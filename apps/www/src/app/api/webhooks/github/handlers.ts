@@ -1196,7 +1196,7 @@ export async function handlePullRequestReviewEvent(
   }
 }
 
-async function resolvePrNumbersFromSha({
+export async function resolvePrNumbersFromSha({
   repoFullName,
   headSha,
   includeTerminal,

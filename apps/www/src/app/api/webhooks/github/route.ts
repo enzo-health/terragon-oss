@@ -46,6 +46,7 @@ import {
   handlePullRequestUpdated,
   handleIssueEvent,
 } from "./handlers";
+import { shadowRefreshGitHubProjectionsForWebhook } from "./shadow-refresh";
 import { Webhooks } from "@octokit/webhooks";
 import { env } from "@terragon/env/apps-www";
 import { randomUUID } from "crypto";
@@ -72,43 +73,81 @@ export async function POST(request: NextRequest) {
       "pull_request.closed",
       "pull_request.ready_for_review",
       "pull_request.converted_to_draft",
-    ],
-    async ({ payload }) => {
-      await handlePullRequestStatusChange(payload, requestId);
-    },
-  );
-  webhooks.on(
-    [
-      "pull_request.opened",
-      "pull_request.ready_for_review",
       "pull_request.synchronize",
     ],
     async ({ payload }) => {
-      await handlePullRequestUpdated(payload);
+      await shadowRefreshGitHubProjectionsForWebhook({
+        name: `pull_request.${payload.action}`,
+        payload,
+      });
+      switch (payload.action) {
+        case "opened":
+        case "reopened":
+        case "closed":
+        case "ready_for_review":
+        case "converted_to_draft": {
+          await handlePullRequestStatusChange(payload, requestId);
+          break;
+        }
+        default:
+      }
+      switch (payload.action) {
+        case "opened":
+        case "ready_for_review":
+        case "synchronize": {
+          await handlePullRequestUpdated(payload);
+          break;
+        }
+        default:
+      }
     },
   );
   webhooks.on("issue_comment.created", async ({ payload }) => {
+    await shadowRefreshGitHubProjectionsForWebhook({
+      name: "issue_comment.created",
+      payload,
+    });
     await handleIssueCommentEvent(payload, requestId);
   });
   webhooks.on("pull_request_review.submitted", async ({ payload }) => {
+    await shadowRefreshGitHubProjectionsForWebhook({
+      name: "pull_request_review.submitted",
+      payload,
+    });
     await handlePullRequestReviewEvent(payload, requestId);
   });
   webhooks.on("pull_request_review_comment.created", async ({ payload }) => {
+    await shadowRefreshGitHubProjectionsForWebhook({
+      name: "pull_request_review_comment.created",
+      payload,
+    });
     await handlePullRequestReviewCommentEvent(payload, requestId);
   });
   webhooks.on(
     ["check_run.completed", "check_run.created", "check_run.rerequested"],
     async ({ payload }) => {
+      await shadowRefreshGitHubProjectionsForWebhook({
+        name: `check_run.${payload.action}`,
+        payload,
+      });
       await handleCheckRunEvent(payload, requestId);
     },
   );
   webhooks.on(
     ["check_suite.completed", "check_suite.rerequested"],
     async ({ payload }) => {
+      await shadowRefreshGitHubProjectionsForWebhook({
+        name: `check_suite.${payload.action}`,
+        payload,
+      });
       await handleCheckSuiteEvent(payload, requestId);
     },
   );
   webhooks.on(["issues.opened"], async ({ payload }) => {
+    await shadowRefreshGitHubProjectionsForWebhook({
+      name: "issues.opened",
+      payload,
+    });
     await handleIssueEvent(payload);
   });
   webhooks.onAny(({ name, payload }) => {

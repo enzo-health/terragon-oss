@@ -5,6 +5,10 @@ import { POST } from "./route";
 import { createMockNextRequest } from "@/test-helpers/mock-next";
 import { db } from "@/lib/db";
 import { getOctokitForApp, updateGitHubPR } from "@/lib/github";
+import {
+  refreshGitHubPrProjection,
+  refreshGitHubRepoProjection,
+} from "@/server-lib/github-projection-refresh";
 import { handleAppMention } from "./handle-app-mention";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import {
@@ -26,6 +30,11 @@ vi.mock("./route-feedback", () => ({
     threadChatId: "feedback-thread-chat-id",
     mode: "reused_existing",
   }),
+}));
+
+vi.mock("@/server-lib/github-projection-refresh", () => ({
+  refreshGitHubPrProjection: vi.fn(),
+  refreshGitHubRepoProjection: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", async () => {
@@ -98,7 +107,10 @@ describe("GitHub webhook route", () => {
 
   beforeAll(async () => {
     const testUserResult = await createTestUser({ db });
-    githubAccountId = parseInt(testUserResult.githubAccount.id);
+    githubAccountId = Number.parseInt(testUserResult.githubAccount.id, 10);
+    if (Number.isNaN(githubAccountId)) {
+      githubAccountId = 123456;
+    }
   });
 
   beforeEach(async () => {
@@ -108,6 +120,12 @@ describe("GitHub webhook route", () => {
       undefined as unknown as Awaited<ReturnType<typeof getOctokitForApp>>,
     );
     vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValue([]);
+    vi.mocked(refreshGitHubPrProjection).mockImplementation(async () => {
+      return {} as Awaited<ReturnType<typeof refreshGitHubPrProjection>>;
+    });
+    vi.mocked(refreshGitHubRepoProjection).mockImplementation(async () => {
+      return {} as Awaited<ReturnType<typeof refreshGitHubRepoProjection>>;
+    });
   });
 
   describe("webhook validation (VAL-API-006)", () => {
@@ -310,6 +328,27 @@ describe("GitHub webhook route", () => {
       });
     });
 
+    it("shadow-refreshes PR projections for pull request webhook families", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createPullRequestBody({
+          action: "synchronize",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+    });
+
     it("should handle PR not found in database", async () => {
       // Don't create a PR in the database to test the not found case
       // Use a different PR number that definitely doesn't exist
@@ -487,6 +526,10 @@ describe("GitHub webhook route", () => {
         commentType: "issue_comment",
         issueContext: undefined,
       });
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: "owner/repo",
+        prNumber: 123,
+      });
     });
 
     it("should ignore comments without app mention", async () => {
@@ -556,6 +599,9 @@ describe("GitHub webhook route", () => {
         commentType: "issue_comment",
         issueContext:
           "**Default Issue Title**\n\nDefault issue body description",
+      });
+      expect(refreshGitHubRepoProjection).toHaveBeenCalledWith({
+        repoFullName: "owner/repo",
       });
     });
 
@@ -839,6 +885,10 @@ describe("GitHub webhook route", () => {
         commentGitHubAccountId: githubAccountId,
       });
       expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: githubPR.repoFullName,
+        prNumber: githubPR.number,
+      });
     });
 
     it("fans out review feedback routing to each enrolled loop user on the PR", async () => {
@@ -1304,6 +1354,10 @@ describe("GitHub webhook route", () => {
         commentContext: undefined,
       });
       expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: githubPR.repoFullName,
+        prNumber: githubPR.number,
+      });
     });
 
     it("fans out review-comment feedback routing to each enrolled loop user on the PR", async () => {
@@ -1534,6 +1588,84 @@ describe("GitHub webhook route", () => {
         createIfNotFound: false,
       });
       expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+    });
+
+    it("uses SHA fallback for shadow refresh when check runs omit inline PRs", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const listPullRequestsAssociatedWithCommit = vi.fn().mockResolvedValue({
+        data: [{ number: pr.number, state: "open" }],
+      });
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit,
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+
+      const request = await createMockRequest(
+        createCheckRunBody({
+          action: "created",
+          repoFullName: pr.repoFullName,
+          prNumbers: [],
+          headSha: "shadow-check-run-sha",
+          status: "queued",
+          conclusion: null,
+        }),
+        {
+          "x-github-event": "check_run",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+      expect(updateGitHubPR).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+        createIfNotFound: false,
+      });
+      expect(listPullRequestsAssociatedWithCommit).toHaveBeenCalledWith({
+        owner: "terragon",
+        repo: "test-repo",
+        commit_sha: "shadow-check-run-sha",
+      });
+    });
+
+    it("falls back to repo refresh when check runs cannot resolve a PR", async () => {
+      const request = await createMockRequest(
+        createCheckRunBody({
+          action: "created",
+          repoFullName: "owner/repo",
+          prNumbers: [],
+          headSha: "missing-pr-sha",
+          status: "queued",
+          conclusion: null,
+        }),
+        {
+          "x-github-event": "check_run",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(refreshGitHubRepoProjection).toHaveBeenCalledWith({
+        repoFullName: "owner/repo",
+      });
+      expect(refreshGitHubPrProjection).not.toHaveBeenCalled();
     });
 
     it("routes successful check runs only when an SDLC loop is enrolled", async () => {
@@ -1972,6 +2104,41 @@ describe("GitHub webhook route", () => {
       expect(response.status).toBe(500);
       expect(data.error).toBe("Internal server error");
     });
+
+    it("keeps primary webhook handling intact when shadow refresh fails", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(refreshGitHubPrProjection).mockRejectedValueOnce(
+        new Error("shadow refresh exploded"),
+      );
+
+      const request = await createMockRequest(
+        createPullRequestBody({
+          action: "opened",
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+        }),
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(updateGitHubPR).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+        createIfNotFound: false,
+      });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[github webhook] shadow refresh failed",
+        expect.objectContaining({
+          eventName: "pull_request.opened",
+        }),
+      );
+
+      errorSpy.mockRestore();
+    });
   });
 
   describe("check suite events", () => {
@@ -1980,6 +2147,7 @@ describe("GitHub webhook route", () => {
       repoFullName = "owner/repo",
       prNumbers = [123],
       checkSuiteId = 1,
+      headSha,
       conclusion = "success",
       status = "completed",
     }: {
@@ -1987,6 +2155,7 @@ describe("GitHub webhook route", () => {
       repoFullName?: string;
       prNumbers?: number[];
       checkSuiteId?: number;
+      headSha?: string;
       conclusion?: string | null;
       status?: string;
     }) {
@@ -1996,6 +2165,7 @@ describe("GitHub webhook route", () => {
           id: checkSuiteId,
           status,
           conclusion,
+          head_sha: headSha,
           pull_requests: prNumbers.map((num) => ({ number: num })),
         },
         repository: {
@@ -2032,6 +2202,54 @@ describe("GitHub webhook route", () => {
         createIfNotFound: false,
       });
       expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+    });
+
+    it("uses SHA fallback for shadow refresh when check suites omit inline PRs", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const listPullRequestsAssociatedWithCommit = vi.fn().mockResolvedValue({
+        data: [{ number: pr.number, state: "open" }],
+      });
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit,
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+
+      const request = await createMockRequest(
+        createCheckSuiteBody({
+          action: "rerequested",
+          repoFullName: pr.repoFullName,
+          prNumbers: [],
+          checkSuiteId: 999,
+          headSha: "shadow-check-suite-sha",
+          status: "queued",
+          conclusion: null,
+        }),
+        {
+          "x-github-event": "check_suite",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+      });
+      expect(listPullRequestsAssociatedWithCommit).toHaveBeenCalledWith({
+        owner: "terragon",
+        repo: "test-repo",
+        commit_sha: "shadow-check-suite-sha",
+      });
     });
 
     it("routes successful check suites only when an SDLC loop is enrolled", async () => {
@@ -2276,6 +2494,39 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(500);
       expect(data.error).toBe("Internal server error");
+    });
+  });
+
+  describe("issue events", () => {
+    it("shadow-refreshes repo projections for issues.opened", async () => {
+      const request = await createMockRequest(
+        {
+          action: "opened",
+          issue: {
+            number: 321,
+            title: "New issue",
+            body: "Issue body",
+            user: { login: "reporter", id: githubAccountId },
+          },
+          repository: {
+            full_name: "owner/repo",
+            owner: { login: "owner", id: githubAccountId },
+            name: "repo",
+          },
+        },
+        {
+          "x-github-event": "issues",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(refreshGitHubRepoProjection).toHaveBeenCalledWith({
+        repoFullName: "owner/repo",
+      });
     });
   });
 
