@@ -4,9 +4,9 @@ import * as schema from "../db/schema";
 import type {
   GithubInstallationProjection,
   GithubInstallationProjectionInsert,
+  GithubPRStatus,
   GithubPrProjection,
   GithubPrProjectionInsert,
-  GithubPRStatus,
   GithubRepoProjection,
   GithubRepoProjectionInsert,
 } from "../db/types";
@@ -41,7 +41,10 @@ export async function getGithubInstallationProjectionByInstallationId({
   installationId: number;
 }): Promise<GithubInstallationProjection | null> {
   const projection = await db.query.githubInstallationProjection.findFirst({
-    where: eq(schema.githubInstallationProjection.installationId, installationId),
+    where: eq(
+      schema.githubInstallationProjection.installationId,
+      installationId,
+    ),
   });
 
   return projection ?? null;
@@ -70,6 +73,12 @@ export async function upsertGithubInstallationProjection({
       },
     })
     .returning();
+
+  if (!projection) {
+    throw new Error(
+      `GitHub installation projection upsert returned no rows for installation ${installationId}`,
+    );
+  }
 
   return projection;
 }
@@ -143,6 +152,12 @@ export async function upsertGithubRepoProjection({
       },
     })
     .returning();
+
+  if (!projection) {
+    throw new Error(
+      `GitHub repo projection upsert returned no rows for repo ${repoId}`,
+    );
+  }
 
   return projection;
 }
