@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "@terragon/env/pkg-shared";
+import { eq } from "drizzle-orm";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
 import {
@@ -141,6 +142,91 @@ describe("github workspace helpers", () => {
     ).rejects.toThrow("GitHub repo projection not found");
   });
 
+  it("keeps one canonical workspace row when the repo projection rebinds to a new installation", async () => {
+    const {
+      installationId,
+      repoId,
+      prNodeId,
+      prProjection,
+      repoProjection,
+      installationProjection,
+    } = await createProjectionChain();
+
+    const workspace = await upsertGithubPrWorkspace({
+      db,
+      installationId,
+      repoId,
+      prNodeId,
+    });
+
+    const reboundInstallationId = nextGithubId();
+    const reboundInstallationProjection =
+      await upsertGithubInstallationProjection({
+        db,
+        installationId: reboundInstallationId,
+        fields: {
+          targetAccountLogin: `terragon-${reboundInstallationId}`,
+          targetAccountType: "Organization",
+        },
+      });
+
+    const reboundRepoProjection = await upsertGithubRepoProjection({
+      db,
+      installationId: reboundInstallationId,
+      repoId,
+      fields: {
+        currentSlug: repoProjection.currentSlug,
+      },
+    });
+
+    const reboundWorkspace = await upsertGithubPrWorkspace({
+      db,
+      installationId: reboundInstallationId,
+      repoId,
+      prNodeId,
+      fields: {
+        status: "closed",
+        headSha: "rebased789",
+      },
+    });
+
+    expect(reboundWorkspace.id).toBe(workspace.id);
+    expect(reboundWorkspace.prProjectionId).toBe(prProjection.id);
+    expect(reboundWorkspace.installationId).toBe(reboundInstallationId);
+    expect(reboundWorkspace.installationProjectionId).toBe(
+      reboundInstallationProjection.id,
+    );
+    expect(reboundWorkspace.repoProjectionId).toBe(reboundRepoProjection.id);
+    expect(reboundWorkspace.status).toBe("closed");
+    expect(reboundWorkspace.headSha).toBe("rebased789");
+
+    const workspaceRows = await db.query.githubPrWorkspace.findMany({
+      where: eq(schema.githubPrWorkspace.prProjectionId, prProjection.id),
+    });
+
+    expect(workspaceRows).toHaveLength(1);
+
+    const staleCanonicalLookup = await getGithubPrWorkspaceByCanonicalId({
+      db,
+      installationId,
+      repoId,
+      prNodeId,
+    });
+    const reboundCanonicalLookup = await getGithubPrWorkspaceByCanonicalId({
+      db,
+      installationId: reboundInstallationId,
+      repoId,
+      prNodeId,
+    });
+
+    expect(staleCanonicalLookup).toBeNull();
+    expect(reboundCanonicalLookup?.id).toBe(workspace.id);
+
+    expect(installationProjection.id).not.toBe(
+      reboundInstallationProjection.id,
+    );
+  });
+
   it("upserts workspace runs with durable thread and workflow ownership", async () => {
     const { installationId, repoId, prNodeId } = await createProjectionChain();
     const workspace = await upsertGithubPrWorkspace({
@@ -215,6 +301,64 @@ describe("github workspace helpers", () => {
     expect(workspaceRuns.map((workspaceRun) => workspaceRun.id)).toContain(
       run.id,
     );
+  });
+
+  it("rejects rebinding an existing run key to a different thread", async () => {
+    const { installationId, repoId, prNodeId } = await createProjectionChain();
+    const workspace = await upsertGithubPrWorkspace({
+      db,
+      installationId,
+      repoId,
+      prNodeId,
+    });
+
+    const { user } = await createTestUser({ db });
+    const firstThread = await createTestThread({
+      db,
+      userId: user.id,
+    });
+    const secondThread = await createTestThread({
+      db,
+      userId: user.id,
+    });
+
+    const initialRun = await upsertGithubWorkspaceRun({
+      db,
+      workspaceId: workspace.id,
+      lane: "review_response",
+      headSha: "abc123",
+      attempt: 2,
+      threadId: firstThread.threadId,
+      fields: {
+        status: "running",
+      },
+    });
+
+    await expect(
+      upsertGithubWorkspaceRun({
+        db,
+        workspaceId: workspace.id,
+        lane: "review_response",
+        headSha: "abc123",
+        attempt: 2,
+        threadId: secondThread.threadId,
+        fields: {
+          status: "failed",
+        },
+      }),
+    ).rejects.toThrow("identity mismatch");
+
+    const persistedRun = await getGithubWorkspaceRun({
+      db,
+      workspaceId: workspace.id,
+      lane: "review_response",
+      headSha: "abc123",
+      attempt: 2,
+    });
+
+    expect(persistedRun?.id).toBe(initialRun.id);
+    expect(persistedRun?.threadId).toBe(firstThread.threadId);
+    expect(persistedRun?.status).toBe("running");
   });
 
   it("enforces workspace and run uniqueness plus workflow-thread consistency", async () => {

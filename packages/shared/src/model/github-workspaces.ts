@@ -169,15 +169,14 @@ export async function upsertGithubPrWorkspace({
       headSha,
     })
     .onConflictDoUpdate({
-      target: [
-        schema.githubPrWorkspace.installationId,
-        schema.githubPrWorkspace.repoId,
-        schema.githubPrWorkspace.prNodeId,
-      ],
+      target: schema.githubPrWorkspace.prProjectionId,
       set: {
         installationProjectionId,
+        installationId,
         repoProjectionId: repoProjection.id,
+        repoId,
         prProjectionId: prProjection.id,
+        prNodeId,
         prNumber: prProjection.number,
         status,
         headSha,
@@ -256,6 +255,20 @@ export async function upsertGithubWorkspaceRun({
 }): Promise<GithubWorkspaceRun> {
   await requireGithubPrWorkspaceById({ db, workspaceId });
 
+  const existingRun = await getGithubWorkspaceRun({
+    db,
+    workspaceId,
+    lane,
+    headSha,
+    attempt,
+  });
+
+  if (existingRun && existingRun.threadId !== threadId) {
+    throw new Error(
+      `GitHub workspace run identity mismatch for workspace ${workspaceId}, lane ${lane}, head ${headSha}, attempt ${attempt}: existing thread ${existingRun.threadId}, received ${threadId}`,
+    );
+  }
+
   const [run] = await db
     .insert(schema.githubWorkspaceRun)
     .values({
@@ -277,17 +290,31 @@ export async function upsertGithubWorkspaceRun({
         schema.githubWorkspaceRun.attempt,
       ],
       set: {
-        threadId,
         ...(fields?.status !== undefined ? { status: fields.status } : {}),
         ...(fields?.workflowId !== undefined
           ? { workflowId: fields.workflowId }
           : {}),
         updatedAt: new Date(),
       },
+      setWhere: eq(schema.githubWorkspaceRun.threadId, threadId),
     })
     .returning();
 
   if (!run) {
+    const conflictedRun = await getGithubWorkspaceRun({
+      db,
+      workspaceId,
+      lane,
+      headSha,
+      attempt,
+    });
+
+    if (conflictedRun && conflictedRun.threadId !== threadId) {
+      throw new Error(
+        `GitHub workspace run identity mismatch for workspace ${workspaceId}, lane ${lane}, head ${headSha}, attempt ${attempt}: existing thread ${conflictedRun.threadId}, received ${threadId}`,
+      );
+    }
+
     throw new Error(
       `GitHub workspace run upsert returned no rows for workspace ${workspaceId}, lane ${lane}, head ${headSha}, attempt ${attempt}`,
     );
