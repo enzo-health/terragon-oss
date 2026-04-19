@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
 import {
+  createGithubSurfaceBinding,
   getGithubSurfaceBindingBySurface,
   resolveGithubSurfaceBinding,
   upsertGithubSurfaceBinding,
@@ -84,7 +85,7 @@ describe("github surface binding helpers", () => {
   it("creates and resolves a bound surface to one workspace deterministically", async () => {
     const { workspace } = await createWorkspace();
 
-    const binding = await upsertGithubSurfaceBinding({
+    const binding = await createGithubSurfaceBinding({
       db,
       workspaceId: workspace.id,
       surfaceKind: "review_thread",

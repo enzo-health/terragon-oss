@@ -10,7 +10,10 @@ import {
   upsertGithubWorkspaceRun,
 } from "@terragon/shared/model/github-workspaces";
 import { db as defaultDb } from "@/lib/db";
-import { refreshGitHubPrProjection } from "./github-projection-refresh";
+import {
+  refreshGitHubPrProjection,
+  type GitHubPullRequestSnapshot,
+} from "./github-projection-refresh";
 import { createGitHubSurfaceBindingCoordinator } from "./github-surface-bindings";
 
 type RefreshGithubPrProjectionResult = Awaited<
@@ -30,10 +33,7 @@ export type BootstrapThreadGithubWorkspaceParams = {
   repoFullName: string;
   prNumber: number;
   threadId: string;
-  pullRequestIdentity: {
-    prNodeId: string;
-    headSha: string;
-  };
+  pullRequestIdentity?: Pick<GitHubPullRequestSnapshot, "prNodeId" | "headSha">;
 };
 
 export type BootstrapThreadGithubWorkspaceResult = {
@@ -45,24 +45,30 @@ export type BootstrapThreadGithubWorkspaceResult = {
 function getBoundHeadSha(params: {
   repoFullName: string;
   prNumber: number;
-  identityHeadSha: string;
+  projectionHeadSha: string | null;
+  identityHeadSha?: string | null;
 }): string {
-  if (!params.identityHeadSha) {
+  const headSha = params.identityHeadSha ?? params.projectionHeadSha;
+
+  if (!headSha) {
     throw new Error(
       `GitHub PR ${params.repoFullName}#${params.prNumber} is missing a head SHA`,
     );
   }
 
-  return params.identityHeadSha;
+  return headSha;
 }
 
 function getCanonicalPrNodeId(params: {
   repoFullName: string;
   prNumber: number;
   projectionPrNodeId: string;
-  identityPrNodeId: string;
+  identityPrNodeId?: string | null;
 }): string {
-  if (params.identityPrNodeId !== params.projectionPrNodeId) {
+  if (
+    params.identityPrNodeId &&
+    params.identityPrNodeId !== params.projectionPrNodeId
+  ) {
     throw new Error(
       `GitHub PR ${params.repoFullName}#${params.prNumber} identity mismatch: expected ${params.projectionPrNodeId}, received ${params.identityPrNodeId}`,
     );
@@ -121,12 +127,13 @@ export function createGitHubWorkspaceBootstrapClient(
         repoFullName: params.repoFullName,
         prNumber: params.prNumber,
         projectionPrNodeId: prProjection.prNodeId,
-        identityPrNodeId: params.pullRequestIdentity.prNodeId,
+        identityPrNodeId: params.pullRequestIdentity?.prNodeId,
       });
       const boundHeadSha = getBoundHeadSha({
         repoFullName: params.repoFullName,
         prNumber: params.prNumber,
-        identityHeadSha: params.pullRequestIdentity.headSha,
+        projectionHeadSha: prProjection.headSha,
+        identityHeadSha: params.pullRequestIdentity?.headSha,
       });
 
       return await resolvedDependencies.db.transaction(async (tx) => {

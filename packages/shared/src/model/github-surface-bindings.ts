@@ -170,6 +170,42 @@ export async function getGithubSurfaceBindingBySurface<
   return binding ? normalizeGithubSurfaceBinding(binding, surfaceKind) : null;
 }
 
+export async function createGithubSurfaceBinding<
+  K extends GithubSurfaceBindingKind,
+>({
+  db,
+  workspaceId,
+  surfaceKind,
+  surfaceGitHubId,
+  fields,
+}: GithubSurfaceBindingLookupKey & {
+  db: GithubSurfaceBindingDb;
+  workspaceId: string;
+  surfaceKind: K;
+  fields: GithubSurfaceBindingMutableFields<K>;
+}): Promise<GithubSurfaceBindingRecordForKind<K>> {
+  const workspace = await requireGithubPrWorkspace({ db, workspaceId });
+  requireWorkspaceHeadSha(workspace, fields.boundHeadSha);
+
+  const [binding] = await db
+    .insert(schema.githubSurfaceBinding)
+    .values({
+      workspaceId,
+      surfaceKind,
+      surfaceGitHubId,
+      ...fields,
+    })
+    .returning();
+
+  if (!binding) {
+    throw new Error(
+      `GitHub surface binding create returned no rows for ${surfaceKind}:${surfaceGitHubId}`,
+    );
+  }
+
+  return normalizeGithubSurfaceBinding(binding, surfaceKind);
+}
+
 export async function upsertGithubSurfaceBinding<
   K extends GithubSurfaceBindingKind,
 >({
@@ -280,4 +316,10 @@ export async function resolveGithubSurfaceBinding<
     workspace,
     headSha: workspace.headSha,
   };
+}
+export function formatGithubSurfaceBindingId({
+  surfaceKind,
+  surfaceGitHubId,
+}: GithubSurfaceBindingLookupKey): string {
+  return `${surfaceKind}:${surfaceGitHubId}`;
 }
