@@ -14,7 +14,6 @@ import {
   ThreadStatus,
   ThreadVisibility,
 } from "../db/types";
-import { LEGACY_THREAD_CHAT_ID } from "../utils/thread-utils";
 import { getUser } from "./user";
 
 const activeThreadStatuses: ReadonlySet<ThreadStatus> = new Set([
@@ -146,47 +145,6 @@ function getPrimaryThreadChatSummary(
   return summary;
 }
 
-function createLegacyThreadChatSummary({
-  thread,
-  isUnread,
-}: {
-  thread: Pick<
-    typeof schema.thread.$inferSelect,
-    | "id"
-    | "createdAt"
-    | "updatedAt"
-    | "agent"
-    | "agentVersion"
-    | "status"
-    | "errorMessage"
-    | "errorMessageInfo"
-    | "scheduleAt"
-    | "reattemptQueueAt"
-    | "contextLength"
-    | "permissionMode"
-    | "messageSeq"
-  >;
-  isUnread: boolean;
-}): ThreadPageChatSummaryWithCreatedAt {
-  return {
-    id: LEGACY_THREAD_CHAT_ID,
-    threadId: thread.id,
-    createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
-    agent: thread.agent,
-    agentVersion: thread.agentVersion,
-    status: thread.status,
-    errorMessage: thread.errorMessage,
-    errorMessageInfo: thread.errorMessageInfo,
-    scheduleAt: thread.scheduleAt,
-    reattemptQueueAt: thread.reattemptQueueAt,
-    contextLength: thread.contextLength,
-    permissionMode: thread.permissionMode ?? "allowAll",
-    messageSeq: thread.messageSeq,
-    isUnread,
-  };
-}
-
 function toThreadPageChatSummaryWithCreatedAt(
   chat: Pick<
     ThreadPageChat,
@@ -283,29 +241,6 @@ function getThreadPageShellThreadChatSummarySelect() {
     contextLength: schema.threadChat.contextLength,
     permissionMode: schema.threadChat.permissionMode,
     messageSeq: schema.threadChat.messageSeq,
-  };
-}
-
-function getThreadPageLegacyChatSelect() {
-  return {
-    id: schema.thread.id,
-    userId: schema.thread.userId,
-    name: schema.thread.name,
-    createdAt: schema.thread.createdAt,
-    updatedAt: schema.thread.updatedAt,
-    agent: schema.thread.agent,
-    agentVersion: schema.thread.agentVersion,
-    status: schema.thread.status,
-    messages: schema.thread.messages,
-    queuedMessages: schema.thread.queuedMessages,
-    sessionId: schema.thread.sessionId,
-    errorMessage: schema.thread.errorMessage,
-    errorMessageInfo: schema.thread.errorMessageInfo,
-    scheduleAt: schema.thread.scheduleAt,
-    reattemptQueueAt: schema.thread.reattemptQueueAt,
-    contextLength: schema.thread.contextLength,
-    permissionMode: schema.thread.permissionMode,
-    messageSeq: schema.thread.messageSeq,
   };
 }
 
@@ -492,9 +427,10 @@ export async function getThreadPageShellWithPermissions({
     return undefined;
   }
 
-  const chatSummaries = threadChats.length
-    ? threadChats.map(toThreadPageChatSummaryWithCreatedAt)
-    : [createLegacyThreadChatSummary({ thread, isUnread: thread.isUnread })];
+  const chatSummaries = threadChats.map(toThreadPageChatSummaryWithCreatedAt);
+  if (chatSummaries.length === 0) {
+    return undefined;
+  }
   const primaryThreadChat = getPrimaryThreadChatSummary(chatSummaries);
 
   return {
@@ -563,62 +499,6 @@ export async function getThreadPageChatWithPermissions({
   });
   if (!access) {
     return undefined;
-  }
-
-  if (threadChatId === LEGACY_THREAD_CHAT_ID) {
-    const threadResult = await db
-      .select({
-        ...getThreadPageLegacyChatSelect(),
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
-      })
-      .from(schema.thread)
-      .leftJoin(
-        schema.threadReadStatus,
-        and(
-          eq(schema.threadReadStatus.threadId, schema.thread.id),
-          eq(schema.threadReadStatus.userId, userId),
-        ),
-      )
-      .where(
-        and(
-          eq(schema.thread.id, threadId),
-          eq(schema.thread.userId, access.ownerUserId),
-        ),
-      );
-
-    const thread = threadResult[0];
-    if (!thread) {
-      return undefined;
-    }
-
-    const messages = thread.messages ?? [];
-    return {
-      id: LEGACY_THREAD_CHAT_ID,
-      userId: thread.userId,
-      threadId: thread.id,
-      title: thread.name ?? null,
-      createdAt: thread.createdAt,
-      updatedAt: thread.updatedAt,
-      agent: thread.agent,
-      agentVersion: thread.agentVersion,
-      status: thread.status,
-      sessionId: thread.sessionId,
-      errorMessage: thread.errorMessage,
-      errorMessageInfo: thread.errorMessageInfo,
-      scheduleAt: thread.scheduleAt,
-      reattemptQueueAt: thread.reattemptQueueAt,
-      contextLength: thread.contextLength,
-      permissionMode: thread.permissionMode ?? "allowAll",
-      messageSeq: thread.messageSeq,
-      codexPreviousResponseId: null,
-      isUnread: thread.isUnread,
-      messages,
-      queuedMessages: thread.queuedMessages ?? [],
-      messageCount: messages.length,
-      chatSequence:
-        thread.messageSeq > 0 ? thread.messageSeq : thread.updatedAt.getTime(),
-      patchVersion: 0,
-    };
   }
 
   const threadChatResult = await db

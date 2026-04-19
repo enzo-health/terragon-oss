@@ -29,7 +29,6 @@ import {
   getThreadChat,
   getThreadMinimal,
 } from "./threads";
-import { LEGACY_THREAD_CHAT_ID } from "../utils/thread-utils";
 import { upsertGithubPR } from "./github";
 import {
   markThreadChatAsUnread,
@@ -43,6 +42,7 @@ import { set as setDateValues, subDays } from "date-fns";
 import * as broadcastServer from "../broadcast-server";
 
 const db = createDb(env.DATABASE_URL!);
+const NON_EXISTENT_THREAD_CHAT_ID = "non-existent-thread-chat-id";
 
 describe("thread", () => {
   let user: User;
@@ -93,7 +93,7 @@ describe("thread", () => {
 
       expect(threadId).toBeDefined();
       expect(threadChatId).toBeDefined();
-      expect(threadChatId).not.toBe(LEGACY_THREAD_CHAT_ID);
+      expect(threadChatId).not.toBe(NON_EXISTENT_THREAD_CHAT_ID);
 
       const thread = await getThread({ db, threadId, userId: user.id });
       expect(thread).toBeDefined();
@@ -108,84 +108,49 @@ describe("thread", () => {
       expect(dbThreadChat!.threadId).toBe(threadId);
     });
 
-    describe("enableThreadChatCreation parameter", () => {
-      it("should create legacy thread when enableThreadChatCreation is false", async () => {
-        const scheduleAt = new Date();
-        const { threadId, threadChatId } = await createThread({
-          db,
-          userId: user.id,
-          threadValues: {
-            githubRepoFullName: "terragon/terragon",
-            repoBaseBranchName: "main",
-            sandboxProvider: "e2b",
-          },
-          initialChatValues: {
-            scheduleAt,
-          },
-          enableThreadChatCreation: false,
-        });
-
-        expect(threadId).toBeDefined();
-        expect(threadChatId).toBe(LEGACY_THREAD_CHAT_ID);
-
-        const thread = await getThread({ db, threadId, userId: user.id });
-        expect(thread).toBeDefined();
-        expect(thread!.threadChats).toHaveLength(1);
-        expect(thread!.threadChats[0]!.id).toBe(LEGACY_THREAD_CHAT_ID);
-
-        // Verify chat data is stored on the thread table
-        const dbThread = await db.query.thread.findFirst({
-          where: eq(schema.thread.id, threadId),
-        });
-        expect(dbThread!.scheduleAt).toEqual(scheduleAt);
+    it("stores chat metadata on thread_chat records", async () => {
+      const scheduleAt = new Date();
+      const { threadId, threadChatId } = await createThread({
+        db,
+        userId: user.id,
+        threadValues: {
+          githubRepoFullName: "terragon/terragon",
+          repoBaseBranchName: "main",
+          sandboxProvider: "e2b",
+        },
+        initialChatValues: {
+          scheduleAt,
+        },
       });
 
-      it("should create thread with separate threadChat when enableThreadChatCreation is true", async () => {
-        const scheduleAt = new Date();
-        const { threadId, threadChatId } = await createThread({
-          db,
-          userId: user.id,
-          threadValues: {
-            githubRepoFullName: "terragon/terragon",
-            repoBaseBranchName: "main",
-            sandboxProvider: "e2b",
-          },
-          initialChatValues: {
-            scheduleAt,
-          },
-          enableThreadChatCreation: true,
-        });
+      expect(threadId).toBeDefined();
+      expect(threadChatId).toBeDefined();
+      expect(threadChatId).not.toBe(NON_EXISTENT_THREAD_CHAT_ID);
 
-        expect(threadId).toBeDefined();
-        expect(threadChatId).toBeDefined();
-        expect(threadChatId).not.toBe(LEGACY_THREAD_CHAT_ID);
+      const thread = await getThread({ db, threadId, userId: user.id });
+      expect(thread).toBeDefined();
+      expect(thread!.threadChats).toHaveLength(1);
+      expect(thread!.threadChats[0]!.id).toBe(threadChatId);
+      expect(thread!.threadChats[0]!.id).not.toBe(NON_EXISTENT_THREAD_CHAT_ID);
 
-        const thread = await getThread({ db, threadId, userId: user.id });
-        expect(thread).toBeDefined();
-        expect(thread!.threadChats).toHaveLength(1);
-        expect(thread!.threadChats[0]!.id).toBe(threadChatId);
-        expect(thread!.threadChats[0]!.id).not.toBe(LEGACY_THREAD_CHAT_ID);
-
-        // Verify separate threadChat record exists
-        const dbThreadChat = await db.query.threadChat.findFirst({
-          where: eq(schema.threadChat.id, threadChatId),
-        });
-        console.log({ dbThreadChat });
-        expect(dbThreadChat).toBeDefined();
-        expect(dbThreadChat!.threadId).toBe(threadId);
-        expect(dbThreadChat!.scheduleAt).toEqual(scheduleAt);
-
-        // Verify thread table doesn't have chat data
-        const dbThread = await db.query.thread.findFirst({
-          where: eq(schema.thread.id, threadId),
-        });
-        expect(dbThread!.scheduleAt).toBeNull();
+      // Verify separate threadChat record exists
+      const dbThreadChat = await db.query.threadChat.findFirst({
+        where: eq(schema.threadChat.id, threadChatId),
       });
+      expect(dbThreadChat).toBeDefined();
+      expect(dbThreadChat!.threadId).toBe(threadId);
+      expect(dbThreadChat!.scheduleAt).toEqual(scheduleAt);
+
+      // Verify thread table doesn't have chat data
+      const dbThread = await db.query.thread.findFirst({
+        where: eq(schema.thread.id, threadId),
+      });
+      expect(dbThread!.scheduleAt).toBeNull();
     });
   });
 
   describe("getThreadChat", () => {
-    it("should retrieve legacy thread chat when enableThreadChatCreation is false", async () => {
+    it("should retrieve thread chat created with the thread", async () => {
       const { threadId, threadChatId } = await createThread({
         db,
         userId: user.id,
@@ -198,7 +163,6 @@ describe("thread", () => {
           agent: "claudeCode",
           status: "working",
         },
-        enableThreadChatCreation: false,
       });
 
       const threadChat = await getThreadChat({
@@ -209,13 +173,13 @@ describe("thread", () => {
       });
 
       expect(threadChat).toBeDefined();
-      expect(threadChat!.id).toBe(LEGACY_THREAD_CHAT_ID);
+      expect(threadChat!.id).toBe(threadChatId);
       expect(threadChat!.threadId).toBe(threadId);
       expect(threadChat!.agent).toBe("claudeCode");
       expect(threadChat!.status).toBe("working");
     });
 
-    it("should retrieve separate thread chat when enableThreadChatCreation is true", async () => {
+    it("should retrieve thread chat for queued threads", async () => {
       const { threadId, threadChatId } = await createThread({
         db,
         userId: user.id,
@@ -228,7 +192,6 @@ describe("thread", () => {
           agent: "claudeCode",
           status: "queued",
         },
-        enableThreadChatCreation: true,
       });
 
       const threadChat = await getThreadChat({
@@ -240,7 +203,7 @@ describe("thread", () => {
 
       expect(threadChat).toBeDefined();
       expect(threadChat!.id).toBe(threadChatId);
-      expect(threadChat!.id).not.toBe(LEGACY_THREAD_CHAT_ID);
+      expect(threadChat!.id).not.toBe(NON_EXISTENT_THREAD_CHAT_ID);
       expect(threadChat!.threadId).toBe(threadId);
       expect(threadChat!.agent).toBe("claudeCode");
       expect(threadChat!.status).toBe("queued");
@@ -258,7 +221,6 @@ describe("thread", () => {
         initialChatValues: {
           agent: "claudeCode",
         },
-        enableThreadChatCreation: true,
       });
 
       const threadChat = await getThreadChat({
@@ -284,7 +246,6 @@ describe("thread", () => {
         initialChatValues: {
           agent: "claudeCode",
         },
-        enableThreadChatCreation: true,
       });
 
       const threadChat = await getThreadChat({
@@ -297,7 +258,7 @@ describe("thread", () => {
       expect(threadChat).toBeUndefined();
     });
 
-    it("should include messages and queuedMessages when enableThreadChatCreation is true", async () => {
+    it("should include messages and queuedMessages from thread_chat records", async () => {
       const { threadId, threadChatId } = await createThread({
         db,
         userId: user.id,
@@ -309,7 +270,6 @@ describe("thread", () => {
         initialChatValues: {
           agent: "claudeCode",
         },
-        enableThreadChatCreation: true,
       });
 
       const message: DBMessage = {
@@ -382,7 +342,6 @@ describe("thread", () => {
       const { threadId, threadChatId } = await createTestThread({
         db,
         userId: user.id,
-        enableThreadChatCreation: true,
       });
       const publishSpy = vi
         .spyOn(broadcastServer, "publishBroadcastUserMessage")
@@ -424,7 +383,6 @@ describe("thread", () => {
       const { threadId, threadChatId } = await createTestThread({
         db,
         userId: user.id,
-        enableThreadChatCreation: true,
       });
       const publishSpy = vi
         .spyOn(broadcastServer, "publishBroadcastUserMessage")
@@ -639,7 +597,6 @@ describe("thread", () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
-          enableThreadChatCreation: true,
         });
         const initialMessage: DBMessage = {
           type: "user",
@@ -775,7 +732,7 @@ describe("thread", () => {
             db,
             userId: user.id,
             threadId: "non-existent-thread",
-            threadChatId: LEGACY_THREAD_CHAT_ID,
+            threadChatId: NON_EXISTENT_THREAD_CHAT_ID,
             updates: {
               appendMessages: [message],
             },
@@ -790,9 +747,9 @@ describe("thread", () => {
         });
         // Ensure thread has null messages
         await db
-          .update(schema.thread)
+          .update(schema.threadChat)
           .set({ messages: null })
-          .where(eq(schema.thread.id, threadId));
+          .where(eq(schema.threadChat.id, threadChatId));
         const message: DBMessage = {
           type: "user",
           model: null,
@@ -811,7 +768,7 @@ describe("thread", () => {
         const updatedThreadChat = await getThreadChat({
           db,
           threadId,
-          threadChatId: LEGACY_THREAD_CHAT_ID,
+          threadChatId,
           userId: user.id,
         });
         expect(updatedThreadChat!.messages).toHaveLength(1);
@@ -1755,7 +1712,6 @@ describe("thread", () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
-          enableThreadChatCreation: true,
         });
         const queuedMessage: DBUserMessage = {
           type: "user",
@@ -3402,13 +3358,12 @@ describe("thread", () => {
       expect(count).toBe(0);
     });
 
-    it("should count threads with active threadChats when enableThreadChatCreation is true", async () => {
+    it("should count threads with active threadChats", async () => {
       // Thread is complete but threadChat is active
       await createTestThread({
         db,
         userId: user.id,
         chatOverrides: { status: "working" },
-        enableThreadChatCreation: true,
       });
 
       const count = await getActiveThreadCount({ db, userId: user.id });
@@ -3420,7 +3375,6 @@ describe("thread", () => {
         db,
         userId: user.id,
         chatOverrides: { status: "working" },
-        enableThreadChatCreation: true,
       });
       await db
         .update(schema.thread)
@@ -3445,7 +3399,6 @@ describe("thread", () => {
         db,
         userId: user.id,
         chatOverrides: { status: "complete" },
-        enableThreadChatCreation: true,
       });
 
       const count = await getActiveThreadCount({ db, userId: user.id });
@@ -3567,11 +3520,10 @@ describe("thread", () => {
       expect(user1Threads[0]!.id).not.toBe(user2ThreadId2);
     });
 
-    it("should return threadChats array for legacy threads", async () => {
-      const { threadId } = await createTestThread({
+    it("should return threadChats array for single-chat threads", async () => {
+      const { threadId, threadChatId } = await createTestThread({
         db,
         userId: user.id,
-        enableThreadChatCreation: false,
         chatOverrides: {
           agent: "claudeCode",
           status: "working",
@@ -3588,7 +3540,7 @@ describe("thread", () => {
       expect(threads[0]!.id).toBe(threadId);
       expect(threads[0]!.threadChats).toHaveLength(1);
       expect(threads[0]!.threadChats[0]).toMatchObject({
-        id: LEGACY_THREAD_CHAT_ID,
+        id: threadChatId,
         agent: "claudeCode",
         status: "working",
         errorMessage: "unknown-error",
@@ -3608,7 +3560,6 @@ describe("thread", () => {
           agent: "claudeCode",
           status: "working",
         },
-        enableThreadChatCreation: true,
       });
 
       // Add second chat
@@ -4119,7 +4070,7 @@ describe("thread", () => {
       expect(userIds).not.toContain(testUser.id);
     });
 
-    it("should detect stuck users with queued threadChats when enableThreadChatCreation is true", async () => {
+    it("should detect stuck users with queued threadChats", async () => {
       const { user: testUser } = await createTestUser({ db });
 
       // Create thread with queued threadChat but no active threads
@@ -4127,14 +4078,13 @@ describe("thread", () => {
         db,
         userId: testUser.id,
         chatOverrides: { status: "queued-tasks-concurrency" },
-        enableThreadChatCreation: true,
       });
 
       const userIds = await getUserIdsWithThreadsStuckInQueue({ db });
       expect(userIds).toContain(testUser.id);
     });
 
-    it("should not return users with active threadChats when enableThreadChatCreation is true", async () => {
+    it("should not return users with active threadChats", async () => {
       const { user: testUser } = await createTestUser({ db });
 
       // User has an active threadChat
@@ -4142,7 +4092,6 @@ describe("thread", () => {
         db,
         userId: testUser.id,
         chatOverrides: { status: "working" },
-        enableThreadChatCreation: true,
       });
 
       const userIds = await getUserIdsWithThreadsStuckInQueue({ db });
@@ -4781,7 +4730,7 @@ describe("thread", () => {
       expect(readyUsers).not.toContain(user3.user.id); // future reattemptQueueAt
     });
 
-    it("should return users with threadChats ready to process when enableThreadChatCreation is true", async () => {
+    it("should return users with threadChats ready to process", async () => {
       const user2 = await createTestUser({ db });
       const user3 = await createTestUser({ db });
 
@@ -4793,7 +4742,6 @@ describe("thread", () => {
           status: "queued-sandbox-creation-rate-limit",
           reattemptQueueAt: null,
         },
-        enableThreadChatCreation: true,
       });
 
       // User 2: threadChat with past reattemptQueueAt
@@ -4804,7 +4752,6 @@ describe("thread", () => {
           status: "queued-agent-rate-limit",
           reattemptQueueAt: new Date(Date.now() - 60 * 1000),
         },
-        enableThreadChatCreation: true,
       });
 
       // User 3: threadChat with future reattemptQueueAt
@@ -4815,7 +4762,6 @@ describe("thread", () => {
           status: "queued-sandbox-creation-rate-limit",
           reattemptQueueAt: new Date(Date.now() + 60 * 1000),
         },
-        enableThreadChatCreation: true,
       });
 
       const readyUsers = await getUserIdsWithThreadsReadyToProcess({ db });

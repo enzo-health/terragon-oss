@@ -22,7 +22,6 @@ import {
   getNextPatchVersion,
 } from "../broadcast-server";
 import { AGENT_VERSION } from "@terragon/agent/versions";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import {
   Thread,
   ThreadInsert,
@@ -89,7 +88,27 @@ async function getThreadsInner({
     whereConditions.push(eq(schema.thread.archived, where.archived));
   }
   if (where?.status?.length) {
-    whereConditions.push(inArray(schema.thread.status, where.status));
+    const latestThreadChatStatusMatch = sql<boolean>`exists (
+      select 1
+      from thread_chat tc
+      where tc.thread_id = ${schema.thread.id}
+        and tc.status in (${sql.join(
+          where.status.map((status) => sql`${status}`),
+          sql`, `,
+        )})
+        and not exists (
+          select 1
+          from thread_chat newer
+          where newer.thread_id = tc.thread_id
+            and newer.created_at > tc.created_at
+        )
+    )`;
+    whereConditions.push(
+      or(
+        inArray(schema.thread.status, where.status),
+        latestThreadChatStatusMatch,
+      ),
+    );
   }
   if (where?.automationId !== undefined) {
     whereConditions.push(eq(schema.thread.automationId, where.automationId));
@@ -173,12 +192,6 @@ async function getThreadsInner({
           }
         : {}),
 
-      // Legacy thread chat columns
-      legacyThreadChat: {
-        agent: schema.thread.agent,
-        status: schema.thread.status,
-        errorMessage: schema.thread.errorMessage,
-      },
       // Additional columns
       authorName: schema.user.name,
       authorImage: schema.user.image,
@@ -222,28 +235,12 @@ async function getThreadsInner({
     return [];
   }
   return threads.map((thread) => {
-    const {
-      user = null,
-      legacyThreadChat,
-      threadChats,
-      ...threadWithoutChats
-    } = thread;
-    if (threadChats?.length) {
-      return {
-        user,
-        thread: { ...threadWithoutChats, threadChats },
-      };
-    }
+    const { user = null, threadChats, ...threadWithoutChats } = thread;
     return {
       user,
       thread: {
         ...threadWithoutChats,
-        threadChats: [
-          {
-            id: LEGACY_THREAD_CHAT_ID,
-            ...legacyThreadChat,
-          },
-        ],
+        threadChats: threadChats ?? [],
       },
     };
   });
@@ -647,7 +644,7 @@ export async function getThread({
     version: thread.version,
     messageSeq: thread.messageSeq,
     isUnread: thread.isUnread,
-    threadChats: resolveThreadChatFull(thread, threadChats),
+    threadChats: resolveThreadChatFull(threadChats),
     childThreads,
   };
 }
@@ -663,29 +660,6 @@ export async function getThreadChat({
   threadChatId: string;
   userId: string;
 }): Promise<ThreadChatInfoFull | undefined> {
-  if (threadChatId === LEGACY_THREAD_CHAT_ID) {
-    const threadResult = await db
-      .select({
-        ...getTableColumns(schema.thread),
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
-      })
-      .from(schema.thread)
-      .leftJoin(
-        schema.threadReadStatus,
-        and(
-          eq(schema.threadReadStatus.threadId, schema.thread.id),
-          eq(schema.threadReadStatus.userId, userId),
-        ),
-      )
-      .where(
-        and(eq(schema.thread.id, threadId), eq(schema.thread.userId, userId)),
-      );
-    if (threadResult.length === 0) {
-      return undefined;
-    }
-    const thread = threadResult[0]!;
-    return createLegacyThreadChatFull(thread);
-  }
   const threadChatResult = await db
     .select({
       ...getTableColumns(schema.threadChat),
@@ -713,67 +687,13 @@ export async function getThreadChat({
   return threadChatResult[0]!;
 }
 
-type ThreadForThreadChatInfoFull = Pick<
-  Thread,
-  | "id"
-  | "userId"
-  | "createdAt"
-  | "updatedAt"
-  | "agent"
-  | "agentVersion"
-  | "status"
-  | "sessionId"
-  | "errorMessage"
-  | "errorMessageInfo"
-  | "scheduleAt"
-  | "reattemptQueueAt"
-  | "contextLength"
-  | "permissionMode"
-  | "version"
-  | "name"
-  | "queuedMessages"
-  | "messages"
-  | "messageSeq"
-> & {
-  isUnread: boolean;
-};
-
 function resolveThreadChatFull(
-  thread: ThreadForThreadChatInfoFull,
   chats: ThreadChatInfoFull[] | undefined,
 ): ThreadChatInfoFull[] {
-  if (thread.version > 0 && chats && chats.length > 0) {
+  if (chats?.length) {
     return chats;
   }
-  return [createLegacyThreadChatFull(thread)];
-}
-
-function createLegacyThreadChatFull(
-  thread: ThreadForThreadChatInfoFull,
-): ThreadChatInfoFull {
-  return {
-    id: LEGACY_THREAD_CHAT_ID,
-    userId: thread.userId,
-    threadId: thread.id,
-    title: thread.name ?? null,
-    createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
-    agent: thread.agent,
-    agentVersion: thread.agentVersion,
-    status: thread.status,
-    sessionId: thread.sessionId,
-    errorMessage: thread.errorMessage,
-    errorMessageInfo: thread.errorMessageInfo,
-    scheduleAt: thread.scheduleAt,
-    reattemptQueueAt: thread.reattemptQueueAt,
-    contextLength: thread.contextLength,
-    permissionMode: thread.permissionMode ?? "allowAll",
-    messageSeq: thread.messageSeq,
-    codexPreviousResponseId: null,
-    isUnread: thread.isUnread,
-    messages: thread.messages ?? [],
-    queuedMessages: thread.queuedMessages ?? [],
-  };
+  return [];
 }
 
 export async function createThread({
@@ -781,13 +701,11 @@ export async function createThread({
   userId,
   threadValues,
   initialChatValues,
-  enableThreadChatCreation = true,
 }: {
   db: DB;
   userId: string;
   threadValues: Omit<ThreadInsert, "userId">;
   initialChatValues: Omit<ThreadChatInsert, "userId" | "threadId">;
-  enableThreadChatCreation?: boolean;
 }): Promise<{ threadId: string; threadChatId: string }> {
   const initialChatInsert: Omit<ThreadChatInsert, "userId" | "threadId"> = {
     ...initialChatValues,
@@ -797,7 +715,7 @@ export async function createThread({
     const threadInsert: ThreadInsertRaw = {
       userId,
       ...threadValues,
-      ...(enableThreadChatCreation ? { version: 1 } : initialChatInsert),
+      version: 1,
     };
     const [threadInsertResult] = await tx
       .insert(schema.thread)
@@ -807,13 +725,10 @@ export async function createThread({
       throw new Error("Failed to create thread");
     }
     const threadId = threadInsertResult.id;
-    if (!enableThreadChatCreation) {
-      return { threadId, threadChatId: LEGACY_THREAD_CHAT_ID };
-    }
     const threadChatInsert: ThreadChatInsertRaw = {
       userId,
       threadId,
-      ...initialChatValues,
+      ...initialChatInsert,
     };
     const [threadChatInsertResult] = await tx
       .insert(schema.threadChat)
@@ -878,20 +793,17 @@ export async function createLinearMentionThread({
   userId,
   threadValues,
   initialChatValues,
-  enableThreadChatCreation,
 }: {
   db: DB;
   userId: string;
   threadValues: Omit<LinearMentionThreadInsert, "userId">;
   initialChatValues: Omit<ThreadChatInsert, "userId" | "threadId">;
-  enableThreadChatCreation?: boolean;
 }): Promise<{ threadId: string; threadChatId: string }> {
   return createThread({
     db,
     userId,
     threadValues,
     initialChatValues,
-    enableThreadChatCreation,
   });
 }
 
@@ -929,196 +841,101 @@ export async function updateThreadChat({
       appendMessages && appendMessages.length > 0
         ? sanitizeForJson(appendMessages)
         : undefined;
-    if (threadChatId === LEGACY_THREAD_CHAT_ID) {
-      const updateObject: Partial<ThreadInsertRaw> = {
-        ...updatesWithoutAppends,
-      };
-      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
-        // Sanitize messages to remove null bytes and other invalid JSON characters
-        // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
-        // Atomically increment messageSeq for monotonic chat sequence
-        // @ts-expect-error
-        updateObject.messageSeq = sql`COALESCE(${schema.thread.messageSeq}, 0) + 1`;
+    const updateObject: Partial<ThreadChatInsertRaw> = {
+      ...updatesWithoutAppends,
+    };
+    if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
+      // Sanitize messages to remove null bytes and other invalid JSON characters
+      // @ts-expect-error
+      updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
+      // Atomically increment messageSeq for monotonic chat sequence
+      // @ts-expect-error
+      updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
+    }
+    if (appendAndResetQueuedMessages) {
+      updateObject.queuedMessages = [];
+      // @ts-expect-error
+      updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || COALESCE(${schema.threadChat.queuedMessages}, '[]'::jsonb)`;
+    } else if (replaceQueuedMessages) {
+      const sanitizedQueuedMessages = sanitizeForJson(replaceQueuedMessages);
+      // @ts-expect-error
+      updateObject.queuedMessages = sql`${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
+    } else if (appendQueuedMessages && appendQueuedMessages.length > 0) {
+      const sanitizedQueuedMessages = sanitizeForJson(appendQueuedMessages);
+      // @ts-expect-error
+      updateObject.queuedMessages = sql`COALESCE(${schema.threadChat.queuedMessages}, '[]'::jsonb) || ${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
+    }
+    for (const stringKey in updateObject) {
+      const key = stringKey as keyof ThreadChatInsertRaw;
+      if (schema.threadChat[key]?.columnType === "PgText") {
+        updateObject[key] = sanitizeForJson(updateObject[key]) as any;
       }
-      if (appendAndResetQueuedMessages) {
-        updateObject.queuedMessages = [];
-        // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.thread.messages}, '[]'::jsonb) || COALESCE(${schema.thread.queuedMessages}, '[]'::jsonb)`;
-      } else if (replaceQueuedMessages) {
-        const sanitizedQueuedMessages = sanitizeForJson(replaceQueuedMessages);
-        // @ts-expect-error
-        updateObject.queuedMessages = sql`${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
-      } else if (appendQueuedMessages && appendQueuedMessages.length > 0) {
-        const sanitizedQueuedMessages = sanitizeForJson(appendQueuedMessages);
-        // @ts-expect-error
-        updateObject.queuedMessages = sql`COALESCE(${schema.thread.queuedMessages}, '[]'::jsonb) || ${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
-      }
-      for (const stringKey in updateObject) {
-        const key = stringKey as keyof ThreadInsertRaw;
-        if (schema.thread[key]?.columnType === "PgText") {
-          updateObject[key] = sanitizeForJson(updateObject[key]) as any;
-        }
-      }
-      const result = await tx
-        .update(schema.thread)
-        .set(updateObject)
-        .where(
-          and(eq(schema.thread.id, threadId), eq(schema.thread.userId, userId)),
-        )
-        .returning();
-      const updatedThread = result[0];
-      if (!updatedThread) {
-        throw new Error("Failed to update thread chat (legacy)");
-      }
-      updatedAtIsoString = updatedThread.updatedAt.toISOString();
-      chatSequence = updatedThread.messageSeq ?? 0;
-      chatForPatch = {
-        updatedAt: updatedAtIsoString,
-        ...(updatesWithoutAppends.agent !== undefined
-          ? { agent: updatedThread.agent }
-          : {}),
-        ...(updatesWithoutAppends.agentVersion !== undefined
-          ? { agentVersion: updatedThread.agentVersion }
-          : {}),
-        ...(updatesWithoutAppends.errorMessage !== undefined
-          ? { errorMessage: updatedThread.errorMessage }
-          : {}),
-        ...(updatesWithoutAppends.errorMessageInfo !== undefined
-          ? { errorMessageInfo: updatedThread.errorMessageInfo }
-          : {}),
-        ...(updatesWithoutAppends.scheduleAt !== undefined
-          ? {
-              scheduleAt: updatedThread.scheduleAt
-                ? updatedThread.scheduleAt.toISOString()
-                : null,
-            }
-          : {}),
-        ...(updatesWithoutAppends.reattemptQueueAt !== undefined
-          ? {
-              reattemptQueueAt: updatedThread.reattemptQueueAt
-                ? updatedThread.reattemptQueueAt.toISOString()
-                : null,
-            }
-          : {}),
-        ...(updatesWithoutAppends.contextLength !== undefined
-          ? { contextLength: updatedThread.contextLength }
-          : {}),
-        ...(updatesWithoutAppends.permissionMode !== undefined
-          ? { permissionMode: updatedThread.permissionMode ?? "allowAll" }
-          : {}),
-        ...(appendAndResetQueuedMessages ||
-        replaceQueuedMessages !== undefined ||
-        (appendQueuedMessages?.length ?? 0) > 0
-          ? { queuedMessages: updatedThread.queuedMessages ?? [] }
-          : {}),
-      };
-      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
-        appendMessagesForPatch = sanitizedAppendMessages;
-        expectedMessageCount =
-          (updatedThread.messages?.length ?? sanitizedAppendMessages.length) -
-          sanitizedAppendMessages.length;
-      }
-      if (appendAndResetQueuedMessages) {
-        shouldRefetchChat = true;
-      }
-    } else {
-      const updateObject: Partial<ThreadChatInsertRaw> = {
-        ...updatesWithoutAppends,
-      };
-      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
-        // Sanitize messages to remove null bytes and other invalid JSON characters
-        // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
-        // Atomically increment messageSeq for monotonic chat sequence
-        // @ts-expect-error
-        updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
-      }
-      if (appendAndResetQueuedMessages) {
-        updateObject.queuedMessages = [];
-        // @ts-expect-error
-        updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || COALESCE(${schema.threadChat.queuedMessages}, '[]'::jsonb)`;
-      } else if (replaceQueuedMessages) {
-        const sanitizedQueuedMessages = sanitizeForJson(replaceQueuedMessages);
-        // @ts-expect-error
-        updateObject.queuedMessages = sql`${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
-      } else if (appendQueuedMessages && appendQueuedMessages.length > 0) {
-        const sanitizedQueuedMessages = sanitizeForJson(appendQueuedMessages);
-        // @ts-expect-error
-        updateObject.queuedMessages = sql`COALESCE(${schema.threadChat.queuedMessages}, '[]'::jsonb) || ${JSON.stringify(sanitizedQueuedMessages)}::jsonb`;
-      }
-      for (const stringKey in updateObject) {
-        const key = stringKey as keyof ThreadChatInsertRaw;
-        if (schema.threadChat[key]?.columnType === "PgText") {
-          updateObject[key] = sanitizeForJson(updateObject[key]) as any;
-        }
-      }
-      const result = await tx
-        .update(schema.threadChat)
-        .set(updateObject)
-        .where(
-          and(
-            eq(schema.threadChat.id, threadChatId),
-            eq(schema.threadChat.threadId, threadId),
-            eq(schema.threadChat.userId, userId),
-          ),
-        )
-        .returning();
-      const updatedThreadChat = result[0];
-      if (!updatedThreadChat) {
-        throw new Error("Failed to update thread chat");
-      }
-      updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
-      chatSequence = updatedThreadChat.messageSeq ?? 0;
-      chatForPatch = {
-        updatedAt: updatedAtIsoString,
-        ...(updatesWithoutAppends.agent !== undefined
-          ? { agent: updatedThreadChat.agent }
-          : {}),
-        ...(updatesWithoutAppends.agentVersion !== undefined
-          ? { agentVersion: updatedThreadChat.agentVersion }
-          : {}),
-        ...(updatesWithoutAppends.errorMessage !== undefined
-          ? { errorMessage: updatedThreadChat.errorMessage }
-          : {}),
-        ...(updatesWithoutAppends.errorMessageInfo !== undefined
-          ? { errorMessageInfo: updatedThreadChat.errorMessageInfo }
-          : {}),
-        ...(updatesWithoutAppends.scheduleAt !== undefined
-          ? {
-              scheduleAt: updatedThreadChat.scheduleAt
-                ? updatedThreadChat.scheduleAt.toISOString()
-                : null,
-            }
-          : {}),
-        ...(updatesWithoutAppends.reattemptQueueAt !== undefined
-          ? {
-              reattemptQueueAt: updatedThreadChat.reattemptQueueAt
-                ? updatedThreadChat.reattemptQueueAt.toISOString()
-                : null,
-            }
-          : {}),
-        ...(updatesWithoutAppends.contextLength !== undefined
-          ? { contextLength: updatedThreadChat.contextLength }
-          : {}),
-        ...(updatesWithoutAppends.permissionMode !== undefined
-          ? { permissionMode: updatedThreadChat.permissionMode ?? "allowAll" }
-          : {}),
-        ...(appendAndResetQueuedMessages ||
-        replaceQueuedMessages !== undefined ||
-        (appendQueuedMessages?.length ?? 0) > 0
-          ? { queuedMessages: updatedThreadChat.queuedMessages ?? [] }
-          : {}),
-      };
-      if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
-        appendMessagesForPatch = sanitizedAppendMessages;
-        expectedMessageCount =
-          (updatedThreadChat.messages?.length ??
-            sanitizedAppendMessages.length) - sanitizedAppendMessages.length;
-      }
-      if (appendAndResetQueuedMessages) {
-        shouldRefetchChat = true;
-      }
+    }
+    const result = await tx
+      .update(schema.threadChat)
+      .set(updateObject)
+      .where(
+        and(
+          eq(schema.threadChat.id, threadChatId),
+          eq(schema.threadChat.threadId, threadId),
+          eq(schema.threadChat.userId, userId),
+        ),
+      )
+      .returning();
+    const updatedThreadChat = result[0];
+    if (!updatedThreadChat) {
+      throw new Error("Failed to update thread chat");
+    }
+    updatedAtIsoString = updatedThreadChat.updatedAt.toISOString();
+    chatSequence = updatedThreadChat.messageSeq ?? 0;
+    chatForPatch = {
+      updatedAt: updatedAtIsoString,
+      ...(updatesWithoutAppends.agent !== undefined
+        ? { agent: updatedThreadChat.agent }
+        : {}),
+      ...(updatesWithoutAppends.agentVersion !== undefined
+        ? { agentVersion: updatedThreadChat.agentVersion }
+        : {}),
+      ...(updatesWithoutAppends.errorMessage !== undefined
+        ? { errorMessage: updatedThreadChat.errorMessage }
+        : {}),
+      ...(updatesWithoutAppends.errorMessageInfo !== undefined
+        ? { errorMessageInfo: updatedThreadChat.errorMessageInfo }
+        : {}),
+      ...(updatesWithoutAppends.scheduleAt !== undefined
+        ? {
+            scheduleAt: updatedThreadChat.scheduleAt
+              ? updatedThreadChat.scheduleAt.toISOString()
+              : null,
+          }
+        : {}),
+      ...(updatesWithoutAppends.reattemptQueueAt !== undefined
+        ? {
+            reattemptQueueAt: updatedThreadChat.reattemptQueueAt
+              ? updatedThreadChat.reattemptQueueAt.toISOString()
+              : null,
+          }
+        : {}),
+      ...(updatesWithoutAppends.contextLength !== undefined
+        ? { contextLength: updatedThreadChat.contextLength }
+        : {}),
+      ...(updatesWithoutAppends.permissionMode !== undefined
+        ? { permissionMode: updatedThreadChat.permissionMode ?? "allowAll" }
+        : {}),
+      ...(appendAndResetQueuedMessages ||
+      replaceQueuedMessages !== undefined ||
+      (appendQueuedMessages?.length ?? 0) > 0
+        ? { queuedMessages: updatedThreadChat.queuedMessages ?? [] }
+        : {}),
+    };
+    if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
+      appendMessagesForPatch = sanitizedAppendMessages;
+      expectedMessageCount =
+        (updatedThreadChat.messages?.length ?? sanitizedAppendMessages.length) -
+        sanitizedAppendMessages.length;
+    }
+    if (appendAndResetQueuedMessages) {
+      shouldRefetchChat = true;
     }
   });
   patchVersion = await getNextPatchVersion(threadChatId);
@@ -1221,7 +1038,7 @@ export async function updateThread({
 }
 
 /**
- * Explicitly set `updatedAt` on a threadChat (or legacy thread) to the current time.
+ * Explicitly set `updatedAt` on a threadChat to the current time.
  * Used by heartbeat events to prevent the stalled-tasks cron from killing active runs
  * that happen to produce no stdout for extended periods.
  */
@@ -1234,22 +1051,15 @@ export async function touchThreadChatUpdatedAt({
   threadId: string;
   threadChatId: string;
 }) {
-  if (threadChatId === LEGACY_THREAD_CHAT_ID) {
-    await db
-      .update(schema.thread)
-      .set({ updatedAt: new Date() })
-      .where(eq(schema.thread.id, threadId));
-  } else {
-    await db
-      .update(schema.threadChat)
-      .set({ updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.threadChat.id, threadChatId),
-          eq(schema.threadChat.threadId, threadId),
-        ),
-      );
-  }
+  await db
+    .update(schema.threadChat)
+    .set({ updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.threadChat.id, threadChatId),
+        eq(schema.threadChat.threadId, threadId),
+      ),
+    );
 }
 
 /**
@@ -1289,41 +1099,21 @@ export async function updateThreadChatStatusAtomic({
   }
   let didUpdateStatus = false;
   let updatedAtIsoString: string | undefined;
-  if (threadChatId === LEGACY_THREAD_CHAT_ID) {
-    // Use a update set where pattern to ensure that we're the ones who updated the thread status
-    // from the current status to the new status.
-    const updateResult = await db
-      .update(schema.thread)
-      .set({ ...otherUpdates, status: toStatus })
-      .where(
-        and(
-          eq(schema.thread.id, threadId),
-          eq(schema.thread.userId, userId),
-          eq(schema.thread.status, fromStatus),
-        ),
-      )
-      .returning();
-    if (updateResult.length > 0) {
-      didUpdateStatus = true;
-      updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
-    }
-  } else {
-    const updateResult = await db
-      .update(schema.threadChat)
-      .set({ ...otherUpdates, status: toStatus })
-      .where(
-        and(
-          eq(schema.threadChat.id, threadChatId),
-          eq(schema.threadChat.threadId, threadId),
-          eq(schema.threadChat.userId, userId),
-          eq(schema.threadChat.status, fromStatus),
-        ),
-      )
-      .returning();
-    if (updateResult.length > 0) {
-      didUpdateStatus = true;
-      updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
-    }
+  const updateResult = await db
+    .update(schema.threadChat)
+    .set({ ...otherUpdates, status: toStatus })
+    .where(
+      and(
+        eq(schema.threadChat.id, threadChatId),
+        eq(schema.threadChat.threadId, threadId),
+        eq(schema.threadChat.userId, userId),
+        eq(schema.threadChat.status, fromStatus),
+      ),
+    )
+    .returning();
+  if (updateResult.length > 0) {
+    didUpdateStatus = true;
+    updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
   }
 
   if (didUpdateStatus) {
@@ -1402,9 +1192,11 @@ export async function getStalledThreads({
   db: DB;
   cutoffSecs?: number;
 }) {
-  const threads = await db.query.thread.findMany({
-    where: and(
-      inArray(schema.thread.status, [
+  const staleThreadChatRows = await db
+    .selectDistinct({ threadId: schema.threadChat.threadId })
+    .from(schema.threadChat)
+    .where(
+      inArray(schema.threadChat.status, [
         "booting",
         "stopping",
         "working",
@@ -1412,6 +1204,18 @@ export async function getStalledThreads({
         "working-error",
         "checkpointing",
       ]),
+    );
+
+  if (staleThreadChatRows.length === 0) {
+    return [];
+  }
+
+  const threads = await db.query.thread.findMany({
+    where: and(
+      inArray(
+        schema.thread.id,
+        staleThreadChatRows.map((row) => row.threadId),
+      ),
       lte(schema.thread.updatedAt, new Date(Date.now() - cutoffSecs * 1000)),
     ),
     orderBy: (thread) => [desc(thread.updatedAt)],
@@ -1426,6 +1230,28 @@ export async function stopStalledThreads({
   db: DB;
   threadIds: string[];
 }) {
+  const stalledThreadChats = await db
+    .select({ id: schema.threadChat.id })
+    .from(schema.threadChat)
+    .where(inArray(schema.threadChat.threadId, threadIds));
+
+  if (stalledThreadChats.length > 0) {
+    await db
+      .update(schema.threadChat)
+      .set({
+        status: "complete",
+        errorMessage: "request-timeout",
+        queuedMessages: [],
+      })
+      .where(
+        inArray(
+          schema.threadChat.id,
+          stalledThreadChats.map((threadChat) => threadChat.id),
+        ),
+      )
+      .returning();
+  }
+
   await db
     .update(schema.thread)
     .set({ status: "complete", errorMessage: "request-timeout" })
@@ -1604,12 +1430,6 @@ export async function getEligibleQueuedThreadChats({
   sandboxCreationRateLimitReached: boolean;
 }): Promise<ThreadChatAndStatus[]> {
   return await db.transaction(async (tx) => {
-    const threadStatusConditions = [
-      and(
-        eq(schema.thread.status, "queued-agent-rate-limit"),
-        lte(schema.thread.reattemptQueueAt, new Date()),
-      ),
-    ];
     const threadChatStatusConditions = [
       and(
         eq(schema.threadChat.status, "queued-agent-rate-limit"),
@@ -1617,62 +1437,32 @@ export async function getEligibleQueuedThreadChats({
       ),
     ];
     if (!sandboxCreationRateLimitReached) {
-      threadStatusConditions.push(
-        eq(schema.thread.status, "queued-sandbox-creation-rate-limit"),
-      );
       threadChatStatusConditions.push(
         eq(schema.threadChat.status, "queued-sandbox-creation-rate-limit"),
       );
     }
     if (!concurrencyLimitReached) {
-      threadStatusConditions.push(
-        eq(schema.thread.status, "queued-tasks-concurrency"),
-      );
       threadChatStatusConditions.push(
         eq(schema.threadChat.status, "queued-tasks-concurrency"),
       );
     }
-    const [threads, threadChats] = await Promise.all([
-      tx.query.thread.findMany({
-        where: and(
-          eq(schema.thread.userId, userId),
-          or(...threadStatusConditions),
-        ),
-        columns: {
-          id: true,
-          status: true,
-        },
-        orderBy: (thread, { asc }) => asc(thread.createdAt),
-      }),
-      tx.query.threadChat.findMany({
-        where: and(
-          eq(schema.threadChat.userId, userId),
-          or(...threadChatStatusConditions),
-        ),
-        columns: {
-          id: true,
-          threadId: true,
-          status: true,
-        },
-        orderBy: (threadChat, { asc }) => asc(threadChat.createdAt),
-      }),
-    ]);
-    const result: ThreadChatAndStatus[] = [];
-    for (const thread of threads) {
-      result.push({
-        threadId: thread.id,
-        threadChatId: LEGACY_THREAD_CHAT_ID,
-        status: thread.status,
-      });
-    }
-    for (const threadChat of threadChats) {
-      result.push({
-        threadId: threadChat.threadId,
-        threadChatId: threadChat.id,
-        status: threadChat.status,
-      });
-    }
-    return result;
+    const threadChats = await tx.query.threadChat.findMany({
+      where: and(
+        eq(schema.threadChat.userId, userId),
+        or(...threadChatStatusConditions),
+      ),
+      columns: {
+        id: true,
+        threadId: true,
+        status: true,
+      },
+      orderBy: (threadChat, { asc }) => asc(threadChat.createdAt),
+    });
+    return threadChats.map((threadChat) => ({
+      threadId: threadChat.threadId,
+      threadChatId: threadChat.id,
+      status: threadChat.status,
+    }));
   });
 }
 
@@ -1759,106 +1549,53 @@ export async function getUserIdsWithThreadsReadyToProcess({ db }: { db: DB }) {
     "queued-sandbox-creation-rate-limit",
     "queued-agent-rate-limit",
   ] as const;
-  const [threads, threadChats] = await Promise.all([
-    db
-      .selectDistinct({
-        userId: schema.thread.userId,
-      })
-      .from(schema.thread)
-      .where(
-        and(
-          inArray(schema.thread.status, statuses),
-          or(
-            isNull(schema.thread.reattemptQueueAt),
-            lte(schema.thread.reattemptQueueAt, now),
-          ),
+  const threadChats = await db
+    .selectDistinct({
+      userId: schema.threadChat.userId,
+    })
+    .from(schema.threadChat)
+    .where(
+      and(
+        inArray(schema.threadChat.status, statuses),
+        or(
+          isNull(schema.threadChat.reattemptQueueAt),
+          lte(schema.threadChat.reattemptQueueAt, now),
         ),
       ),
-    db
-      .selectDistinct({
-        userId: schema.threadChat.userId,
-      })
-      .from(schema.threadChat)
-      .where(
-        and(
-          inArray(schema.threadChat.status, statuses),
-          or(
-            isNull(schema.threadChat.reattemptQueueAt),
-            lte(schema.threadChat.reattemptQueueAt, now),
-          ),
-        ),
-      ),
-  ]);
-  return Array.from(
-    new Set([
-      ...threads.map((thread) => thread.userId),
-      ...threadChats.map((threadChat) => threadChat.userId),
-    ]),
-  );
+    );
+  return threadChats.map((threadChat) => threadChat.userId);
 }
 
 export async function getUserIdsWithThreadsStuckInQueue({ db }: { db: DB }) {
   // Find users who have threads in "queued-tasks-concurrency" but no active threads
   // This indicates they might be stuck in the queue
-  const [usersWithQueuedThreads, usersWithQueuedThreadChats] =
-    await Promise.all([
-      db
-        .selectDistinct({
-          userId: schema.thread.userId,
-        })
-        .from(schema.thread)
-        .where(eq(schema.thread.status, "queued-tasks-concurrency")),
-      db
-        .selectDistinct({
-          userId: schema.threadChat.userId,
-        })
-        .from(schema.threadChat)
-        .where(eq(schema.threadChat.status, "queued-tasks-concurrency")),
-    ]);
-  if (
-    usersWithQueuedThreads.length === 0 &&
-    usersWithQueuedThreadChats.length === 0
-  ) {
+  const usersWithQueuedThreadChats = await db
+    .selectDistinct({
+      userId: schema.threadChat.userId,
+    })
+    .from(schema.threadChat)
+    .where(eq(schema.threadChat.status, "queued-tasks-concurrency"));
+  if (usersWithQueuedThreadChats.length === 0) {
     return [];
   }
 
   const userIds = Array.from(
-    new Set([
-      ...usersWithQueuedThreads.map((user) => user.userId),
-      ...usersWithQueuedThreadChats.map((user) => user.userId),
-    ]),
+    new Set(usersWithQueuedThreadChats.map((user) => user.userId)),
   );
   // Check which of these users have active threads
-  const [usersWithActiveThreads, usersWithActiveThreadChats] =
-    await Promise.all([
-      db
-        .selectDistinct({
-          userId: schema.thread.userId,
-        })
-        .from(schema.thread)
-        .where(
-          and(
-            inArray(schema.thread.userId, userIds),
-            inArray(schema.thread.status, activeThreadStatuses),
-          ),
-        ),
-      db
-        .selectDistinct({
-          userId: schema.threadChat.userId,
-        })
-        .from(schema.threadChat)
-        .where(
-          and(
-            inArray(schema.threadChat.userId, userIds),
-            inArray(schema.threadChat.status, activeThreadStatuses),
-          ),
-        ),
-    ]);
+  const usersWithActiveThreadChats = await db
+    .selectDistinct({
+      userId: schema.threadChat.userId,
+    })
+    .from(schema.threadChat)
+    .where(
+      and(
+        inArray(schema.threadChat.userId, userIds),
+        inArray(schema.threadChat.status, activeThreadStatuses),
+      ),
+    );
   const activeUserIds = Array.from(
-    new Set([
-      ...usersWithActiveThreads.map((user) => user.userId),
-      ...usersWithActiveThreadChats.map((user) => user.userId),
-    ]),
+    new Set(usersWithActiveThreadChats.map((user) => user.userId)),
   );
   // Return users who have queued threads but no active threads
   return userIds.filter((userId) => !activeUserIds.includes(userId));
@@ -1935,56 +1672,27 @@ export async function getScheduledThreadChatsDueToRun({
   db: DB;
   currentTime?: Date;
 }): Promise<ScheduledThreadChat[]> {
-  return await db.transaction(async (tx) => {
-    const [threads, threadChats] = await Promise.all([
-      tx.query.thread.findMany({
-        where: and(
-          eq(schema.thread.status, "scheduled"),
-          lte(schema.thread.scheduleAt, currentTime),
-        ),
-        orderBy: (thread) => [thread.scheduleAt],
-        columns: {
-          id: true,
-          userId: true,
-          status: true,
-          scheduleAt: true,
-        },
-      }),
-      tx.query.threadChat.findMany({
-        where: and(
-          eq(schema.threadChat.status, "scheduled"),
-          lte(schema.threadChat.scheduleAt, currentTime),
-        ),
-        orderBy: (threadChat) => [threadChat.scheduleAt],
-        columns: {
-          id: true,
-          threadId: true,
-          userId: true,
-          status: true,
-          scheduleAt: true,
-        },
-      }),
-    ]);
-
-    const dueToRun: ScheduledThreadChat[] = [];
-    for (const thread of threads) {
-      dueToRun.push({
-        userId: thread.userId,
-        scheduleAt: thread.scheduleAt!,
-        threadId: thread.id,
-        threadChatId: LEGACY_THREAD_CHAT_ID,
-      });
-    }
-    for (const threadChat of threadChats) {
-      dueToRun.push({
-        userId: threadChat.userId,
-        scheduleAt: threadChat.scheduleAt!,
-        threadId: threadChat.threadId,
-        threadChatId: threadChat.id,
-      });
-    }
-    return dueToRun;
+  const threadChats = await db.query.threadChat.findMany({
+    where: and(
+      eq(schema.threadChat.status, "scheduled"),
+      lte(schema.threadChat.scheduleAt, currentTime),
+    ),
+    orderBy: (threadChat) => [threadChat.scheduleAt],
+    columns: {
+      id: true,
+      threadId: true,
+      userId: true,
+      status: true,
+      scheduleAt: true,
+    },
   });
+
+  return threadChats.map((threadChat) => ({
+    userId: threadChat.userId,
+    scheduleAt: threadChat.scheduleAt!,
+    threadId: threadChat.threadId,
+    threadChatId: threadChat.id,
+  }));
 }
 
 /**

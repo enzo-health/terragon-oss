@@ -872,7 +872,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     const { threadId, threadChatId } = await createTestThread({
       db,
       userId: user.id,
-      enableThreadChatCreation: true,
       overrides: {
         codesandboxId: "mock-sandbox-id",
         sandboxProvider: "mock",
@@ -971,7 +970,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     const { threadId, threadChatId } = await createTestThread({
       db,
       userId: user.id,
-      enableThreadChatCreation: true,
       overrides: {
         codesandboxId: "mock-sandbox-id",
         disableGitCheckpointing: true,

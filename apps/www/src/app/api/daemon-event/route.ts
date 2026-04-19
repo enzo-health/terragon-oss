@@ -14,7 +14,6 @@ import {
   DaemonEventAPIBody,
   type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import {
@@ -508,15 +507,6 @@ function parseDaemonCapabilitiesHeader(
   );
 }
 
-function hasNonLegacyDaemonPayload(body: DaemonEventAPIBody): boolean {
-  return (
-    body.payloadVersion !== undefined ||
-    body.eventId !== undefined ||
-    body.runId !== undefined ||
-    body.seq !== undefined
-  );
-}
-
 /**
  * Returns true if any message in the batch contains at least one tool_use
  * content block (i.e. the agent invoked at least one tool during this run).
@@ -631,13 +621,11 @@ function buildFailedEvent(
   }
 }
 
-function hasRequiredThreadChatIdForNonLegacyPayload(
-  threadChatId: unknown,
-): threadChatId is string {
+function hasValidThreadChatId(threadChatId: unknown): threadChatId is string {
   return (
     typeof threadChatId === "string" &&
     threadChatId.length > 0 &&
-    threadChatId !== LEGACY_THREAD_CHAT_ID
+    threadChatId !== "legacy-thread-chat-id"
   );
 }
 
@@ -701,10 +689,16 @@ export async function POST(request: Request) {
       ? json.headShaAtCompletion
       : null;
   const rawThreadChatId = json.threadChatId;
-  const threadChatId =
-    typeof rawThreadChatId === "string" && rawThreadChatId.length > 0
-      ? rawThreadChatId
-      : LEGACY_THREAD_CHAT_ID;
+  if (!hasValidThreadChatId(rawThreadChatId)) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_non_legacy_requires_thread_chat_id",
+      },
+      { status: 400 },
+    );
+  }
+  const threadChatId = rawThreadChatId;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
   let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
   const daemonTokenAuthContext = await getDaemonTokenAuthContextOrNull(request);
@@ -776,39 +770,32 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    transportMode !== "legacy" &&
-    hasNonLegacyDaemonPayload(json) &&
-    !hasRequiredThreadChatIdForNonLegacyPayload(rawThreadChatId)
-  ) {
+  let runContext: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null =
+    null;
+  const authoritativeRunId = claims?.runId ?? envelopeV2?.runId ?? null;
+  if (!authoritativeRunId) {
     return Response.json(
       {
         success: false,
-        error: "daemon_event_non_legacy_requires_thread_chat_id",
+        error: "daemon_event_run_id_required",
       },
       { status: 400 },
     );
   }
-
-  let runContext: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null =
-    null;
-  const authoritativeRunId = claims?.runId ?? envelopeV2?.runId ?? null;
-  if (authoritativeRunId) {
-    runContext = await getAgentRunContextByRunId({
-      db,
-      runId: authoritativeRunId,
-      userId,
-    });
-    if (!runContext) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_run_context_not_found",
-          runId: authoritativeRunId,
-        },
-        { status: 409 },
-      );
-    }
+  runContext = await getAgentRunContextByRunId({
+    db,
+    runId: authoritativeRunId,
+    userId,
+  });
+  if (!runContext) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_run_context_not_found",
+        runId: authoritativeRunId,
+      },
+      { status: 409 },
+    );
   }
 
   const updateRunContextIfPresent = async (
@@ -899,15 +886,12 @@ export async function POST(request: Request) {
       runContext.status === "failed" ||
       runContext.status === "stopped"
     ) {
-      const replayedSelfDispatch =
-        threadChatId !== LEGACY_THREAD_CHAT_ID
-          ? await getReplayableSelfDispatch({
-              threadChatId,
-              sourceEventId: envelopeV2.eventId,
-              sourceSeq: envelopeV2.seq,
-              sourceRunId: runContext.runId,
-            })
-          : null;
+      const replayedSelfDispatch = await getReplayableSelfDispatch({
+        threadChatId,
+        sourceEventId: envelopeV2.eventId,
+        sourceSeq: envelopeV2.seq,
+        sourceRunId: runContext.runId,
+      });
       return jsonTerminalAckResponse(
         buildTerminalAckState(
           {
@@ -1017,15 +1001,14 @@ export async function POST(request: Request) {
       runContext.status === "failed" ||
       runContext.status === "stopped"
     ) {
-      const replayedSelfDispatch =
-        envelopeV2 && threadChatId !== LEGACY_THREAD_CHAT_ID
-          ? await getReplayableSelfDispatch({
-              threadChatId,
-              sourceEventId: envelopeV2.eventId,
-              sourceSeq: envelopeV2.seq,
-              sourceRunId: runContext.runId,
-            })
-          : null;
+      const replayedSelfDispatch = envelopeV2
+        ? await getReplayableSelfDispatch({
+            threadChatId,
+            sourceEventId: envelopeV2.eventId,
+            sourceSeq: envelopeV2.seq,
+            sourceRunId: runContext.runId,
+          })
+        : null;
       return jsonTerminalAckResponse(
         buildTerminalAckState(
           {
@@ -1043,8 +1026,7 @@ export async function POST(request: Request) {
   }
 
   if (deltas && deltas.length > 0) {
-    const deltaRunId =
-      envelopeV2?.runId ?? daemonAuthContext.claims?.runId ?? "legacy";
+    const deltaRunId = authoritativeRunId;
     const normalizedDeltas = normalizeDeltasForPersistence(deltas);
     const knownMaxSeqByKey = await getKnownMaxDeltaSeqByKey({
       runId: deltaRunId,
@@ -1181,6 +1163,7 @@ export async function POST(request: Request) {
       userId,
       timezone,
       contextUsage: null,
+      runId: authoritativeRunId,
       runContext,
     });
     if (!result.success) {
@@ -1321,7 +1304,7 @@ export async function POST(request: Request) {
       userId,
       timezone,
       contextUsage: computedContextUsage ?? null,
-      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      runId: authoritativeRunId,
       runContext,
       workflowId: effectiveLoopId,
     });

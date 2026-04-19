@@ -1,9 +1,7 @@
 import { DB } from "@terragon/shared/db";
 import * as schema from "@terragon/shared/db/schema";
-import { and, eq, lte, ne } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import { updateThreadChatStatusAtomic } from "@terragon/shared/model/threads";
-
-const LEGACY_THREAD_CHAT_ID = "legacy";
 
 export async function getStaleBootingThreadChats({
   db,
@@ -25,7 +23,6 @@ export async function getStaleBootingThreadChats({
       and(
         eq(schema.threadChat.status, "booting"),
         lte(schema.threadChat.updatedAt, new Date(Date.now() - maxAgeMs)),
-        ne(schema.threadChat.id, LEGACY_THREAD_CHAT_ID),
       ),
     );
 }

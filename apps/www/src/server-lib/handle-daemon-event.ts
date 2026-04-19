@@ -101,14 +101,14 @@ async function maybeTrackFirstAssistantLatency({
   hasAssistantMessage,
   runContext,
 }: {
-  runId: string | null;
+  runId: string;
   userId: string;
   threadId: string;
   threadChatId: string;
   hasAssistantMessage: boolean;
   runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
 }) {
-  if (!runId || !hasAssistantMessage) {
+  if (!hasAssistantMessage) {
     return;
   }
   try {
@@ -216,7 +216,7 @@ export async function handleDaemonEvent({
   userId,
   timezone,
   contextUsage,
-  runId = null,
+  runId,
   runContext = null,
   workflowId = null,
 }: {
@@ -226,7 +226,7 @@ export async function handleDaemonEvent({
   userId: string;
   timezone: string;
   contextUsage: number | null;
-  runId?: string | null;
+  runId?: string;
   runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
   workflowId?: string | null;
 }) {
@@ -241,6 +241,13 @@ export async function handleDaemonEvent({
     "messages",
     JSON.stringify(messages, null, 2),
   );
+  if (!runId) {
+    return {
+      success: false,
+      error: "Run id is required",
+      status: 400,
+    };
+  }
 
   // Heartbeat: empty messages just extend sandbox life and refresh updatedAt
   if (messages.length === 0) {
@@ -1049,57 +1056,32 @@ async function handleThreadFinish({
   shouldSkipCheckpoint: boolean;
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
-  runId: string | null;
+  runId: string;
 }) {
   // Check if another run is still active for this threadChat on this sandbox.
   // If so, skip cleanup — the sandbox must stay active for the other run.
-  if (runId) {
-    const otherRunsActive = await hasOtherActiveRuns({
+  const otherRunsActive = await hasOtherActiveRuns({
+    sandboxId,
+    threadChatId,
+    excludeRunId: runId,
+  });
+  if (otherRunsActive) {
+    console.log(
+      "[handleThreadFinish] Other runs still active, skipping sandbox deactivation",
+      {
+        threadId,
+        threadChatId,
+        runId,
+      },
+    );
+    // Still deactivate THIS run but don't remove the threadChat from the sandbox
+    await setActiveThreadChat({
       sandboxId,
       threadChatId,
-      excludeRunId: runId,
+      isActive: false,
+      runId,
     });
-    if (otherRunsActive) {
-      console.log(
-        "[handleThreadFinish] Other runs still active, skipping sandbox deactivation",
-        {
-          threadId,
-          threadChatId,
-          runId,
-        },
-      );
-      // Still deactivate THIS run but don't remove the threadChat from the sandbox
-      await setActiveThreadChat({
-        sandboxId,
-        threadChatId,
-        isActive: false,
-        runId,
-      });
-      return;
-    }
-  }
-
-  // Fallback: re-read thread chat status for legacy paths without runId.
-  // Only bail if the thread is actively "working" (already re-dispatched).
-  // Queued states like queued-agent-rate-limit should still proceed to checkpoint.
-  if (!runId) {
-    const currentChat = await getThreadChat({
-      db,
-      threadId,
-      threadChatId,
-      userId,
-    });
-    if (currentChat && currentChat.status === "working") {
-      console.log(
-        "[handleThreadFinish] Thread already re-dispatched, skipping",
-        {
-          threadId,
-          threadChatId,
-          currentStatus: currentChat.status,
-        },
-      );
-      return;
-    }
+    return;
   }
 
   // Deactivate the sandbox immediately so hibernation is never blocked,

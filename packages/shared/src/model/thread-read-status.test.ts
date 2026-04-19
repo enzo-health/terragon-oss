@@ -154,7 +154,6 @@ describe("thread-read-status", () => {
       overrides: {
         name: "Unread task",
       },
-      enableThreadChatCreation: true,
     });
     const publishSpy = vi
       .spyOn(broadcastServer, "publishBroadcastUserMessage")
@@ -196,7 +195,6 @@ describe("thread-read-status", () => {
     const { threadId, threadChatId } = await createTestThread({
       db,
       userId: user.id,
-      enableThreadChatCreation: true,
     });
     const publishSpy = vi
       .spyOn(broadcastServer, "publishBroadcastUserMessage")

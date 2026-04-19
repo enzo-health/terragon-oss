@@ -216,7 +216,6 @@ export async function createNewThread({
       permissionMode: message.permissionMode || "allowAll",
       status: scheduleAt ? "scheduled" : saveAsDraft ? "draft" : "queued",
     },
-    enableThreadChatCreation: true,
   });
 
   const enrollmentAllowedForThread = isDeliveryLoopEnrollmentAllowedForThread({

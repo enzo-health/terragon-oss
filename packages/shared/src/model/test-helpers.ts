@@ -107,13 +107,11 @@ export async function createTestThread({
   userId,
   overrides,
   chatOverrides,
-  enableThreadChatCreation = false,
 }: {
   db: DB;
   userId: string;
   overrides?: Partial<ThreadInsert>;
   chatOverrides?: Omit<ThreadChatInsert, "threadChatId">;
-  enableThreadChatCreation?: boolean;
 }): Promise<{ threadId: string; threadChatId: string }> {
   const threadName = overrides?.name ?? `Test Thread`;
   const githubRepoFullName =
@@ -136,7 +134,6 @@ export async function createTestThread({
     initialChatValues: {
       agent: "claudeCode",
     },
-    enableThreadChatCreation,
   });
   if (overrides) {
     await updateThread({

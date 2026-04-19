@@ -15,9 +15,8 @@ import {
   getGithubPRChecksStatus,
 } from "@terragon/shared/github-api/helpers";
 import { getInstallationToken } from "@terragon/shared/github-app";
-import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
+import { symmetricDecrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
-import { decryptTokenWithBackwardsCompatibility } from "@terragon/utils/encryption";
 import { getPostHogServer } from "./posthog-server";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { updateThread } from "@terragon/shared/model/threads";
@@ -328,14 +327,6 @@ async function decodeGitHubOAuthToken(
     return rawToken;
   }
 
-  const legacyToken = decryptTokenWithBackwardsCompatibility(
-    rawToken,
-    env.ENCRYPTION_MASTER_KEY,
-  );
-  if (isLikelyGitHubOAuthToken(legacyToken)) {
-    return legacyToken;
-  }
-
   const betterAuthToken = await tryDecryptBetterAuthToken({
     token: rawToken,
     key: env.BETTER_AUTH_SECRET,
@@ -366,75 +357,6 @@ async function getDirectGitHubAccessTokenFromAccount(params: {
   return await decodeGitHubOAuthToken(rawToken);
 }
 
-async function tryMigrateLegacyGitHubOAuthTokens({
-  userId,
-}: {
-  userId: string;
-}): Promise<boolean> {
-  const githubAccount = await db.query.account.findFirst({
-    where: and(
-      eq(schema.account.userId, userId),
-      eq(schema.account.providerId, "github"),
-    ),
-    columns: {
-      id: true,
-      accessToken: true,
-      refreshToken: true,
-    },
-  });
-  if (!githubAccount?.accessToken) {
-    return false;
-  }
-
-  const decryptedAccessToken = decryptTokenWithBackwardsCompatibility(
-    githubAccount.accessToken,
-    env.ENCRYPTION_MASTER_KEY,
-  );
-  if (!isLikelyGitHubOAuthToken(decryptedAccessToken)) {
-    return false;
-  }
-
-  const decryptedRefreshToken = githubAccount.refreshToken
-    ? decryptTokenWithBackwardsCompatibility(
-        githubAccount.refreshToken,
-        env.ENCRYPTION_MASTER_KEY,
-      )
-    : null;
-  if (
-    decryptedRefreshToken &&
-    !isLikelyGitHubOAuthToken(decryptedRefreshToken)
-  ) {
-    return false;
-  }
-
-  const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-    symmetricEncrypt({
-      key: env.BETTER_AUTH_SECRET,
-      data: decryptedAccessToken,
-    }),
-    decryptedRefreshToken
-      ? symmetricEncrypt({
-          key: env.BETTER_AUTH_SECRET,
-          data: decryptedRefreshToken,
-        })
-      : Promise.resolve<string | null>(null),
-  ]);
-
-  await db
-    .update(schema.account)
-    .set({
-      accessToken: encryptedAccessToken,
-      refreshToken: encryptedRefreshToken,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.account.id, githubAccount.id));
-
-  console.info(
-    `[github-oauth] Migrated legacy encrypted tokens for user ${userId}`,
-  );
-  return true;
-}
-
 export async function getGitHubUserAccessToken({
   userId,
 }: {
@@ -453,27 +375,7 @@ export async function getGitHubUserAccessToken({
       `[github-oauth] Failed to get/refresh GitHub access token for user ${userId}`,
       error,
     );
-    try {
-      const migratedLegacyTokens = await tryMigrateLegacyGitHubOAuthTokens({
-        userId,
-      });
-      if (!migratedLegacyTokens) {
-        return await getDirectGitHubAccessTokenFromAccount({ userId });
-      }
-      const retryResult = await auth.api.getAccessToken({
-        body: { providerId: "github", userId },
-      });
-      if (retryResult?.accessToken) {
-        return retryResult.accessToken;
-      }
-      return await getDirectGitHubAccessTokenFromAccount({ userId });
-    } catch (migrationError) {
-      console.error(
-        `[github-oauth] Failed to recover GitHub OAuth tokens for user ${userId}`,
-        migrationError,
-      );
-      return await getDirectGitHubAccessTokenFromAccount({ userId });
-    }
+    return await getDirectGitHubAccessTokenFromAccount({ userId });
   }
 }
 
