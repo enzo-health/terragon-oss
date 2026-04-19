@@ -1,7 +1,6 @@
 import { DBUserMessage, ThreadSource } from "@terragon/shared";
 import { db } from "@/lib/db";
 import {
-  getGithubPR,
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
 } from "@terragon/shared/model/github";
@@ -272,27 +271,11 @@ async function resolveOwnerUserId({
     return { userId: input.userId, reason: "input-user-id" };
   }
 
-  const [githubPR, threads] = await Promise.all([
-    getGithubPR({
-      db,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-    }),
-    getThreadsForGithubPR({
-      db,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-    }),
-  ]);
-
-  if (githubPR?.threadId) {
-    const matchingThread = threads.find(
-      (thread) => thread.id === githubPR.threadId,
-    );
-    if (matchingThread?.userId) {
-      return { userId: matchingThread.userId, reason: "github-pr-thread-id" };
-    }
-  }
+  const threads = await getThreadsForGithubPR({
+    db,
+    repoFullName: input.repoFullName,
+    prNumber: input.prNumber,
+  });
 
   let ambiguousThreadReason: string | null = null;
 
@@ -307,14 +290,6 @@ async function resolveOwnerUserId({
   }
   if (threads.some((thread) => !thread.archived && thread.userId)) {
     ambiguousThreadReason = "ambiguous-unarchived-thread-owners";
-  }
-
-  const uniqueThreadOwnerId = getUniqueThreadOwnerUserId(threads);
-  if (uniqueThreadOwnerId) {
-    return { userId: uniqueThreadOwnerId, reason: "existing-thread" };
-  }
-  if (threads.some((thread) => thread.userId)) {
-    ambiguousThreadReason = ambiguousThreadReason ?? "ambiguous-thread-owners";
   }
 
   let authorGitHubAccountId =
@@ -637,85 +612,6 @@ export async function routeGithubFeedbackOrSpawnThread(
       throw new RetryableOwnerResolutionError(
         `Failed to resolve GitHub feedback owner for ${input.repoFullName}#${input.prNumber} after transient PR context fetch failure`,
       );
-    }
-
-    const existingThreadsForFallback = await getThreadsForGithubPR({
-      db,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-    });
-    const fallbackThreads = existingThreadsForFallback.some(
-      (thread) => !thread.archived && Boolean(thread.userId),
-    )
-      ? existingThreadsForFallback.filter(
-          (thread) => !thread.archived && Boolean(thread.userId),
-        )
-      : existingThreadsForFallback.filter((thread) => Boolean(thread.userId));
-    const fallbackReason = `owner-resolution-fallback:${ownerResolution.reason}`;
-    const githubPRForFallback = await getGithubPR({
-      db,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-    });
-    const canonicalFallbackThreadMeta =
-      fallbackThreads.find(
-        (thread) =>
-          thread.id === githubPRForFallback?.threadId &&
-          typeof thread.userId === "string",
-      ) ?? (fallbackThreads.length === 1 ? fallbackThreads[0] : null);
-
-    if (canonicalFallbackThreadMeta?.userId) {
-      const fallbackThread = await getThreadForGithubPRAndUser({
-        db,
-        repoFullName: input.repoFullName,
-        prNumber: input.prNumber,
-        userId: canonicalFallbackThreadMeta.userId,
-      });
-      if (fallbackThread) {
-        const fallbackThreadChat = getPrimaryThreadChat(fallbackThread);
-        if (
-          feedbackDeliveryMarker &&
-          threadChatContainsFeedbackDeliveryMarker({
-            threadChat: fallbackThreadChat,
-            deliveryMarker: feedbackDeliveryMarker,
-          })
-        ) {
-          captureFeedbackRouting({
-            userId: canonicalFallbackThreadMeta.userId,
-            input,
-            mode: "reused_existing",
-            reason: `${fallbackReason}:deduplicated-delivery`,
-            threadId: fallbackThread.id,
-          });
-          return {
-            threadId: fallbackThread.id,
-            threadChatId: fallbackThreadChat.id,
-            mode: "reused_existing",
-            reason: `${fallbackReason}:deduplicated-delivery`,
-          };
-        }
-        await queueFollowUpInternal({
-          userId: canonicalFallbackThreadMeta.userId,
-          threadId: fallbackThread.id,
-          threadChatId: fallbackThreadChat.id,
-          messages: [feedbackMessage],
-          appendOrReplace: "append",
-          source: "github",
-        });
-        captureFeedbackRouting({
-          userId: canonicalFallbackThreadMeta.userId,
-          input,
-          mode: "reused_existing",
-          reason: fallbackReason,
-          threadId: fallbackThread.id,
-        });
-        return {
-          threadId: fallbackThread.id,
-          threadChatId: fallbackThreadChat.id,
-          mode: "reused_existing",
-          reason: fallbackReason,
-        };
-      }
     }
 
     console.warn("[github feedback routing] owner resolution failed; noop", {
