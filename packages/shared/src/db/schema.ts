@@ -272,10 +272,6 @@ export const onboardingQuestionnaire = pgTable(
     claudeSubscription: text("claude_subscription"),
     participationPreference: text("participation_preference"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
-    // Keep old columns for backwards compatibility during migration
-    primaryUseDeprecated: text("primary_use"),
-    feedbackWillingnessDeprecated: text("feedback_willingness"),
-    interviewWillingnessDeprecated: text("interview_willingness"),
   },
   (table) => [uniqueIndex("onboarding_email_unique").on(table.email)],
 );
@@ -808,8 +804,6 @@ export const userSettings = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    // This setting is now deprecated. It is always true.
-    autoPushBranches: boolean("auto_push_branches").notNull().default(false),
     autoCreatePRs: boolean("auto_create_draft_prs").notNull().default(true),
     autoArchiveMergedPRs: boolean("auto_archive_merged_prs")
       .notNull()
@@ -1267,8 +1261,6 @@ export const userFlags = pgTable(
     multiAgentMode: boolean("multi_agent_mode").notNull().default(false),
     selectedRepo: text("selected_repo"),
     selectedBranch: text("selected_branch"),
-    // @deprecated Use lastSeenReleaseNotesVersion instead
-    lastSeenReleaseNotes: timestamp("last_seen_release_notes"),
     lastSeenReleaseNotesVersion: integer("last_seen_release_notes_version"),
     // Reserved metadata for feature-upgrade notification tracking.
     lastSeenFeatureUpsellVersion: integer("last_seen_feature_upsell_version"),

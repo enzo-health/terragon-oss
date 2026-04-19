@@ -31,7 +31,6 @@ describe("DBDelegationMessage — DB roundtrip", () => {
     const result = await createTestThread({
       db,
       userId: user.id,
-      enableThreadChatCreation: true,
     });
     threadChatId = result.threadChatId;
   });

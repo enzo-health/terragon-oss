@@ -46,5 +46,3 @@ export function getPrimaryThreadChat(
   }
   return threadChat;
 }
-
-export const LEGACY_THREAD_CHAT_ID = "legacy-thread-chat-id";

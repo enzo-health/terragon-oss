@@ -2,7 +2,6 @@ import { DB } from "../db";
 import * as schema from "../db/schema";
 import { eq } from "drizzle-orm";
 import { publishBroadcastUserMessage } from "../broadcast-server";
-import { LEGACY_THREAD_CHAT_ID } from "../utils/thread-utils";
 
 async function updateThreadReadStatus({
   db,
@@ -18,7 +17,7 @@ async function updateThreadReadStatus({
   isRead: boolean;
 }): Promise<void> {
   const now = new Date();
-  if (threadChatIdOrNull && threadChatIdOrNull !== LEGACY_THREAD_CHAT_ID) {
+  if (threadChatIdOrNull) {
     await db
       .insert(schema.threadChatReadStatus)
       .values({
@@ -33,6 +32,25 @@ async function updateThreadReadStatus({
           schema.threadChatReadStatus.userId,
           schema.threadChatReadStatus.threadId,
           schema.threadChatReadStatus.threadChatId,
+        ],
+        set: {
+          isRead,
+          lastReadAt: now,
+          updatedAt: now,
+        },
+      });
+    await db
+      .insert(schema.threadReadStatus)
+      .values({
+        userId,
+        threadId,
+        isRead,
+        lastReadAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.threadReadStatus.userId,
+          schema.threadReadStatus.threadId,
         ],
         set: {
           isRead,

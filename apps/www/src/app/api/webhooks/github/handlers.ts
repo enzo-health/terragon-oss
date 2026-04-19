@@ -930,9 +930,6 @@ export async function handlePullRequestReviewCommentEvent(
                   reviewBody: commentBody,
                   commentId: event.comment.id,
                   sourceType: isMention ? "github-mention" : "automation",
-                  unresolvedThreadCount: 1,
-                  unresolvedThreadCountSource: "review_state_heuristic",
-                  headSha: event.pull_request.head?.sha ?? undefined,
                   authorGitHubAccountId: event.pull_request.user?.id,
                   baseBranchName: event.pull_request.base?.ref,
                   headBranchName: event.pull_request.head?.ref,
@@ -1130,9 +1127,6 @@ export async function handlePullRequestReviewEvent(
                   commentId: event.review.id,
                   reviewId: event.review.id,
                   reviewState: event.review.state,
-                  unresolvedThreadCount: unresolvedThreadCount ?? undefined,
-                  unresolvedThreadCountSource,
-                  headSha: event.pull_request.head?.sha ?? undefined,
                   failureDetails: `Review state: ${event.review.state}`,
                   sourceType: isMention ? "github-mention" : "automation",
                   authorGitHubAccountId: event.pull_request.user?.id,
@@ -1373,18 +1367,9 @@ export async function handleCheckRunEvent(
                     prNumber,
                     eventType: "check_run.completed",
                     deliveryId,
-                    checkName: checkRun.name,
-                    checkOutcome: signalOutcome,
-                    headSha: checkRun.head_sha ?? undefined,
                     checkSummary: `${checkRun.name} (${checkRun.status}:${signalOutcome})`,
                     failureDetails,
                     checkRunId: checkRun.id,
-                    ciSnapshotSource: ciSnapshot
-                      ? "github_check_runs"
-                      : undefined,
-                    ciSnapshotCheckNames: ciSnapshot?.checkNames,
-                    ciSnapshotFailingChecks: ciSnapshot?.failingChecks,
-                    ciSnapshotComplete: ciSnapshot?.complete,
                     sourceType: "automation",
                   });
                 console.log("GitHub feedback routed from check run", {
@@ -1531,17 +1516,9 @@ export async function handleCheckSuiteEvent(
                     prNumber,
                     eventType: "check_suite.completed",
                     deliveryId,
-                    checkOutcome: signalOutcome,
-                    headSha: checkSuite.head_sha ?? undefined,
                     checkSummary: `Check suite (${checkSuite.status}:${signalOutcome})`,
                     failureDetails,
                     checkSuiteId: checkSuite.id,
-                    ciSnapshotSource: ciSnapshot
-                      ? "github_check_runs"
-                      : undefined,
-                    ciSnapshotCheckNames: ciSnapshot?.checkNames,
-                    ciSnapshotFailingChecks: ciSnapshot?.failingChecks,
-                    ciSnapshotComplete: ciSnapshot?.complete,
                     sourceType: "automation",
                   });
                 console.log("GitHub feedback routed from check suite", {

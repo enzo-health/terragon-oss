@@ -159,7 +159,6 @@ export function createGitHubSurfaceBindingCoordinator(
     upsertBindingForWorkspace,
   };
 }
-
 const defaultGitHubSurfaceBindingCoordinator =
   createGitHubSurfaceBindingCoordinator();
 

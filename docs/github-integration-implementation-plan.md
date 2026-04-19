@@ -117,26 +117,31 @@ If any of these decisions change, stop execution and rewrite the plan first.
 #### Task 0.2 Output: Current ownership truth inventory
 
 1. `thread.githubRepoFullName` + `thread.githubPRNumber` act as the de facto PR-thread index.
+
    - **Evidence:** `packages/shared/src/model/github.ts:7-20`, `packages/shared/src/model/github.ts:97-109`, `apps/www/src/lib/github.ts:173-177`, `apps/www/src/lib/github.ts:663-709`, `apps/www/src/server-lib/new-thread-shared.ts:314-336`, `apps/www/src/agent/pull-request.ts:157-179`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:281-285`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:642-645`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:740-744`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:498-509`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:580-596`
    - **Current use:** scan all threads attached to a repo/PR pair, reuse an existing thread for a user, fan out PR status changes, stamp new threads with PR metadata, late-associate an existing thread to a PR by branch lookup, and wire delivery enrollment off thread-held PR metadata.
    - **Replace with:** a canonical `github_pr_workspace` plus `github_workspace_run`. When a thread is created or later associated to a PR, Terragon should create or find the workspace and attach the thread/execution to the appropriate run instead of persisting repo/PR identity on the thread row.
 
 2. `github_pr.threadId` is a sticky PR-owner backpointer.
+
    - **Evidence:** `packages/shared/src/model/github.ts:29-53`, `apps/www/src/agent/pull-request.ts:231-236`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:275-295`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:655-665`
    - **Current use:** first-choice owner hint for feedback routing and canonical fallback-thread selection when multiple PR threads exist.
    - **Replace with:** `github_surface_binding` for surface ownership plus `github_workspace_run` for the owning thread/execution reference, so the PR-to-thread owner pointer is replaced by workspace/run state instead of another mutable backpointer.
 
 3. Archived/newest thread scans still decide ownership.
+
    - **Evidence:** `packages/shared/src/model/github.ts:97-109`, `packages/shared/src/model/threads.ts:1494-1518`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:299-317`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:647-665`, `apps/www/src/server-lib/archive-thread.ts:52-79`
    - **Current use:** prefer one unarchived thread owner, then any unique owner, then prefer unarchived/newest thread candidates when choosing where feedback should land.
    - **Replace with:** `github_surface_binding.routingReason` plus `github_workspace_run` ownership references become the routing source of truth. Archived thread state should only affect whether a run can be resumed, not who owns the PR surface.
 
 4. PR author fallback is part of runtime routing instead of initial binding.
+
    - **Evidence:** `apps/www/src/lib/github.ts:508-555`, `apps/www/src/server-lib/automations.ts:334-336`, `apps/www/src/app/api/webhooks/github/route-feedback.ts:320-335`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:240-294`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:688-737`, `apps/www/src/app/api/webhooks/github/handlers.ts:681-736`, `apps/www/src/app/api/webhooks/github/handlers.ts:822`, `apps/www/src/app/api/webhooks/github/handlers.ts:936`, `apps/www/src/app/api/webhooks/github/handlers.ts:1138`
    - **Current use:** when thread-derived ownership fails, fetch live PR context, read the PR author's GitHub account, map it to a Terragon user, and route feedback there. Separate automation and mention paths also use PR-author checks as part of who should get a task or follow-up.
    - **Replace with:** binding-driven workspace resolution for runtime routing. If author-based rules remain for automations or mentions, keep them in a separate policy/eligibility layer that can write a durable `routingReason` when it creates a binding; missing bindings should produce unresolved-owner or operator-visible states instead of runtime PR-author fallback.
 
 5. `delivery_workflow.repoFullName` + `delivery_workflow.prNumber` + `delivery_workflow.threadId` are treated as PR ownership for active loops.
+
    - **Evidence:** `packages/shared/src/delivery-loop/store/workflow-store.ts:77-90`, `apps/www/src/server-lib/delivery-loop/enrollment.ts:64-89`, `apps/www/src/app/api/webhooks/github/handlers.ts:564-568`, `apps/www/src/app/api/webhooks/github/handlers.ts:586-621`, `apps/www/src/app/api/webhooks/github/handlers.ts:793-799`, `apps/www/src/app/api/webhooks/github/handlers.ts:894-900`, `apps/www/src/app/api/webhooks/github/handlers.ts:1050-1057`, `apps/www/src/app/api/webhooks/github/handlers.ts:1317-1324`, `apps/www/src/app/api/webhooks/github/handlers.ts:1475-1482`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:430-436`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:523-527`, `apps/www/src/app/api/webhooks/github/handle-app-mention.ts:531-577`
    - **Current use:** look up active workflows by repo/PR, resurrect terminal loops, append gate events, derive route users, and route PR mentions through the enrolled workflow thread.
    - **Replace with:** `github_pr_workspace`, `github_workspace_run`, and `github_surface_binding` for canonical ownership. Review and check signals should land in `github_review_inbox_item` before explicit run policy decides whether to wake or create a run; mention signals should go through the same workspace binding coordinator and lane/run policy instead of using workflow-thread ownership directly.
@@ -172,7 +177,7 @@ Adjacent migration debt:
   - installation
   - repo
   - PR
-  Each table should store GitHub-native IDs as canonical identifiers, with slug/name fields as mutable projection data.
+    Each table should store GitHub-native IDs as canonical identifiers, with slug/name fields as mutable projection data.
 - **Dependencies:** 0.2
 - **Acceptance Criteria:**
   - tables exist with stable GitHub IDs and timestamps
@@ -222,7 +227,7 @@ Adjacent migration debt:
 - **Description:** Add:
   - `github_pr_workspace`
   - `github_workspace_run`
-  Model one canonical workspace per `(installation_id, repo_id, pr_id)` and explicit runs/lanes under it.
+    Model one canonical workspace per `(installation_id, repo_id, pr_id)` and explicit runs/lanes under it.
 - **Dependencies:** 1.1
 - **Acceptance Criteria:**
   - unique constraint enforces one workspace per PR

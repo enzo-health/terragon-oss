@@ -18,7 +18,6 @@ import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
-import { LEGACY_THREAD_CHAT_ID } from "@terragon/shared/utils/thread-utils";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import {
@@ -26,6 +25,8 @@ import {
   publishDeltaBroadcast,
 } from "@terragon/shared/broadcast-server";
 import { env } from "@terragon/env/apps-www";
+
+const LEGACY_THREAD_CHAT_ID = "legacy-thread-chat-id";
 
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
@@ -714,7 +715,7 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("accepts legacy daemon payloads with the legacy threadChat sentinel", async () => {
+  it("rejects legacy daemon payloads with the legacy threadChat sentinel", async () => {
     vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
       userId: "user-1",
       keyId: "api-key-1",
@@ -776,10 +777,9 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(data.acknowledgedEventId).toBe("event-legacy");
-    expect(data.acknowledgedSeq).toBe(0);
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("requires threadChatId for ACP daemon payloads", async () => {

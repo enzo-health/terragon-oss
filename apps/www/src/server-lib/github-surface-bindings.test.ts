@@ -80,7 +80,7 @@ describe("github surface binding coordinator", () => {
       surfaceKind: "check_run",
       surfaceGitHubId: "12345",
       lane: "ci_repair",
-      routingReason: "github-pr-thread-id",
+      routingReason: "existing-unarchived-thread",
       boundHeadSha: "projection-sha",
     });
 

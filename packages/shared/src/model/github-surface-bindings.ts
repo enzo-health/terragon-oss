@@ -317,7 +317,6 @@ export async function resolveGithubSurfaceBinding<
     headSha: workspace.headSha,
   };
 }
-
 export function formatGithubSurfaceBindingId({
   surfaceKind,
   surfaceGitHubId,

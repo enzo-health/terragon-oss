@@ -1,12 +1,12 @@
 # GitHub Integration Architecture Redesign
 
-| Field     | Value                                   |
-| --------- | --------------------------------------- |
+| Field     | Value                                    |
+| --------- | ---------------------------------------- |
 | Title     | GitHub Integration Architecture Redesign |
-| Authors   | Codex + Tyler Sheffield                 |
-| Status    | Proposed                                |
-| Date      | 2026-04-17                              |
-| Reviewers | TBD                                     |
+| Authors   | Codex + Tyler Sheffield                  |
+| Status    | Proposed                                 |
+| Date      | 2026-04-17                               |
+| Reviewers | TBD                                      |
 
 ---
 
@@ -435,15 +435,15 @@ Must not do:
 
 ### 6.3 Current-to-target mapping
 
-| Current surface | Problem | Target owner |
-| --------------- | ------- | ------------ |
-| `app/api/webhooks/github/route.ts` | good ingress, but event handling is too close downstream | keep as ingress only |
-| `app/api/webhooks/github/handlers.ts` | monolithic branch table | split into normalizer, coordinator, publisher commands |
-| `app/api/webhooks/github/handle-app-mention.ts` | mention routing owns workspace behavior | move routing into binding coordinator |
-| `app/api/webhooks/github/route-feedback.ts` | ownership inferred heuristically | replace with explicit bindings + inbox |
-| `lib/github.ts` | mixed auth, helpers, sync, author checks, association | split into auth broker, projection refresh, repo metadata client |
-| `server-lib/github.ts` | automation-specific check publication | merge into central publisher |
-| `server-lib/delivery-loop/publication.ts` | separate canonical publication system | keep concepts, move under shared publisher |
+| Current surface                                 | Problem                                                  | Target owner                                                     |
+| ----------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------- |
+| `app/api/webhooks/github/route.ts`              | good ingress, but event handling is too close downstream | keep as ingress only                                             |
+| `app/api/webhooks/github/handlers.ts`           | monolithic branch table                                  | split into normalizer, coordinator, publisher commands           |
+| `app/api/webhooks/github/handle-app-mention.ts` | mention routing owns workspace behavior                  | move routing into binding coordinator                            |
+| `app/api/webhooks/github/route-feedback.ts`     | ownership inferred heuristically                         | replace with explicit bindings + inbox                           |
+| `lib/github.ts`                                 | mixed auth, helpers, sync, author checks, association    | split into auth broker, projection refresh, repo metadata client |
+| `server-lib/github.ts`                          | automation-specific check publication                    | merge into central publisher                                     |
+| `server-lib/delivery-loop/publication.ts`       | separate canonical publication system                    | keep concepts, move under shared publisher                       |
 
 ---
 
