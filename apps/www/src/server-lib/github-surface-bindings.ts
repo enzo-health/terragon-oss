@@ -159,13 +159,3 @@ export function createGitHubSurfaceBindingCoordinator(
     upsertBindingForWorkspace,
   };
 }
-
-const defaultGitHubSurfaceBindingCoordinator =
-  createGitHubSurfaceBindingCoordinator();
-
-export const getGitHubSurfaceBinding =
-  defaultGitHubSurfaceBindingCoordinator.getBinding;
-export const resolveGitHubSurfaceWorkspace =
-  defaultGitHubSurfaceBindingCoordinator.resolveWorkspace;
-export const upsertGitHubSurfaceBindingForWorkspace =
-  defaultGitHubSurfaceBindingCoordinator.upsertBindingForWorkspace;

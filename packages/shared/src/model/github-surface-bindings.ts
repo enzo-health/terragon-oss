@@ -317,10 +317,3 @@ export async function resolveGithubSurfaceBinding<
     headSha: workspace.headSha,
   };
 }
-
-export function formatGithubSurfaceBindingId({
-  surfaceKind,
-  surfaceGitHubId,
-}: GithubSurfaceBindingLookupKey): string {
-  return `${surfaceKind}:${surfaceGitHubId}`;
-}

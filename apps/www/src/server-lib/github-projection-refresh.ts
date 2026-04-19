@@ -425,8 +425,6 @@ export function createGitHubProjectionRefreshClient(
 
 const defaultProjectionRefreshClient = createGitHubProjectionRefreshClient();
 
-export const refreshGitHubInstallationProjection =
-  defaultProjectionRefreshClient.refreshInstallationProjection;
 export const refreshGitHubRepoProjection =
   defaultProjectionRefreshClient.refreshRepoProjection;
 export const refreshGitHubPrProjection =
