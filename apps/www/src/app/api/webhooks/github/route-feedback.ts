@@ -43,21 +43,12 @@ export type GithubFeedbackInput = {
   deliveryId?: string;
   reviewBody?: string;
   checkSummary?: string;
-  checkName?: string;
-  checkOutcome?: "pass" | "fail";
   failureDetails?: string;
   commentId?: number;
   reviewId?: number;
   checkRunId?: number;
   checkSuiteId?: number;
   reviewState?: string;
-  unresolvedThreadCount?: number;
-  unresolvedThreadCountSource?: "github_graphql" | "review_state_heuristic";
-  headSha?: string;
-  ciSnapshotSource?: "github_check_runs";
-  ciSnapshotCheckNames?: string[];
-  ciSnapshotFailingChecks?: string[];
-  ciSnapshotComplete?: boolean;
   sourceType?: GithubFeedbackSourceType;
   authorGitHubAccountId?: number;
   baseBranchName?: string;
@@ -470,22 +461,14 @@ function buildIdentityValueOrFallback({
   return fallback;
 }
 
-function buildDeliveryIdOrFallback({
-  deliveryId,
-  fallbackScope,
-}: {
-  deliveryId: string | undefined;
-  fallbackScope: string;
-}): string {
-  if (typeof deliveryId === "string" && deliveryId.trim().length > 0) {
-    return deliveryId.trim();
-  }
-  return `no-delivery:${fallbackScope}`;
-}
-
 function buildFeedbackDeliveryMarker(
   input: GithubFeedbackInput,
 ): string | null {
+  const deliveryId = input.deliveryId?.trim();
+  if (!deliveryId) {
+    return null;
+  }
+
   let causeId: string | null = null;
   switch (input.eventType) {
     case "check_run.completed": {
@@ -493,11 +476,7 @@ function buildFeedbackDeliveryMarker(
         identityValue: input.checkRunId,
         fallback: `${input.repoFullName}:${input.prNumber}:check-run`,
       });
-      const delivery = buildDeliveryIdOrFallback({
-        deliveryId: input.deliveryId,
-        fallbackScope: `check-run:${id}`,
-      });
-      causeId = `${delivery}:${id}`;
+      causeId = `${deliveryId}:${id}`;
       break;
     }
     case "check_suite.completed": {
@@ -505,11 +484,7 @@ function buildFeedbackDeliveryMarker(
         identityValue: input.checkSuiteId,
         fallback: `${input.repoFullName}:${input.prNumber}:check-suite`,
       });
-      const delivery = buildDeliveryIdOrFallback({
-        deliveryId: input.deliveryId,
-        fallbackScope: `check-suite:${id}`,
-      });
-      causeId = `${delivery}:${id}`;
+      causeId = `${deliveryId}:${id}`;
       break;
     }
     case "pull_request_review.submitted": {
@@ -521,11 +496,7 @@ function buildFeedbackDeliveryMarker(
         identityValue: input.reviewState,
         fallback: "unknown",
       });
-      const delivery = buildDeliveryIdOrFallback({
-        deliveryId: input.deliveryId,
-        fallbackScope: `review:${id}:${state}`,
-      });
-      causeId = `${delivery}:${id}:${state}`;
+      causeId = `${deliveryId}:${id}:${state}`;
       break;
     }
     case "pull_request_review_comment.created": {
@@ -533,11 +504,7 @@ function buildFeedbackDeliveryMarker(
         identityValue: input.commentId,
         fallback: `${input.repoFullName}:${input.prNumber}:review-comment`,
       });
-      const delivery = buildDeliveryIdOrFallback({
-        deliveryId: input.deliveryId,
-        fallbackScope: `review-comment:${id}`,
-      });
-      causeId = `${delivery}:${id}`;
+      causeId = `${deliveryId}:${id}`;
       break;
     }
     default:

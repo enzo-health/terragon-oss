@@ -296,7 +296,6 @@ export async function getOctokitForApp({
 
 const GITHUB_OAUTH_TOKEN_REGEX =
   /^(gh[oprsu]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)$/;
-const BETTER_AUTH_ENCRYPTED_TOKEN_REGEX = /^[a-f0-9]{64,}$/i;
 
 function isLikelyGitHubOAuthToken(token: string): boolean {
   return GITHUB_OAUTH_TOKEN_REGEX.test(token);
@@ -327,16 +326,6 @@ async function decodeGitHubOAuthToken(
 ): Promise<string | null> {
   if (isLikelyGitHubOAuthToken(rawToken)) {
     return rawToken;
-  }
-
-  if (BETTER_AUTH_ENCRYPTED_TOKEN_REGEX.test(rawToken)) {
-    const betterAuthToken = await tryDecryptBetterAuthToken({
-      token: rawToken,
-      key: env.BETTER_AUTH_SECRET,
-    });
-    if (betterAuthToken && isLikelyGitHubOAuthToken(betterAuthToken)) {
-      return betterAuthToken;
-    }
   }
 
   const legacyToken = decryptTokenWithBackwardsCompatibility(

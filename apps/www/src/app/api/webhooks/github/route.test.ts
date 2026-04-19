@@ -976,8 +976,6 @@ describe("GitHub webhook route", () => {
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
-          unresolvedThreadCount: 0,
-          unresolvedThreadCountSource: "github_graphql",
         }),
       );
     });
@@ -1016,8 +1014,6 @@ describe("GitHub webhook route", () => {
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
-          unresolvedThreadCount: 1,
-          unresolvedThreadCountSource: "review_state_heuristic",
         }),
       );
     });
@@ -1068,8 +1064,6 @@ describe("GitHub webhook route", () => {
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
-          unresolvedThreadCount: 0,
-          unresolvedThreadCountSource: "review_state_heuristic",
         }),
       );
     });
@@ -1758,10 +1752,6 @@ describe("GitHub webhook route", () => {
           repoFullName: pr.repoFullName,
           prNumber: pr.number,
           eventType: "check_run.completed",
-          ciSnapshotSource: "github_check_runs",
-          ciSnapshotCheckNames: ["CI / lint", "CI / tests"],
-          ciSnapshotFailingChecks: [],
-          ciSnapshotComplete: true,
         }),
       );
     });
@@ -1817,12 +1807,14 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
       const routedPayload = vi.mocked(routeGithubFeedbackOrSpawnThread).mock
         .calls[0]?.[0];
-      // Truncated responses still produce a snapshot - the code logs a warning
-      // and proceeds with what was fetched rather than returning null
-      expect(routedPayload?.ciSnapshotSource).toBe("github_check_runs");
-      expect(routedPayload?.ciSnapshotCheckNames?.length).toBe(100);
-      expect(routedPayload?.ciSnapshotFailingChecks).toEqual([]);
-      expect(routedPayload?.ciSnapshotComplete).toBe(true);
+      expect(routedPayload).toEqual(
+        expect.objectContaining({
+          repoFullName: pr.repoFullName,
+          prNumber: pr.number,
+          eventType: "check_run.completed",
+          checkRunId: 321,
+        }),
+      );
     });
 
     it("hydrates CI snapshot metadata across paginated check-runs responses", async () => {
@@ -1891,13 +1883,6 @@ describe("GitHub webhook route", () => {
           repoFullName: pr.repoFullName,
           prNumber: pr.number,
           eventType: "check_run.completed",
-          ciSnapshotSource: "github_check_runs",
-          ciSnapshotCheckNames: expect.arrayContaining([
-            "CI / lint",
-            "CI / tests",
-          ]),
-          ciSnapshotFailingChecks: [],
-          ciSnapshotComplete: true,
         }),
       );
     });

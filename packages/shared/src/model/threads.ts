@@ -1466,7 +1466,6 @@ export async function getStalledThreadChats({
           schema.threadChat.updatedAt,
           new Date(Date.now() - cutoffSecs * 1000),
         ),
-        ne(schema.threadChat.id, LEGACY_THREAD_CHAT_ID),
       ),
     )
     .orderBy(desc(schema.threadChat.updatedAt));

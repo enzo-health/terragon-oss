@@ -170,7 +170,7 @@ describe("github workspace bootstrap", () => {
       threadId: firstThread.threadId,
       pullRequestIdentity: {
         prNodeId: projections.prProjection.prNodeId,
-        headSha: projections.prProjection.headSha,
+        headSha: projections.prProjection.headSha ?? "live-sha-82",
       },
     });
     const secondResult = await bootstrapClient.bootstrapThreadGithubWorkspace({
@@ -179,7 +179,7 @@ describe("github workspace bootstrap", () => {
       threadId: secondThread.threadId,
       pullRequestIdentity: {
         prNodeId: projections.prProjection.prNodeId,
-        headSha: projections.prProjection.headSha,
+        headSha: projections.prProjection.headSha ?? "live-sha-82",
       },
     });
 
@@ -222,7 +222,7 @@ describe("github workspace bootstrap", () => {
         threadId,
         pullRequestIdentity: {
           prNodeId: "PR_wrong_83",
-          headSha: projections.prProjection.headSha,
+          headSha: projections.prProjection.headSha ?? "live-sha-83",
         },
       }),
     ).rejects.toThrow("identity mismatch");
