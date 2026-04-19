@@ -91,7 +91,7 @@ describe("github surface binding helpers", () => {
       surfaceGitHubId: "RT_123",
       fields: {
         lane: "review_response",
-        routingReason: "existing-thread",
+        routingReason: "existing-unarchived-thread",
         boundHeadSha: workspace.headSha!,
       },
     });
@@ -112,7 +112,9 @@ describe("github surface binding helpers", () => {
     expect(resolution?.workspace.id).toBe(workspace.id);
     expect(resolution?.headSha).toBe(workspace.headSha);
     expect(resolution?.binding.lane).toBe("review_response");
-    expect(resolution?.binding.routingReason).toBe("existing-thread");
+    expect(resolution?.binding.routingReason).toBe(
+      "existing-unarchived-thread",
+    );
     expect(resolution?.binding.boundHeadSha).toBe(workspace.headSha);
   });
 
@@ -126,7 +128,7 @@ describe("github surface binding helpers", () => {
       surfaceGitHubId: "CR_456",
       fields: {
         lane: "ci_repair",
-        routingReason: "github-pr-thread-id",
+        routingReason: "existing-unarchived-thread",
         boundHeadSha: workspace.headSha!,
       },
     });
@@ -171,7 +173,7 @@ describe("github surface binding helpers", () => {
       surfaceGitHubId: "RC_789",
       fields: {
         lane: "review_response",
-        routingReason: "existing-thread",
+        routingReason: "existing-unarchived-thread",
         boundHeadSha: firstWorkspace.workspace.headSha!,
       },
     });
@@ -184,7 +186,7 @@ describe("github surface binding helpers", () => {
         surfaceGitHubId: "RC_789",
         fields: {
           lane: "review_response",
-          routingReason: "existing-thread",
+          routingReason: "existing-unarchived-thread",
           boundHeadSha: "sha-two",
         },
       }),
@@ -243,7 +245,7 @@ describe("github surface binding helpers", () => {
         surfaceGitHubId: "RT_999",
         fields: {
           lane: "review_response",
-          routingReason: "existing-thread",
+          routingReason: "existing-unarchived-thread",
           boundHeadSha: "mismatched-sha",
         },
       }),
@@ -264,7 +266,7 @@ describe("github surface binding helpers", () => {
         surfaceGitHubId: "RT_1000",
         fields: {
           lane: "review_response",
-          routingReason: "existing-thread",
+          routingReason: "existing-unarchived-thread",
           boundHeadSha: "",
         },
       }),
@@ -286,7 +288,7 @@ describe("github surface binding helpers", () => {
           issueOrPrType: "issue",
         },
         lane: "review_response",
-        routingReason: "existing-thread",
+        routingReason: "existing-unarchived-thread",
         boundHeadSha: workspace.headSha!,
       }),
     ).rejects.toThrow();

@@ -398,12 +398,9 @@ export type GithubSurfaceBindingMetadataForKind<
 > = GithubSurfaceBindingMetadataByKind[K];
 export type GithubSurfaceBindingRoutingReason =
   | "input-user-id"
-  | "github-pr-thread-id"
   | "existing-unarchived-thread"
-  | "existing-thread"
   | "pr-author-fallback"
   | "ambiguous-unarchived-thread-owners"
-  | "ambiguous-thread-owners"
   | "no-owner-found";
 export type GithubWorkspaceRunStatus =
   | "pending"
