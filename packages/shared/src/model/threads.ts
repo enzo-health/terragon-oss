@@ -1192,18 +1192,28 @@ export async function getStalledThreads({
   db: DB;
   cutoffSecs?: number;
 }) {
+  const cutoffDate = new Date(Date.now() - cutoffSecs * 1000);
   const staleThreadChatRows = await db
     .selectDistinct({ threadId: schema.threadChat.threadId })
     .from(schema.threadChat)
     .where(
-      inArray(schema.threadChat.status, [
-        "booting",
-        "stopping",
-        "working",
-        "working-done",
-        "working-error",
-        "checkpointing",
-      ]),
+      and(
+        inArray(schema.threadChat.status, [
+          "booting",
+          "stopping",
+          "working",
+          "working-done",
+          "working-error",
+          "checkpointing",
+        ]),
+        lte(schema.threadChat.updatedAt, cutoffDate),
+        sql<boolean>`not exists (
+          select 1
+          from thread_chat newer
+          where newer.thread_id = ${schema.threadChat.threadId}
+            and newer.created_at > ${schema.threadChat.createdAt}
+        )`,
+      ),
     );
 
   if (staleThreadChatRows.length === 0) {
@@ -1216,7 +1226,6 @@ export async function getStalledThreads({
         schema.thread.id,
         staleThreadChatRows.map((row) => row.threadId),
       ),
-      lte(schema.thread.updatedAt, new Date(Date.now() - cutoffSecs * 1000)),
     ),
     orderBy: (thread) => [desc(thread.updatedAt)],
   });

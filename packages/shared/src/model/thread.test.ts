@@ -2881,21 +2881,21 @@ describe("thread", () => {
       // Manually update the updatedAt timestamp to simulate old threads
       const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
       await db
-        .update(schema.thread)
+        .update(schema.threadChat)
         .set({ updatedAt: oldDate })
-        .where(eq(schema.thread.id, bootingThread.threadId));
+        .where(eq(schema.threadChat.threadId, bootingThread.threadId));
       await db
-        .update(schema.thread)
+        .update(schema.threadChat)
         .set({ updatedAt: oldDate })
-        .where(eq(schema.thread.id, workingThread.threadId));
+        .where(eq(schema.threadChat.threadId, workingThread.threadId));
       await db
-        .update(schema.thread)
+        .update(schema.threadChat)
         .set({ updatedAt: oldDate })
-        .where(eq(schema.thread.id, stoppingThread.threadId));
+        .where(eq(schema.threadChat.threadId, stoppingThread.threadId));
       await db
-        .update(schema.thread)
+        .update(schema.threadChat)
         .set({ updatedAt: oldDate })
-        .where(eq(schema.thread.id, stoppedThread.threadId));
+        .where(eq(schema.threadChat.threadId, stoppedThread.threadId));
 
       // Now we should get the stalled threads (booting, working, stopping only)
       const stalledThreadsAfter = await getStalledThreads({
@@ -2924,9 +2924,9 @@ describe("thread", () => {
       // Set to 30 seconds ago
       const thirtySecsAgo = new Date(Date.now() - 30 * 1000);
       await db
-        .update(schema.thread)
+        .update(schema.threadChat)
         .set({ updatedAt: thirtySecsAgo })
-        .where(eq(schema.thread.id, threadId));
+        .where(eq(schema.threadChat.threadId, threadId));
 
       // Should not appear with 60 second cutoff
       const stalled60 = await getStalledThreads({ db, cutoffSecs: 60 });
@@ -2938,6 +2938,36 @@ describe("thread", () => {
       const ourStalled10 = stalled10.filter((t) => t.id === threadId);
       expect(ourStalled10.length).toBe(1);
       expect(ourStalled10[0]!.id).toBe(threadId);
+    });
+
+    it("ignores old transitional chats when a newer chat is no longer transitional", async () => {
+      const { threadId, threadChatId } = await createTestThread({
+        db,
+        userId: user.id,
+        chatOverrides: { status: "working" },
+      });
+
+      const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      await db
+        .update(schema.threadChat)
+        .set({ updatedAt: oldDate })
+        .where(eq(schema.threadChat.id, threadChatId));
+
+      await db.insert(schema.threadChat).values({
+        threadId,
+        userId: user.id,
+        status: "complete",
+      });
+
+      const stalledThreads = await getStalledThreads({
+        db,
+        cutoffSecs: 60 * 60,
+      });
+      const stalledForThread = stalledThreads.filter((thread) => {
+        return thread.id === threadId;
+      });
+
+      expect(stalledForThread).toHaveLength(0);
     });
   });
 
