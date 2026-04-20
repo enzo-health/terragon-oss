@@ -19,7 +19,7 @@ const mockSnapshot: ThreadMetaSnapshot = {
 };
 
 vi.mock("./meta-chips/use-thread-meta-events", () => ({
-  useThreadMetaEvents: (_threadId: string) => ({
+  useThreadMetaEvents: () => ({
     snapshot: mockSnapshot,
     dispatch: vi.fn(),
   }),

@@ -173,11 +173,8 @@ export interface BootChecklistProps {
  * - Shows an install progress bar under the `installing-agent` step while
  *   that step is in-progress.
  */
-export function BootChecklist({
-  threadId,
-  currentSubstatus,
-}: BootChecklistProps) {
-  const { snapshot } = useThreadMetaEvents(threadId);
+export function BootChecklist({ currentSubstatus }: BootChecklistProps) {
+  const { snapshot } = useThreadMetaEvents();
   const { bootSteps, installProgress } = snapshot;
 
   // Determine which step is currently active using meta events when available,
@@ -246,14 +243,11 @@ export function BootChecklist({
 
               {/* Step label */}
               <span
-                className={cn(
-                  "flex-1 text-sm transition-colors duration-200",
-                  {
-                    "text-foreground font-medium": isActive,
-                    "text-muted-foreground": isCompleted,
-                    "text-muted-foreground opacity-40": isPending,
-                  },
-                )}
+                className={cn("flex-1 text-sm transition-colors duration-200", {
+                  "text-foreground font-medium": isActive,
+                  "text-muted-foreground": isCompleted,
+                  "text-muted-foreground opacity-40": isPending,
+                })}
               >
                 {step.label}
               </span>

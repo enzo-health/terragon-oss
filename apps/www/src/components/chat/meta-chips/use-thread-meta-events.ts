@@ -206,10 +206,10 @@ function isThreadMetaKind(name: string): boolean {
  * and dispatched through the reducer so chips re-render without touching
  * the chat message stream.
  *
- * `threadId` is retained for API compatibility — the AG-UI stream is
- * already scoped to a single thread so we don't need to filter here.
+ * The AG-UI stream is already scoped to a single thread, so no threadId
+ * argument is needed.
  */
-export function useThreadMetaEvents(_threadId: string): {
+export function useThreadMetaEvents(): {
   snapshot: ThreadMetaSnapshot;
   dispatch: (action: Action) => void;
 } {

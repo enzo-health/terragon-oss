@@ -54,13 +54,11 @@ function asHttpAgent(fake: FakeAgent): HttpAgent {
 }
 
 function Harness({
-  threadId,
   onSnapshot,
 }: {
-  threadId: string;
   onSnapshot: (snapshot: ThreadMetaSnapshot) => void;
 }): null {
-  const { snapshot } = useThreadMetaEvents(threadId);
+  const { snapshot } = useThreadMetaEvents();
   onSnapshot(snapshot);
   return null;
 }
@@ -80,7 +78,6 @@ function mount(agent: FakeAgent): {
       createElement(AgUiAgentProvider, {
         agent: asHttpAgent(agent),
         children: createElement(Harness, {
-          threadId: "t1",
           onSnapshot: (s) => snapshots.push(s),
         }),
       }),

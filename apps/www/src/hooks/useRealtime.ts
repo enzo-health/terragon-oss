@@ -123,9 +123,12 @@ function usePartySocket({
   return socket;
 }
 
-// TODO(phase-6): only exported for use-realtime-sandbox.ts; re-privatize once
-// useRealtime.ts is deleted and useRealtimeBase is inlined into
-// use-realtime-sandbox.
+// Shared realtime primitive: wraps PartySocket setup, ready-state tracking,
+// and debounced message dispatch. Used internally by `useRealtimeUser` and
+// by `use-realtime-sandbox.ts`. Exported so the sandbox hook (which lives in
+// its own module to survive eventual deletion of the thread/user realtime
+// machinery) can reuse the same socket multiplexing logic without
+// duplicating it here.
 export function useRealtimeBase({
   party,
   channel,
