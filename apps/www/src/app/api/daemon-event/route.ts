@@ -35,6 +35,7 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
+import { appendCanonicalEventsBatch } from "@terragon/shared/model/agent-event-log";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import { and, eq } from "drizzle-orm";
 import {
@@ -428,6 +429,45 @@ function getDaemonEventEnvelopeV2(
   };
 }
 
+function canonicalEventFailureStatus(
+  code:
+    | "invalid_envelope"
+    | "invalid_event"
+    | "seq_violation"
+    | "database_error",
+): number {
+  switch (code) {
+    case "invalid_envelope":
+    case "invalid_event":
+      return 400;
+    case "seq_violation":
+      return 409;
+    case "database_error":
+      return 500;
+  }
+}
+
+function findCanonicalEventContextMismatch(params: {
+  canonicalEvents: NonNullable<DaemonEventAPIBody["canonicalEvents"]>;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+}): { eventId: string; reason: "runId" | "threadId" | "threadChatId" } | null {
+  for (const event of params.canonicalEvents) {
+    if (event.runId !== params.runId) {
+      return { eventId: event.eventId, reason: "runId" };
+    }
+    if (event.threadId !== params.threadId) {
+      return { eventId: event.eventId, reason: "threadId" };
+    }
+    if (event.threadChatId !== params.threadChatId) {
+      return { eventId: event.eventId, reason: "threadChatId" };
+    }
+  }
+
+  return null;
+}
+
 function deriveSessionIdFromMessages(
   messages: DaemonEventAPIBody["messages"],
 ): string | null {
@@ -713,6 +753,9 @@ export async function POST(request: Request) {
   const userId = daemonAuthContext.userId;
   const claims = daemonAuthContext.claims;
 
+  const canonicalEvents = Array.isArray(json.canonicalEvents)
+    ? json.canonicalEvents
+    : null;
   const deltas = json.deltas;
 
   // Meta events (token usage, rate limits, model re-routing, MCP health,
@@ -746,6 +789,7 @@ export async function POST(request: Request) {
   }
 
   const dbPreflight = await getDaemonEventDbPreflight(db);
+  const canPersistCanonicalEvents = dbPreflight.agentEventLogReady;
   const canPersistTokenStreamEvents = dbPreflight.tokenStreamEventReady;
   const canPersistRunContextFailureMeta =
     dbPreflight.agentRunContextFailureColumnsReady;
@@ -1025,6 +1069,53 @@ export async function POST(request: Request) {
     }
   }
 
+  if (canonicalEvents && canonicalEvents.length > 0) {
+    if (!canPersistCanonicalEvents) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+        { status: 503 },
+      );
+    }
+
+    const contextMismatch = findCanonicalEventContextMismatch({
+      canonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+    });
+    if (contextMismatch) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+        { status: 409 },
+      );
+    }
+
+    const canonicalResults = await appendCanonicalEventsBatch({
+      db,
+      events: canonicalEvents,
+    });
+    const canonicalFailure = canonicalResults.find((result) => !result.success);
+    if (canonicalFailure && !canonicalFailure.success) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: canonicalFailure.code,
+          detail: canonicalFailure.error,
+        },
+        { status: canonicalEventFailureStatus(canonicalFailure.code) },
+      );
+    }
+  }
+
   if (deltas && deltas.length > 0) {
     const deltaRunId = authoritativeRunId;
     const normalizedDeltas = normalizeDeltasForPersistence(deltas);
@@ -1155,7 +1246,11 @@ export async function POST(request: Request) {
 
   // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
   // run-context status transitions — just extend sandbox life + refresh updatedAt.
-  if (messages.length === 0 && (!deltas || deltas.length === 0)) {
+  if (
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    (!canonicalEvents || canonicalEvents.length === 0)
+  ) {
     const result = await handleDaemonEvent({
       messages: [],
       threadId,
@@ -1170,6 +1265,18 @@ export async function POST(request: Request) {
       return new Response(result.error, { status: result.status || 500 });
     }
     return Response.json({ success: true });
+  }
+
+  if (
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    canonicalEvents &&
+    canonicalEvents.length > 0
+  ) {
+    return Response.json({
+      success: true,
+      canonicalEventsPersisted: canonicalEvents.length,
+    });
   }
 
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);

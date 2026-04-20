@@ -19,6 +19,7 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
+import { appendCanonicalEventsBatch } from "@terragon/shared/model/agent-event-log";
 import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
 import {
   publishBroadcastUserMessage,
@@ -124,6 +125,10 @@ const tokenStreamMocks = vi.hoisted(() => ({
   appendTokenStreamEvents: vi.fn(),
 }));
 
+const canonicalEventLogMocks = vi.hoisted(() => ({
+  appendCanonicalEventsBatch: vi.fn(),
+}));
+
 const deltaBroadcastMocks = vi.hoisted(() => ({
   publishDeltaBroadcast: vi.fn(),
 }));
@@ -198,6 +203,10 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
 
 vi.mock("@terragon/shared/model/token-stream-event", () => ({
   appendTokenStreamEvents: tokenStreamMocks.appendTokenStreamEvents,
+}));
+
+vi.mock("@terragon/shared/model/agent-event-log", () => ({
+  appendCanonicalEventsBatch: canonicalEventLogMocks.appendCanonicalEventsBatch,
 }));
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
@@ -298,6 +307,27 @@ function createSuccessResultMessage(sessionId = "session-1") {
     num_turns: 1,
     result: "ok",
     session_id: sessionId,
+  };
+}
+
+function createCanonicalRunStartedEvent(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    payloadVersion: 2,
+    eventId: "canonical-event-1",
+    runId: "run-1",
+    threadId: "thread-1",
+    threadChatId: "chat-1",
+    seq: 0,
+    timestamp: "2026-04-19T20:00:00.000Z",
+    category: "operational",
+    type: "run-started",
+    agent: "codex",
+    model: "gpt-5.4",
+    transportMode: "acp",
+    protocolVersion: 2,
+    ...overrides,
   };
 }
 
@@ -403,6 +433,7 @@ describe("daemon-event route", () => {
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.updateReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.signalInboxFindFirst.mockResolvedValue(null);
+    vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([]);
     vi.mocked(appendTokenStreamEvents).mockResolvedValue([]);
     vi.mocked(publishDeltaBroadcast).mockResolvedValue(undefined);
   });
@@ -2233,6 +2264,40 @@ describe("daemon-event route", () => {
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
     });
 
+    it("persists canonical events before legacy handling", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          canonicalEvents: [createCanonicalRunStartedEvent()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(appendCanonicalEventsBatch).toHaveBeenCalledWith({
+        db: dbMocks.db,
+        events: [createCanonicalRunStartedEvent()],
+      });
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+      expect(
+        vi.mocked(appendCanonicalEventsBatch).mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
+      );
+    });
+
     it("passes the fetched runContext and fallback workflowId to handleDaemonEvent", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
@@ -2286,6 +2351,40 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("rejects canonical event context mismatches before legacy handling", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunStartedEvent({ threadChatId: "chat-other" }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-mismatch",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: "daemon_event_canonical_event_context_mismatch",
+        eventId: "canonical-event-1",
+        reason: "threadChatId",
+      });
+      expect(appendCanonicalEventsBatch).not.toHaveBeenCalled();
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
     it("skips v1 signal inbox for enrolled workflows", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
@@ -2309,6 +2408,73 @@ describe("daemon-event route", () => {
       expect(response.status).toBe(200);
       // v1 signal inbox claim was NOT called (no insert into sdlcLoopSignalInbox)
       expect(dbMocks.signalInboxFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("acknowledges canonical-only event batches without legacy handling", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [createCanonicalRunStartedEvent()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        canonicalEventsPersisted: 1,
+      });
+      expect(appendCanonicalEventsBatch).toHaveBeenCalledTimes(1);
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when canonical persistence fails", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
+        {
+          success: false,
+          code: "seq_violation",
+          error: "Sequence collision",
+        },
+      ]);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          canonicalEvents: [createCanonicalRunStartedEvent()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-fail",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: "daemon_event_canonical_event_persist_failed",
+        code: "seq_violation",
+      });
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("processes ACK for pending dispatch intent", async () => {

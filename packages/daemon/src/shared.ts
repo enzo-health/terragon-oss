@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { Anthropic } from "@anthropic-ai/sdk";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import { AIAgentSchema } from "@terragon/agent/types";
 import type { ThreadMetaEvent } from "./codex-app-server";
 
@@ -390,6 +391,8 @@ export type DaemonEventAPIBody = {
   seq?: number;
   /** Git HEAD sha captured after the agent turn completes, before sending terminal message. */
   headShaAtCompletion?: string | null;
+  /** Canonical runtime events persisted before legacy thread patch handling. */
+  canonicalEvents?: CanonicalEvent[];
   /** Token-level deltas for streaming text to clients. */
   deltas?: DaemonDelta[];
   /**
