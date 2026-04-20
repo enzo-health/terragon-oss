@@ -21,10 +21,10 @@
 -- !! second run within a single thread_chat (the writer still emits per-run
 -- !! seq values until 2C).
 
-DROP INDEX IF EXISTS "agent_event_log_run_seq_unique";
---> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "agent_event_log_thread_chat_seq_unique"
   ON "agent_event_log" USING btree ("thread_chat_id", "seq");
+--> statement-breakpoint
+DROP INDEX IF EXISTS "agent_event_log_run_seq_unique";
 --> statement-breakpoint
 DROP INDEX IF EXISTS "token_stream_event_stream_seq_unique";
 --> statement-breakpoint

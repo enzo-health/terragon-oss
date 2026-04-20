@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./canonical-events": "./src/canonical-events.ts",
+    "./ag-ui-mapper": "./src/ag-ui-mapper.ts",
     "./utils": "./src/utils.ts",
     "./tool-calls": "./src/tool-calls.ts",
     "./types": "./src/types.ts",
@@ -20,6 +21,7 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@ag-ui/core": "0.0.52",
     "zod": "4.1.11"
   },
   "devDependencies": {

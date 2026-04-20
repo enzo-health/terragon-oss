@@ -635,7 +635,7 @@ importers:
   packages/agent:
     dependencies:
       '@ag-ui/core':
-        specifier: ^0.0.52
+        specifier: 0.0.52
         version: 0.0.52
       zod:
         specifier: 4.1.11
@@ -940,7 +940,7 @@ importers:
   packages/shared:
     dependencies:
       '@ag-ui/core':
-        specifier: ^0.0.52
+        specifier: 0.0.52
         version: 0.0.52
       '@anthropic-ai/sdk':
         specifier: ^0.52.0

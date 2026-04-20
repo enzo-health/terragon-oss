@@ -1,6 +1,5 @@
 import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
-import type { BaseEvent } from "@ag-ui/core";
-import { EventType } from "@ag-ui/core";
+import { EventType, type BaseEvent } from "@ag-ui/core";
 import type {
   BaseEventEnvelope,
   CanonicalEvent,
@@ -156,13 +155,17 @@ function isAgUiBaseEvent(payload: unknown): payload is BaseEvent {
  * TOOL_CALL_END). This shim returns only the FIRST expanded event, which is
  * sufficient for callers that just need to know the event shape/kind.
  *
+ * Some operational canonical events legitimately map to 0 AG-UI events
+ * (they're internal and have no user-facing representation); for those we
+ * return null silently — it's a recognized shape, just not renderable.
+ *
  * TODO: Callers that need to replay all AG-UI events for a legacy row must
  * iterate the full array from mapCanonicalEventToAgui. When that need arises,
  * expose a sibling function `readAllAgUiPayloads(row)` rather than changing
  * this signature.
  *
- * Returns null for rows whose payload matches neither shape; emits a
- * console.warn so the drift is observable.
+ * Returns null and logs a console.warn ONLY when the payload matches neither
+ * shape — that's real drift worth surfacing.
  */
 export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
   const payload = row.payloadJson;
@@ -173,10 +176,10 @@ export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
 
   const canonical = CanonicalEventSchema.safeParse(payload);
   if (canonical.success) {
-    const mapped = mapCanonicalEventToAgui(canonical.data);
-    if (mapped.length > 0) {
-      return mapped[0] ?? null;
-    }
+    const [first] = mapCanonicalEventToAgui(canonical.data);
+    // first is undefined for recognized canonical events that have no AG-UI
+    // projection (e.g. internal operational events) — return null silently.
+    return first ?? null;
   }
 
   console.warn(

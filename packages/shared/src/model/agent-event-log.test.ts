@@ -461,7 +461,7 @@ describe("agent-event-log", () => {
       const row = makeRow(agUiEvent, { eventType: "TEXT_MESSAGE_CONTENT" });
 
       const result = readAgUiPayload(row);
-      expect(result).toBe(agUiEvent);
+      expect(result).toEqual(agUiEvent);
       expect(result?.type).toBe(EventType.TEXT_MESSAGE_CONTENT);
     });
 
