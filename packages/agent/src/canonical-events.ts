@@ -46,7 +46,7 @@ export const BaseEventEnvelopeSchema = z
     threadChatId: ThreadChatIdSchema,
     seq: SeqSchema,
     timestamp: TimestampSchema,
-    idempotencyKey: z.string().min(1),
+    idempotencyKey: z.string().min(1).optional(),
   })
   .strict();
 export type BaseEventEnvelope = z.infer<typeof BaseEventEnvelopeSchema>;

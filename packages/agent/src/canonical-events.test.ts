@@ -24,9 +24,25 @@ const baseEnvelope = {
   idempotencyKey: "key-1",
 };
 
+const currentMainBaseEnvelope = {
+  payloadVersion: EVENT_ENVELOPE_VERSION,
+  eventId: "event-1",
+  runId: "run-1",
+  threadId: "thread-1",
+  threadChatId: "thread-chat-1",
+  seq: 0,
+  timestamp: "2026-04-17T12:00:00.000Z",
+};
+
 describe("canonical-events", () => {
   it("parses a valid base envelope", () => {
     expect(BaseEventEnvelopeSchema.parse(baseEnvelope)).toEqual(baseEnvelope);
+  });
+
+  it("parses the current main daemon envelope without idempotencyKey", () => {
+    expect(BaseEventEnvelopeSchema.parse(currentMainBaseEnvelope)).toEqual(
+      currentMainBaseEnvelope,
+    );
   });
 
   it("rejects negative seq values", () => {
