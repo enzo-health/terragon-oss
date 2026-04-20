@@ -1,7 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
-import { EventType, type CustomEvent } from "@ag-ui/core";
+import { EventType, type CustomEvent as AgUiCustomEvent } from "@ag-ui/core";
 import { useEffect, useRef } from "react";
 
 /**
@@ -15,33 +15,41 @@ import { useEffect, useRef } from "react";
  * subscription. This avoids tearing down the subscription on every render
  * when callers pass inline arrow functions.
  *
+ * Thrown errors from `onEvent` are caught and logged — they must not
+ * propagate into the `HttpAgent` dispatch loop (mirrors the tolerance of
+ * the prior PartySocket path).
+ *
  * The underlying `HttpAgent.subscribe()` returns `{ unsubscribe }` — the
  * cleanup function calls that, so no stream leaks across agent swaps.
  */
 export function useAgUiCustomEvents(
   agent: HttpAgent | null,
   filter: (name: string) => boolean,
-  onEvent: (event: CustomEvent) => void,
+  onEvent: (event: AgUiCustomEvent) => void,
 ): void {
-  // Track latest callbacks in a ref so the subscription doesn't tear down
-  // when the parent passes new inline closures each render.
   const filterRef = useRef(filter);
   const onEventRef = useRef(onEvent);
-  useEffect(() => {
-    filterRef.current = filter;
-  }, [filter]);
-  useEffect(() => {
-    onEventRef.current = onEvent;
-  }, [onEvent]);
+  // Write refs in render so the subscription always reads the latest callbacks
+  // even if `agent` changes in the same render as the callbacks. Using a
+  // separate useEffect would run AFTER the subscription effect and open a
+  // narrow window where the handler is called with stale refs.
+  filterRef.current = filter;
+  onEventRef.current = onEvent;
 
   useEffect(() => {
     if (!agent) return;
     const subscription = agent.subscribe({
       onEvent: ({ event }) => {
         if (event.type !== EventType.CUSTOM) return;
-        const custom = event as CustomEvent;
+        const custom = event as AgUiCustomEvent;
         if (!filterRef.current(custom.name)) return;
-        onEventRef.current(custom);
+        try {
+          onEventRef.current(custom);
+        } catch (err) {
+          // Never let a handler error propagate into the HttpAgent dispatch
+          // loop; swallow and log so the subscription stays healthy.
+          console.error("[useAgUiCustomEvents] onEvent handler threw", err);
+        }
       },
     });
     return () => {

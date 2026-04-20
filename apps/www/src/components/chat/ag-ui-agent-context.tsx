@@ -1,7 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
-import { createContext, useContext, type ReactNode } from "react";
+import React, { createContext, useContext, type ReactNode } from "react";
 
 /**
  * Shares the current thread's AG-UI `HttpAgent` with descendants that need
