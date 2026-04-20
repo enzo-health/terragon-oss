@@ -5,6 +5,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./canonical-events": "./src/canonical-events.ts",
     "./utils": "./src/utils.ts",
     "./tool-calls": "./src/tool-calls.ts",
     "./types": "./src/types.ts",
