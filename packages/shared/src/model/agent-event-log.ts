@@ -559,6 +559,50 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
   return entries;
 }
 
+/**
+ * Fetch AG-UI BaseEvents for a thread chat with `seq > fromSeq`, ordered by
+ * seq ascending. Used by the AG-UI SSE endpoint for the initial replay burst.
+ *
+ * Rows that cannot be mapped to an AG-UI event (e.g. operational canonical
+ * events with no user-facing projection, or unknown payload shapes) are
+ * silently skipped — readAgUiPayload already warns on truly unrecognized
+ * payloads.
+ */
+export async function getAgUiEventsForReplay({
+  db,
+  threadChatId,
+  fromSeq,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+  fromSeq: number;
+}): Promise<BaseEvent[]> {
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: and(
+        eq(schema.agentEventLog.threadChatId, threadChatId),
+        gt(schema.agentEventLog.seq, fromSeq),
+      ),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  const events: BaseEvent[] = [];
+  for (const row of rows) {
+    const mapped = readAgUiPayload(row);
+    if (mapped !== null) {
+      events.push(mapped);
+    }
+  }
+  return events;
+}
+
 export async function getRunEvents({
   db,
   runId,
