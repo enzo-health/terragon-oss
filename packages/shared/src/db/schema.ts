@@ -474,6 +474,44 @@ export const agentRunContext = pgTable(
   ],
 );
 
+export const agentEventLog = pgTable(
+  "agent_event_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    eventId: text("event_id").notNull(),
+    runId: text("run_id").notNull(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id").notNull(),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    eventType: text("event_type").notNull(),
+    category: text("category").notNull(),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    timestamp: timestamp("timestamp", { mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("agent_event_log_run_event_unique").on(
+      table.runId,
+      table.eventId,
+    ),
+    uniqueIndex("agent_event_log_run_seq_unique").on(table.runId, table.seq),
+    index("agent_event_log_run_seq_idx").on(table.runId, table.seq),
+    index("agent_event_log_thread_seq_idx").on(table.threadId, table.seq),
+    index("agent_event_log_thread_chat_seq_idx").on(
+      table.threadChatId,
+      table.seq,
+    ),
+    index("agent_event_log_timestamp_idx").on(table.timestamp),
+  ],
+);
+
 export const tokenStreamEvent = pgTable(
   "token_stream_event",
   {

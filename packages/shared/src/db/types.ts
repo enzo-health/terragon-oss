@@ -48,6 +48,8 @@ export type Thread = typeof schema.thread.$inferSelect;
 export type ThreadChat = typeof schema.threadChat.$inferSelect;
 export type AgentRunContext = typeof schema.agentRunContext.$inferSelect;
 export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
+export type AgentEventLog = typeof schema.agentEventLog.$inferSelect;
+export type AgentEventLogInsert = typeof schema.agentEventLog.$inferInsert;
 export type TokenStreamEvent = typeof schema.tokenStreamEvent.$inferSelect;
 export type TokenStreamEventInsert =
   typeof schema.tokenStreamEvent.$inferInsert;
