@@ -3,18 +3,17 @@ import type {
   ThreadMetaEvent,
   BootingSubstatus,
 } from "@terragon/shared/delivery-loop/thread-meta-event";
-import {
-  getThreadPatches,
-  shouldProcessThreadPatch,
-  useRealtimeUser,
-} from "@/hooks/useRealtime";
+import type { CustomEvent as AgUiCustomEvent } from "@ag-ui/core";
+import { useAgUiAgent } from "../ag-ui-agent-context";
+import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
 
 /**
  * Snapshot of the latest known meta event values for a thread.
  *
- * Populated via `useRealtimeUser` inside this hook — each incoming
- * BroadcastThreadPatch for the target thread is scanned for `metaEvents`
- * and each one is dispatched through the reducer.
+ * Populated via `useAgUiCustomEvents` — the backend wraps each
+ * `ThreadMetaEvent` as an AG-UI `CUSTOM` event (`name = meta.kind`,
+ * `value = meta`) and publishes it on the SSE stream attached to the
+ * thread's `HttpAgent`.
  */
 export interface ThreadMetaSnapshot {
   /** Latest cumulative token usage for this thread's session. */
@@ -173,57 +172,61 @@ const INITIAL: ThreadMetaSnapshot = {
 };
 
 /**
+ * Known `ThreadMetaEvent.kind` values routed through AG-UI CUSTOM events.
+ * Kept in sync with `packages/shared/src/delivery-loop/thread-meta-event.ts`.
+ * Events NOT in this set are ignored; callers relying on additional kinds
+ * must extend this list AND the reducer above.
+ */
+const THREAD_META_EVENT_KINDS = new Set<string>([
+  "thread.token_usage_updated",
+  "account.rate_limits_updated",
+  "model.rerouted",
+  "mcp_server.startup_status_updated",
+  "thread.status_changed",
+  "config.warning",
+  "deprecation.notice",
+  "session.initialized",
+  "usage.incremental",
+  "message.stop",
+  "boot.substatus_changed",
+  "install.progress",
+]);
+
+function isThreadMetaKind(name: string): boolean {
+  return THREAD_META_EVENT_KINDS.has(name);
+}
+
+/**
  * Accumulates `ThreadMetaEvent`s emitted from the daemon and exposes the
  * latest snapshot for each category.
  *
- * Subscribes to the user realtime channel and filters incoming broadcast
- * patches for ones targeting `threadId` that carry a `metaEvents` array.
- * Each event is dispatched through the reducer so status chips re-render
- * without refetching chat messages.
+ * Subscribes to the AG-UI `HttpAgent` (via `AgUiAgentProvider` in ChatUI)
+ * and filters for CUSTOM events whose `name` matches a known
+ * `ThreadMetaEvent` kind. Each event's `value` is cast to `ThreadMetaEvent`
+ * and dispatched through the reducer so chips re-render without touching
+ * the chat message stream.
+ *
+ * `threadId` is retained for API compatibility — the AG-UI stream is
+ * already scoped to a single thread so we don't need to filter here.
  */
-export function useThreadMetaEvents(threadId: string): {
+export function useThreadMetaEvents(_threadId: string): {
   snapshot: ThreadMetaSnapshot;
   dispatch: (action: Action) => void;
 } {
   const [snapshot, dispatch] = useReducer(reducer, INITIAL);
+  const agent = useAgUiAgent();
 
-  const onMessage = useCallback(
-    (message: Parameters<typeof getThreadPatches>[0]) => {
-      for (const patch of getThreadPatches(message)) {
-        if (
-          !shouldProcessThreadPatch({
-            patch,
-            threadId,
-            threadChatId: undefined,
-          })
-        ) {
-          continue;
-        }
-        const metaEvents = (patch as { metaEvents?: unknown[] }).metaEvents;
-        if (!Array.isArray(metaEvents)) continue;
-        for (const raw of metaEvents) {
-          if (raw && typeof raw === "object" && "kind" in raw) {
-            dispatch({ event: raw as ThreadMetaEvent });
-          }
-        }
+  const onCustomEvent = useCallback(
+    (event: AgUiCustomEvent) => {
+      const value = event.value;
+      if (value && typeof value === "object" && "kind" in value) {
+        dispatch({ event: value as ThreadMetaEvent });
       }
     },
-    [threadId],
+    [dispatch],
   );
 
-  useRealtimeUser({
-    matches: (message) => {
-      const patches = getThreadPatches(message);
-      return patches.some(
-        (p) =>
-          p.threadId === threadId &&
-          Array.isArray((p as { metaEvents?: unknown[] }).metaEvents),
-      );
-    },
-    onMessage,
-    // Meta chips should feel live — no debounce delay on chip updates.
-    debounceMs: 0,
-  });
+  useAgUiCustomEvents(agent, isThreadMetaKind, onCustomEvent);
 
   return { snapshot, dispatch };
 }

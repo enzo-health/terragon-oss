@@ -30,6 +30,7 @@ import { retryThread } from "@/server-actions/retry-thread";
 import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
 import { stopThread } from "@/server-actions/stop-thread";
 import { TerragonThread } from "./assistant-ui/terragon-thread";
+import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -690,7 +691,7 @@ function ChatUI({
     );
   }
   return (
-    <>
+    <AgUiAgentProvider agent={agent}>
       <div className="flex flex-col h-full w-full">
         <ChatHeader
           thread={thread}
@@ -818,7 +819,7 @@ function ChatUI({
           onClose={() => setShowTerminal(false)}
         />
       )}
-    </>
+    </AgUiAgentProvider>
   );
 }
 
