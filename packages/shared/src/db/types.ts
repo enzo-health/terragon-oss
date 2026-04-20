@@ -511,6 +511,7 @@ export type ThreadPageChat = ThreadChatInfoFull & {
   messageCount: number;
   chatSequence: number | null;
   patchVersion: number | null;
+  projectedMessages: ThreadChat["messages"];
 };
 
 export type ThreadPageDiff = Pick<

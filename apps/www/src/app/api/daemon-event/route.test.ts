@@ -12,6 +12,10 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
+import {
+  getThreadMinimal,
+  touchThreadChatUpdatedAt,
+} from "@terragon/shared/model/threads";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
@@ -20,12 +24,19 @@ import {
 } from "@terragon/daemon/shared";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { appendCanonicalEventsBatch } from "@terragon/shared/model/agent-event-log";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import { assignThreadChatMessageSeqToCanonicalEvents } from "@terragon/shared/model/agent-event-log";
+import {
+  appendTokenStreamEvents,
+  assignPendingTokenStreamEventsToThreadChatMessageSeq,
+  getPendingTokenStreamEventFinalizationUpperBound,
+} from "@terragon/shared/model/token-stream-event";
 import {
   publishBroadcastUserMessage,
   publishDeltaBroadcast,
 } from "@terragon/shared/broadcast-server";
 import { env } from "@terragon/env/apps-www";
+import { extendSandboxLife } from "@terragon/sandbox";
+import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 
 const LEGACY_THREAD_CHAT_ID = "legacy-thread-chat-id";
 
@@ -123,10 +134,13 @@ const deliveryLoopModelMocks = vi.hoisted(() => ({
 
 const tokenStreamMocks = vi.hoisted(() => ({
   appendTokenStreamEvents: vi.fn(),
+  assignPendingTokenStreamEventsToThreadChatMessageSeq: vi.fn(),
+  getPendingTokenStreamEventFinalizationUpperBound: vi.fn(),
 }));
 
 const canonicalEventLogMocks = vi.hoisted(() => ({
   appendCanonicalEventsBatch: vi.fn(),
+  assignThreadChatMessageSeqToCanonicalEvents: vi.fn(),
 }));
 
 const deltaBroadcastMocks = vi.hoisted(() => ({
@@ -189,7 +203,12 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
 vi.mock("@terragon/shared/model/threads", () => ({
   getThreadChat: vi.fn(),
   getThreadMinimal: vi.fn(),
+  touchThreadChatUpdatedAt: vi.fn(),
   updateThreadChat: vi.fn(),
+}));
+
+vi.mock("@terragon/sandbox", () => ({
+  extendSandboxLife: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock update-status to isolate the route from the real thread state-machine logic.
@@ -203,10 +222,16 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
 
 vi.mock("@terragon/shared/model/token-stream-event", () => ({
   appendTokenStreamEvents: tokenStreamMocks.appendTokenStreamEvents,
+  assignPendingTokenStreamEventsToThreadChatMessageSeq:
+    tokenStreamMocks.assignPendingTokenStreamEventsToThreadChatMessageSeq,
+  getPendingTokenStreamEventFinalizationUpperBound:
+    tokenStreamMocks.getPendingTokenStreamEventFinalizationUpperBound,
 }));
 
 vi.mock("@terragon/shared/model/agent-event-log", () => ({
   appendCanonicalEventsBatch: canonicalEventLogMocks.appendCanonicalEventsBatch,
+  assignThreadChatMessageSeqToCanonicalEvents:
+    canonicalEventLogMocks.assignThreadChatMessageSeqToCanonicalEvents,
 }));
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
@@ -222,6 +247,10 @@ vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
 vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
   getWorkflowHead: v3BridgeMocks.getWorkflowHead,
   getActiveWorkflowForThread: v3BridgeMocks.getActiveWorkflowForThread,
+}));
+
+vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
+  getDaemonEventDbPreflight: vi.fn(),
 }));
 
 const redisMocks = vi.hoisted(() => {
@@ -394,7 +423,10 @@ describe("daemon-event route", () => {
     vi.mocked(markDispatchIntentDispatched).mockResolvedValue(undefined);
     vi.mocked(markDispatchIntentCompleted).mockResolvedValue(undefined);
     vi.mocked(markDispatchIntentFailed).mockResolvedValue(undefined);
-    vi.mocked(handleDaemonEvent).mockResolvedValue({ success: true });
+    vi.mocked(handleDaemonEvent).mockResolvedValue({
+      success: true,
+      threadChatMessageSeq: null,
+    });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: false,
       dispatchLaunched: false,
@@ -433,8 +465,28 @@ describe("daemon-event route", () => {
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.updateReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.signalInboxFindFirst.mockResolvedValue(null);
+    vi.mocked(getThreadMinimal).mockResolvedValue({
+      id: "thread-1",
+      userId: "user-1",
+      codesandboxId: null,
+      sandboxProvider: null,
+    } as unknown as Awaited<ReturnType<typeof getThreadMinimal>>);
+    vi.mocked(touchThreadChatUpdatedAt).mockResolvedValue(undefined);
+    vi.mocked(extendSandboxLife).mockResolvedValue(undefined);
+    vi.mocked(getDaemonEventDbPreflight).mockResolvedValue({
+      agentEventLogReady: true,
+      tokenStreamEventReady: true,
+      agentRunContextFailureColumnsReady: true,
+      missing: [],
+    });
     vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([]);
     vi.mocked(appendTokenStreamEvents).mockResolvedValue([]);
+    vi.mocked(
+      assignPendingTokenStreamEventsToThreadChatMessageSeq,
+    ).mockResolvedValue(undefined);
+    vi.mocked(
+      getPendingTokenStreamEventFinalizationUpperBound,
+    ).mockResolvedValue(9);
     vi.mocked(publishDeltaBroadcast).mockResolvedValue(undefined);
   });
 
@@ -578,8 +630,10 @@ describe("daemon-event route", () => {
         id: "e-5",
         streamSeq: 5,
         userId: "user-1",
+        runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
+        threadChatMessageSeq: null,
         messageId: "m",
         partIndex: 0,
         partType: "text",
@@ -591,8 +645,10 @@ describe("daemon-event route", () => {
         id: "e-3",
         streamSeq: 3,
         userId: "user-1",
+        runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
+        threadChatMessageSeq: null,
         messageId: "m",
         partIndex: 0,
         partType: "text",
@@ -604,8 +660,10 @@ describe("daemon-event route", () => {
         id: "e-4",
         streamSeq: 4,
         userId: "user-1",
+        runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
+        threadChatMessageSeq: null,
         messageId: "m",
         partIndex: 0,
         partType: "text",
@@ -649,9 +707,11 @@ describe("daemon-event route", () => {
       expect.objectContaining({
         events: [
           expect.objectContaining({
+            runId: "run-1",
             idempotencyKey: "chat-1:event-1:8:0",
           }),
           expect.objectContaining({
+            runId: "run-1",
             idempotencyKey: "chat-1:event-1:8:1",
           }),
         ],
@@ -672,6 +732,136 @@ describe("daemon-event route", () => {
     expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ deltaSeq: 5, deltaIdempotencyKey: "k-5" }),
+    );
+  });
+
+  it("skips token replay assignment when token-stream schema is not ready", async () => {
+    vi.mocked(getDaemonEventDbPreflight).mockResolvedValue({
+      agentEventLogReady: true,
+      tokenStreamEventReady: false,
+      agentRunContextFailureColumnsReady: true,
+      missing: ["token_stream_event.thread_chat_message_seq"],
+    });
+    vi.mocked(handleDaemonEvent).mockResolvedValue({
+      success: true,
+      threadChatMessageSeq: 12,
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      assignPendingTokenStreamEventsToThreadChatMessageSeq,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize pending token replay rows on terminal-only appends", async () => {
+    vi.mocked(handleDaemonEvent).mockResolvedValue({
+      success: true,
+      threadChatMessageSeq: 12,
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [createSuccessResultMessage()],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      assignPendingTokenStreamEventsToThreadChatMessageSeq,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("finalizes pending token replay rows when an assistant message materializes", async () => {
+    vi.mocked(handleDaemonEvent).mockResolvedValue({
+      success: true,
+      threadChatMessageSeq: 12,
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "assistant",
+            message: { content: "working" },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      assignPendingTokenStreamEventsToThreadChatMessageSeq,
+    ).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      runId: "run-1",
+      threadChatId: "chat-1",
+      threadChatMessageSeq: 12,
+      maxStreamSeq: 9,
+    });
+    expect(
+      vi.mocked(getPendingTokenStreamEventFinalizationUpperBound).mock
+        .invocationCallOrder[0] ?? Infinity,
+    ).toBeLessThan(
+      vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
+    );
+  });
+
+  it("finalizes pending token replay rows for thinking-only assistant materialization", async () => {
+    vi.mocked(handleDaemonEvent).mockResolvedValue({
+      success: true,
+      threadChatMessageSeq: 12,
+    });
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              content: [{ type: "thinking", thinking: "private chain" }],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      assignPendingTokenStreamEventsToThreadChatMessageSeq,
+    ).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      runId: "run-1",
+      threadChatId: "chat-1",
+      threadChatMessageSeq: 12,
+      maxStreamSeq: 9,
+    });
+    expect(
+      vi.mocked(getPendingTokenStreamEventFinalizationUpperBound).mock
+        .invocationCallOrder[0] ?? Infinity,
+    ).toBeLessThan(
+      vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
     );
   });
 
@@ -903,6 +1093,65 @@ describe("daemon-event route", () => {
     expect(data.reason).toBe("run_terminal_ignored");
     expect(data.acknowledgedEventId).toBe("event-terminal");
     expect(data.acknowledgedSeq).toBe(0);
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
+  });
+
+  it("persists canonical events before returning run_terminal_ignored", async () => {
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      agent: "claudeCode",
+      permissionMode: "allowAll",
+      requestedSessionId: null,
+      resolvedSessionId: null,
+      status: "completed",
+      tokenNonce: "nonce-1",
+      daemonTokenKeyId: "api-key-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
+      {
+        success: true,
+        inserted: true,
+        eventId: "canonical-event-1",
+        seq: 0,
+        runId: "run-1",
+      },
+    ]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-terminal",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(data.reason).toBe("run_terminal_ignored");
+    expect(appendCanonicalEventsBatch).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      events: [createCanonicalRunStartedEvent()],
+    });
+    expect(
+      vi.mocked(appendCanonicalEventsBatch).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      dispatchIntentMocks.getReplayableSelfDispatch.mock
+        .invocationCallOrder[0] ?? Infinity,
+    );
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
@@ -1922,7 +2171,10 @@ describe("daemon-event route", () => {
         error: "temporary failure",
         status: 503,
       })
-      .mockResolvedValue({ success: true });
+      .mockResolvedValue({
+        success: true,
+        threadChatMessageSeq: null,
+      });
 
     // First request: claim succeeds (set returns "OK"), handleDaemonEvent fails
     // Second request: claim succeeds again (set returns "OK"), handleDaemonEvent succeeds
@@ -2298,6 +2550,49 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("assigns the resulting thread chat replay sequence back onto canonical events", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(handleDaemonEvent).mockResolvedValue({
+        success: true,
+        threadChatMessageSeq: 12,
+      });
+
+      const canonicalEvent = createCanonicalRunStartedEvent();
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          canonicalEvents: [canonicalEvent],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-replay-seq",
+          runId: "run-1",
+          seq: 11,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(
+        assignPendingTokenStreamEventsToThreadChatMessageSeq,
+      ).not.toHaveBeenCalled();
+      expect(assignThreadChatMessageSeqToCanonicalEvents).toHaveBeenCalledWith({
+        db: dbMocks.db,
+        eventIds: [canonicalEvent.eventId],
+        threadChatMessageSeq: 12,
+      });
+      expect(
+        vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
+      ).toBeLessThan(
+        vi.mocked(assignThreadChatMessageSeqToCanonicalEvents).mock
+          .invocationCallOrder[0] ?? Infinity,
+      );
+    });
+
     it("passes the fetched runContext and fallback workflowId to handleDaemonEvent", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
@@ -2416,6 +2711,21 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
+      vi.mocked(getThreadMinimal).mockResolvedValue({
+        id: "thread-1",
+        userId: "user-1",
+        codesandboxId: "sandbox-2",
+        sandboxProvider: "docker",
+      } as unknown as Awaited<ReturnType<typeof getThreadMinimal>>);
+      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
+        {
+          success: true,
+          inserted: true,
+          eventId: "canonical-event-1",
+          seq: 0,
+          runId: "run-1",
+        },
+      ]);
 
       const response = await POST(
         createDaemonRequest({
@@ -2435,8 +2745,112 @@ describe("daemon-event route", () => {
       expect(await response.json()).toMatchObject({
         success: true,
         canonicalEventsPersisted: 1,
+        canonicalEventsDeduplicated: 0,
       });
       expect(appendCanonicalEventsBatch).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(touchThreadChatUpdatedAt).toHaveBeenCalledWith({
+          db: dbMocks.db,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        });
+      });
+      await vi.waitFor(() => {
+        expect(extendSandboxLife).toHaveBeenCalledWith({
+          sandboxId: "sandbox-2",
+          sandboxProvider: "docker",
+        });
+      });
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    it("reports deduplicated canonical-only batches without overcounting inserts", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
+        {
+          success: true,
+          inserted: false,
+          deduplicated: true,
+          reason: "duplicate_event",
+          eventId: "canonical-event-1",
+          seq: 0,
+          runId: "run-1",
+        },
+      ]);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [createCanonicalRunStartedEvent()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only-dup",
+          runId: "run-1",
+          seq: 11,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        canonicalEventsPersisted: 0,
+        canonicalEventsDeduplicated: 1,
+      });
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    it("keeps canonical-only acknowledgements successful when freshness work fails", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
+        {
+          success: true,
+          inserted: true,
+          eventId: "canonical-event-1",
+          seq: 0,
+          runId: "run-1",
+        },
+      ]);
+      vi.mocked(touchThreadChatUpdatedAt).mockRejectedValue(
+        new Error("touch failed"),
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [createCanonicalRunStartedEvent()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only-touch-fail",
+          runId: "run-1",
+          seq: 12,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        canonicalEventsPersisted: 1,
+        canonicalEventsDeduplicated: 0,
+      });
+      await vi.waitFor(() => {
+        expect(touchThreadChatUpdatedAt).toHaveBeenCalledWith({
+          db: dbMocks.db,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        });
+      });
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 

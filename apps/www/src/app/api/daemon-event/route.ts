@@ -35,8 +35,21 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { appendCanonicalEventsBatch } from "@terragon/shared/model/agent-event-log";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import {
+  assignThreadChatMessageSeqToCanonicalEvents,
+  appendCanonicalEventsBatch,
+} from "@terragon/shared/model/agent-event-log";
+import {
+  appendTokenStreamEvents,
+  assignPendingTokenStreamEventsToThreadChatMessageSeq,
+  getPendingTokenStreamEventFinalizationUpperBound,
+} from "@terragon/shared/model/token-stream-event";
+import {
+  getThreadMinimal,
+  touchThreadChatUpdatedAt,
+} from "@terragon/shared/model/threads";
+import { extendSandboxLife } from "@terragon/sandbox";
+import { waitUntil } from "@vercel/functions";
 import { and, eq } from "drizzle-orm";
 import {
   isLocalRedisHttpMode,
@@ -97,6 +110,16 @@ type TerminalAckState =
       kind: "self_dispatch";
       selfDispatch: SdlcSelfDispatchPayload;
     });
+
+type CanonicalPersistenceSummary = {
+  attempted: number;
+  inserted: number;
+  deduplicated: number;
+};
+
+type CanonicalEventsPayload = NonNullable<
+  DaemonEventAPIBody["canonicalEvents"]
+>;
 
 function getDeltaSeqMaxRedisKey(sequenceKey: string): string {
   return `sdlc:delta-seq-max:${sequenceKey}`;
@@ -448,7 +471,7 @@ function canonicalEventFailureStatus(
 }
 
 function findCanonicalEventContextMismatch(params: {
-  canonicalEvents: NonNullable<DaemonEventAPIBody["canonicalEvents"]>;
+  canonicalEvents: CanonicalEventsPayload;
   runId: string;
   threadId: string;
   threadChatId: string;
@@ -468,6 +491,100 @@ function findCanonicalEventContextMismatch(params: {
   return null;
 }
 
+async function persistCanonicalEventsOrResponse(params: {
+  canonicalEvents: CanonicalEventsPayload | null;
+  canPersistCanonicalEvents: boolean;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+}): Promise<
+  | { summary: CanonicalPersistenceSummary; response?: undefined }
+  | { summary?: undefined; response: Response }
+> {
+  const canonicalEvents = params.canonicalEvents;
+  if (!canonicalEvents || canonicalEvents.length === 0) {
+    return {
+      summary: {
+        attempted: 0,
+        inserted: 0,
+        deduplicated: 0,
+      },
+    };
+  }
+
+  if (!params.canPersistCanonicalEvents) {
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+        { status: 503 },
+      ),
+    };
+  }
+
+  const contextMismatch = findCanonicalEventContextMismatch({
+    canonicalEvents,
+    runId: params.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+  });
+  if (contextMismatch) {
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  const canonicalResults = await appendCanonicalEventsBatch({
+    db,
+    events: canonicalEvents,
+  });
+  const canonicalFailure = canonicalResults.find((result) => !result.success);
+  if (canonicalFailure && !canonicalFailure.success) {
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: canonicalFailure.code,
+          detail: canonicalFailure.error,
+        },
+        { status: canonicalEventFailureStatus(canonicalFailure.code) },
+      ),
+    };
+  }
+
+  let inserted = 0;
+  let deduplicated = 0;
+  for (const result of canonicalResults) {
+    if (!result.success) {
+      continue;
+    }
+    if (result.inserted) {
+      inserted += 1;
+    } else {
+      deduplicated += 1;
+    }
+  }
+
+  return {
+    summary: {
+      attempted: canonicalEvents.length,
+      inserted,
+      deduplicated,
+    },
+  };
+}
+
 function deriveSessionIdFromMessages(
   messages: DaemonEventAPIBody["messages"],
 ): string | null {
@@ -479,6 +596,51 @@ function deriveSessionIdFromMessages(
     }
   }
   return null;
+}
+
+function hasMaterializedAssistantMessage(
+  messages: DaemonEventAPIBody["messages"],
+): boolean {
+  for (const message of messages) {
+    if (message?.type !== "assistant") {
+      continue;
+    }
+    const content = message.message?.content;
+    if (typeof content === "string") {
+      if (content.length > 0) {
+        return true;
+      }
+      continue;
+    }
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const block of content) {
+      if (!block || typeof block !== "object") {
+        continue;
+      }
+      const record = block as {
+        type?: unknown;
+        text?: unknown;
+        thinking?: unknown;
+      };
+      if (
+        record.type === "text" &&
+        typeof record.text === "string" &&
+        record.text.length > 0
+      ) {
+        return true;
+      }
+      if (
+        record.type === "thinking" &&
+        typeof record.thinking === "string" &&
+        record.thinking.length > 0
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function deriveRunStatusFromMessages(
@@ -925,31 +1087,6 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    if (
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      const replayedSelfDispatch = await getReplayableSelfDispatch({
-        threadChatId,
-        sourceEventId: envelopeV2.eventId,
-        sourceSeq: envelopeV2.seq,
-        sourceRunId: runContext.runId,
-      });
-      return jsonTerminalAckResponse(
-        buildTerminalAckState(
-          {
-            status: 202,
-            deduplicated: true,
-            reason: "run_terminal_ignored",
-            runId: runContext.runId,
-            acknowledgedEventId: envelopeV2.eventId,
-            acknowledgedSeq: envelopeV2.seq,
-          },
-          replayedSelfDispatch,
-        ),
-      );
-    }
   }
 
   if (claims) {
@@ -1040,81 +1177,52 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    if (
-      runContext.status === "completed" ||
+  }
+
+  const canonicalPersistence = await persistCanonicalEventsOrResponse({
+    canonicalEvents,
+    canPersistCanonicalEvents,
+    runId: runContext.runId,
+    threadId,
+    threadChatId,
+  });
+  if (canonicalPersistence.response) {
+    return canonicalPersistence.response;
+  }
+
+  const shouldIgnoreTerminalRun =
+    runContext !== null &&
+    (claims !== null || (usingDaemonTestAuth && envelopeV2 !== null)) &&
+    (runContext.status === "completed" ||
       runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      const replayedSelfDispatch = envelopeV2
-        ? await getReplayableSelfDispatch({
-            threadChatId,
-            sourceEventId: envelopeV2.eventId,
-            sourceSeq: envelopeV2.seq,
-            sourceRunId: runContext.runId,
-          })
-        : null;
-      return jsonTerminalAckResponse(
-        buildTerminalAckState(
-          {
-            status: 202,
-            deduplicated: true,
-            reason: "run_terminal_ignored",
-            runId: runContext.runId,
-            acknowledgedEventId: envelopeV2?.eventId ?? null,
-            acknowledgedSeq: envelopeV2?.seq ?? null,
-          },
-          replayedSelfDispatch,
-        ),
-      );
-    }
+      runContext.status === "stopped");
+  if (shouldIgnoreTerminalRun) {
+    const replayedSelfDispatch = envelopeV2
+      ? await getReplayableSelfDispatch({
+          threadChatId,
+          sourceEventId: envelopeV2.eventId,
+          sourceSeq: envelopeV2.seq,
+          sourceRunId: runContext.runId,
+        })
+      : null;
+    return jsonTerminalAckResponse(
+      buildTerminalAckState(
+        {
+          status: 202,
+          deduplicated: true,
+          reason: "run_terminal_ignored",
+          runId: runContext.runId,
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
+        },
+        replayedSelfDispatch,
+      ),
+    );
   }
 
-  if (canonicalEvents && canonicalEvents.length > 0) {
-    if (!canPersistCanonicalEvents) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_persistence_unavailable",
-        },
-        { status: 503 },
-      );
-    }
-
-    const contextMismatch = findCanonicalEventContextMismatch({
-      canonicalEvents,
-      runId: runContext.runId,
-      threadId,
-      threadChatId,
-    });
-    if (contextMismatch) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_context_mismatch",
-          eventId: contextMismatch.eventId,
-          reason: contextMismatch.reason,
-        },
-        { status: 409 },
-      );
-    }
-
-    const canonicalResults = await appendCanonicalEventsBatch({
-      db,
-      events: canonicalEvents,
-    });
-    const canonicalFailure = canonicalResults.find((result) => !result.success);
-    if (canonicalFailure && !canonicalFailure.success) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_persist_failed",
-          code: canonicalFailure.code,
-          detail: canonicalFailure.error,
-        },
-        { status: canonicalEventFailureStatus(canonicalFailure.code) },
-      );
-    }
-  }
+  const shouldFinalizeMaterializedAssistantTokens =
+    canPersistTokenStreamEvents && hasMaterializedAssistantMessage(messages);
+  let tokenFinalizationUpperBound: number | null = null;
 
   if (deltas && deltas.length > 0) {
     const deltaRunId = authoritativeRunId;
@@ -1143,6 +1251,7 @@ export async function POST(request: Request) {
             db,
             events: acceptedDeltas.map((delta, index) => ({
               userId,
+              runId: deltaRunId,
               threadId,
               threadChatId,
               messageId: delta.messageId,
@@ -1244,6 +1353,15 @@ export async function POST(request: Request) {
     }
   }
 
+  if (shouldFinalizeMaterializedAssistantTokens) {
+    tokenFinalizationUpperBound =
+      await getPendingTokenStreamEventFinalizationUpperBound({
+        db,
+        runId: authoritativeRunId,
+        threadChatId,
+      });
+  }
+
   // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
   // run-context status transitions — just extend sandbox life + refresh updatedAt.
   if (
@@ -1273,9 +1391,42 @@ export async function POST(request: Request) {
     canonicalEvents &&
     canonicalEvents.length > 0
   ) {
+    waitUntil(
+      (async () => {
+        try {
+          await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+        } catch (error) {
+          console.warn("[daemon-event] canonical-only freshness touch failed", {
+            threadId,
+            threadChatId,
+            error,
+          });
+        }
+      })(),
+    );
+    waitUntil(
+      (async () => {
+        try {
+          const thread = await getThreadMinimal({ db, threadId, userId });
+          if (thread?.codesandboxId && thread.sandboxProvider) {
+            await extendSandboxLife({
+              sandboxId: thread.codesandboxId,
+              sandboxProvider: thread.sandboxProvider,
+            });
+          }
+        } catch (error) {
+          console.warn("[daemon-event] canonical-only thread refresh failed", {
+            threadId,
+            threadChatId,
+            error,
+          });
+        }
+      })(),
+    );
     return Response.json({
       success: true,
-      canonicalEventsPersisted: canonicalEvents.length,
+      canonicalEventsPersisted: canonicalPersistence.summary.inserted,
+      canonicalEventsDeduplicated: canonicalPersistence.summary.deduplicated,
     });
   }
 
@@ -1447,6 +1598,25 @@ export async function POST(request: Request) {
       });
     }
     return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (result.threadChatMessageSeq != null) {
+    if (tokenFinalizationUpperBound !== null) {
+      await assignPendingTokenStreamEventsToThreadChatMessageSeq({
+        db,
+        runId: authoritativeRunId,
+        threadChatId,
+        threadChatMessageSeq: result.threadChatMessageSeq,
+        maxStreamSeq: tokenFinalizationUpperBound,
+      });
+    }
+    if (canonicalEvents && canonicalEvents.length > 0) {
+      await assignThreadChatMessageSeqToCanonicalEvents({
+        db,
+        eventIds: canonicalEvents.map((event) => event.eventId),
+        threadChatMessageSeq: result.threadChatMessageSeq,
+      });
+    }
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);

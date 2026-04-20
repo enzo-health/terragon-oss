@@ -24,7 +24,6 @@ type UseRealtimeThreadMock = (
   replayBaseline?:
     | {
         messageSeq: number | null;
-        deltaSeq?: number | null;
       }
     | undefined,
 ) => { socketReadyState: number };
@@ -60,7 +59,6 @@ function TestHarness({
   enabled?: boolean;
   replayBaseline?: {
     messageSeq: number | null;
-    deltaSeq?: number | null;
   };
 }): null {
   useDeliveryLoopStatusRealtime({
@@ -258,7 +256,7 @@ describe("useDeliveryLoopStatusRealtime", () => {
           threadId="thread-1"
           threadChatId="chat-1"
           onThreadPatches={onThreadPatches}
-          replayBaseline={{ messageSeq: 7, deltaSeq: 13 }}
+          replayBaseline={{ messageSeq: 7 }}
         />
       </QueryClientProvider>,
     );
@@ -269,7 +267,6 @@ describe("useDeliveryLoopStatusRealtime", () => {
       expect.any(Function),
       {
         messageSeq: 7,
-        deltaSeq: 13,
       },
     );
   });

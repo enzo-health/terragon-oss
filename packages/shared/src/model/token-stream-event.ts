@@ -1,10 +1,11 @@
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { DB } from "../db";
 import * as schema from "../db/schema";
 import { TokenStreamEvent, TokenStreamEventInsert } from "../db/types";
 
 export type TokenStreamEventInput = {
   userId: string;
+  runId: string;
   threadId: string;
   threadChatId: string;
   messageId: string;
@@ -27,8 +28,10 @@ export async function appendTokenStreamEvents({
 
   const values: TokenStreamEventInsert[] = events.map((event) => ({
     userId: event.userId,
+    runId: event.runId,
     threadId: event.threadId,
     threadChatId: event.threadChatId,
+    threadChatMessageSeq: null,
     messageId: event.messageId,
     partIndex: event.partIndex,
     partType: event.partType,
@@ -50,25 +53,94 @@ export async function appendTokenStreamEvents({
   return insertedOrExisting.sort((a, b) => a.streamSeq - b.streamSeq);
 }
 
-export async function replayTokenStreamEventsFromSeq({
+export async function assignPendingTokenStreamEventsToThreadChatMessageSeq({
+  db,
+  runId,
+  threadChatId,
+  threadChatMessageSeq,
+  maxStreamSeq,
+}: {
+  db: DB;
+  runId: string;
+  threadChatId: string;
+  threadChatMessageSeq: number;
+  maxStreamSeq: number;
+}): Promise<void> {
+  await db
+    .update(schema.tokenStreamEvent)
+    .set({ threadChatMessageSeq })
+    .where(
+      and(
+        eq(schema.tokenStreamEvent.runId, runId),
+        eq(schema.tokenStreamEvent.threadChatId, threadChatId),
+        lte(schema.tokenStreamEvent.streamSeq, maxStreamSeq),
+        isNull(schema.tokenStreamEvent.threadChatMessageSeq),
+      ),
+    );
+}
+
+export async function getPendingTokenStreamEventFinalizationUpperBound({
+  db,
+  runId,
+  threadChatId,
+}: {
+  db: DB;
+  runId: string;
+  threadChatId: string;
+}): Promise<number | null> {
+  const row = await db.query.tokenStreamEvent.findFirst({
+    where: and(
+      eq(schema.tokenStreamEvent.runId, runId),
+      eq(schema.tokenStreamEvent.threadChatId, threadChatId),
+      isNull(schema.tokenStreamEvent.threadChatMessageSeq),
+    ),
+    columns: {
+      streamSeq: true,
+    },
+    orderBy: [desc(schema.tokenStreamEvent.streamSeq)],
+  });
+
+  return row?.streamSeq ?? null;
+}
+
+export async function replayPendingTokenStreamEventsForActiveRun({
   db,
   userId,
   threadId,
   threadChatId,
-  fromSeq,
 }: {
   db: DB;
   userId: string;
   threadId: string;
   threadChatId: string;
-  fromSeq: number;
 }): Promise<TokenStreamEvent[]> {
+  const activeRun = await db.query.agentRunContext.findFirst({
+    where: and(
+      eq(schema.agentRunContext.threadId, threadId),
+      eq(schema.agentRunContext.threadChatId, threadChatId),
+      inArray(schema.agentRunContext.status, [
+        "pending",
+        "dispatched",
+        "processing",
+      ]),
+    ),
+    columns: {
+      runId: true,
+    },
+    orderBy: [desc(schema.agentRunContext.updatedAt)],
+  });
+
+  if (!activeRun) {
+    return [];
+  }
+
   return db.query.tokenStreamEvent.findMany({
     where: and(
       eq(schema.tokenStreamEvent.userId, userId),
+      eq(schema.tokenStreamEvent.runId, activeRun.runId),
       eq(schema.tokenStreamEvent.threadId, threadId),
       eq(schema.tokenStreamEvent.threadChatId, threadChatId),
-      gt(schema.tokenStreamEvent.streamSeq, fromSeq),
+      isNull(schema.tokenStreamEvent.threadChatMessageSeq),
     ),
     orderBy: [asc(schema.tokenStreamEvent.streamSeq)],
   });

@@ -821,7 +821,7 @@ export async function updateThreadChat({
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
   skipAppendMessagesInBroadcast?: boolean;
-}) {
+}): Promise<{ chatSequence?: number }> {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
   let patchVersion: number | undefined;
@@ -963,7 +963,9 @@ export async function updateThreadChat({
       ],
     },
   });
-  return null;
+  return {
+    ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+  };
 }
 
 export async function updateThread({

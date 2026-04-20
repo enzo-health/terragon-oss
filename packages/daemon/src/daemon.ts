@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { AIAgent } from "@terragon/agent/types";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
+import { AIAgent, type AIModel, AIModelSchema } from "@terragon/agent/types";
 import {
   coalesceAssistantTextMessages,
   parseAcpLineToClaudeMessages,
@@ -189,6 +190,31 @@ function readString(
   return typeof keyValue === "string" ? keyValue : null;
 }
 
+function readBoolean(
+  value: Record<string, unknown> | null,
+  key: string,
+): boolean | null {
+  if (!value) {
+    return null;
+  }
+  const keyValue = value[key];
+  return typeof keyValue === "boolean" ? keyValue : null;
+}
+
+function stringifyCanonicalToolResult(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function extractThreadIdFromRpcResult(result: unknown): string | null {
   const resultRecord = toRecord(result);
   if (!resultRecord) {
@@ -322,17 +348,24 @@ type AppServerRunContext = {
 type DaemonEventRunState = {
   runId: string;
   nextSeq: number;
+  nextCanonicalSeq: number;
   nextDeltaSeq: number;
+  agent: AIAgent | null;
+  model: string | null;
   transportMode: DaemonTransportMode;
   protocolVersion: number;
   acpServerId: string | null;
   acpSessionId: string | null;
+  canonicalRunStartedEmitted: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
     eventId: string;
     seq: number;
     entryCount: number;
+    canonicalEvents: CanonicalEvent[];
+    nextCanonicalSeqAfterBatch: number;
+    canonicalRunStartedEmittedAfterBatch: boolean;
   } | null;
 };
 
@@ -746,14 +779,26 @@ export class TerragonDaemon {
   }: {
     input: DaemonMessageClaude;
   }): void {
+    const existing = this.daemonEventRunStates.get(input.threadChatId);
+    if (existing?.pendingEnvelope) {
+      existing.agent = input.agent;
+      existing.model = input.model;
+      existing.cleanupRequested = false;
+      this.daemonEventRunStates.set(input.threadChatId, existing);
+      return;
+    }
     this.daemonEventRunStates.set(input.threadChatId, {
       runId: input.runId ?? randomUUID(),
       nextSeq: 0,
+      nextCanonicalSeq: 0,
       nextDeltaSeq: 0,
+      agent: input.agent,
+      model: input.model,
       transportMode: input.transportMode ?? "legacy",
       protocolVersion: input.protocolVersion ?? 1,
       acpServerId: input.acpServerId ?? null,
       acpSessionId: input.acpSessionId ?? null,
+      canonicalRunStartedEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -865,6 +910,7 @@ export class TerragonDaemon {
           droppedEntries: bufferedBefore - this.messageBuffer.length,
         },
       );
+      this.clearPendingDaemonEventEnvelope(input.threadChatId);
     }
     this.initializeDaemonEventRunStateForNewRun({
       input,
@@ -1534,27 +1580,15 @@ export class TerragonDaemon {
                 context.agentMessageTextById.set(itemId, messageText);
               }
               if (deltaText) {
-                const runState = this.getOrCreateDaemonEventRunState(
-                  input.threadChatId,
-                );
-                const deltaSeq = runState.nextDeltaSeq;
-                runState.nextDeltaSeq += 1;
-                this.deltaBuffer.push({
-                  messageId: itemId,
-                  partIndex: 0,
-                  deltaSeq,
-                  kind: "text",
-                  text: deltaText,
+                this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
                   token: input.token,
+                  messageId: itemId,
+                  partIndex: 0,
+                  kind: "text",
+                  text: deltaText,
                 });
-                // Trigger a flush so deltas are sent promptly
-                if (!this.isFlushInProgress && !this.messageFlushTimer) {
-                  this.messageFlushTimer = setTimeout(() => {
-                    this.flushMessageBuffer();
-                  }, 50);
-                }
               }
             }
             // Deltas were routed through the broadcast buffer above; skip
@@ -1576,26 +1610,15 @@ export class TerragonDaemon {
             const itemId = item?.id as string | undefined;
             const output = item?.aggregated_output as string | undefined;
             if (itemId && output) {
-              const runState = this.getOrCreateDaemonEventRunState(
-                input.threadChatId,
-              );
-              const deltaSeq = runState.nextDeltaSeq;
-              runState.nextDeltaSeq += 1;
-              this.deltaBuffer.push({
-                messageId: itemId,
-                partIndex: 0,
-                deltaSeq,
-                kind: "text",
-                text: output,
+              this.enqueueDelta({
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
                 token: input.token,
+                messageId: itemId,
+                partIndex: 0,
+                kind: "text",
+                text: output,
               });
-              if (!this.isFlushInProgress && !this.messageFlushTimer) {
-                this.messageFlushTimer = setTimeout(() => {
-                  this.flushMessageBuffer();
-                }, 50);
-              }
             }
             // commandExecution/outputDelta is delta-only — don't pass to
             // parseCodexLine since there's no full item to persist yet.
@@ -1612,26 +1635,15 @@ export class TerragonDaemon {
             const itemId = item?.id as string | undefined;
             const delta = item?._delta as string | undefined;
             if (itemId && delta) {
-              const runState = this.getOrCreateDaemonEventRunState(
-                input.threadChatId,
-              );
-              const deltaSeq = runState.nextDeltaSeq;
-              runState.nextDeltaSeq += 1;
-              this.deltaBuffer.push({
-                messageId: itemId,
-                partIndex: 0,
-                deltaSeq,
-                kind: "text",
-                text: delta,
+              this.enqueueDelta({
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
                 token: input.token,
+                messageId: itemId,
+                partIndex: 0,
+                kind: "text",
+                text: delta,
               });
-              if (!this.isFlushInProgress && !this.messageFlushTimer) {
-                this.messageFlushTimer = setTimeout(() => {
-                  this.flushMessageBuffer();
-                }, 50);
-              }
             }
             return;
           }
@@ -1647,26 +1659,15 @@ export class TerragonDaemon {
             const itemId = item?.id as string | undefined;
             const text = item?.text as string | undefined;
             if (itemId && text) {
-              const runState = this.getOrCreateDaemonEventRunState(
-                input.threadChatId,
-              );
-              const deltaSeq = runState.nextDeltaSeq;
-              runState.nextDeltaSeq += 1;
-              this.deltaBuffer.push({
-                messageId: itemId,
-                partIndex: 0,
-                deltaSeq,
-                kind: "thinking",
-                text,
+              this.enqueueDelta({
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
                 token: input.token,
+                messageId: itemId,
+                partIndex: 0,
+                kind: "thinking",
+                text,
               });
-              if (!this.isFlushInProgress && !this.messageFlushTimer) {
-                this.messageFlushTimer = setTimeout(() => {
-                  this.flushMessageBuffer();
-                }, 50);
-              }
             }
             return;
           }
@@ -2095,7 +2096,6 @@ export class TerragonDaemon {
     // on the client. Resets each time a non-text message arrives (tool_use, result).
     let deltaMessageId: string = randomUUID();
     let deltaPartIndex = 0;
-    let deltaSeq = 0;
 
     const createUrl = (bootstrapAgent: boolean): string => {
       const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
@@ -2288,39 +2288,25 @@ export class TerragonDaemon {
           if (Array.isArray(content)) {
             for (const block of content) {
               if (block.type === "text" && block.text) {
-                this.runtime.serverPostDelta(
-                  {
-                    threadId: input.threadId,
-                    threadChatId: input.threadChatId,
-                    deltas: [
-                      {
-                        messageId: deltaMessageId,
-                        partIndex: deltaPartIndex,
-                        deltaSeq: deltaSeq++,
-                        kind: "text",
-                        text: block.text,
-                      },
-                    ],
-                  },
-                  input.token,
-                );
+                this.enqueueDelta({
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                  messageId: deltaMessageId,
+                  partIndex: deltaPartIndex,
+                  kind: "text",
+                  text: block.text,
+                });
               } else if (block.type === "thinking" && block.thinking) {
-                this.runtime.serverPostDelta(
-                  {
-                    threadId: input.threadId,
-                    threadChatId: input.threadChatId,
-                    deltas: [
-                      {
-                        messageId: deltaMessageId,
-                        partIndex: deltaPartIndex,
-                        deltaSeq: deltaSeq++,
-                        kind: "thinking",
-                        text: block.thinking,
-                      },
-                    ],
-                  },
-                  input.token,
-                );
+                this.enqueueDelta({
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                  messageId: deltaMessageId,
+                  partIndex: deltaPartIndex,
+                  kind: "thinking",
+                  text: block.thinking,
+                });
               }
             }
             // If any content block is a tool_use, bump the part index for the next text block
@@ -3117,6 +3103,243 @@ export class TerragonDaemon {
     return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
   }
 
+  private createCanonicalEventId(runId: string, seq: number): string {
+    return createHash("sha256")
+      .update(`${runId}:canonical:${seq}`)
+      .digest("hex");
+  }
+
+  private allocateCanonicalBaseEvent(params: {
+    runId: string;
+    threadId: string;
+    threadChatId: string;
+    seq: number;
+    timestamp: string;
+  }): Pick<
+    CanonicalEvent,
+    | "payloadVersion"
+    | "eventId"
+    | "runId"
+    | "threadId"
+    | "threadChatId"
+    | "seq"
+    | "timestamp"
+  > {
+    return {
+      payloadVersion: 2,
+      eventId: this.createCanonicalEventId(params.runId, params.seq),
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      seq: params.seq,
+      timestamp: params.timestamp,
+    };
+  }
+
+  private toCanonicalModelOrNull(model: string | null): AIModel | null {
+    if (!model) {
+      return null;
+    }
+    const parsed = AIModelSchema.safeParse(model);
+    return parsed.success ? parsed.data : null;
+  }
+
+  private toCanonicalToolParameters(value: unknown): Record<string, unknown> {
+    const record = toRecord(value);
+    if (record) {
+      return record;
+    }
+    if (value === undefined) {
+      return {};
+    }
+    return { value };
+  }
+
+  private buildCanonicalEventsForBatch(params: {
+    runState: DaemonEventRunState;
+    threadId: string;
+    threadChatId: string;
+    messages: ClaudeMessage[];
+  }): {
+    canonicalEvents: CanonicalEvent[];
+    nextCanonicalSeqAfterBatch: number;
+    canonicalRunStartedEmittedAfterBatch: boolean;
+  } {
+    const { runState, threadId, threadChatId, messages } = params;
+    if (messages.length === 0 || runState.agent === null) {
+      return {
+        canonicalEvents: [],
+        nextCanonicalSeqAfterBatch: runState.nextCanonicalSeq,
+        canonicalRunStartedEmittedAfterBatch:
+          runState.canonicalRunStartedEmitted,
+      };
+    }
+
+    const timestamp = new Date().toISOString();
+    const events: CanonicalEvent[] = [];
+    let nextCanonicalSeq = runState.nextCanonicalSeq;
+    let canonicalRunStartedEmitted = runState.canonicalRunStartedEmitted;
+    const allocateBaseEvent = (): Pick<
+      CanonicalEvent,
+      | "payloadVersion"
+      | "eventId"
+      | "runId"
+      | "threadId"
+      | "threadChatId"
+      | "seq"
+      | "timestamp"
+    > => {
+      const baseEvent = this.allocateCanonicalBaseEvent({
+        runId: runState.runId,
+        threadId,
+        threadChatId,
+        seq: nextCanonicalSeq,
+        timestamp,
+      });
+      nextCanonicalSeq += 1;
+      return baseEvent;
+    };
+    const warnMalformedCanonicalBlock = (
+      reason: string,
+      blockType: string,
+    ): void => {
+      this.runtime.logger.warn("Skipping malformed canonical block", {
+        runId: runState.runId,
+        threadId,
+        threadChatId,
+        blockType,
+        reason,
+      });
+    };
+
+    if (!canonicalRunStartedEmitted) {
+      const baseEvent = allocateBaseEvent();
+      const model = this.toCanonicalModelOrNull(runState.model);
+      events.push({
+        ...baseEvent,
+        category: "operational",
+        type: "run-started",
+        agent: runState.agent,
+        transportMode: runState.transportMode,
+        protocolVersion: runState.protocolVersion,
+        ...(model ? { model } : {}),
+      });
+      canonicalRunStartedEmitted = true;
+    }
+
+    const canonicalModel = this.toCanonicalModelOrNull(runState.model);
+    for (const message of messages) {
+      if (message.type === "assistant") {
+        const content = message.message.content;
+        if (typeof content === "string") {
+          if (content.length === 0) {
+            continue;
+          }
+          const baseEvent = allocateBaseEvent();
+          events.push({
+            ...baseEvent,
+            category: "transcript",
+            type: "assistant-message",
+            messageId: baseEvent.eventId,
+            content,
+            parentToolUseId: message.parent_tool_use_id,
+            ...(canonicalModel ? { model: canonicalModel } : {}),
+          });
+          continue;
+        }
+
+        if (!Array.isArray(content)) {
+          continue;
+        }
+
+        for (const block of content) {
+          const blockRecord = toRecord(block);
+          const blockType = readString(blockRecord, "type");
+          if (blockType === "text") {
+            const text = readString(blockRecord, "text");
+            if (!text || text.length === 0) {
+              continue;
+            }
+            const baseEvent = allocateBaseEvent();
+            events.push({
+              ...baseEvent,
+              category: "transcript",
+              type: "assistant-message",
+              messageId: baseEvent.eventId,
+              content: text,
+              parentToolUseId: message.parent_tool_use_id,
+              ...(canonicalModel ? { model: canonicalModel } : {}),
+            });
+            continue;
+          }
+          if (blockType !== "tool_use") {
+            continue;
+          }
+          const toolCallId = readString(blockRecord, "id");
+          const name = readString(blockRecord, "name");
+          if (!toolCallId || !name) {
+            warnMalformedCanonicalBlock(
+              "missing_tool_use_identity",
+              "tool_use",
+            );
+            continue;
+          }
+          const baseEvent = allocateBaseEvent();
+          events.push({
+            ...baseEvent,
+            category: "tool_lifecycle",
+            type: "tool-call-start",
+            toolCallId,
+            name,
+            parameters: this.toCanonicalToolParameters(blockRecord?.input),
+            parentToolUseId: message.parent_tool_use_id,
+          });
+        }
+        continue;
+      }
+
+      if (message.type !== "user") {
+        continue;
+      }
+
+      const content = message.message.content;
+      if (!Array.isArray(content)) {
+        continue;
+      }
+
+      for (const block of content) {
+        const blockRecord = toRecord(block);
+        if (readString(blockRecord, "type") !== "tool_result") {
+          continue;
+        }
+        const toolCallId = readString(blockRecord, "tool_use_id");
+        if (!toolCallId) {
+          warnMalformedCanonicalBlock(
+            "missing_tool_result_identity",
+            "tool_result",
+          );
+          continue;
+        }
+        const baseEvent = allocateBaseEvent();
+        events.push({
+          ...baseEvent,
+          category: "tool_lifecycle",
+          type: "tool-call-result",
+          toolCallId,
+          result: stringifyCanonicalToolResult(blockRecord?.content),
+          isError: readBoolean(blockRecord, "is_error") ?? false,
+          completedAt: timestamp,
+        });
+      }
+    }
+
+    return {
+      canonicalEvents: events,
+      nextCanonicalSeqAfterBatch: nextCanonicalSeq,
+      canonicalRunStartedEmittedAfterBatch: canonicalRunStartedEmitted,
+    };
+  }
+
   private getOrCreateDaemonEventRunState(
     threadChatId: string,
   ): DaemonEventRunState {
@@ -3127,11 +3350,15 @@ export class TerragonDaemon {
     const created: DaemonEventRunState = {
       runId: randomUUID(),
       nextSeq: 0,
+      nextCanonicalSeq: 0,
       nextDeltaSeq: 0,
+      agent: null,
+      model: null,
       transportMode: "legacy",
       protocolVersion: 1,
       acpServerId: null,
       acpSessionId: null,
+      canonicalRunStartedEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -3140,10 +3367,12 @@ export class TerragonDaemon {
   }
 
   private createDaemonEventEnvelope({
+    threadId,
     threadChatId,
     messages,
     entryCount,
   }: {
+    threadId: string;
     threadChatId: string;
     messages: ClaudeMessage[];
     entryCount: number;
@@ -3175,11 +3404,21 @@ export class TerragonDaemon {
     const eventId = createHash("sha256")
       .update(`${runState.runId}:${seq}`)
       .digest("hex");
+    const canonicalBatch = this.buildCanonicalEventsForBatch({
+      runState,
+      threadId,
+      threadChatId,
+      messages,
+    });
     runState.pendingEnvelope = {
       messagesFingerprint,
       eventId,
       seq,
       entryCount,
+      canonicalEvents: canonicalBatch.canonicalEvents,
+      nextCanonicalSeqAfterBatch: canonicalBatch.nextCanonicalSeqAfterBatch,
+      canonicalRunStartedEmittedAfterBatch:
+        canonicalBatch.canonicalRunStartedEmittedAfterBatch,
     };
     this.daemonEventRunStates.set(threadChatId, runState);
 
@@ -3192,11 +3431,12 @@ export class TerragonDaemon {
   }
 
   /**
-   * Construct a v2 envelope for a delta-only HTTP flush (no associated
-   * messages). Each delta POST needs its own seq so the server can treat it
-   * as a distinct event; v3-enrolled loops reject payloads without the v2
-   * envelope (`enrolled_loop_requires_v2_envelope`), which silently breaks
-   * streaming even though the subsequent full-message POST still succeeds.
+   * Construct a v2 envelope for a delta-only daemon-event flush (no
+   * associated messages). Each flush needs its own seq so the server can
+   * treat it as a distinct event; v3-enrolled loops reject payloads without
+   * the v2 envelope (`enrolled_loop_requires_v2_envelope`), which silently
+   * breaks streaming even though the subsequent full-message POST still
+   * succeeds.
    */
   private createDeltaOnlyDaemonEventEnvelope(
     threadChatId: string,
@@ -3228,6 +3468,20 @@ export class TerragonDaemon {
       return;
     }
     if (runState.pendingEnvelope.eventId !== eventId) {
+      return;
+    }
+    runState.nextCanonicalSeq =
+      runState.pendingEnvelope.nextCanonicalSeqAfterBatch;
+    runState.canonicalRunStartedEmitted =
+      runState.pendingEnvelope.canonicalRunStartedEmittedAfterBatch;
+    runState.pendingEnvelope = null;
+    this.daemonEventRunStates.set(threadChatId, runState);
+    this.maybeCleanupDaemonEventRunState(threadChatId);
+  }
+
+  private clearPendingDaemonEventEnvelope(threadChatId: string): void {
+    const runState = this.daemonEventRunStates.get(threadChatId);
+    if (!runState?.pendingEnvelope) {
       return;
     }
     runState.pendingEnvelope = null;
@@ -3662,27 +3916,19 @@ export class TerragonDaemon {
 
           // Push text/thinking deltas into the delta buffer
           if (deltas.length > 0) {
-            const runState = this.getOrCreateDaemonEventRunState(
-              input.threadChatId,
-            );
             for (const delta of deltas) {
-              const deltaSeq = runState.nextDeltaSeq;
-              runState.nextDeltaSeq += 1;
-              this.deltaBuffer.push({
-                messageId: delta.messageId,
-                partIndex: delta.partIndex,
-                deltaSeq,
-                kind: delta.kind,
-                text: delta.text,
+              if (delta.kind !== "text" && delta.kind !== "thinking") {
+                continue;
+              }
+              this.enqueueDelta({
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
                 token: input.token,
+                messageId: delta.messageId,
+                partIndex: delta.partIndex,
+                kind: delta.kind,
+                text: delta.text,
               });
-            }
-            if (!this.isFlushInProgress && !this.messageFlushTimer) {
-              this.messageFlushTimer = setTimeout(() => {
-                this.flushMessageBuffer();
-              }, 50);
             }
           }
 
@@ -4069,6 +4315,29 @@ export class TerragonDaemon {
     }
   }
 
+  private enqueueDelta(entry: {
+    threadId: string;
+    threadChatId: string;
+    token: string;
+    messageId: string;
+    partIndex: number;
+    kind: "text" | "thinking";
+    text: string;
+  }): void {
+    const runState = this.getOrCreateDaemonEventRunState(entry.threadChatId);
+    const deltaSeq = runState.nextDeltaSeq;
+    runState.nextDeltaSeq += 1;
+    this.deltaBuffer.push({
+      ...entry,
+      deltaSeq,
+    });
+    if (!this.isFlushInProgress && !this.messageFlushTimer) {
+      this.messageFlushTimer = setTimeout(() => {
+        this.flushMessageBuffer();
+      }, 50);
+    }
+  }
+
   /**
    * Add a message to the buffer and trigger debounced sending
    */
@@ -4347,6 +4616,7 @@ export class TerragonDaemon {
             this.messageBuffer = this.messageBuffer.filter(
               (entry) => entry.threadChatId !== g.threadChatId,
             );
+            this.clearPendingDaemonEventEnvelope(g.threadChatId);
             return false;
           }
           return true;
@@ -4475,12 +4745,17 @@ export class TerragonDaemon {
       });
       const envelopeV2 = this.shouldEmitDaemonEventEnvelopeV2(threadChatId)
         ? this.createDaemonEventEnvelope({
+            threadId,
             threadChatId,
             messages,
             entryCount,
           })
         : null;
       const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+      const canonicalEvents =
+        messages.length > 0
+          ? (runState.pendingEnvelope?.canonicalEvents ?? [])
+          : [];
       const hasTerminalMessage = messages.some(
         (m) =>
           m.type === "result" ||
@@ -4546,6 +4821,7 @@ export class TerragonDaemon {
           : {}),
         ...(envelopeV2 ?? {}),
         ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
+        ...(canonicalEvents.length > 0 ? { canonicalEvents } : {}),
         ...(matchingDeltas.length > 0 ? { deltas: matchingDeltas } : {}),
         ...(matchingMetaEvents.length > 0
           ? { metaEvents: matchingMetaEvents }

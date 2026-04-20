@@ -264,7 +264,7 @@ export async function handleDaemonEvent({
       );
     }
     await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
-    return { success: true };
+    return { success: true, threadChatMessageSeq: null };
   }
 
   const [threadChat, thread] = await Promise.all([
@@ -963,6 +963,7 @@ export async function handleDaemonEvent({
   }
 
   let didUpdateStatus: boolean;
+  let threadChatMessageSeq: number | null = null;
   try {
     const result = await updateThreadChatWithTransition({
       userId,
@@ -986,6 +987,7 @@ export async function handleDaemonEvent({
       skipAppendMessagesInBroadcast: !!hasPreviewMessages,
     });
     didUpdateStatus = result.didUpdateStatus;
+    threadChatMessageSeq = result.chatSequence ?? null;
   } catch (dbError) {
     // DB write failed after pre-broadcast — tell client to refetch
     // so it doesn't keep stale optimistic messages.
@@ -1030,7 +1032,7 @@ export async function handleDaemonEvent({
       }),
     );
   }
-  return { success: true };
+  return { success: true, threadChatMessageSeq };
 }
 
 async function handleThreadFinish({

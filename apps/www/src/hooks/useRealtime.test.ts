@@ -302,8 +302,7 @@ describe("useRealtimeThread", () => {
     expect(replayUrl.pathname).toBe("/api/thread-replay");
     expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
     expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
-    expect(replayUrl.searchParams.get("threadChatId")).toBeNull();
-    expect(replayUrl.searchParams.get("fromDeltaSeq")).toBeNull();
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-1");
     expect(receivedPatches).toHaveLength(1);
     expect(receivedPatches[0]).toEqual([
       {
@@ -314,6 +313,169 @@ describe("useRealtimeThread", () => {
         messageSeq: 6,
         appendMessages: [{ type: "agent", parts: [] }],
       },
+    ]);
+  });
+
+  it("replays canonical message entries and delta entries from the same thread chat scope", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            seq: 6,
+            messages: [{ type: "agent", parts: [] }],
+          },
+        ],
+        deltaEntries: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messageId: "message-1",
+            partIndex: 0,
+            partType: "text",
+            streamSeq: 9,
+            idempotencyKey: "delta-9",
+            text: "hello",
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread(
+        "thread-1",
+        "chat-1",
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: 5 },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      await Promise.resolve();
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-1");
+    expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
+    expect(receivedPatches).toEqual([
+      [
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          op: "upsert",
+          chatSequence: 6,
+          messageSeq: 6,
+          appendMessages: [{ type: "agent", parts: [] }],
+        },
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          op: "delta",
+          messageId: "message-1",
+          partIndex: 0,
+          deltaSeq: 9,
+          deltaIdempotencyKey: "delta-9",
+          deltaKind: "text",
+          text: "hello",
+        },
+      ],
+    ]);
+  });
+
+  it("replays the pending delta tail when the canonical baseline is zero", async () => {
+    const receivedPatches: BroadcastThreadPatch[][] = [];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        deltaEntries: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messageId: "message-1",
+            partIndex: 0,
+            partType: "text",
+            streamSeq: 1,
+            idempotencyKey: "delta-1",
+            text: "hello",
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    function Harness() {
+      useRealtimeThread(
+        "thread-1",
+        "chat-1",
+        (patches) => {
+          receivedPatches.push(patches);
+        },
+        { messageSeq: 0 },
+      );
+      return null;
+    }
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      await Promise.resolve();
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-1");
+    expect(replayUrl.searchParams.get("fromSeq")).toBe("0");
+    expect(receivedPatches).toEqual([
+      [
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          op: "delta",
+          messageId: "message-1",
+          partIndex: 0,
+          deltaSeq: 1,
+          deltaIdempotencyKey: "delta-1",
+          deltaKind: "text",
+          text: "hello",
+        },
+      ],
     ]);
   });
 
@@ -374,8 +536,7 @@ describe("useRealtimeThread", () => {
     const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
     expect(replayUrl.searchParams.get("fromSeq")).toBe("2");
-    expect(replayUrl.searchParams.get("threadChatId")).toBeNull();
-    expect(replayUrl.searchParams.get("fromDeltaSeq")).toBeNull();
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-2");
   });
 
   it("applies live patches immediately when a replay gap arrives during an in-flight replay", async () => {
@@ -549,6 +710,7 @@ describe("useRealtimeThread", () => {
     const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
     expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-1");
   });
 
   it("falls back to live patches when replay fetch fails in the active context", async () => {

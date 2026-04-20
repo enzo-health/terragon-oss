@@ -10,7 +10,6 @@ import readline from "node:readline";
 import stripAnsi from "strip-ansi";
 import { Logger, OutputFormat } from "./logger";
 import {
-  DaemonDelta,
   DaemonEventAPIBody,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
@@ -140,15 +139,6 @@ export interface IDaemonRuntime {
     body: DaemonEventAPIBody,
     token: string,
   ) => Promise<SdlcSelfDispatchPayload | null>;
-
-  serverPostDelta: (
-    body: {
-      threadId: string;
-      threadChatId: string;
-      deltas: DaemonDelta[];
-    },
-    token: string,
-  ) => void;
 
   listenToUnixSocket: (callback: (data: string) => void) => Promise<void>;
 
@@ -384,32 +374,6 @@ export class DaemonRuntime implements IDaemonRuntime {
       return parseSdlcSelfDispatchPayload(responseBody);
     }
     return null;
-  }
-
-  serverPostDelta(
-    body: {
-      threadId: string;
-      threadChatId: string;
-      deltas: DaemonDelta[];
-    },
-    token: string,
-  ): void {
-    if (this.skipReportingDaemonEvents) {
-      return;
-    }
-    const url = `${this.url}/api/daemon-delta`;
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Daemon-Token": token,
-      },
-      body: JSON.stringify(body),
-    }).catch((err) => {
-      this.logger.debug("Delta POST failed (non-critical)", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 
   async listenToUnixSocket(

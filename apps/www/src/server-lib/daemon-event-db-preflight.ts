@@ -13,8 +13,10 @@ const REQUIRED_TOKEN_STREAM_EVENT_COLUMNS = [
   "id",
   "stream_seq",
   "user_id",
+  "run_id",
   "thread_id",
   "thread_chat_id",
+  "thread_chat_message_seq",
   "message_id",
   "part_index",
   "part_type",
@@ -30,6 +32,7 @@ const REQUIRED_AGENT_EVENT_LOG_COLUMNS = [
   "run_id",
   "thread_id",
   "thread_chat_id",
+  "thread_chat_message_seq",
   "seq",
   "event_type",
   "category",
@@ -46,7 +49,19 @@ type DaemonEventDbPreflight = {
   missing: string[];
 };
 
+const PREFLIGHT_SUCCESS_TTL_MS = 60_000;
+const PREFLIGHT_RETRY_TTL_MS = 5_000;
+
 let preflightPromise: Promise<DaemonEventDbPreflight> | null = null;
+let preflightExpiresAt = 0;
+
+function isPreflightFullyReady(result: DaemonEventDbPreflight): boolean {
+  return (
+    result.agentEventLogReady &&
+    result.tokenStreamEventReady &&
+    result.agentRunContextFailureColumnsReady
+  );
+}
 
 function missingFromRequired({
   required,
@@ -69,8 +84,15 @@ function missingFromRequired({
 export async function getDaemonEventDbPreflight(
   db: DB,
 ): Promise<DaemonEventDbPreflight> {
-  if (!preflightPromise) {
-    preflightPromise = runDaemonEventDbPreflight(db);
+  if (!preflightPromise || Date.now() >= preflightExpiresAt) {
+    preflightPromise = runDaemonEventDbPreflight(db).then((result) => {
+      preflightExpiresAt =
+        Date.now() +
+        (isPreflightFullyReady(result)
+          ? PREFLIGHT_SUCCESS_TTL_MS
+          : PREFLIGHT_RETRY_TTL_MS);
+      return result;
+    });
   }
   return preflightPromise;
 }
@@ -84,9 +106,9 @@ async function runDaemonEventDbPreflight(
     );
     if (!tokenTableResult.rows.length) {
       return {
-        agentEventLogReady: true,
-        tokenStreamEventReady: true,
-        agentRunContextFailureColumnsReady: true,
+        agentEventLogReady: false,
+        tokenStreamEventReady: false,
+        agentRunContextFailureColumnsReady: false,
         missing: [],
       };
     }
@@ -110,9 +132,9 @@ async function runDaemonEventDbPreflight(
     );
     if (!arcColumnsResult.rows.length) {
       return {
-        agentEventLogReady: true,
-        tokenStreamEventReady: true,
-        agentRunContextFailureColumnsReady: true,
+        agentEventLogReady: false,
+        tokenStreamEventReady: false,
+        agentRunContextFailureColumnsReady: false,
         missing: [],
       };
     }
@@ -207,9 +229,9 @@ async function runDaemonEventDbPreflight(
   } catch (error) {
     console.error("[daemon-event] db preflight failed", { error });
     return {
-      agentEventLogReady: true,
-      tokenStreamEventReady: true,
-      agentRunContextFailureColumnsReady: true,
+      agentEventLogReady: false,
+      tokenStreamEventReady: false,
+      agentRunContextFailureColumnsReady: false,
       missing: ["preflight_query_failed"],
     };
   }

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type {
   BaseEventEnvelope,
   CanonicalEvent,
@@ -11,6 +11,7 @@ import {
   CanonicalEventSchema,
 } from "@terragon/agent/canonical-events";
 import type { DB } from "../db";
+import type { DBMessage } from "../db/db-message";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import * as schema from "../db/schema";
 
@@ -44,6 +45,11 @@ export type AppendEventResult =
 export type AppendEventOptions = {
   validateSequence?: boolean;
   expectedPrevSeq?: number | null;
+};
+
+export type ThreadReplayEntry = {
+  seq: number;
+  messages: DBMessage[];
 };
 
 const ENVELOPE_FIELDS = [
@@ -308,6 +314,150 @@ export async function appendCanonicalEventsBatch({
   }
 
   return successes;
+}
+
+export async function assignThreadChatMessageSeqToCanonicalEvents({
+  db,
+  eventIds,
+  threadChatMessageSeq,
+}: {
+  db: Pick<DB, "update">;
+  eventIds: string[];
+  threadChatMessageSeq: number;
+}): Promise<number> {
+  if (eventIds.length === 0) {
+    return 0;
+  }
+
+  const updatedRows = await db
+    .update(schema.agentEventLog)
+    .set({ threadChatMessageSeq })
+    .where(inArray(schema.agentEventLog.eventId, eventIds))
+    .returning({ eventId: schema.agentEventLog.eventId });
+
+  return updatedRows.length;
+}
+
+export async function hasCanonicalReplayProjection({
+  db,
+  threadId,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  threadId: string;
+  threadChatId?: string;
+}): Promise<boolean> {
+  const row = await db.query.agentEventLog.findFirst({
+    where: and(
+      eq(schema.agentEventLog.threadId, threadId),
+      isNotNull(schema.agentEventLog.threadChatMessageSeq),
+      ...(threadChatId
+        ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
+        : []),
+    ),
+    columns: {
+      eventId: true,
+    },
+  });
+
+  return row !== undefined;
+}
+
+function canonicalEventToReplayMessage(
+  event: CanonicalEvent,
+): DBMessage | null {
+  switch (event.type) {
+    case "assistant-message":
+      return {
+        type: "agent",
+        parent_tool_use_id: event.parentToolUseId ?? null,
+        parts: [{ type: "text", text: event.content }],
+      };
+    case "tool-call-start":
+      return {
+        type: "tool-call",
+        id: event.toolCallId,
+        name: event.name,
+        parameters: event.parameters,
+        parent_tool_use_id: event.parentToolUseId ?? null,
+        status: "started",
+      };
+    case "tool-call-result":
+      return {
+        type: "tool-result",
+        id: event.toolCallId,
+        is_error: event.isError,
+        parent_tool_use_id: null,
+        result: event.result,
+      };
+    case "run-started":
+      return null;
+  }
+}
+
+export async function getThreadReplayEntriesFromCanonicalEvents({
+  db,
+  threadId,
+  fromThreadChatMessageSeq,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  threadId: string;
+  fromThreadChatMessageSeq: number;
+  threadChatId?: string;
+}): Promise<ThreadReplayEntry[]> {
+  const rows = await db.query.agentEventLog.findMany({
+    where: and(
+      eq(schema.agentEventLog.threadId, threadId),
+      gt(schema.agentEventLog.threadChatMessageSeq, fromThreadChatMessageSeq),
+      ...(threadChatId
+        ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
+        : []),
+    ),
+    orderBy: [
+      asc(schema.agentEventLog.threadChatMessageSeq),
+      asc(schema.agentEventLog.seq),
+    ],
+    columns: {
+      threadChatMessageSeq: true,
+      payloadJson: true,
+      seq: true,
+    },
+  });
+
+  const entries: ThreadReplayEntry[] = [];
+  let activeSeq: number | null = null;
+  let activeMessages: DBMessage[] = [];
+
+  for (const row of rows) {
+    const replaySeq = row.threadChatMessageSeq;
+    if (replaySeq == null) {
+      continue;
+    }
+    if (activeSeq !== null && replaySeq !== activeSeq) {
+      if (activeMessages.length > 0) {
+        entries.push({ seq: activeSeq, messages: activeMessages });
+      }
+      activeMessages = [];
+    }
+    activeSeq = replaySeq;
+
+    const payload = row.payloadJson;
+    const parsedEvent = CanonicalEventSchema.safeParse(payload);
+    if (!parsedEvent.success) {
+      continue;
+    }
+    const replayMessage = canonicalEventToReplayMessage(parsedEvent.data);
+    if (replayMessage) {
+      activeMessages.push(replayMessage);
+    }
+  }
+
+  if (activeSeq !== null && activeMessages.length > 0) {
+    entries.push({ seq: activeSeq, messages: activeMessages });
+  }
+
+  return entries;
 }
 
 export async function getRunEvents({

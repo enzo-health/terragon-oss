@@ -3,6 +3,7 @@ import { env } from "@terragon/env/pkg-shared";
 import type {
   AssistantMessageEvent,
   OperationalRunStartedEvent,
+  ToolCallResultEvent,
   ToolCallStartEvent,
 } from "@terragon/agent/canonical-events";
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
@@ -12,8 +13,11 @@ import { createTestThread, createTestUser } from "./test-helpers";
 import {
   appendCanonicalEvent,
   appendCanonicalEventsBatch,
+  assignThreadChatMessageSeqToCanonicalEvents,
+  getThreadReplayEntriesFromCanonicalEvents,
   getRunEvents,
   getRunMaxSeq,
+  hasCanonicalReplayProjection,
   validateCanonicalEnvelope,
   validateCanonicalEvent,
 } from "./agent-event-log";
@@ -120,6 +124,31 @@ function createToolCallStartEvent({
     toolCallId: newId("tool"),
     name: "bash",
     parameters: { command: "ls -la" },
+  };
+}
+
+function createToolCallResultEvent({
+  runId,
+  threadId,
+  threadChatId,
+  seq,
+}: RunFixture & {
+  seq: number;
+}): ToolCallResultEvent {
+  return {
+    payloadVersion: EVENT_ENVELOPE_VERSION,
+    eventId: newId("event"),
+    runId,
+    threadId,
+    threadChatId,
+    seq,
+    timestamp: new Date().toISOString(),
+    category: "tool_lifecycle",
+    type: "tool-call-result",
+    toolCallId: newId("tool"),
+    result: "done",
+    isError: false,
+    completedAt: new Date().toISOString(),
   };
 }
 
@@ -266,5 +295,84 @@ describe("agent-event-log", () => {
 
     const maxSeq = await getRunMaxSeq({ db, runId: fixture.runId });
     expect(maxSeq).toBe(2);
+  });
+
+  it("assigns replay sequences and projects replay entries in message order", async () => {
+    const fixture = await createRunFixture();
+    const firstBatch = [
+      createRunStartedEvent({ ...fixture, seq: 0 }),
+      createAssistantMessageEvent({ ...fixture, seq: 1 }),
+      createToolCallStartEvent({ ...fixture, seq: 2 }),
+    ];
+    const secondBatch = [
+      createToolCallResultEvent({ ...fixture, seq: 3 }),
+      createAssistantMessageEvent({ ...fixture, seq: 4 }),
+    ];
+
+    await appendCanonicalEventsBatch({
+      db,
+      events: [...firstBatch, ...secondBatch],
+    });
+
+    expect(
+      await hasCanonicalReplayProjection({
+        db,
+        threadId: fixture.threadId,
+      }),
+    ).toBe(false);
+
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: firstBatch.map((event) => event.eventId),
+      threadChatMessageSeq: 6,
+    });
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: secondBatch.map((event) => event.eventId),
+      threadChatMessageSeq: 7,
+    });
+
+    expect(
+      await hasCanonicalReplayProjection({
+        db,
+        threadId: fixture.threadId,
+      }),
+    ).toBe(true);
+
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      fromThreadChatMessageSeq: 5,
+    });
+
+    expect(replayEntries).toEqual([
+      {
+        seq: 6,
+        messages: [
+          expect.objectContaining({
+            type: "agent",
+            parts: [{ type: "text", text: "hello" }],
+          }),
+          expect.objectContaining({
+            type: "tool-call",
+            name: "bash",
+          }),
+        ],
+      },
+      {
+        seq: 7,
+        messages: [
+          expect.objectContaining({
+            type: "tool-result",
+            result: "done",
+          }),
+          expect.objectContaining({
+            type: "agent",
+            parts: [{ type: "text", text: "hello" }],
+          }),
+        ],
+      },
+    ]);
   });
 });

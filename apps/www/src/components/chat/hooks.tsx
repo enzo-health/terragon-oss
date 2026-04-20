@@ -134,12 +134,17 @@ export function useOptimisticUpdateThreadChat({
             typeof updatesOrUpdater === "function"
               ? updatesOrUpdater(oldData)
               : updatesOrUpdater;
-          const nextMessages = updates.messages ?? oldData.messages ?? [];
+          const nextProjectedMessages =
+            updates.projectedMessages ??
+            updates.messages ??
+            oldData.projectedMessages ??
+            oldData.messages ??
+            [];
           return {
             ...oldData,
             ...updates,
-            messages: nextMessages,
-            messageCount: nextMessages.length,
+            projectedMessages: nextProjectedMessages,
+            messageCount: nextProjectedMessages.length,
           };
         },
       );

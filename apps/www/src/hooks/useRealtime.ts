@@ -375,7 +375,6 @@ export function useRealtimeThread(
   onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
   replayBaseline?: {
     messageSeq: number | null;
-    deltaSeq?: number | null;
   },
 ) {
   const lastMessageSeqRef = useRef<number | null>(null);
@@ -397,8 +396,12 @@ export function useRealtimeThread(
     (patches: BroadcastThreadPatch[]) => {
       const maxMessageSeq = patches.reduce<number | null>((max, patch) => {
         const seq =
-          patch.messageSeq ??
-          (isMonotonicSequence(patch.chatSequence) ? patch.chatSequence : null);
+          patch.op === "delta"
+            ? null
+            : (patch.messageSeq ??
+              (isMonotonicSequence(patch.chatSequence)
+                ? patch.chatSequence
+                : null));
         if (seq == null) return max;
         return max === null ? seq : Math.max(max, seq);
       }, null);
@@ -440,25 +443,14 @@ export function useRealtimeThread(
 
   const fetchReplay = useCallback(
     async ({
-      replayMessages,
-      replayDeltas,
       livePatches = [],
       abortController,
     }: {
-      replayMessages: boolean;
-      replayDeltas: boolean;
       livePatches?: BroadcastThreadPatch[];
       abortController?: AbortController;
     }) => {
-      const fromMessageSeq = replayMessages ? lastMessageSeqRef.current : null;
-      const fromDeltaSeq = replayDeltas ? lastDeltaSeqRef.current : null;
-      const shouldReplayMessages = fromMessageSeq != null;
-      const shouldReplayDeltas = threadChatId != null && fromDeltaSeq != null;
-
-      if (
-        (!shouldReplayMessages && !shouldReplayDeltas) ||
-        replayInFlightRef.current
-      ) {
+      const fromMessageSeq = lastMessageSeqRef.current;
+      if (fromMessageSeq == null || replayInFlightRef.current) {
         applyPatches(livePatches);
         return false;
       }
@@ -473,13 +465,10 @@ export function useRealtimeThread(
       replayAbortControllerRef.current = activeAbortController;
       const replayUrl = new URL("/api/thread-replay", window.location.origin);
       replayUrl.searchParams.set("threadId", threadId);
-      if (shouldReplayMessages) {
-        replayUrl.searchParams.set("fromSeq", String(fromMessageSeq));
-      }
-      if (shouldReplayDeltas) {
+      if (threadChatId) {
         replayUrl.searchParams.set("threadChatId", threadChatId);
-        replayUrl.searchParams.set("fromDeltaSeq", String(fromDeltaSeq));
       }
+      replayUrl.searchParams.set("fromSeq", String(fromMessageSeq));
 
       try {
         const res = await fetch(replayUrl.toString(), {
@@ -589,8 +578,6 @@ export function useRealtimeThread(
 
         if (shouldReplayMessages || shouldReplayDeltas) {
           void fetchReplay({
-            replayMessages: shouldReplayMessages,
-            replayDeltas: shouldReplayDeltas,
             livePatches: patches,
           });
         } else if (
@@ -612,7 +599,7 @@ export function useRealtimeThread(
       activeReplayContextRef.current = nextReplayContext;
       replayGenerationRef.current += 1;
       lastMessageSeqRef.current = replayBaseline?.messageSeq ?? null;
-      lastDeltaSeqRef.current = replayBaseline?.deltaSeq ?? null;
+      lastDeltaSeqRef.current = null;
       replayInFlightRef.current = false;
       replayAttemptMarkerRef.current = null;
       return;
@@ -626,21 +613,7 @@ export function useRealtimeThread(
     ) {
       lastMessageSeqRef.current = baselineMessageSeq;
     }
-
-    const baselineDeltaSeq = replayBaseline?.deltaSeq;
-    if (
-      baselineDeltaSeq != null &&
-      (lastDeltaSeqRef.current == null ||
-        baselineDeltaSeq > lastDeltaSeqRef.current)
-    ) {
-      lastDeltaSeqRef.current = baselineDeltaSeq;
-    }
-  }, [
-    replayBaseline?.deltaSeq,
-    replayBaseline?.messageSeq,
-    threadChatId,
-    threadId,
-  ]);
+  }, [replayBaseline?.messageSeq, threadChatId, threadId]);
 
   useEffect(() => {
     return () => {
@@ -674,17 +647,13 @@ export function useRealtimeThread(
 
     const shouldReplayMessages =
       replayBaseline?.messageSeq != null || lastMessageSeqRef.current != null;
-    const shouldReplayDeltas =
-      replayBaseline?.deltaSeq != null || lastDeltaSeqRef.current != null;
-    if (!shouldReplayMessages && !shouldReplayDeltas) {
+    if (!shouldReplayMessages) {
       return;
     }
 
     replayAttemptMarkerRef.current = replayAttemptMarker;
     const abortController = new AbortController();
     void fetchReplay({
-      replayMessages: shouldReplayMessages,
-      replayDeltas: shouldReplayDeltas,
       abortController,
     });
 
@@ -696,12 +665,7 @@ export function useRealtimeThread(
       replayInFlightRef.current = false;
       replayAttemptMarkerRef.current = null;
     };
-  }, [
-    fetchReplay,
-    replayBaseline?.deltaSeq,
-    replayBaseline?.messageSeq,
-    socketReadyState,
-  ]);
+  }, [fetchReplay, replayBaseline?.messageSeq, socketReadyState]);
 
   return {
     socketReadyState,

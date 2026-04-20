@@ -12,7 +12,6 @@ type UseDeliveryLoopStatusRealtimeArgs = {
   enabled?: boolean;
   replayBaseline?: {
     messageSeq: number | null;
-    deltaSeq?: number | null;
   };
 };
 

@@ -64,6 +64,10 @@ function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
 }
 
+function getTranscriptMessages(chat: ThreadPageChat): DBMessage[] {
+  return chat.projectedMessages ?? chat.messages ?? [];
+}
+
 export function applyChatSummaryPatchFields(
   chat: ThreadPageShell["primaryThreadChat"],
   fields: BroadcastActiveChatRealtimeFields,
@@ -244,7 +248,10 @@ export function validateChatPatch(
       isDbMessageArray(patch.appendMessages) &&
       patch.appendMessages.length > 0
     ) {
-      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+      const nextMessages = [
+        ...getTranscriptMessages(chat),
+        ...patch.appendMessages,
+      ];
       return {
         action: "apply",
         nextChat: buildChatObject(
@@ -270,7 +277,7 @@ export function validateChatPatch(
               nextChat: buildChatObject(
                 chat,
                 patch,
-                chat.messages ?? [],
+                getTranscriptMessages(chat),
                 incomingSequence!,
                 currentMessageSeq ?? null,
                 currentPatchVersion ?? null,
@@ -287,7 +294,7 @@ export function validateChatPatch(
         nextChat: buildChatObject(
           chat,
           patch,
-          [...(chat.messages ?? []), ...patch.appendMessages!],
+          [...getTranscriptMessages(chat), ...patch.appendMessages!],
           incomingSequence!,
           currentMessageSeq ?? null,
           currentPatchVersion ?? null,
@@ -310,7 +317,7 @@ export function validateChatPatch(
           nextChat: buildChatObject(
             chat,
             patch,
-            chat.messages ?? [],
+            getTranscriptMessages(chat),
             patch.chatSequence ?? chat.chatSequence,
             currentMessageSeq,
             incomingPatchVersion,
@@ -328,7 +335,7 @@ export function validateChatPatch(
       nextChat: buildChatObject(
         chat,
         patch,
-        [...(chat.messages ?? []), ...patch.appendMessages],
+        [...getTranscriptMessages(chat), ...patch.appendMessages],
         patch.chatSequence ?? chat.chatSequence,
         incomingMessageSeq,
         incomingPatchVersion ?? currentPatchVersion ?? null,
@@ -348,7 +355,7 @@ export function validateChatPatch(
       nextChat: buildChatObject(
         chat,
         patch,
-        chat.messages ?? [],
+        getTranscriptMessages(chat),
         patch.chatSequence ?? chat.chatSequence,
         incomingMessageSeq ?? currentMessageSeq ?? null,
         incomingPatchVersion,
@@ -363,7 +370,7 @@ export function validateChatPatch(
       nextChat: buildChatObject(
         chat,
         patch,
-        chat.messages ?? [],
+        getTranscriptMessages(chat),
         patch.chatSequence ?? chat.chatSequence,
         incomingMessageSeq,
         currentPatchVersion ?? null,
@@ -415,7 +422,7 @@ function buildChatObject(
       ? { updatedAt: new Date(patch.chat.updatedAt) }
       : {}),
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
-    messages: nextMessages,
+    projectedMessages: nextMessages,
     messageCount: nextMessages.length,
     chatSequence,
     messageSeq: messageSeq ?? 0,

@@ -38,6 +38,7 @@ export async function updateThreadChatWithTransition({
 }): Promise<{
   didUpdateStatus: boolean;
   updatedStatus: ThreadStatus | undefined;
+  chatSequence?: number;
 }> {
   const threadChat = await getThreadChat({
     db,
@@ -49,6 +50,7 @@ export async function updateThreadChatWithTransition({
     throw new ThreadError("unknown-error", "Thread not found", null);
   }
   let didUpdateStatus = false;
+  let chatSequence: number | undefined;
   const updatedStatus = handleTransition(threadChat.status, eventType);
   if (updatedStatus) {
     let reattemptQueueAt: Date | null | undefined = undefined;
@@ -90,7 +92,7 @@ export async function updateThreadChatWithTransition({
     chatUpdates &&
     (!requireStatusTransitionForChatUpdates || didUpdateStatus)
   ) {
-    await updateThreadChat({
+    const chatUpdateResult = await updateThreadChat({
       db,
       userId,
       threadId,
@@ -98,6 +100,7 @@ export async function updateThreadChatWithTransition({
       updates: chatUpdates,
       skipAppendMessagesInBroadcast,
     });
+    chatSequence = chatUpdateResult.chatSequence;
   }
   if (didUpdateStatus && (updates || chatUpdates)) {
     if (markAsUnread) {
@@ -113,5 +116,6 @@ export async function updateThreadChatWithTransition({
   return {
     didUpdateStatus,
     updatedStatus: updatedStatus ?? undefined,
+    ...(chatSequence !== undefined ? { chatSequence } : {}),
   };
 }

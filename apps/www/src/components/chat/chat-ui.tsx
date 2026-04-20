@@ -214,12 +214,15 @@ function ChatUI({
       threadChat?.messageSeq ?? 0,
     );
 
-    return canonicalMessageSeq > 0 ? { messageSeq: canonicalMessageSeq } : null;
+    return { messageSeq: canonicalMessageSeq };
   }, [shell?.primaryThreadChat.messageSeq, threadChat?.messageSeq]);
 
   const dbMessages = useMemo(
-    () => (threadChat?.messages as DBMessage[]) ?? [],
-    [threadChat?.messages],
+    () =>
+      (threadChat?.projectedMessages as DBMessage[]) ??
+      (threadChat?.messages as DBMessage[]) ??
+      [],
+    [threadChat?.messages, threadChat?.projectedMessages],
   );
   const queuedMessages = useMemo(
     () =>
@@ -868,7 +871,10 @@ const ChatPromptBox = memo(function ChatPromptBox({
       const optimisticStatus =
         plainText.trim() === "/clear" ? "complete" : "booting";
       updateThreadChat((currentChat) => ({
-        messages: [...(currentChat.messages ?? []), userMessage],
+        projectedMessages: [
+          ...(currentChat.projectedMessages ?? currentChat.messages ?? []),
+          userMessage,
+        ],
         errorMessage: null,
         errorMessageInfo: null,
         status: optimisticStatus,

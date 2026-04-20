@@ -81,6 +81,15 @@ function createThreadShell(): ThreadPageShell {
 function createThreadChat(
   overrides: Partial<ThreadPageChat> = {},
 ): ThreadPageChat {
+  const fallbackMessages = [
+    {
+      type: "user" as const,
+      model: null,
+      parts: [{ type: "text" as const, text: "Initial prompt" }],
+    },
+  ];
+  const transcriptMessages =
+    overrides.projectedMessages ?? overrides.messages ?? fallbackMessages;
   return {
     id: "chat-1",
     userId: "user-1",
@@ -101,15 +110,10 @@ function createThreadChat(
     codexPreviousResponseId: null,
     isUnread: false,
     messageSeq: 0,
-    messages: [
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "Initial prompt" }],
-      },
-    ],
+    messages: transcriptMessages,
+    projectedMessages: transcriptMessages,
     queuedMessages: [],
-    messageCount: 1,
+    messageCount: transcriptMessages.length,
     chatSequence: INITIAL_CHAT_SEQUENCE,
     patchVersion: 0,
     ...overrides,
@@ -621,7 +625,9 @@ describe("seq-based fast path", () => {
       threadQueryKeys.chat("thread-1", "chat-1"),
     );
     expect(nextChat?.messageCount).toBe(2);
-    expect(nextChat?.messages?.at(-1)).toMatchObject({ type: "agent" });
+    expect(nextChat?.projectedMessages?.at(-1)).toMatchObject({
+      type: "agent",
+    });
     expect(nextChat?.chatSequence).toBe(4);
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
@@ -1039,6 +1045,7 @@ describe("dual-seq (messageSeq + patchVersion)", () => {
     );
     expect(chat?.status).toBe("complete");
     expect(chat?.messageCount).toBe(2);
+    expect(chat?.projectedMessages).toHaveLength(2);
     expect(chat?.messages).toHaveLength(2);
     expect(chat?.patchVersion).toBe(2);
     expect(chat?.messageSeq).toBe(5);
@@ -1094,7 +1101,7 @@ describe("dual-seq (messageSeq + patchVersion)", () => {
       threadQueryKeys.chat("thread-1", "chat-1"),
     );
     expect(chat?.messageCount).toBe(2);
-    expect(chat?.messages?.at(-1)).toMatchObject({
+    expect(chat?.projectedMessages?.at(-1)).toMatchObject({
       type: "agent",
       parts: [{ type: "text", text: "response" }],
     });
@@ -1304,5 +1311,74 @@ describe("dual-seq (messageSeq + patchVersion)", () => {
     expect(chat?.messageCount).toBe(2); // messages preserved
     expect(chat?.messageSeq).toBe(6); // unchanged
     expect(chat?.patchVersion).toBe(2);
+  });
+
+  it("appends into projectedMessages without mutating the legacy messages snapshot", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+      createThreadChat({
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "legacy only" }],
+          },
+        ],
+        projectedMessages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "projected baseline" }],
+          },
+        ],
+        messageCount: 1,
+        chatSequence: 2,
+        messageSeq: 2,
+        patchVersion: 1,
+      }),
+    );
+
+    applyThreadPatchToQueryClient({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        messageSeq: 3,
+        patchVersion: 2,
+        chatSequence: 3,
+        appendMessages: [
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "projected append" }],
+          },
+        ],
+      },
+    });
+
+    const chat = queryClient.getQueryData<ThreadPageChat>(
+      threadQueryKeys.chat("thread-1", "chat-1"),
+    );
+    expect(chat?.projectedMessages).toEqual([
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "projected baseline" }],
+      },
+      {
+        type: "agent",
+        parent_tool_use_id: null,
+        parts: [{ type: "text", text: "projected append" }],
+      },
+    ]);
+    expect(chat?.messages).toEqual([
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "legacy only" }],
+      },
+    ]);
   });
 });

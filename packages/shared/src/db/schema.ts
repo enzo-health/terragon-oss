@@ -495,6 +495,7 @@ export const agentEventLog = pgTable(
       .notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     timestamp: timestamp("timestamp", { mode: "date" }).notNull(),
+    threadChatMessageSeq: integer("thread_chat_message_seq"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (table) => [
@@ -513,6 +514,14 @@ export const agentEventLog = pgTable(
       table.threadChatId,
       table.logSeq,
     ),
+    index("agent_event_log_thread_replay_seq_idx").on(
+      table.threadId,
+      table.threadChatMessageSeq,
+    ),
+    index("agent_event_log_thread_chat_replay_seq_idx").on(
+      table.threadChatId,
+      table.threadChatMessageSeq,
+    ),
     index("agent_event_log_timestamp_idx").on(table.timestamp),
   ],
 );
@@ -527,10 +536,12 @@ export const tokenStreamEvent = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
     threadChatId: text("thread_chat_id").notNull(),
+    threadChatMessageSeq: integer("thread_chat_message_seq"),
     messageId: text("message_id").notNull(),
     partIndex: integer("part_index").notNull(),
     partType: text("part_type").notNull().default("text"),
@@ -545,14 +556,17 @@ export const tokenStreamEvent = pgTable(
     ),
     index("token_stream_event_thread_part_seq_idx").on(
       table.threadChatId,
+      table.threadChatMessageSeq,
       table.messageId,
       table.partIndex,
       table.streamSeq,
     ),
     index("token_stream_event_replay_idx").on(
       table.userId,
+      table.runId,
       table.threadId,
       table.threadChatId,
+      table.threadChatMessageSeq,
       table.streamSeq,
     ),
   ],
