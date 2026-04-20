@@ -18,8 +18,8 @@ import {
   ThreadChatInfoFull,
 } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
-import { useIncrementalUIMessages } from "./toUIMessages";
+import { toUIMessages } from "./toUIMessages";
+import { useAgUiMessages } from "./use-ag-ui-messages";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -66,35 +66,16 @@ import { unwrapError } from "@/lib/server-actions";
 import { usePlatform } from "@/hooks/use-platform";
 import dynamic from "next/dynamic";
 import { ThreadInfoFull } from "@terragon/shared";
-import { applyThreadPatchToQueryClient } from "@/queries/thread-patch-cache";
-import { useDeltaAccumulator } from "@/hooks/useDeltaAccumulator";
 import {
   seedShell,
-  applyShellPatchToCollection,
   useShellFromCollection,
 } from "@/collections/thread-shell-collection";
 import {
   seedChat,
-  applyChatPatchToCollection,
   useChatFromCollection,
 } from "@/collections/thread-chat-collection";
-import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
-import { reduceThreadPatchesForChat } from "@/collections/patch-helpers";
 import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
-
-function isThreadStatusWorking(status: ThreadStatus): boolean {
-  return [
-    "queued",
-    "queued-tasks-concurrency",
-    "queued-sandbox-creation-rate-limit",
-    "queued-agent-rate-limit",
-    "booting",
-    "working",
-    "stopping",
-    "checkpointing",
-  ].includes(status);
-}
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -339,37 +320,15 @@ function ChatUI({
     threadIsUnread: !!shell?.isUnread,
     isReadOnly,
   });
-  const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
-  const handleThreadPatches = useCallback(
-    (patches: BroadcastThreadPatch[]) => {
-      const transcriptReduction =
-        threadChat != null
-          ? reduceThreadPatchesForChat(threadChat, patches)
-          : null;
-      for (const patch of patches) {
-        if (patch.op === "delta") {
-          applyDelta(patch);
-        } else {
-          // Write to TanStack DB collections (primary data path)
-          applyShellPatchToCollection(patch);
-          applyChatPatchToCollection(patch);
-          applyThreadPatchToCollection(patch);
-          // Dual-write to React Query cache (diff invalidation + legacy consumers)
-          applyThreadPatchToQueryClient({ queryClient, patch });
-        }
-      }
-      // When a complete message arrives, clear accumulated deltas since the
-      // DB message now contains the full text.
-      if (
-        transcriptReduction?.hasMaterializedMessages &&
-        transcriptReduction.latestPatchedStatus != null &&
-        !isThreadStatusWorking(transcriptReduction.latestPatchedStatus)
-      ) {
-        clearDeltasForThread();
-      }
-    },
-    [applyDelta, clearDeltasForThread, queryClient, threadChat],
-  );
+  // Task 6B: AG-UI is now the source of truth for the transcript. We keep
+  // `useDeliveryLoopStatusRealtime` only for its internal delivery-loop
+  // query invalidation behaviour — transcript patches flowing through the
+  // legacy broadcast are ignored. Status / queuedMessages / error updates
+  // rely on React Query refetches (on mount / focus) + AG-UI CUSTOM meta
+  // events (see meta-chips/use-thread-meta-events.ts).
+  const handleThreadPatches = useCallback(() => {
+    // No-op: the AG-UI SSE stream is the sole live projection source.
+  }, []);
   useDeliveryLoopStatusRealtime({
     threadId,
     threadChatId,
@@ -481,29 +440,29 @@ function ChatUI({
       }),
     [deliveryLoopStatus?.state, threadChat?.status],
   );
-  const messages = useIncrementalUIMessages({
-    dbMessages,
-    agent: chatAgent,
-    threadStatus: threadChat?.status,
-    cacheKey: threadChatId ?? threadId,
-    deltas,
-  });
-
-  // Snapshot the DB messages + seq for AG-UI `initialMessages` seed. These are
-  // captured at first mount per (threadId, threadChatId); subsequent updates
-  // arrive via the SSE stream. We pass stable identity fields so the
-  // `useAgUiTransport` memo won't thrash.
+  // Snapshot the DB messages for both the AG-UI transport hydration seed
+  // (so the HttpAgent starts from a non-empty state) AND the aggregator's
+  // initial UIMessage[] seed. Memoized on threadChatId — we freeze at mount
+  // time so the SSE replay cursor stays stable and the reducer's initial
+  // state isn't clobbered by incoming React Query refetches.
   const agUiInitialMessages = useMemo(
     () => dbMessagesToAgUiMessages(dbMessages),
-    // Memo only on threadChatId so we seed once per chat — live updates come
-    // through the AG-UI SSE stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [threadChatId],
   );
   const agUiFromSeq = useMemo(
     () => threadChat?.messageSeq ?? 0,
-    // Same rationale: freeze at mount time so the SSE replay cursor stays
-    // stable across re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [threadChatId],
+  );
+  const initialUiMessages = useMemo(
+    () =>
+      toUIMessages({
+        dbMessages,
+        agent: chatAgent,
+        threadStatus: threadChat?.status,
+      }),
+    // Seed once per chat; subsequent updates come through the AG-UI stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [threadChatId],
   );
@@ -512,6 +471,11 @@ function ChatUI({
     threadChatId: threadChatId ?? null,
     fromSeq: agUiFromSeq,
     initialMessages: agUiInitialMessages,
+  });
+  const messages = useAgUiMessages({
+    agent,
+    agentKind: chatAgent,
+    initialMessages: initialUiMessages,
   });
   const artifactDescriptors = useMemo(
     () =>

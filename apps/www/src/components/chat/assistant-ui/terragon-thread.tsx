@@ -28,9 +28,10 @@ type TerragonThreadProps = {
    */
   agent: HttpAgent;
   /**
-   * Rendered messages. In Phase 4 these still come from the external realtime
-   * projection (useIncrementalUIMessages) rather than the AG-UI runtime — the
-   * migration to runtime-driven rendering lands in Phase 6.
+   * Rendered messages. Task 6B: these are projected from the AG-UI SSE
+   * stream via `useAgUiMessages` (seeded with `toUIMessages(dbMessages)`)
+   * in `chat-ui.tsx`. The AG-UI runtime itself powers the composer / run-
+   * state but not the message list.
    */
   messages: UIMessage[];
   threadStatus: ThreadStatus | null;
