@@ -89,6 +89,24 @@ describe("dbMessagesToAgUiMessages", () => {
     expect(out?.role).toBe("tool");
     expect(out?.content).toBe("output");
     expect((out as { toolCallId?: string }).toolCallId).toBe("tc-1");
+    // Success case should not attach an `error` field.
+    expect((out as { error?: string }).error).toBeUndefined();
+  });
+
+  it("surfaces the diagnostic in `error` when tool-result is_error is true", () => {
+    const input: DBMessage[] = [
+      {
+        type: "tool-result",
+        id: "tc-err",
+        is_error: true,
+        parent_tool_use_id: null,
+        result: "boom: permission denied",
+      },
+    ];
+    const [out] = dbMessagesToAgUiMessages(input);
+    expect(out?.role).toBe("tool");
+    expect(out?.content).toBe("boom: permission denied");
+    expect((out as { error?: string }).error).toBe("boom: permission denied");
   });
 
   it("converts a system message with text parts", () => {
@@ -177,5 +195,18 @@ describe("dbMessagesToAgUiMessages", () => {
     ];
     const [out] = dbMessagesToAgUiMessages(input);
     expect(out?.content).toBe("hi @user hello");
+  });
+
+  it("returns [] when input contains only unsupported variants", () => {
+    // Locks the "skip, don't throw" contract — a thread made exclusively of
+    // git-diff / stop / error / meta messages must hydrate to an empty seed.
+    const input: DBMessage[] = [
+      {
+        type: "git-diff",
+        diff: "",
+      },
+      { type: "stop" },
+    ];
+    expect(dbMessagesToAgUiMessages(input)).toEqual([]);
   });
 });

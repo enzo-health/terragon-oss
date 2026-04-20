@@ -91,8 +91,13 @@ export function TerragonThread({
   threadChatStatus,
   children,
 }: TerragonThreadProps) {
+  // Only agents that emit reasoning / thinking events benefit from the
+  // thinking UI. Other agents would show an empty "thinking" affordance.
+  const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
+
   const runtime = useTerragonRuntime({
     agent,
+    showThinking,
     ...(onCancel && { onCancel }),
   });
 

@@ -72,4 +72,22 @@ describe("useTerragonRuntime", () => {
     expect(opts.onCancel).toBeUndefined();
     expect(opts.onError).toBeUndefined();
   });
+
+  it("passes showThinking=false through to useAgUiRuntime when provided", () => {
+    const agent = {} as HttpAgent;
+    renderToStaticMarkup(<HookHarness args={{ agent, showThinking: false }} />);
+    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+      showThinking: boolean;
+    };
+    expect(opts.showThinking).toBe(false);
+  });
+
+  it("defaults showThinking to true when omitted", () => {
+    const agent = {} as HttpAgent;
+    renderToStaticMarkup(<HookHarness args={{ agent }} />);
+    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+      showThinking: boolean;
+    };
+    expect(opts.showThinking).toBe(true);
+  });
 });

@@ -508,7 +508,7 @@ function ChatUI({
   );
   const agent = useAgUiTransport({
     threadId,
-    threadChatId: threadChatId ?? "",
+    threadChatId: threadChatId ?? null,
     fromSeq: agUiFromSeq,
     initialMessages: agUiInitialMessages,
   });
@@ -680,7 +680,8 @@ function ChatUI({
     isThreadChatLoading ||
     !thread ||
     !threadChat ||
-    !shell
+    !shell ||
+    !agent
   ) {
     return (
       <div className="flex flex-col h-full w-full items-center justify-center">

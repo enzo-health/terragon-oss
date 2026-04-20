@@ -16,21 +16,27 @@ import { useMemo } from "react";
  * same instance, different inputs → new instance. Callers wiring this into
  * `@assistant-ui/react-ag-ui`'s `useAgUiRuntime` will re-attach when the
  * identity changes (e.g. thread switch).
+ *
+ * Returns `null` when `threadChatId` is `null` or empty — this lets callers
+ * render the hook unconditionally while thread/chat data is still loading
+ * without constructing an `HttpAgent` pointed at an invalid URL (which the
+ * backend would reject with a 400 the first time any eager prefetch fired).
  */
 export function useAgUiTransport(args: {
   threadId: string;
-  threadChatId: string;
+  threadChatId: string | null;
   /** Starting seq for initial replay. 0 means "from the beginning". */
   fromSeq: number;
   /** Historical messages to seed the agent with (optional). */
   initialMessages?: Message[];
   /** Initial state snapshot (optional). */
   initialState?: State;
-}): HttpAgent {
+}): HttpAgent | null {
   const { threadId, threadChatId, fromSeq, initialMessages, initialState } =
     args;
 
   return useMemo(() => {
+    if (!threadChatId) return null;
     const query = new URLSearchParams({
       threadChatId,
       fromSeq: String(fromSeq),

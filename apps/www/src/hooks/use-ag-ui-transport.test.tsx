@@ -50,16 +50,23 @@ interface CapturedAgent {
   __mockId: number;
 }
 
+type CapturedValue = CapturedAgent | null;
+
+function requireAgent(value: CapturedValue): CapturedAgent {
+  if (!value) throw new Error("expected HttpAgent, got null");
+  return value;
+}
+
 function Harness({
   args,
   onAgent,
 }: {
   args: TransportArgs;
-  onAgent: (agent: CapturedAgent) => void;
+  onAgent: (agent: CapturedValue) => void;
 }): null {
   const agent = useAgUiTransport(args);
   useEffect(() => {
-    onAgent(agent as unknown as CapturedAgent);
+    onAgent(agent as unknown as CapturedValue);
   }, [agent, onAgent]);
   return null;
 }
@@ -67,15 +74,15 @@ function Harness({
 async function renderHarness({ args }: { args: TransportArgs }): Promise<{
   container: HTMLDivElement;
   root: Root;
-  captured: CapturedAgent[];
+  captured: CapturedValue[];
   rerender: (next: { args: TransportArgs }) => Promise<void>;
 }> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
 
-  const captured: CapturedAgent[] = [];
-  const onAgent = (agent: CapturedAgent) => {
+  const captured: CapturedValue[] = [];
+  const onAgent = (agent: CapturedValue) => {
     captured.push(agent);
   };
 
@@ -105,8 +112,8 @@ describe("useAgUiTransport", () => {
     });
 
     expect(captured.length).toBeGreaterThan(0);
-    expect(captured[0]).toBeDefined();
-    expect(typeof captured[0]!.__mockId).toBe("number");
+    const first = requireAgent(captured[0]!);
+    expect(typeof first.__mockId).toBe("number");
 
     await act(async () => {
       root.unmount();
@@ -119,7 +126,7 @@ describe("useAgUiTransport", () => {
       args: { threadId: "thread-abc", threadChatId: "chat-xyz", fromSeq: 0 },
     });
 
-    const agent = captured.at(-1)!;
+    const agent = requireAgent(captured.at(-1)!);
     expect(agent.url).toBe(
       "/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=0",
     );
@@ -139,7 +146,7 @@ describe("useAgUiTransport", () => {
       },
     });
 
-    const agent = captured.at(-1)!;
+    const agent = requireAgent(captured.at(-1)!);
     // URLSearchParams encodes '&' → %26, '=' → %3D.
     // encodeURIComponent encodes '/' → %2F, ' ' → %20.
     expect(agent.url).toBe(
@@ -168,7 +175,7 @@ describe("useAgUiTransport", () => {
       },
     });
 
-    const agent = captured.at(-1)!;
+    const agent = requireAgent(captured.at(-1)!);
     expect(agent.threadId).toBe("t1");
     expect(agent.initialMessages).toEqual(initialMessages);
     expect(agent.initialState).toEqual(initialState);
@@ -188,13 +195,13 @@ describe("useAgUiTransport", () => {
     const { captured, rerender, root, container } = await renderHarness({
       args,
     });
-    const firstId = captured[0]!.__mockId;
+    const firstId = requireAgent(captured[0]!).__mockId;
 
     await rerender({ args: { ...args } });
 
     // Every captured agent so far should be the same instance (same __mockId).
     for (const agent of captured) {
-      expect(agent.__mockId).toBe(firstId);
+      expect(requireAgent(agent).__mockId).toBe(firstId);
     }
     // Only one HttpAgent ever constructed.
     expect(httpAgentInstances.length).toBe(1);
@@ -209,12 +216,12 @@ describe("useAgUiTransport", () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "thread-A", threadChatId: "c1", fromSeq: 0 },
     });
-    const firstId = captured.at(-1)!.__mockId;
+    const firstId = requireAgent(captured.at(-1)!).__mockId;
 
     await rerender({
       args: { threadId: "thread-B", threadChatId: "c1", fromSeq: 0 },
     });
-    const secondId = captured.at(-1)!.__mockId;
+    const secondId = requireAgent(captured.at(-1)!).__mockId;
 
     expect(secondId).not.toBe(firstId);
     expect(httpAgentInstances.length).toBeGreaterThanOrEqual(2);
@@ -229,15 +236,15 @@ describe("useAgUiTransport", () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
     });
-    const firstId = captured.at(-1)!.__mockId;
+    const firstId = requireAgent(captured.at(-1)!).__mockId;
 
     await rerender({
       args: { threadId: "t1", threadChatId: "c1", fromSeq: 42 },
     });
-    const secondId = captured.at(-1)!.__mockId;
+    const secondId = requireAgent(captured.at(-1)!).__mockId;
 
     expect(secondId).not.toBe(firstId);
-    const lastAgent = captured.at(-1)!;
+    const lastAgent = requireAgent(captured.at(-1)!);
     expect(lastAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42");
 
     await act(async () => {
@@ -250,14 +257,67 @@ describe("useAgUiTransport", () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: "chat-A", fromSeq: 0 },
     });
-    const firstId = captured.at(-1)!.__mockId;
+    const firstId = requireAgent(captured.at(-1)!).__mockId;
 
     await rerender({
       args: { threadId: "t1", threadChatId: "chat-B", fromSeq: 0 },
     });
-    const secondId = captured.at(-1)!.__mockId;
+    const secondId = requireAgent(captured.at(-1)!).__mockId;
 
     expect(secondId).not.toBe(firstId);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("returns null when threadChatId is null", async () => {
+    const { captured, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: null, fromSeq: 0 },
+    });
+
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured.at(-1)!).toBeNull();
+    // No HttpAgent constructed for a null threadChatId.
+    expect(httpAgentInstances.length).toBe(0);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("returns null when threadChatId is an empty string", async () => {
+    const { captured, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: "", fromSeq: 0 },
+    });
+
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured.at(-1)!).toBeNull();
+    expect(httpAgentInstances.length).toBe(0);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("transitions from null to HttpAgent when threadChatId becomes available", async () => {
+    const { captured, rerender, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: null, fromSeq: 0 },
+    });
+
+    expect(captured.at(-1)!).toBeNull();
+    expect(httpAgentInstances.length).toBe(0);
+
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
+    });
+
+    const latest = requireAgent(captured.at(-1)!);
+    expect(latest.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=0");
+    expect(httpAgentInstances.length).toBe(1);
 
     await act(async () => {
       root.unmount();

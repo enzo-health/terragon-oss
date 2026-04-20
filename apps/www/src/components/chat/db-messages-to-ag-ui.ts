@@ -51,6 +51,12 @@ export function dbMessagesToAgUiMessages(dbMessages: DBMessage[]): Message[] {
       // Unknown / unrepresentable variants (git-diff, stop, error, meta,
       // thread-context, thread-context-result, delegation) are skipped.
       default:
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug(
+            `[ag-ui-hydrate] skipped unsupported message type: ${(msg as { type: string }).type}`,
+          );
+        }
         break;
     }
   }
@@ -120,11 +126,15 @@ function toolCallToAgUi(msg: DBToolCall, id: string): Message {
 }
 
 function toolResultToAgUi(msg: DBToolResultLike, id: string): Message {
+  // AG-UI's ToolMessageSchema exposes an optional `error` string; when the
+  // original DBToolResult was an error we mirror the diagnostic there so
+  // downstream consumers can distinguish success/failure.
   return {
     id,
     role: "tool",
     content: msg.result,
     toolCallId: msg.id,
+    ...(msg.is_error ? { error: msg.result } : {}),
   };
 }
 

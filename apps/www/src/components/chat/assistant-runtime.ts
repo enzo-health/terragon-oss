@@ -23,14 +23,21 @@ export function useTerragonRuntime({
   agent,
   onError,
   onCancel,
+  showThinking = true,
 }: {
   agent: HttpAgent;
   onError?: (error: Error) => void;
   onCancel?: () => void | Promise<void>;
+  /**
+   * Whether to surface THINKING / reasoning deltas. Callers should set this
+   * based on whether the selected agent emits reasoning events; not every
+   * agent does. Defaults to `true` for backward compatibility.
+   */
+  showThinking?: boolean;
 }): AssistantRuntime {
   return useAgUiRuntime({
     agent,
-    showThinking: true,
+    showThinking,
     ...(onError && { onError }),
     ...(onCancel && {
       onCancel: () => {
