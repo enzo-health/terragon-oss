@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventType } from "@ag-ui/core";
 import { env } from "@terragon/env/pkg-shared";
 import type {
   AssistantMessageEvent,
@@ -9,6 +10,7 @@ import type {
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
+import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import { createTestThread, createTestUser } from "./test-helpers";
 import {
   appendCanonicalEvent,
@@ -18,6 +20,7 @@ import {
   getRunEvents,
   getRunMaxSeq,
   hasCanonicalReplayProjection,
+  readAgUiPayload,
   validateCanonicalEnvelope,
   validateCanonicalEvent,
 } from "./agent-event-log";
@@ -421,5 +424,82 @@ describe("agent-event-log", () => {
     } finally {
       findManySpy.mockRestore();
     }
+  });
+
+  describe("readAgUiPayload", () => {
+    function makeRow(
+      payloadJson: Record<string, unknown>,
+      overrides: Partial<AgentEventLogRow> = {},
+    ): AgentEventLogRow {
+      const now = new Date();
+      return {
+        id: newId("row"),
+        logSeq: 1,
+        eventId: newId("event"),
+        runId: newId("run"),
+        threadId: newId("thread"),
+        threadChatId: newId("thread-chat"),
+        seq: 0,
+        eventType: "unknown",
+        category: "operational",
+        payloadJson,
+        idempotencyKey: newId("idempotency"),
+        timestamp: now,
+        threadChatMessageSeq: null,
+        createdAt: now,
+        ...overrides,
+      } as AgentEventLogRow;
+    }
+
+    it("returns an AG-UI BaseEvent unchanged when payload is already AG-UI shape", () => {
+      const agUiEvent: Record<string, unknown> = {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 1_700_000_000_000,
+        messageId: "msg-1",
+        delta: "hello world",
+      };
+      const row = makeRow(agUiEvent, { eventType: "TEXT_MESSAGE_CONTENT" });
+
+      const result = readAgUiPayload(row);
+      expect(result).toBe(agUiEvent);
+      expect(result?.type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+    });
+
+    it("maps an envelope-v2 canonical event row to its first AG-UI event", async () => {
+      const fixture = await createRunFixture();
+      const canonicalEvent = createAssistantMessageEvent({
+        ...fixture,
+        seq: 1,
+      });
+      const row = makeRow(
+        canonicalEvent as unknown as Record<string, unknown>,
+        {
+          eventType: canonicalEvent.type,
+          category: canonicalEvent.category,
+        },
+      );
+
+      const result = readAgUiPayload(row);
+
+      // assistant-message expands to TEXT_MESSAGE_START + _CONTENT + _END;
+      // the shim returns the first (START).
+      expect(result).not.toBeNull();
+      expect(result?.type).toBe(EventType.TEXT_MESSAGE_START);
+      expect((result as { messageId?: string } | null)?.messageId).toBe(
+        canonicalEvent.messageId,
+      );
+    });
+
+    it("returns null and warns when the payload matches neither shape", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const row = makeRow({ garbage: true, nothing: "useful" });
+        const result = readAgUiPayload(row);
+        expect(result).toBeNull();
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 });

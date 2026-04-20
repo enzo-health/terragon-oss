@@ -504,7 +504,10 @@ export const agentEventLog = pgTable(
       table.runId,
       table.eventId,
     ),
-    uniqueIndex("agent_event_log_run_seq_unique").on(table.runId, table.seq),
+    uniqueIndex("agent_event_log_thread_chat_seq_unique").on(
+      table.threadChatId,
+      table.seq,
+    ),
     index("agent_event_log_run_seq_idx").on(table.runId, table.seq),
     index("agent_event_log_thread_log_seq_idx").on(
       table.threadId,

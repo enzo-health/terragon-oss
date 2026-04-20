@@ -1,4 +1,6 @@
 import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import type { BaseEvent } from "@ag-ui/core";
+import { EventType } from "@ag-ui/core";
 import type {
   BaseEventEnvelope,
   CanonicalEvent,
@@ -10,6 +12,7 @@ import {
   BaseEventEnvelopeSchema,
   CanonicalEventSchema,
 } from "@terragon/agent/canonical-events";
+import { mapCanonicalEventToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DB } from "../db";
 import type { DBMessage } from "../db/db-message";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
@@ -121,6 +124,70 @@ export function validateCanonicalEvent(
   }
 
   return { valid: true, event: result.data };
+}
+
+const AG_UI_EVENT_TYPES: ReadonlySet<string> = new Set(
+  Object.values(EventType) as string[],
+);
+
+function isAgUiBaseEvent(payload: unknown): payload is BaseEvent {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const type = Reflect.get(payload, "type");
+  return typeof type === "string" && AG_UI_EVENT_TYPES.has(type);
+}
+
+/**
+ * Read an agent_event_log row's payload as an AG-UI BaseEvent.
+ *
+ * Forward-compatibility shim for the AG-UI cutover: reads rows written in
+ * either shape and returns a single BaseEvent.
+ *
+ * - Rows written after Task 2C store an AG-UI BaseEvent directly in
+ *   payload_json (detected by `type` matching the AG-UI EventType enum).
+ * - Legacy rows written before the cutover store a canonical envelope-v2
+ *   event. We parse via CanonicalEventSchema and call mapCanonicalEventToAgui
+ *   to convert.
+ *
+ * Note: some canonical events expand to multiple AG-UI events
+ * (e.g. assistant-message -> TEXT_MESSAGE_START + TEXT_MESSAGE_CONTENT +
+ * TEXT_MESSAGE_END; tool-call-start -> TOOL_CALL_START + TOOL_CALL_ARGS +
+ * TOOL_CALL_END). This shim returns only the FIRST expanded event, which is
+ * sufficient for callers that just need to know the event shape/kind.
+ *
+ * TODO: Callers that need to replay all AG-UI events for a legacy row must
+ * iterate the full array from mapCanonicalEventToAgui. When that need arises,
+ * expose a sibling function `readAllAgUiPayloads(row)` rather than changing
+ * this signature.
+ *
+ * Returns null for rows whose payload matches neither shape; emits a
+ * console.warn so the drift is observable.
+ */
+export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
+  const payload = row.payloadJson;
+
+  if (isAgUiBaseEvent(payload)) {
+    return payload;
+  }
+
+  const canonical = CanonicalEventSchema.safeParse(payload);
+  if (canonical.success) {
+    const mapped = mapCanonicalEventToAgui(canonical.data);
+    if (mapped.length > 0) {
+      return mapped[0] ?? null;
+    }
+  }
+
+  console.warn(
+    "[agent-event-log] readAgUiPayload: unrecognized payload shape",
+    {
+      eventId: row.eventId,
+      runId: row.runId,
+      eventType: row.eventType,
+    },
+  );
+  return null;
 }
 
 function toIdempotencyKey(envelope: BaseEventEnvelope): string {
