@@ -56,9 +56,12 @@ import {
   buildRunTerminalAgUi,
   canonicalEventsToAgUiRows,
   daemonDeltasToAgUiRows,
+  dbAgentMessagePartsToAgUiRows,
   metaEventsToAgUiEvents,
   persistAndPublishAgUiEvents,
+  type AssistantMessagePartsInput,
 } from "@/server-lib/ag-ui-publisher";
+import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { env } from "@terragon/env/apps-www";
 
 type DaemonEventEnvelopeV2 = {
@@ -1354,6 +1357,57 @@ export async function POST(request: Request) {
         eventIds: insertedEventIds,
         threadChatMessageSeq: result.threadChatMessageSeq,
       });
+    }
+  }
+
+  // Emit AG-UI events for rich DBAgentMessage parts that are NOT covered by
+  // the canonical-events pipeline (thinking, terminal, diff, image, audio,
+  // pdf, text-file, resource-link, auto-approval-review, plan,
+  // plan-structured, server-tool-use, web-search-result, rich-text). We
+  // rebuild the DBMessages here rather than threading them back from
+  // `handleDaemonEvent` — `toDBMessage` is pure, so the second call is
+  // deterministic, and the stable (envelope eventId + messageIndex)
+  // messageId pattern means retried POSTs dedupe on (runId, eventId).
+  if (canPersistCanonicalEvents && envelopeV2) {
+    const richPartInputs: AssistantMessagePartsInput[] = [];
+    let messageIndex = 0;
+    for (const claudeMessage of messages) {
+      for (const dbMsg of toDBMessage(claudeMessage)) {
+        const currentIndex = messageIndex++;
+        if (dbMsg.type !== "agent") continue;
+        // DBAgentMessage parts never contain tool-use/tool-result — those
+        // are separate top-level DBMessage variants. The mapper's skip set
+        // is a superset; here we only need to filter out pure-text parts.
+        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
+        if (!hasRichParts) continue;
+        richPartInputs.push({
+          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
+          parts: dbMsg.parts,
+        });
+      }
+    }
+    if (richPartInputs.length > 0) {
+      try {
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
+        });
+      } catch (error) {
+        // Rich-part emission is best-effort: the DBMessages themselves are
+        // already committed via handleDaemonEvent, and the frontend
+        // fallback-reads from thread chat if the AG-UI stream misses
+        // something. Log and continue rather than 500 (which would force
+        // the daemon to retry the whole POST and duplicate side effects).
+        console.warn("[daemon-event] AG-UI rich-part persistence failed", {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        });
+      }
     }
   }
 

@@ -12,6 +12,9 @@ import {
   type ToolCallEndEvent,
   type ToolCallResultEvent,
   type ToolCallStartEvent,
+  type ReasoningMessageStartEvent,
+  type ReasoningMessageContentEvent,
+  type ReasoningMessageEndEvent,
 } from "@ag-ui/core";
 
 import type {
@@ -223,6 +226,123 @@ export function mapRunErrorToAgui(
     message,
     ...(code ? { code } : {}),
   } as RunErrorEvent;
+}
+
+// ---------------------------------------------------------------------------
+// DBAgentMessage rich parts → AG-UI events
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural type for a single `DBAgentMessage.parts[i]` entry.
+ *
+ * We deliberately keep this loose (structural, not nominal): the `@terragon/
+ * shared` DB-message union pulls in `AIModel` which is exported from this same
+ * package, so an `import type` on `DBAgentMessagePart` would reintroduce the
+ * `shared` → `agent` workspace dep as a cycle. Instead we narrow by `type` at
+ * runtime and let TypeScript infer enough to access the shape's fields where
+ * needed (currently only `thinking.thinking`).
+ *
+ * Callers in `apps/www` pass real `DBAgentMessagePart` values; the structural
+ * contract is enforced at those call sites by `DBAgentMessagePart` itself.
+ */
+export type DBAgentMessagePartLike = { type: string } & Record<string, unknown>;
+
+/**
+ * Part-types that are already expressed via canonical events (assistant-message
+ * text, tool-call-start/result) and therefore must NOT be re-emitted here. Kept
+ * as a typed literal so the compiler catches drift if we ever rename one.
+ */
+const SKIPPED_AGENT_PART_TYPES = new Set<string>([
+  "text",
+  "tool-use",
+  "tool-result",
+]);
+
+/**
+ * Stable prefix for the CUSTOM event `name` field. The frontend consumer
+ * (Task 6B) keys off this prefix to route parts to the right renderer.
+ */
+const CUSTOM_PART_NAME_PREFIX = "terragon.part.";
+
+/**
+ * Map a `DBAgentMessage.parts` array to the AG-UI events that represent the
+ * non-text, non-tool-call parts. These exist in addition to the canonical-
+ * events pipeline:
+ *   - `assistant-message` canonical events cover `text` parts.
+ *   - `tool-call-start` / `tool-call-result` canonical events cover `tool-use`
+ *     and `tool-result` parts.
+ *   - Everything else (thinking, terminal, diff, image, audio, plan, ...) is
+ *     NOT represented in canonical events today, so it needs first-class
+ *     AG-UI events or the frontend can't reconstruct the full UI state.
+ *
+ * Thinking parts expand to REASONING_MESSAGE_START + CONTENT + END. All other
+ * rich variants expand to a single CUSTOM event whose `name` is
+ * `terragon.part.<type>` and whose `value` carries `{ messageId, partIndex,
+ * part }`. Carrying the original part object intact lets the frontend
+ * renderer consume it without a second round-trip.
+ *
+ * The returned events are NOT timestamped per-event; callers pick a single
+ * timestamp for the whole message (matching the existing mapper convention).
+ */
+export function dbAgentMessagePartsToAgUi(
+  messageId: string,
+  parts: readonly DBAgentMessagePartLike[],
+  timestamp = Date.now(),
+): BaseEvent[] {
+  const events: BaseEvent[] = [];
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    const part = parts[partIndex]!;
+    if (SKIPPED_AGENT_PART_TYPES.has(part.type)) continue;
+
+    if (part.type === "thinking") {
+      // Synthesize a deterministic per-thinking messageId so two thinking
+      // parts in the same DBAgentMessage never collide on dedupe at the
+      // AG-UI layer. The `:thinking:<idx>` suffix is load-bearing for the
+      // frontend reducer — it groups a START/CONTENT/END triple.
+      const thinkingMessageId = `${messageId}:thinking:${partIndex}`;
+      const text =
+        typeof part.thinking === "string"
+          ? part.thinking
+          : // Defensive: tolerate unexpected shapes rather than throw.
+            "";
+      const start: ReasoningMessageStartEvent = {
+        type: EventType.REASONING_MESSAGE_START,
+        timestamp,
+        messageId: thinkingMessageId,
+        role: "reasoning",
+      } as ReasoningMessageStartEvent;
+      events.push(start);
+      if (text.length > 0) {
+        const content: ReasoningMessageContentEvent = {
+          type: EventType.REASONING_MESSAGE_CONTENT,
+          timestamp,
+          messageId: thinkingMessageId,
+          delta: text,
+        } as ReasoningMessageContentEvent;
+        events.push(content);
+      }
+      const end: ReasoningMessageEndEvent = {
+        type: EventType.REASONING_MESSAGE_END,
+        timestamp,
+        messageId: thinkingMessageId,
+      } as ReasoningMessageEndEvent;
+      events.push(end);
+      continue;
+    }
+
+    const custom: CustomEvent = {
+      type: EventType.CUSTOM,
+      timestamp,
+      name: `${CUSTOM_PART_NAME_PREFIX}${part.type}`,
+      value: {
+        messageId,
+        partIndex,
+        part,
+      },
+    } as CustomEvent;
+    events.push(custom);
+  }
+  return events;
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ const {
   persistAndPublishAgUiEvents,
   buildAgUiEventId,
   canonicalEventsToAgUiRows,
+  dbAgentMessagePartsToAgUiRows,
 } = await import("./ag-ui-publisher");
 
 const db = createDb(env.DATABASE_URL);
@@ -307,6 +308,135 @@ describe("ag-ui-publisher", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("rich-part rows: persists + XADDs AG-UI events for non-text DBAgentMessage parts", async () => {
+    const fixture = await createRunFixture();
+    const messageId = `${fixture.runId}:msg:0`;
+
+    // First publish one canonical assistant-message (covers the text) then
+    // the rich-part rows for thinking + terminal. This mirrors the route
+    // flow: canonical events first, then rich parts.
+    const canonicalRows = canonicalEventsToAgUiRows([
+      {
+        payloadVersion: 2,
+        eventId: "ce-1",
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 0,
+        timestamp: new Date().toISOString(),
+        category: "transcript",
+        type: "assistant-message",
+        messageId,
+        content: "hello",
+      },
+    ]);
+    await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: canonicalRows,
+    });
+    redisMocks.xadd.mockClear();
+
+    const richRows = dbAgentMessagePartsToAgUiRows([
+      {
+        messageId,
+        parts: [
+          { type: "text", text: "hello" }, // skipped by the mapper
+          { type: "thinking", thinking: "pondering" },
+          {
+            type: "terminal",
+            sandboxId: "sb-1",
+            terminalId: "t-1",
+            chunks: [],
+          },
+        ],
+      },
+    ]);
+
+    // Expect 3 reasoning events + 1 custom event = 4 rows.
+    expect(richRows).toHaveLength(4);
+    expect(richRows.map((r) => r.event.type)).toEqual([
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_END,
+      EventType.CUSTOM,
+    ]);
+
+    const result = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: richRows,
+    });
+
+    expect(result.inserted).toBe(4);
+    expect(result.skipped).toBe(0);
+    expect(redisMocks.xadd).toHaveBeenCalledTimes(4);
+
+    // Verify persistence alongside the canonical rows.
+    const persisted = await fetchRowsForThreadChat(fixture.threadChatId);
+    expect(persisted).toHaveLength(7); // 3 canonical + 4 rich
+    const customRow = persisted.find(
+      (r) => r.eventType === String(EventType.CUSTOM),
+    );
+    expect(customRow).toBeTruthy();
+    const customPayload = customRow!.payloadJson as unknown as {
+      name: string;
+      value: { messageId: string; partIndex: number; part: { type: string } };
+    };
+    expect(customPayload.name).toBe("terragon.part.terminal");
+    expect(customPayload.value.messageId).toBe(messageId);
+    expect(customPayload.value.partIndex).toBe(2);
+    expect(customPayload.value.part.type).toBe("terminal");
+  });
+
+  it("rich-part rows: republishing the same batch is idempotent (dedupe on eventId)", async () => {
+    const fixture = await createRunFixture();
+    const messageId = `${fixture.runId}:msg:0`;
+    const richRows = dbAgentMessagePartsToAgUiRows([
+      {
+        messageId,
+        parts: [{ type: "thinking", thinking: "x" }],
+      },
+    ]);
+
+    const first = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: richRows,
+    });
+    expect(first.inserted).toBe(3);
+
+    redisMocks.xadd.mockClear();
+    const second = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: richRows,
+    });
+    expect(second.inserted).toBe(0);
+    expect(second.skipped).toBe(3);
+    expect(redisMocks.xadd).not.toHaveBeenCalled();
+  });
+
+  it("rich-part rows: empty input produces no rows", () => {
+    expect(dbAgentMessagePartsToAgUiRows([])).toEqual([]);
+    expect(
+      dbAgentMessagePartsToAgUiRows([{ messageId: "m", parts: [] }]),
+    ).toEqual([]);
+    expect(
+      dbAgentMessagePartsToAgUiRows([
+        { messageId: "m", parts: [{ type: "text", text: "only text" }] },
+      ]),
+    ).toEqual([]);
   });
 
   it("seq continuity: two sequential calls for same threadChatId produce contiguous seqs", async () => {

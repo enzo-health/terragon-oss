@@ -1,5 +1,6 @@
 import type { BaseEvent } from "@ag-ui/core";
 import {
+  dbAgentMessagePartsToAgUi,
   mapCanonicalEventToAgui,
   mapDaemonDeltaToAgui,
   mapMetaEventToAgui,
@@ -7,6 +8,7 @@ import {
   mapRunFinishedToAgui,
   serializeAgUiEvent,
 } from "@terragon/agent/ag-ui-mapper";
+import type { DBAgentMessagePart } from "@terragon/shared";
 import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
@@ -235,6 +237,59 @@ export function daemonDeltasToAgUiRows(params: {
     const kind = delta.kind === "thinking" ? "thinking" : "text";
     const eventId = `delta:${runId}:${delta.messageId}:${delta.partIndex}:${kind}:${delta.deltaSeq}`;
     rows.push({ event: agUi, eventId, timestamp: now });
+  }
+  return rows;
+}
+
+/**
+ * Inputs describing one persisted assistant DBMessage whose `parts` array
+ * may contain rich, non-canonical variants (thinking, terminal, diff, image,
+ * ...). The route ensures `messageId` is stable across daemon retries — it
+ * is a deterministic function of (envelope eventId, message index) — so the
+ * resulting `eventId`s also dedupe correctly on (runId, eventId).
+ */
+export type AssistantMessagePartsInput = {
+  messageId: string;
+  parts: readonly DBAgentMessagePart[];
+};
+
+/**
+ * Turn one or more persisted assistant DBMessages into AG-UI publish rows for
+ * the rich parts that canonical events don't cover (thinking / terminal /
+ * diff / image / audio / pdf / text-file / resource-link / auto-approval-
+ * review / plan / plan-structured / server-tool-use / web-search-result /
+ * rich-text). Text, tool-use, and tool-result parts are intentionally
+ * skipped — the canonical-events pipeline already emits AG-UI events for
+ * them, and duplicating here would cause double-render on the client.
+ *
+ * Each row's `eventId` combines the stable `messageId` with the AG-UI event
+ * type and a per-message expansion index, keeping the collision-safety
+ * invariant that `persistAndPublishAgUiEvents` relies on (dedupe key is
+ * `(runId, eventId)`).
+ */
+export function dbAgentMessagePartsToAgUiRows(
+  messages: readonly AssistantMessagePartsInput[],
+  timestamp: Date = new Date(),
+): AgUiPublishRow[] {
+  const rows: AgUiPublishRow[] = [];
+  for (const message of messages) {
+    const expanded = dbAgentMessagePartsToAgUi(
+      message.messageId,
+      message.parts,
+      timestamp.getTime(),
+    );
+    for (let i = 0; i < expanded.length; i++) {
+      const agUi = expanded[i]!;
+      rows.push({
+        event: agUi,
+        eventId: buildAgUiEventId(
+          `msg:${message.messageId}`,
+          String(agUi.type),
+          i,
+        ),
+        timestamp,
+      });
+    }
   }
   return rows;
 }

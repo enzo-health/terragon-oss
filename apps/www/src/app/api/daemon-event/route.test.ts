@@ -141,6 +141,7 @@ const agUiPublisherMocks = vi.hoisted(() => ({
     })),
   ),
   daemonDeltasToAgUiRows: vi.fn(() => []),
+  dbAgentMessagePartsToAgUiRows: vi.fn(() => []),
   metaEventsToAgUiEvents: vi.fn(() => []),
   buildRunTerminalAgUi: vi.fn(() => ({ type: "RUN_FINISHED" })),
   buildAgUiEventId: vi.fn(
@@ -661,6 +662,83 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
       }),
     );
+  });
+
+  it("emits AG-UI rich-part events for assistant messages with thinking blocks", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-rich-1",
+        runId: "run-1",
+        seq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "pondering" },
+                { type: "text", text: "final answer" },
+              ],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // dbAgentMessagePartsToAgUiRows receives one rich assistant message with
+    // a stable messageId derived from the envelope's eventId + the running
+    // dbMessage index.
+    expect(
+      agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
+    ).toHaveBeenCalledTimes(1);
+    const call = agUiPublisherMocks.dbAgentMessagePartsToAgUiRows.mock
+      .calls[0] as unknown as [
+      Array<{ messageId: string; parts: Array<{ type: string }> }>,
+    ];
+    const inputs = call[0];
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]!.messageId).toMatch(/^event-rich-1:msg:\d+$/);
+    // Parts should include the thinking block; the text block is retained in
+    // the DBAgentMessage parts array but the mapper itself skips pure text.
+    const partTypes = inputs[0]!.parts.map((p) => p.type);
+    expect(partTypes).toContain("thinking");
+  });
+
+  it("skips rich-part emission when assistant message has only text parts", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-text-only",
+        runId: "run-1",
+        seq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: "just text, nothing rich",
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
+    ).not.toHaveBeenCalled();
   });
 
   it("rejects enrolled-loop daemon events without v2 envelope when daemon advertises v2 capability", async () => {

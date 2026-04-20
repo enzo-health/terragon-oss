@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EventType } from "@ag-ui/core";
 import {
+  dbAgentMessagePartsToAgUi,
   mapCanonicalEventToAgui,
   mapDaemonDeltaToAgui,
   mapMetaEventToAgui,
@@ -326,6 +327,210 @@ describe("mapRunErrorToAgui", () => {
       code: "RATE_LIMIT",
     });
   });
+});
+
+describe("dbAgentMessagePartsToAgUi", () => {
+  const MSG = "m-agent-1";
+  const TS = 1_712_000_000_000;
+
+  it("returns empty array when parts contain only text", () => {
+    const result = dbAgentMessagePartsToAgUi(
+      MSG,
+      [
+        { type: "text", text: "hello" },
+        { type: "text", text: "world" },
+      ],
+      TS,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("skips tool-use and tool-result parts (covered by canonical events)", () => {
+    const result = dbAgentMessagePartsToAgUi(
+      MSG,
+      [
+        { type: "tool-use", id: "tc-1", name: "Bash", input: {} },
+        {
+          type: "tool-result",
+          id: "tc-1",
+          is_error: false,
+          result: "ok",
+          parent_tool_use_id: null,
+        },
+      ],
+      TS,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("expands a thinking part to REASONING_MESSAGE_START + CONTENT + END", () => {
+    const result = dbAgentMessagePartsToAgUi(
+      MSG,
+      [{ type: "thinking", thinking: "let me think..." }],
+      TS,
+    );
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({
+      type: EventType.REASONING_MESSAGE_START,
+      messageId: "m-agent-1:thinking:0",
+      role: "reasoning",
+      timestamp: TS,
+    });
+    expect(result[1]).toMatchObject({
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: "m-agent-1:thinking:0",
+      delta: "let me think...",
+      timestamp: TS,
+    });
+    expect(result[2]).toMatchObject({
+      type: EventType.REASONING_MESSAGE_END,
+      messageId: "m-agent-1:thinking:0",
+      timestamp: TS,
+    });
+  });
+
+  it("omits the CONTENT event for an empty thinking part (still emits START + END)", () => {
+    const result = dbAgentMessagePartsToAgUi(
+      MSG,
+      [{ type: "thinking", thinking: "" }],
+      TS,
+    );
+    expect(result.map((e) => e.type)).toEqual([
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_END,
+    ]);
+  });
+
+  it("encodes a terminal part as a CUSTOM event with name terragon.part.terminal", () => {
+    const terminalPart = {
+      type: "terminal",
+      sandboxId: "sb-1",
+      terminalId: "term-1",
+      chunks: [{ streamSeq: 0, kind: "stdout", text: "hi" }],
+    };
+    const result = dbAgentMessagePartsToAgUi(MSG, [terminalPart], TS);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      type: EventType.CUSTOM,
+      name: "terragon.part.terminal",
+      timestamp: TS,
+      value: {
+        messageId: MSG,
+        partIndex: 0,
+        part: terminalPart,
+      },
+    });
+  });
+
+  it("emits CUSTOM events in order across a mixed part array, preserving partIndex", () => {
+    const thinking = { type: "thinking", thinking: "brief" };
+    const terminal = {
+      type: "terminal",
+      sandboxId: "sb",
+      terminalId: "t",
+      chunks: [],
+    };
+    const diff = {
+      type: "diff",
+      filePath: "a.ts",
+      newContent: "x",
+      status: "pending",
+    };
+    const result = dbAgentMessagePartsToAgUi(
+      MSG,
+      [
+        { type: "text", text: "pre" },
+        thinking,
+        { type: "text", text: "middle" },
+        terminal,
+        diff,
+      ],
+      TS,
+    );
+
+    // Expected expansion (by source partIndex):
+    //   0: text -> skipped
+    //   1: thinking -> 3 reasoning events
+    //   2: text -> skipped
+    //   3: terminal -> 1 custom event (partIndex: 3)
+    //   4: diff -> 1 custom event (partIndex: 4)
+    expect(result).toHaveLength(5);
+    expect(result[0]?.type).toBe(EventType.REASONING_MESSAGE_START);
+    expect(result[1]?.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+    expect(result[2]?.type).toBe(EventType.REASONING_MESSAGE_END);
+    expect(result[3]).toMatchObject({
+      type: EventType.CUSTOM,
+      name: "terragon.part.terminal",
+      value: { messageId: MSG, partIndex: 3, part: terminal },
+    });
+    expect(result[4]).toMatchObject({
+      type: EventType.CUSTOM,
+      name: "terragon.part.diff",
+      value: { messageId: MSG, partIndex: 4, part: diff },
+    });
+  });
+
+  it.each([
+    [
+      "terminal",
+      { type: "terminal", sandboxId: "s", terminalId: "t", chunks: [] },
+    ],
+    [
+      "diff",
+      { type: "diff", filePath: "a", newContent: "b", status: "pending" },
+    ],
+    [
+      "image",
+      { type: "image", mime_type: "image/png", image_url: "https://x" },
+    ],
+    ["audio", { type: "audio", mimeType: "audio/wav" }],
+    [
+      "pdf",
+      { type: "pdf", mime_type: "application/pdf", pdf_url: "https://x" },
+    ],
+    [
+      "text-file",
+      { type: "text-file", mime_type: "text/plain", file_url: "https://x" },
+    ],
+    ["resource-link", { type: "resource-link", uri: "https://x", name: "n" }],
+    [
+      "auto-approval-review",
+      {
+        type: "auto-approval-review",
+        reviewId: "r",
+        targetItemId: "t",
+        riskLevel: "low",
+        action: "write",
+        status: "pending",
+      },
+    ],
+    ["plan", { type: "plan", entries: [] }],
+    [
+      "plan-structured",
+      { type: "plan-structured", entries: [], title: "Plan" },
+    ],
+    [
+      "server-tool-use",
+      { type: "server-tool-use", id: "s1", name: "web_search", input: {} },
+    ],
+    [
+      "web-search-result",
+      { type: "web-search-result", toolUseId: "s1", results: [] },
+    ],
+    ["rich-text", { type: "rich-text", nodes: [{ type: "text", text: "x" }] }],
+  ])(
+    "wraps %s as CUSTOM terragon.part.%s with full part in value",
+    (name, part) => {
+      const result = dbAgentMessagePartsToAgUi(MSG, [part], TS);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: `terragon.part.${name}`,
+        timestamp: TS,
+        value: { messageId: MSG, partIndex: 0, part },
+      });
+    },
+  );
 });
 
 describe("serializeAgUiEvent", () => {
