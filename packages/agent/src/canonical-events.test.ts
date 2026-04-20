@@ -24,7 +24,7 @@ const baseEnvelope = {
   idempotencyKey: "key-1",
 };
 
-const currentMainBaseEnvelope = {
+const envelopeWithoutIdempotencyKey = {
   payloadVersion: EVENT_ENVELOPE_VERSION,
   eventId: "event-1",
   runId: "run-1",
@@ -39,10 +39,10 @@ describe("canonical-events", () => {
     expect(BaseEventEnvelopeSchema.parse(baseEnvelope)).toEqual(baseEnvelope);
   });
 
-  it("parses the current main daemon envelope without idempotencyKey", () => {
-    expect(BaseEventEnvelopeSchema.parse(currentMainBaseEnvelope)).toEqual(
-      currentMainBaseEnvelope,
-    );
+  it("parses a canonical envelope without idempotencyKey", () => {
+    expect(
+      BaseEventEnvelopeSchema.parse(envelopeWithoutIdempotencyKey),
+    ).toEqual(envelopeWithoutIdempotencyKey);
   });
 
   it("rejects negative seq values", () => {
@@ -150,6 +150,16 @@ describe("canonical-events", () => {
         type: "assistant-message",
         messageId: "message-1",
         content: 123,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects full daemon request bodies that are not canonical envelopes", () => {
+    expect(() =>
+      BaseEventEnvelopeSchema.parse({
+        ...envelopeWithoutIdempotencyKey,
+        messages: [],
+        timezone: "America/Denver",
       }),
     ).toThrow();
   });
