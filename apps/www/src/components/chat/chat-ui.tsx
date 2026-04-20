@@ -193,14 +193,6 @@ function ChatUI({
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
   const threadChat = chatFromCollection ?? chatFromQuery ?? null;
   const isThreadChatLoading = !threadChat && isChatFetching;
-  const realtimeReplayBaseline = useMemo(() => {
-    const canonicalMessageSeq = Math.max(
-      shell?.primaryThreadChat.messageSeq ?? 0,
-      threadChat?.messageSeq ?? 0,
-    );
-
-    return { messageSeq: canonicalMessageSeq };
-  }, [shell?.primaryThreadChat.messageSeq, threadChat?.messageSeq]);
 
   const dbMessages = useMemo(
     () =>
@@ -320,21 +312,15 @@ function ChatUI({
     threadIsUnread: !!shell?.isUnread,
     isReadOnly,
   });
-  // Task 6B: AG-UI is now the source of truth for the transcript. We keep
-  // `useDeliveryLoopStatusRealtime` only for its internal delivery-loop
-  // query invalidation behaviour — transcript patches flowing through the
-  // legacy broadcast are ignored. Status / queuedMessages / error updates
-  // rely on React Query refetches (on mount / focus) + AG-UI CUSTOM meta
-  // events (see meta-chips/use-thread-meta-events.ts).
-  const handleThreadPatches = useCallback(() => {
-    // No-op: the AG-UI SSE stream is the sole live projection source.
-  }, []);
+  // Delivery-loop status invalidation only — the legacy broadcast socket
+  // was removed with the AG-UI migration. Status / queuedMessages / error
+  // updates ride on React Query refetches plus AG-UI events
+  // (`RUN_FINISHED` from `useAgUiRunEvents`, `thread.status_changed` via
+  // `use-thread-meta-events`). This hook provides a low-frequency polling
+  // fallback for the delivery-loop progress stepper.
   useDeliveryLoopStatusRealtime({
     threadId,
-    threadChatId,
     enabled: shouldShowDeliveryLoopStatus,
-    onThreadPatches: handleThreadPatches,
-    replayBaseline: realtimeReplayBaseline ?? undefined,
   });
 
   const chatAgent = ensureAgent(threadChat?.agent);

@@ -1,119 +1,52 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
-import { useCallback, useEffect, useRef } from "react";
-import { shouldRefreshDeliveryLoopStatusFromThreadPatch } from "@/lib/delivery-loop-status";
+import { useEffect, useRef } from "react";
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
-import { useRealtimeThread } from "./useRealtime";
 
 type UseDeliveryLoopStatusRealtimeArgs = {
   threadId: string;
-  threadChatId: string | undefined;
-  onThreadPatches: (patches: BroadcastThreadPatch[]) => void;
   enabled?: boolean;
-  replayBaseline?: {
-    messageSeq: number | null;
-  };
+  /** Poll interval for delivery-loop status refreshes. Default 15s. */
+  pollIntervalMs?: number;
 };
 
-export function resolveDeliveryLoopReconnectState(params: {
-  enabled: boolean;
-  hasSeenOpen: boolean;
-  previousSocketReadyState: number;
-  socketReadyState: number;
-}): {
-  hasSeenOpen: boolean;
-  previousSocketReadyState: number;
-  shouldInvalidate: boolean;
-} {
-  if (!params.enabled) {
-    return {
-      hasSeenOpen: params.hasSeenOpen,
-      previousSocketReadyState: params.socketReadyState,
-      shouldInvalidate: false,
-    };
-  }
+const DEFAULT_POLL_INTERVAL_MS = 15_000;
 
-  if (params.socketReadyState !== WebSocket.OPEN) {
-    return {
-      hasSeenOpen: params.hasSeenOpen,
-      previousSocketReadyState: params.socketReadyState,
-      shouldInvalidate: false,
-    };
-  }
-
-  if (!params.hasSeenOpen) {
-    return {
-      hasSeenOpen: true,
-      previousSocketReadyState: params.socketReadyState,
-      shouldInvalidate: false,
-    };
-  }
-
-  return {
-    hasSeenOpen: true,
-    previousSocketReadyState: params.socketReadyState,
-    shouldInvalidate: params.previousSocketReadyState !== WebSocket.OPEN,
-  };
-}
-
+/**
+ * Keeps the delivery-loop status query fresh without the legacy broadcast
+ * socket. After the AG-UI migration the dedicated per-thread broadcast
+ * subscription was removed — status freshness on the chat page comes from:
+ *
+ *   - `RUN_FINISHED` / `thread.status_changed` invalidations fired from
+ *     `useAgUiRunEvents` / `useAgUiCustomEvents` in `chat-ui.tsx`
+ *   - React Query refetch-on-focus
+ *   - A low-frequency polling fallback driven by this hook, so the
+ *     delivery-loop progress stepper catches transitions that don't
+ *     produce an AG-UI terminal event (e.g. gate outcomes that close out
+ *     the active run before the stepper is mounted).
+ *
+ * The hook is intentionally a no-op when `enabled` is false so non-opted-in
+ * threads don't trigger periodic invalidations.
+ */
 export function useDeliveryLoopStatusRealtime({
   threadId,
-  threadChatId,
-  onThreadPatches,
   enabled = true,
-  replayBaseline,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 }: UseDeliveryLoopStatusRealtimeArgs): void {
   const queryClient = useQueryClient();
-  const hasSeenOpenRef = useRef(false);
-  const previousSocketReadyStateRef = useRef<number>(WebSocket.CONNECTING);
-
-  const onThreadPatchesWithDeliveryLoopInvalidation = useCallback(
-    (patches: BroadcastThreadPatch[]) => {
-      if (!enabled) {
-        onThreadPatches(patches);
-        return;
-      }
-
-      if (patches.some(shouldRefreshDeliveryLoopStatusFromThreadPatch)) {
-        void queryClient.invalidateQueries(
-          {
-            queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
-          },
-          { cancelRefetch: false },
-        );
-      }
-
-      onThreadPatches(patches);
-    },
-    [enabled, onThreadPatches, queryClient, threadId],
-  );
-
-  const { socketReadyState } = useRealtimeThread(
-    threadId,
-    threadChatId,
-    onThreadPatchesWithDeliveryLoopInvalidation,
-    replayBaseline,
-  );
+  const threadIdRef = useRef(threadId);
+  threadIdRef.current = threadId;
 
   useEffect(() => {
-    const reconnectState = resolveDeliveryLoopReconnectState({
-      enabled,
-      hasSeenOpen: hasSeenOpenRef.current,
-      previousSocketReadyState: previousSocketReadyStateRef.current,
-      socketReadyState,
-    });
-
-    hasSeenOpenRef.current = reconnectState.hasSeenOpen;
-    previousSocketReadyStateRef.current =
-      reconnectState.previousSocketReadyState;
-
-    if (reconnectState.shouldInvalidate) {
+    if (!enabled) return;
+    if (pollIntervalMs <= 0) return;
+    const handle = setInterval(() => {
       void queryClient.invalidateQueries(
         {
-          queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
+          queryKey: deliveryLoopStatusQueryKeys.detail(threadIdRef.current),
         },
         { cancelRefetch: false },
       );
-    }
-  }, [enabled, queryClient, socketReadyState, threadId]);
+    }, pollIntervalMs);
+    return () => clearInterval(handle);
+  }, [enabled, pollIntervalMs, queryClient]);
 }

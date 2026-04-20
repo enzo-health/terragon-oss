@@ -1,73 +1,31 @@
+/* @vitest-environment jsdom */
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
-import React from "react";
-import { renderToString } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-// Polyfill WebSocket constants for Node.js test environment
-if (typeof globalThis.WebSocket === "undefined") {
-  Object.defineProperty(globalThis, "WebSocket", {
-    value: { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 },
-    writable: true,
-  });
-}
-import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import {
-  resolveDeliveryLoopReconnectState,
-  useDeliveryLoopStatusRealtime,
-} from "./use-delivery-loop-status-realtime";
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 
-type UseRealtimeThreadMock = (
-  threadId: string,
-  threadChatId: string | undefined,
-  onThreadPatches: (patches: BroadcastThreadPatch[]) => void,
-  replayBaseline?:
-    | {
-        messageSeq: number | null;
-      }
-    | undefined,
-) => { socketReadyState: number };
-
-const useRealtimeThreadMock = vi.fn<UseRealtimeThreadMock>();
-let activeThreadPatchCallback:
-  | ((patches: BroadcastThreadPatch[]) => void)
-  | null = null;
-let activeSocketReadyState: number = WebSocket.CONNECTING;
-
-vi.mock("./useRealtime", () => {
-  return {
-    useRealtimeThread: (
-      ...args: Parameters<UseRealtimeThreadMock>
-    ): { socketReadyState: number } => {
-      useRealtimeThreadMock(...args);
-      activeThreadPatchCallback = args[2];
-      return { socketReadyState: activeSocketReadyState };
-    },
-  };
-});
+import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
+import { useDeliveryLoopStatusRealtime } from "./use-delivery-loop-status-realtime";
 
 function TestHarness({
   threadId,
-  threadChatId,
-  onThreadPatches,
   enabled,
-  replayBaseline,
+  pollIntervalMs,
 }: {
   threadId: string;
-  threadChatId: string | undefined;
-  onThreadPatches: (patches: BroadcastThreadPatch[]) => void;
   enabled?: boolean;
-  replayBaseline?: {
-    messageSeq: number | null;
-  };
+  pollIntervalMs?: number;
 }): null {
-  useDeliveryLoopStatusRealtime({
-    threadId,
-    threadChatId,
-    onThreadPatches,
-    enabled,
-    replayBaseline,
-  });
+  useDeliveryLoopStatusRealtime({ threadId, enabled, pollIntervalMs });
   return null;
 }
 
@@ -82,309 +40,119 @@ function createQueryClient(): QueryClient {
 }
 
 describe("useDeliveryLoopStatusRealtime", () => {
+  let container: HTMLDivElement | null = null;
+  let invalidateSpy: MockInstance | null = null;
+
   beforeEach(() => {
-    useRealtimeThreadMock.mockClear();
-    activeThreadPatchCallback = null;
-    activeSocketReadyState = WebSocket.CONNECTING;
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
   });
 
   afterEach(() => {
-    activeThreadPatchCallback = null;
+    invalidateSpy?.mockRestore();
+    invalidateSpy = null;
+    container?.remove();
+    container = null;
+    vi.useRealTimers();
   });
 
-  it("subscribes to thread realtime updates and invalidates delivery-loop status on explicit refetch", () => {
+  it("invalidates delivery-loop status on each poll tick while enabled", async () => {
     const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const onThreadPatches = vi.fn();
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const root = createRoot(container!);
+    await act(async () => {
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(TestHarness, {
+            threadId: "thread-1",
+            pollIntervalMs: 1000,
+          }),
+        ),
+      );
+    });
+    expect(invalidateSpy).not.toHaveBeenCalled();
 
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-        />
-      </QueryClientProvider>,
-    );
-
-    expect(useRealtimeThreadMock).toHaveBeenCalledWith(
-      "thread-1",
-      "chat-1",
-      expect.any(Function),
-      undefined,
-    );
-
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    ]);
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenLastCalledWith(
       {
         queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
       },
       { cancelRefetch: false },
     );
-    expect(onThreadPatches).toHaveBeenCalledWith([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    ]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
+
+    await act(async () => {
+      root.unmount();
+    });
   });
 
-  it("invalidates for shell refetch patches that affect delivery-loop state", () => {
+  it("skips polling when disabled", async () => {
     const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const onThreadPatches = vi.fn();
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const root = createRoot(container!);
+    await act(async () => {
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(TestHarness, {
+            threadId: "thread-1",
+            enabled: false,
+            pollIntervalMs: 1000,
+          }),
+        ),
+      );
+    });
 
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-        />
-      </QueryClientProvider>,
-    );
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(invalidateSpy).not.toHaveBeenCalled();
 
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["shell"],
-      },
-    ]);
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
-      {
-        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
-      },
-      { cancelRefetch: false },
-    );
-    expect(onThreadPatches).toHaveBeenCalledWith([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["shell"],
-      },
-    ]);
+    await act(async () => {
+      root.unmount();
+    });
   });
 
-  it("invalidates for mixed refetch targets that include delivery-loop", () => {
+  it("stops invalidating after unmount", async () => {
     const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const onThreadPatches = vi.fn();
-
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-        />
-      </QueryClientProvider>,
-    );
-
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["shell", "delivery-loop"],
-      },
-    ]);
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
-      {
-        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
-      },
-      { cancelRefetch: false },
-    );
-    expect(onThreadPatches).toHaveBeenCalledWith([
-      {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["shell", "delivery-loop"],
-      },
-    ]);
-  });
-
-  it("ignores non-refetch patches that carry a delivery-loop refetch target", () => {
-    const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const onThreadPatches = vi.fn();
-
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-        />
-      </QueryClientProvider>,
-    );
-
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        op: "upsert",
-        refetch: ["delivery-loop"],
-      },
-    ]);
-
-    expect(invalidateQueriesSpy).not.toHaveBeenCalled();
-    expect(onThreadPatches).toHaveBeenCalledWith([
-      {
-        threadId: "thread-1",
-        op: "upsert",
-        refetch: ["delivery-loop"],
-      },
-    ]);
-  });
-
-  it("passes replay baselines through to the realtime subscription", () => {
-    const queryClient = createQueryClient();
-    const onThreadPatches = vi.fn();
-
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-          replayBaseline={{ messageSeq: 7 }}
-        />
-      </QueryClientProvider>,
-    );
-
-    expect(useRealtimeThreadMock).toHaveBeenCalledWith(
-      "thread-1",
-      "chat-1",
-      expect.any(Function),
-      {
-        messageSeq: 7,
-      },
-    );
-  });
-
-  it("preserves interleaved delta ordering around delivery-loop refetch patches", () => {
-    const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const observedDeltaSeqs: number[] = [];
-    const onThreadPatches = vi.fn((patches: BroadcastThreadPatch[]) => {
-      for (const patch of patches) {
-        if (patch.op === "delta" && patch.deltaSeq != null) {
-          observedDeltaSeqs.push(patch.deltaSeq);
-        }
-      }
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const root = createRoot(container!);
+    await act(async () => {
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(TestHarness, {
+            threadId: "thread-1",
+            pollIntervalMs: 1000,
+          }),
+        ),
+      );
     });
 
-    renderToString(
-      <QueryClientProvider client={queryClient}>
-        <TestHarness
-          threadId="thread-1"
-          threadChatId="chat-1"
-          onThreadPatches={onThreadPatches}
-        />
-      </QueryClientProvider>,
-    );
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "delta",
-        messageId: "message-1",
-        partIndex: 0,
-        deltaSeq: 10,
-        deltaIdempotencyKey: "delta-10",
-        deltaKind: "text",
-        text: "Hello",
-      },
-    ]);
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    ]);
-    activeThreadPatchCallback?.([
-      {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "delta",
-        messageId: "message-1",
-        partIndex: 0,
-        deltaSeq: 11,
-        deltaIdempotencyKey: "delta-11",
-        deltaKind: "text",
-        text: " world",
-      },
-    ]);
-
-    expect(observedDeltaSeqs).toEqual([10, 11]);
-    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(1);
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith(
-      {
-        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
-      },
-      { cancelRefetch: false },
-    );
-    expect(onThreadPatches).toHaveBeenNthCalledWith(1, [
-      expect.objectContaining({ op: "delta", deltaSeq: 10 }),
-    ]);
-    expect(onThreadPatches).toHaveBeenNthCalledWith(2, [
-      expect.objectContaining({ op: "refetch", refetch: ["delivery-loop"] }),
-    ]);
-    expect(onThreadPatches).toHaveBeenNthCalledWith(3, [
-      expect.objectContaining({ op: "delta", deltaSeq: 11 }),
-    ]);
-  });
-
-  it("invalidates once when the socket reconnects after the initial open", () => {
-    const firstOpen = resolveDeliveryLoopReconnectState({
-      enabled: true,
-      hasSeenOpen: false,
-      previousSocketReadyState: WebSocket.CONNECTING,
-      socketReadyState: WebSocket.OPEN,
+    await act(async () => {
+      root.unmount();
     });
 
-    expect(firstOpen).toEqual({
-      hasSeenOpen: true,
-      previousSocketReadyState: WebSocket.OPEN,
-      shouldInvalidate: false,
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
     });
-
-    const closed = resolveDeliveryLoopReconnectState({
-      enabled: true,
-      hasSeenOpen: firstOpen.hasSeenOpen,
-      previousSocketReadyState: firstOpen.previousSocketReadyState,
-      socketReadyState: WebSocket.CLOSED,
-    });
-
-    expect(closed).toEqual({
-      hasSeenOpen: true,
-      previousSocketReadyState: WebSocket.CLOSED,
-      shouldInvalidate: false,
-    });
-
-    const reopened = resolveDeliveryLoopReconnectState({
-      enabled: true,
-      hasSeenOpen: closed.hasSeenOpen,
-      previousSocketReadyState: closed.previousSocketReadyState,
-      socketReadyState: WebSocket.OPEN,
-    });
-
-    expect(reopened).toEqual({
-      hasSeenOpen: true,
-      previousSocketReadyState: WebSocket.OPEN,
-      shouldInvalidate: true,
-    });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 });
