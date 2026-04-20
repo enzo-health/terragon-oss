@@ -10,19 +10,32 @@ import { redis } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Long-lived SSE stream: request up to 5 minutes of serverless execution
+// time (Vercel Pro cap). Client-side aborts close the stream early, so
+// typical usage will not hit this ceiling.
+export const maxDuration = 300;
 
 // Redis stream key used for the live tail. Task 2C will publish AG-UI
 // BaseEvent payloads as JSON strings on this key (field `event`).
 // The SSE endpoint polls the stream via XREAD with blockMS.
+//
+// Namespacing: follows the `dl3:` pattern from delivery-loop-v3 (a static
+// domain prefix — environment isolation is provided by using separate
+// REDIS_URLs per env, matching how `dl3:outbox:stream` works today).
 function agUiStreamKey(threadChatId: string): string {
   return `agui:thread:${threadChatId}`;
 }
 
-// XREAD poll tuning. blockMS on Upstash caps the HTTP wait; we loop so the
-// endpoint can honor request.signal aborts and emit keepalives on idle.
-const XREAD_BLOCK_MS = 5_000;
+// XREAD poll tuning. blockMS is capped by the resilient-redis client's
+// localHttpCommandTimeoutMs (3_000) in dev, so we stay under that to
+// avoid noisy "Local redis-http command timeout" warnings. Production
+// Upstash has a higher ceiling; 2s is conservative everywhere.
+const XREAD_BLOCK_MS = 2_000;
 const XREAD_COUNT = 32;
 const KEEPALIVE_INTERVAL_MS = 15_000;
+const XREAD_BACKOFF_MS = 1_000;
+
+const ENCODER = new TextEncoder();
 
 type AgUiStreamEntry = {
   id: string;
@@ -60,7 +73,8 @@ function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
     try {
       const parsed = JSON.parse(serialized) as BaseEvent;
       entries.push({ id, event: parsed });
-    } catch {
+    } catch (err) {
+      console.warn("[ag-ui] malformed stream entry", { id, err });
       entries.push({ id, event: null });
     }
   }
@@ -85,11 +99,36 @@ function readEventField(rawFields: unknown): string | null {
 }
 
 function encodeSseEvent(event: BaseEvent): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+  return ENCODER.encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
 function encodeSseComment(comment: string): Uint8Array {
-  return new TextEncoder().encode(`: ${comment}\n\n`);
+  return ENCODER.encode(`: ${comment}\n\n`);
+}
+
+/**
+ * Capture the stream's current last ID BEFORE the DB replay query so that
+ * events XADD'd while the replay is in flight are not dropped by the live
+ * tail's `$` cursor. Empty/missing streams fall back to `"0"` so the first
+ * XREAD picks up any entry published after this moment.
+ */
+async function captureStreamCursor(streamKey: string): Promise<string> {
+  try {
+    const latest = await redis.xrevrange(streamKey, "+", "-", 1);
+    if (latest && typeof latest === "object") {
+      const ids = Object.keys(latest);
+      if (ids.length > 0 && typeof ids[0] === "string") {
+        return ids[0]!;
+      }
+    }
+    return "0";
+  } catch (err) {
+    console.warn("[ag-ui] captureStreamCursor failed; falling back to 0", {
+      streamKey,
+      err,
+    });
+    return "0";
+  }
 }
 
 export async function GET(
@@ -118,29 +157,41 @@ export async function GET(
       { status: 400 },
     );
   }
-  const fromSeq = parseInt(fromSeqStr, 10);
-  if (!Number.isFinite(fromSeq) || fromSeq < 0) {
+  const fromSeq = Number(fromSeqStr);
+  if (!Number.isInteger(fromSeq) || fromSeq < 0) {
     return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
   }
 
-  // Verify thread ownership — return 404 for mismatches so unauthorized
-  // access can't distinguish "thread doesn't exist" from "not yours".
-  const thread = await db
-    .select({ id: schema.thread.id })
-    .from(schema.thread)
+  // Verify BOTH that the thread belongs to the session user AND that the
+  // threadChatId belongs to that same thread. Without the join a caller
+  // who owns thread-A could pass threadChatId pointing at someone else's
+  // chat. Return 404 on mismatch to avoid leaking existence.
+  const ownership = await db
+    .select({ id: schema.threadChat.id })
+    .from(schema.threadChat)
+    .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
     .where(
       and(
+        eq(schema.threadChat.id, threadChatId),
         eq(schema.thread.id, threadId),
         eq(schema.thread.userId, session.user.id),
       ),
     )
     .limit(1);
 
-  if (thread.length === 0) {
+  if (ownership.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const streamKey = agUiStreamKey(threadChatId);
+
+  // Capture the live-tail cursor BEFORE the DB replay so in-flight events
+  // published during the replay query window are not lost. This preserves
+  // the at-least-once contract: client will receive all events with
+  // seq > fromSeq (via DB replay) plus any new stream entries from this
+  // cursor onward. Some duplicates are acceptable — AG-UI is designed to
+  // de-dupe by event identity on the client.
+  const initialLastId = await captureStreamCursor(streamKey);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -171,14 +222,13 @@ export async function GET(
         }
       };
 
-      // Tear down on client abort.
+      // Tear down on client abort. `once: true` handles listener cleanup.
       const abortSignal = request.signal;
-      const onAbort = () => close();
       if (abortSignal.aborted) {
         close();
         return;
       }
-      abortSignal.addEventListener("abort", onAbort, { once: true });
+      abortSignal.addEventListener("abort", () => close(), { once: true });
 
       // 1) Initial replay burst from agent_event_log.
       try {
@@ -210,14 +260,14 @@ export async function GET(
         enqueue(encodeSseComment("keepalive"));
       }, KEEPALIVE_INTERVAL_MS);
 
-      // 3) Live tail via XREAD. Poll in a loop so aborts are responsive.
-      // Start from "$" = only messages newer than the current end-of-stream.
-      // Task 2C will be responsible for publishing to this stream with
+      // 3) Live tail via XREAD, starting from the cursor captured BEFORE
+      // the DB replay query so nothing XADD'd during replay is lost.
+      // Task 2C publishes to this stream with
       // XADD `${streamKey} * event <json>`.
       // TODO(2C): integration coverage of the live tail lives with the
       // writer work; the subscribe path here is intentionally shape-compatible
       // with that contract but not exercised by unit tests.
-      let lastId = "$";
+      let lastId = initialLastId;
       while (!closed) {
         try {
           const raw = await redis.xread(streamKey, lastId, {
@@ -239,11 +289,9 @@ export async function GET(
             { streamKey },
             error,
           );
-          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          await new Promise((resolve) => setTimeout(resolve, XREAD_BACKOFF_MS));
         }
       }
-
-      abortSignal.removeEventListener("abort", onAbort);
     },
   });
 

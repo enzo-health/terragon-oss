@@ -17,6 +17,7 @@ import {
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
   getThreadReplayEntriesFromCanonicalEvents,
+  getAgUiEventsForReplay,
   getRunEvents,
   getRunMaxSeq,
   hasCanonicalReplayProjection,
@@ -419,6 +420,28 @@ describe("agent-event-log", () => {
           threadId: fixture.threadId,
           threadChatId: fixture.threadChatId,
           fromThreadChatMessageSeq: 0,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it("getAgUiEventsForReplay returns [] when the agent_event_log relation is unavailable", async () => {
+    const findManySpy = vi
+      .spyOn(db.query.agentEventLog, "findMany")
+      .mockRejectedValue(
+        Object.assign(new Error('relation "agent_event_log" does not exist'), {
+          code: "42P01",
+        }),
+      );
+
+    try {
+      await expect(
+        getAgUiEventsForReplay({
+          db,
+          threadChatId: "missing-chat",
+          fromSeq: 0,
         }),
       ).resolves.toEqual([]);
     } finally {
