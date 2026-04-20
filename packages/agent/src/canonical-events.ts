@@ -48,7 +48,7 @@ export const BaseEventEnvelopeSchema = z
     timestamp: TimestampSchema,
     idempotencyKey: z.string().min(1),
   })
-  .passthrough();
+  .strict();
 export type BaseEventEnvelope = z.infer<typeof BaseEventEnvelopeSchema>;
 
 export const OperationalRunStartedEventSchema = BaseEventEnvelopeSchema.extend({

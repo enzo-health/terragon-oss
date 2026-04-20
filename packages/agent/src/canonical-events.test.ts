@@ -110,6 +110,13 @@ describe("canonical-events", () => {
 
   it("rejects invalid canonical event shapes", () => {
     expect(() =>
+      BaseEventEnvelopeSchema.parse({
+        ...baseEnvelope,
+        unexpectedTopLevelField: "nope",
+      }),
+    ).toThrow();
+
+    expect(() =>
       CanonicalEventSchema.parse({
         ...baseEnvelope,
         category: "operational",
