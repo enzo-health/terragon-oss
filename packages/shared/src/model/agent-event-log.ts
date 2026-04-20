@@ -662,16 +662,32 @@ export async function getRunMaxSeq({
 // ---------------------------------------------------------------------------
 
 /**
- * Reserve `count` consecutive `seq` values for `threadChatId` inside a
- * transaction. Returns the starting seq. The lock is released at tx commit.
+ * Peek the next per-thread-chat `seq` under an advisory lock held for the
+ * duration of the caller's transaction. The returned seq values are valid
+ * ONLY if the caller inserts the corresponding rows in the SAME transaction.
  *
- * Uses `pg_advisory_xact_lock(hashtext(key), 0)` — same idiom as
+ * ## Invariants the caller MUST uphold
+ * - **MUST be called inside a `db.transaction(async (tx) => { ... })` block.**
+ *   The advisory lock is acquired with `pg_advisory_xact_lock`, which
+ *   auto-releases at tx commit/rollback. Calling outside a transaction
+ *   releases the lock immediately — dangerous.
+ * - **Caller MUST insert rows with seqs `[returnedSeq, returnedSeq+count-1]`
+ *   inside the same `tx`** (so that the inserts happen while the lock is
+ *   still held). Readers outside the lock see the inserted rows only after
+ *   tx commit.
+ * - **Caller MUST NOT reuse the returned seqs in a different transaction.**
+ *   The counter advances only when the caller's inserts commit; a second
+ *   call from a new tx re-reads MAX(seq) under a fresh lock.
+ *
+ * Violating any of the above produces duplicate `seq` values and silent
+ * data corruption (caught only at replay time by the (threadChatId, seq)
+ * unique constraint — last-line defense, not first-line correctness).
+ *
+ * Implementation: `pg_advisory_xact_lock(hashtext(key), 0)`, same idiom as
  * `retryGitCommitAndPush` in checkpoint-thread-internal.ts. The 32-bit hash
- * collision rate is acceptable (thread-chat IDs are already scoped) and the
- * lock is tx-scoped, so a stray collision just serializes two unrelated
- * thread chats for the duration of one write.
+ * collision risk merely serializes two unrelated thread chats for one tx.
  */
-export async function reserveThreadChatSeqs({
+export async function peekNextThreadChatSeqLocked({
   tx,
   threadChatId,
   count,
@@ -681,7 +697,9 @@ export async function reserveThreadChatSeqs({
   count: number;
 }): Promise<number> {
   if (count <= 0) {
-    throw new Error(`reserveThreadChatSeqs: count must be >= 1 (got ${count})`);
+    throw new Error(
+      `peekNextThreadChatSeqLocked: count must be >= 1 (got ${count})`,
+    );
   }
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext(${`agent_event_log:thread_chat_seq:${threadChatId}`}), 0)`,
@@ -710,32 +728,34 @@ type AppendAgUiEventRow = {
 };
 
 /**
- * Persist a pre-computed AG-UI BaseEvent row. Caller supplies the seq
- * (reserved via `reserveThreadChatSeqs`) and other envelope fields.
+ * Convert an AG-UI BaseEvent to the jsonb column payload shape.
  *
- * Returns `{ inserted: true }` on fresh insert or `{ inserted: false }` on
- * duplicate (idempotency-key collision via runId+eventId). Throws on other
- * DB failures.
+ * The agent_event_log.payloadJson column is typed `Record<string, unknown>`
+ * (see schema.ts), while BaseEvent is a discriminated union with required
+ * literal tag types. Shallow-spread widens the union safely at the
+ * persistence boundary without a load-bearing `as unknown as` double cast.
+ */
+function toPayloadJson(event: BaseEvent): Record<string, unknown> {
+  return { ...(event as unknown as Record<string, unknown>) };
+}
+
+/**
+ * Persist a pre-computed AG-UI BaseEvent row. Caller supplies the seq
+ * (peeked via `peekNextThreadChatSeqLocked`) and other envelope fields.
+ *
+ * Race-safe by construction: uses `INSERT ... ON CONFLICT DO NOTHING
+ * RETURNING` keyed on (runId, eventId). The unique index
+ * `agent_event_log_run_event_unique` makes this atomic; no find-then-insert
+ * race, no reliance on external locking.
  */
 export async function appendAgUiEventRow({
   tx,
   row,
 }: {
-  tx: Pick<DB, "insert" | "query">;
+  tx: Pick<DB, "insert">;
   row: AppendAgUiEventRow;
 }): Promise<{ inserted: boolean }> {
-  const existing = await tx.query.agentEventLog.findFirst({
-    where: and(
-      eq(schema.agentEventLog.runId, row.runId),
-      eq(schema.agentEventLog.eventId, row.eventId),
-    ),
-    columns: { eventId: true },
-  });
-  if (existing) {
-    return { inserted: false };
-  }
-
-  const [inserted] = await tx
+  const inserted = await tx
     .insert(schema.agentEventLog)
     .values({
       eventId: row.eventId,
@@ -745,11 +765,14 @@ export async function appendAgUiEventRow({
       seq: row.seq,
       eventType: row.eventType,
       category: row.category,
-      payloadJson: row.payload as unknown as Record<string, unknown>,
+      payloadJson: toPayloadJson(row.payload),
       idempotencyKey: row.idempotencyKey,
       timestamp: row.timestamp,
     })
+    .onConflictDoNothing({
+      target: [schema.agentEventLog.runId, schema.agentEventLog.eventId],
+    })
     .returning({ eventId: schema.agentEventLog.eventId });
 
-  return { inserted: !!inserted };
+  return { inserted: inserted.length > 0 };
 }

@@ -104,6 +104,15 @@ type CanonicalPersistenceSummary = {
   attempted: number;
   inserted: number;
   deduplicated: number;
+  /**
+   * eventIds of AG-UI rows that were freshly inserted for the incoming
+   * canonical events (expanded 1→N). Used to backfill
+   * `thread_chat_message_seq` after `handleDaemonEvent` returns a replay
+   * sequence number — the route must NOT re-map via
+   * `canonicalEventsToAgUiRows` because that would risk drift between
+   * producer and consumer.
+   */
+  insertedEventIds: string[];
 };
 
 type CanonicalEventsPayload = NonNullable<
@@ -395,6 +404,7 @@ async function persistCanonicalEventsOrResponse(params: {
         attempted: 0,
         inserted: 0,
         deduplicated: 0,
+        insertedEventIds: [],
       },
     };
   }
@@ -445,6 +455,7 @@ async function persistCanonicalEventsOrResponse(params: {
         attempted: canonicalEvents.length,
         inserted: result.inserted,
         deduplicated: result.skipped,
+        insertedEventIds: result.insertedEventIds,
       },
     };
   } catch (error) {
@@ -1331,19 +1342,16 @@ export async function POST(request: Request) {
   }
 
   if (result.threadChatMessageSeq != null) {
-    if (canonicalEvents && canonicalEvents.length > 0) {
-      // The canonicalEvents the daemon sent were expanded into multiple
-      // AG-UI rows (START / CONTENT / END). Build the set of agent_event_log
-      // eventIds so threadChatMessageSeq attaches to all of them.
-      const expandedEventIds: string[] = [];
-      for (const canonical of canonicalEvents) {
-        for (const expanded of canonicalEventsToAgUiRows([canonical])) {
-          expandedEventIds.push(expanded.eventId);
-        }
-      }
+    const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
+    if (insertedEventIds.length > 0) {
+      // The persist layer already recorded the exact eventIds it wrote —
+      // use them directly instead of re-running the mapper (which would
+      // risk drift between producer and consumer if the mapping ever
+      // changed). Duplicates from earlier POSTs already carry their seq
+      // from the initial insert, so they're intentionally excluded here.
       await assignThreadChatMessageSeqToCanonicalEvents({
         db,
-        eventIds: expandedEventIds,
+        eventIds: insertedEventIds,
         threadChatMessageSeq: result.threadChatMessageSeq,
       });
     }

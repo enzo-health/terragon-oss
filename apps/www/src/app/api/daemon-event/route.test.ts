@@ -132,15 +132,21 @@ const agUiPublisherMocks = vi.hoisted(() => ({
   persistAndPublishAgUiEvents: vi.fn(),
   broadcastAgUiEventEphemeral: vi.fn(),
   canonicalEventsToAgUiRows: vi.fn((events: Array<{ eventId: string }>) =>
+    // Test-only stub — the route under test does not consume this result
+    // (the publisher does). Keep the signature shape only for completeness.
     events.map((e) => ({
       event: { type: "STUB" } as unknown,
-      eventId: `${e.eventId}:STUB`,
+      eventId: `${e.eventId}:STUB:0`,
       timestamp: new Date(),
     })),
   ),
   daemonDeltasToAgUiRows: vi.fn(() => []),
   metaEventsToAgUiEvents: vi.fn(() => []),
   buildRunTerminalAgUi: vi.fn(() => ({ type: "RUN_FINISHED" })),
+  buildAgUiEventId: vi.fn(
+    (canonicalEventId: string, agUiType: string, index: number) =>
+      `${canonicalEventId}:${agUiType}:${index}`,
+  ),
 }));
 
 const v3BridgeMocks = vi.hoisted(() => ({
@@ -469,6 +475,7 @@ describe("daemon-event route", () => {
     agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValue({
       inserted: 0,
       skipped: 0,
+      insertedEventIds: [],
     });
     agUiPublisherMocks.broadcastAgUiEventEphemeral.mockResolvedValue(undefined);
   });
@@ -909,6 +916,7 @@ describe("daemon-event route", () => {
     agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValue({
       inserted: 1,
       skipped: 0,
+      insertedEventIds: ["canonical-event-1:RUN_STARTED:0"],
     });
 
     const response = await POST(
@@ -2355,6 +2363,19 @@ describe("daemon-event route", () => {
         threadChatMessageSeq: 12,
       });
 
+      // The route threads the publisher's `insertedEventIds` through to
+      // `assignThreadChatMessageSeqToCanonicalEvents` directly — no double
+      // mapper call. Mock the publisher's return value accordingly.
+      const persistedEventIds = [
+        "canonical-event-1:RUN_STARTED:0",
+        "canonical-event-1:RUN_STARTED:1",
+      ];
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
+        inserted: persistedEventIds.length,
+        skipped: 0,
+        insertedEventIds: persistedEventIds,
+      });
+
       const canonicalEvent = createCanonicalRunStartedEvent();
       const response = await POST(
         createDaemonRequest({
@@ -2373,10 +2394,7 @@ describe("daemon-event route", () => {
       expect(response.status).toBe(200);
       expect(assignThreadChatMessageSeqToCanonicalEvents).toHaveBeenCalledWith({
         db: dbMocks.db,
-        // The route expands each canonical event into AG-UI rows and attaches
-        // thread-chat message seq to every resulting eventId. The
-        // canonicalEventsToAgUiRows mock returns `${eventId}:STUB`.
-        eventIds: [`${canonicalEvent.eventId}:STUB`],
+        eventIds: persistedEventIds,
         threadChatMessageSeq: 12,
       });
       expect(
@@ -2514,6 +2532,7 @@ describe("daemon-event route", () => {
       agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
         inserted: 1,
         skipped: 0,
+        insertedEventIds: ["canonical-event-1:RUN_STARTED:0"],
       });
 
       const response = await POST(
@@ -2562,6 +2581,7 @@ describe("daemon-event route", () => {
       agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
         inserted: 0,
         skipped: 1,
+        insertedEventIds: [],
       });
 
       const response = await POST(
@@ -2596,6 +2616,7 @@ describe("daemon-event route", () => {
       agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
         inserted: 1,
         skipped: 0,
+        insertedEventIds: ["canonical-event-1:RUN_STARTED:0"],
       });
       vi.mocked(touchThreadChatUpdatedAt).mockRejectedValue(
         new Error("touch failed"),

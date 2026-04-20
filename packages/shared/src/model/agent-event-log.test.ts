@@ -21,8 +21,8 @@ import {
   getRunEvents,
   getRunMaxSeq,
   hasCanonicalReplayProjection,
+  peekNextThreadChatSeqLocked,
   readAgUiPayload,
-  reserveThreadChatSeqs,
   validateCanonicalEnvelope,
   validateCanonicalEvent,
 } from "./agent-event-log";
@@ -527,11 +527,11 @@ describe("agent-event-log", () => {
     });
   });
 
-  describe("reserveThreadChatSeqs", () => {
+  describe("peekNextThreadChatSeqLocked", () => {
     it("returns 0 when no prior events exist for the thread chat", async () => {
       const fixture = await createRunFixture();
       const seq = await db.transaction(async (tx) =>
-        reserveThreadChatSeqs({
+        peekNextThreadChatSeqLocked({
           tx,
           threadChatId: fixture.threadChatId,
           count: 1,
@@ -550,7 +550,7 @@ describe("agent-event-log", () => {
         ],
       });
       const seq = await db.transaction(async (tx) =>
-        reserveThreadChatSeqs({
+        peekNextThreadChatSeqLocked({
           tx,
           threadChatId: fixture.threadChatId,
           count: 1,
@@ -559,28 +559,29 @@ describe("agent-event-log", () => {
       expect(seq).toBe(2);
     });
 
-    it("serializes concurrent reservations for the same thread chat", async () => {
+    it("documents the peek-without-insert contract", async () => {
+      // The function is a peek inside a lock — two concurrent callers that
+      // peek without inserting both observe MAX=NULL and return 0. This
+      // test pins the invariant: the caller MUST insert rows inside the
+      // same transaction to advance the counter. See the JSDoc on
+      // peekNextThreadChatSeqLocked for the full contract.
       const fixture = await createRunFixture();
       const [seqA, seqB] = await Promise.all([
         db.transaction(async (tx) =>
-          reserveThreadChatSeqs({
+          peekNextThreadChatSeqLocked({
             tx,
             threadChatId: fixture.threadChatId,
             count: 1,
           }),
         ),
         db.transaction(async (tx) =>
-          reserveThreadChatSeqs({
+          peekNextThreadChatSeqLocked({
             tx,
             threadChatId: fixture.threadChatId,
             count: 1,
           }),
         ),
       ]);
-      // Both see 0 because neither commits any rows — the advisory lock
-      // serializes them but without an insert they both observe MAX=NULL.
-      // This test documents the contract: reservation is a read, writers
-      // must insert rows to move MAX forward.
       expect(seqA).toBe(0);
       expect(seqB).toBe(0);
     });

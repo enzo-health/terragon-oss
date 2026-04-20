@@ -12,16 +12,20 @@ import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
   agUiStreamKey,
   appendAgUiEventRow,
-  reserveThreadChatSeqs,
+  peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
 import type { DB } from "@terragon/shared/db";
 import { redis } from "@/lib/redis";
 
 /**
  * Shape of a single AG-UI event to be persisted + streamed.
- * `eventId` is the row-level idempotency key on (runId, eventId) — different
+ *
+ * `eventId` is the row-level idempotency key on (runId, eventId). Different
  * AG-UI events derived from the same canonical event must have distinct
- * eventIds (we append a type suffix).
+ * eventIds — callers append both the AG-UI event type AND a 0-based
+ * expansion index (see `buildAgUiEventId`) so two events of the same type
+ * from the same source (e.g. progressive TOOL_CALL_ARGS chunks) never
+ * collide on insert.
  */
 type AgUiPublishRow = {
   event: BaseEvent;
@@ -29,13 +33,36 @@ type AgUiPublishRow = {
   timestamp: Date;
 };
 
+export type PersistAndPublishResult = {
+  inserted: number;
+  skipped: number;
+  /**
+   * eventIds of rows that were freshly inserted (skipped duplicates are NOT
+   * included). Callers that need to backfill `thread_chat_message_seq` use
+   * this list — it's the authoritative record from the persist layer and
+   * never drifts from the mapper output.
+   */
+  insertedEventIds: string[];
+};
+
 /**
  * Persist each AG-UI row to `agent_event_log` and publish to
  * `agui:thread:{threadChatId}` in the order provided.
  *
- * Seq is assigned per-thread-chat via `reserveThreadChatSeqs` under an
- * advisory lock inside a transaction. Duplicates are skipped silently
- * (idempotency key: runId + eventId).
+ * ## Contract
+ * - Seq is assigned per-thread-chat under a transaction-scoped advisory lock
+ *   (see `peekNextThreadChatSeqLocked`).
+ * - Duplicates are skipped silently (idempotency key: runId + eventId).
+ * - XADD publishing happens AFTER tx commit so readers never see a stream
+ *   event before the corresponding DB row.
+ *
+ * ## XADD failure policy (see C2 in Task 2C code review)
+ * The DB is the source of truth; Redis is a live-tail optimization. On the
+ * first XADD failure we log at error severity and STOP publishing remaining
+ * events in the batch — out-of-order stream arrival is worse than a gap,
+ * because the SSE reader's `XREAD $` cursor would advance past missing
+ * entries. Clients recover the gap via replay-from-seq on reconnect using
+ * the DB as source of truth.
  */
 export async function persistAndPublishAgUiEvents(params: {
   db: DB;
@@ -43,18 +70,19 @@ export async function persistAndPublishAgUiEvents(params: {
   threadId: string;
   threadChatId: string;
   rows: AgUiPublishRow[];
-}): Promise<{ inserted: number; skipped: number }> {
+}): Promise<PersistAndPublishResult> {
   const { db, runId, threadId, threadChatId, rows } = params;
   if (rows.length === 0) {
-    return { inserted: 0, skipped: 0 };
+    return { inserted: 0, skipped: 0, insertedEventIds: [] };
   }
 
   let inserted = 0;
   let skipped = 0;
+  const insertedEventIds: string[] = [];
   const persistedEvents: BaseEvent[] = [];
 
   await db.transaction(async (tx) => {
-    const startSeq = await reserveThreadChatSeqs({
+    const startSeq = await peekNextThreadChatSeqLocked({
       tx,
       threadChatId,
       count: rows.length,
@@ -72,7 +100,7 @@ export async function persistAndPublishAgUiEvents(params: {
           threadChatId,
           seq,
           eventType: String(row.event.type),
-          // AG-UI BaseEvent has no explicit category; use event type as a
+          // AG-UI BaseEvent has no explicit category; reuse event type as a
           // stable proxy. Readers project via readAgUiPayload anyway.
           category: String(row.event.type),
           payload: row.event,
@@ -82,6 +110,7 @@ export async function persistAndPublishAgUiEvents(params: {
       });
       if (result.inserted) {
         inserted += 1;
+        insertedEventIds.push(row.eventId);
         persistedEvents.push(row.event);
       } else {
         skipped += 1;
@@ -89,23 +118,39 @@ export async function persistAndPublishAgUiEvents(params: {
     }
   });
 
-  // XADD after commit so readers never see a stream event before the row.
-  // Persisted-only: if the DB rejected as duplicate, the live-tail has
-  // likely already seen it (or will get it via replay on next connect).
-  for (const event of persistedEvents) {
+  // Publish after commit. See "XADD failure policy" in the function header:
+  // first failure halts the remaining publishes.
+  const streamKey = agUiStreamKey(threadChatId);
+  for (let i = 0; i < persistedEvents.length; i++) {
+    const event = persistedEvents[i]!;
     try {
-      await redis.xadd(agUiStreamKey(threadChatId), "*", {
+      await redis.xadd(streamKey, "*", {
         event: serializeAgUiEvent(event),
       });
     } catch (err) {
-      console.warn("[ag-ui-publisher] XADD failed, continuing", {
-        threadChatId,
-        err,
-      });
+      console.error(
+        "[ag-ui-publisher] XADD failed — halting live-tail publish for this batch; clients will recover via SSE replay-from-seq",
+        {
+          threadChatId,
+          streamKey,
+          eventType: String(event.type),
+          publishedCount: i,
+          remainingCount: persistedEvents.length - i,
+          insertedEventIdRange:
+            insertedEventIds.length > 0
+              ? {
+                  first: insertedEventIds[0],
+                  last: insertedEventIds[insertedEventIds.length - 1],
+                }
+              : null,
+          error: err,
+        },
+      );
+      break;
     }
   }
 
-  return { inserted, skipped };
+  return { inserted, skipped, insertedEventIds };
 }
 
 /**
@@ -117,14 +162,17 @@ export async function broadcastAgUiEventEphemeral(params: {
   threadChatId: string;
   event: BaseEvent;
 }): Promise<void> {
+  const streamKey = agUiStreamKey(params.threadChatId);
   try {
-    await redis.xadd(agUiStreamKey(params.threadChatId), "*", {
+    await redis.xadd(streamKey, "*", {
       event: serializeAgUiEvent(params.event),
     });
   } catch (err) {
-    console.warn("[ag-ui-publisher] ephemeral XADD failed, continuing", {
+    console.error("[ag-ui-publisher] ephemeral XADD failed", {
       threadChatId: params.threadChatId,
-      err,
+      streamKey,
+      eventType: String(params.event.type),
+      error: err,
     });
   }
 }
@@ -135,10 +183,14 @@ export async function broadcastAgUiEventEphemeral(params: {
 
 /**
  * Expand canonical events to AG-UI rows. Each canonical event may produce
- * 1..3 AG-UI rows (e.g., assistant-message → START + CONTENT + END).
+ * 1..3 AG-UI rows (e.g. assistant-message → START + CONTENT + END;
+ * tool-call-start → START + ARGS + END).
  *
- * The caller receives ordered rows suitable for direct hand-off to
- * `persistAndPublishAgUiEvents`.
+ * Each row gets a stable `eventId` combining the source canonical eventId,
+ * the AG-UI event type, and a 0-based expansion index. The index is
+ * essential: if a canonical event ever expands to two rows of the same type
+ * (progressive TOOL_CALL_ARGS chunks, split content events, etc.), dedupe
+ * on (runId, eventId) must still distinguish them.
  */
 export function canonicalEventsToAgUiRows(
   events: CanonicalEvent[],
@@ -147,10 +199,11 @@ export function canonicalEventsToAgUiRows(
   for (const event of events) {
     const expanded = mapCanonicalEventToAgui(event);
     const ts = new Date(event.timestamp);
-    for (const agUi of expanded) {
+    for (let i = 0; i < expanded.length; i++) {
+      const agUi = expanded[i]!;
       rows.push({
         event: agUi,
-        eventId: buildAgUiEventId(event.eventId, String(agUi.type)),
+        eventId: buildAgUiEventId(event.eventId, String(agUi.type), i),
         timestamp: ts,
       });
     }
@@ -219,9 +272,14 @@ export function buildRunTerminalAgUi(params: {
   );
 }
 
-function buildAgUiEventId(
+/**
+ * Build a stable, collision-safe eventId for an AG-UI row expanded from a
+ * canonical source event. Exported so tests can reason about the scheme.
+ */
+export function buildAgUiEventId(
   canonicalEventId: string,
   agUiEventType: string,
+  expansionIndex: number,
 ): string {
-  return `${canonicalEventId}:${agUiEventType}`;
+  return `${canonicalEventId}:${agUiEventType}:${expansionIndex}`;
 }
