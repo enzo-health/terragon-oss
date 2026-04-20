@@ -3,7 +3,10 @@ import { and, eq } from "drizzle-orm";
 import type { BaseEvent } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import * as schema from "@terragon/shared/db/schema";
-import { getAgUiEventsForReplay } from "@terragon/shared/model/agent-event-log";
+import {
+  agUiStreamKey,
+  getAgUiEventsForReplay,
+} from "@terragon/shared/model/agent-event-log";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
@@ -14,17 +17,6 @@ export const dynamic = "force-dynamic";
 // time (Vercel Pro cap). Client-side aborts close the stream early, so
 // typical usage will not hit this ceiling.
 export const maxDuration = 300;
-
-// Redis stream key used for the live tail. Task 2C will publish AG-UI
-// BaseEvent payloads as JSON strings on this key (field `event`).
-// The SSE endpoint polls the stream via XREAD with blockMS.
-//
-// Namespacing: follows the `dl3:` pattern from delivery-loop-v3 (a static
-// domain prefix — environment isolation is provided by using separate
-// REDIS_URLs per env, matching how `dl3:outbox:stream` works today).
-function agUiStreamKey(threadChatId: string): string {
-  return `agui:thread:${threadChatId}`;
-}
 
 // XREAD poll tuning. blockMS is capped by the resilient-redis client's
 // localHttpCommandTimeoutMs (3_000) in dev, so we stay under that to

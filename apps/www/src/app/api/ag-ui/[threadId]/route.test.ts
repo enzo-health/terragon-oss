@@ -56,6 +56,7 @@ vi.mock("@/lib/redis", () => ({
 }));
 
 vi.mock("@terragon/shared/model/agent-event-log", () => ({
+  agUiStreamKey: (threadChatId: string) => `agui:thread:${threadChatId}`,
   getAgUiEventsForReplay: vi.fn(),
 }));
 

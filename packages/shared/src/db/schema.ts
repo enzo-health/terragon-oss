@@ -529,52 +529,6 @@ export const agentEventLog = pgTable(
   ],
 );
 
-export const tokenStreamEvent = pgTable(
-  "token_stream_event",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    streamSeq: bigserial("stream_seq", { mode: "number" }).notNull(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    runId: text("run_id").notNull(),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    threadChatId: text("thread_chat_id").notNull(),
-    threadChatMessageSeq: integer("thread_chat_message_seq"),
-    messageId: text("message_id").notNull(),
-    partIndex: integer("part_index").notNull(),
-    partType: text("part_type").notNull().default("text"),
-    text: text("text").notNull(),
-    idempotencyKey: text("idempotency_key").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("token_stream_event_stream_seq_unique").on(table.streamSeq),
-    uniqueIndex("token_stream_event_idempotency_key_unique").on(
-      table.idempotencyKey,
-    ),
-    index("token_stream_event_thread_part_seq_idx").on(
-      table.threadChatId,
-      table.threadChatMessageSeq,
-      table.messageId,
-      table.partIndex,
-      table.streamSeq,
-    ),
-    index("token_stream_event_replay_idx").on(
-      table.userId,
-      table.runId,
-      table.threadId,
-      table.threadChatId,
-      table.threadChatMessageSeq,
-      table.streamSeq,
-    ),
-  ],
-);
-
 export const threadVisibility = pgTable(
   "thread_visibility",
   {

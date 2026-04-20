@@ -147,12 +147,7 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@terragon/shared/model/token-stream-event", () => ({
-  appendTokenStreamEvents: vi.fn().mockResolvedValue([]),
-}));
-
 vi.mock("@terragon/shared/broadcast-server", () => ({
-  publishDeltaBroadcast: vi.fn().mockResolvedValue(undefined),
   publishBroadcastUserMessage: vi.fn().mockResolvedValue(undefined),
 }));
 

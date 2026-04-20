@@ -17,6 +17,15 @@ import type { DBMessage } from "../db/db-message";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import * as schema from "../db/schema";
 
+/**
+ * Redis stream key namespace used by the AG-UI writer (/api/daemon-event) and
+ * the AG-UI SSE reader (/api/ag-ui/[threadId]). Co-located here so the two
+ * sides cannot drift.
+ */
+export function agUiStreamKey(threadChatId: string): string {
+  return `agui:thread:${threadChatId}`;
+}
+
 export type AppendEventResult =
   | {
       success: true;
@@ -266,7 +275,7 @@ export async function appendCanonicalEvent({
 
       const collidingEvent = await tx.query.agentEventLog.findFirst({
         where: and(
-          eq(schema.agentEventLog.runId, envelope.runId),
+          eq(schema.agentEventLog.threadChatId, envelope.threadChatId),
           eq(schema.agentEventLog.seq, envelope.seq),
         ),
         columns: {
@@ -277,7 +286,7 @@ export async function appendCanonicalEvent({
       if (collidingEvent) {
         return {
           success: false,
-          error: `Sequence collision: seq ${envelope.seq} already exists in run ${envelope.runId} with event ${collidingEvent.eventId}`,
+          error: `Sequence collision: seq ${envelope.seq} already exists in threadChat ${envelope.threadChatId} with event ${collidingEvent.eventId}`,
           code: "seq_violation",
         };
       }
@@ -646,4 +655,101 @@ export async function getRunMaxSeq({
   }
 
   return Number(result.maxSeq);
+}
+
+// ---------------------------------------------------------------------------
+// AG-UI writer path (Task 2C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reserve `count` consecutive `seq` values for `threadChatId` inside a
+ * transaction. Returns the starting seq. The lock is released at tx commit.
+ *
+ * Uses `pg_advisory_xact_lock(hashtext(key), 0)` — same idiom as
+ * `retryGitCommitAndPush` in checkpoint-thread-internal.ts. The 32-bit hash
+ * collision rate is acceptable (thread-chat IDs are already scoped) and the
+ * lock is tx-scoped, so a stray collision just serializes two unrelated
+ * thread chats for the duration of one write.
+ */
+export async function reserveThreadChatSeqs({
+  tx,
+  threadChatId,
+  count,
+}: {
+  tx: Pick<DB, "execute" | "select">;
+  threadChatId: string;
+  count: number;
+}): Promise<number> {
+  if (count <= 0) {
+    throw new Error(`reserveThreadChatSeqs: count must be >= 1 (got ${count})`);
+  }
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`agent_event_log:thread_chat_seq:${threadChatId}`}), 0)`,
+  );
+  const [row] = await tx
+    .select({
+      maxSeq: sql<string | null>`MAX(${schema.agentEventLog.seq})`,
+    })
+    .from(schema.agentEventLog)
+    .where(eq(schema.agentEventLog.threadChatId, threadChatId));
+  const nextSeq = row?.maxSeq == null ? 0 : Number(row.maxSeq) + 1;
+  return nextSeq;
+}
+
+type AppendAgUiEventRow = {
+  eventId: string;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  seq: number;
+  eventType: string;
+  category: string;
+  payload: BaseEvent;
+  idempotencyKey: string;
+  timestamp: Date;
+};
+
+/**
+ * Persist a pre-computed AG-UI BaseEvent row. Caller supplies the seq
+ * (reserved via `reserveThreadChatSeqs`) and other envelope fields.
+ *
+ * Returns `{ inserted: true }` on fresh insert or `{ inserted: false }` on
+ * duplicate (idempotency-key collision via runId+eventId). Throws on other
+ * DB failures.
+ */
+export async function appendAgUiEventRow({
+  tx,
+  row,
+}: {
+  tx: Pick<DB, "insert" | "query">;
+  row: AppendAgUiEventRow;
+}): Promise<{ inserted: boolean }> {
+  const existing = await tx.query.agentEventLog.findFirst({
+    where: and(
+      eq(schema.agentEventLog.runId, row.runId),
+      eq(schema.agentEventLog.eventId, row.eventId),
+    ),
+    columns: { eventId: true },
+  });
+  if (existing) {
+    return { inserted: false };
+  }
+
+  const [inserted] = await tx
+    .insert(schema.agentEventLog)
+    .values({
+      eventId: row.eventId,
+      runId: row.runId,
+      threadId: row.threadId,
+      threadChatId: row.threadChatId,
+      seq: row.seq,
+      eventType: row.eventType,
+      category: row.category,
+      payloadJson: row.payload as unknown as Record<string, unknown>,
+      idempotencyKey: row.idempotencyKey,
+      timestamp: row.timestamp,
+    })
+    .returning({ eventId: schema.agentEventLog.eventId });
+
+  return { inserted: !!inserted };
 }

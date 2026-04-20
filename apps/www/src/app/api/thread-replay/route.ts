@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@terragon/shared/db/schema";
 import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
-import { replayPendingTokenStreamEventsForActiveRun } from "@terragon/shared/model/token-stream-event";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionOrNull();
@@ -58,14 +57,8 @@ export async function GET(request: NextRequest) {
     fromThreadChatMessageSeq: fromSeq,
     ...(threadChatId ? { threadChatId } : {}),
   });
-  const deltaEntries =
-    threadChatId != null
-      ? await replayPendingTokenStreamEventsForActiveRun({
-          db,
-          userId: session.user.id,
-          threadId,
-          threadChatId,
-        })
-      : [];
-  return NextResponse.json({ entries, deltaEntries });
+  // Phase 6 deletes this route outright. Until then the response shape is
+  // frozen so pre-cutover clients keep parsing; `deltaEntries` is always
+  // empty because token_stream_event was deleted in Task 2C.
+  return NextResponse.json({ entries, deltaEntries: [] });
 }

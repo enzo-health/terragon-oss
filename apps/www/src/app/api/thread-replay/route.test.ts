@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import { GET } from "./route";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
-import { replayPendingTokenStreamEventsForActiveRun } from "@terragon/shared/model/token-stream-event";
 
 const dbMocks = vi.hoisted(() => {
   const limit = vi.fn();
@@ -34,10 +33,6 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
   getThreadReplayEntriesFromCanonicalEvents: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/token-stream-event", () => ({
-  replayPendingTokenStreamEventsForActiveRun: vi.fn(),
-}));
-
 describe("thread-replay route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -58,7 +53,6 @@ describe("thread-replay route", () => {
     } as Awaited<ReturnType<typeof getSessionOrNull>>);
     dbMocks.limit.mockResolvedValue([{ id: "thread-1" }]);
     vi.mocked(getThreadReplayEntriesFromCanonicalEvents).mockResolvedValue([]);
-    vi.mocked(replayPendingTokenStreamEventsForActiveRun).mockResolvedValue([]);
   });
 
   it("requires an authenticated session", async () => {
@@ -141,33 +135,9 @@ describe("thread-replay route", () => {
       threadChatId: "chat-1",
       fromThreadChatMessageSeq: 5,
     });
-    expect(replayPendingTokenStreamEventsForActiveRun).toHaveBeenCalledWith({
-      db: dbMocks.db,
-      userId: "user-1",
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-    });
   });
 
-  it("replays pending token deltas for the active run from the same thread chat scope", async () => {
-    vi.mocked(replayPendingTokenStreamEventsForActiveRun).mockResolvedValue([
-      {
-        id: "delta-1",
-        streamSeq: 9,
-        userId: "user-1",
-        runId: "run-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        threadChatMessageSeq: null,
-        messageId: "message-1",
-        partIndex: 0,
-        partType: "text",
-        text: "hello",
-        idempotencyKey: "key-1",
-        createdAt: new Date("2026-04-19T00:00:00.000Z"),
-      },
-    ]);
-
+  it("always returns empty deltaEntries after Task 2C cutover", async () => {
     const response = await GET(
       new NextRequest(
         "http://localhost/api/thread-replay?threadId=thread-1&threadChatId=chat-1&fromSeq=5",
@@ -177,23 +147,7 @@ describe("thread-replay route", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       entries: [],
-      deltaEntries: [
-        {
-          id: "delta-1",
-          streamSeq: 9,
-          userId: "user-1",
-          runId: "run-1",
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          threadChatMessageSeq: null,
-          messageId: "message-1",
-          partIndex: 0,
-          partType: "text",
-          text: "hello",
-          idempotencyKey: "key-1",
-          createdAt: expect.any(String),
-        },
-      ],
+      deltaEntries: [],
     });
   });
 

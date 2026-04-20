@@ -3,10 +3,7 @@ import {
   type DaemonTokenAuthContext,
 } from "@/lib/auth-server";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import {
-  publishBroadcastUserMessage,
-  publishDeltaBroadcast,
-} from "@terragon/shared/broadcast-server";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -35,15 +32,7 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import {
-  assignThreadChatMessageSeqToCanonicalEvents,
-  appendCanonicalEventsBatch,
-} from "@terragon/shared/model/agent-event-log";
-import {
-  appendTokenStreamEvents,
-  assignPendingTokenStreamEventsToThreadChatMessageSeq,
-  getPendingTokenStreamEventFinalizationUpperBound,
-} from "@terragon/shared/model/token-stream-event";
+import { assignThreadChatMessageSeqToCanonicalEvents } from "@terragon/shared/model/agent-event-log";
 import {
   getThreadMinimal,
   touchThreadChatUpdatedAt,
@@ -63,12 +52,13 @@ import {
 } from "@/server-lib/delivery-loop/v3/store";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
-  buildDeltaSequenceKey,
-  computeMaxSeqByKey,
-  type DeltaSequenceKey,
-  filterDeltasByKnownMaxSeq,
-  normalizeDeltasForPersistence,
-} from "@/server-lib/token-stream-guards";
+  broadcastAgUiEventEphemeral,
+  buildRunTerminalAgUi,
+  canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
+  metaEventsToAgUiEvents,
+  persistAndPublishAgUiEvents,
+} from "@/server-lib/ag-ui-publisher";
 import { env } from "@terragon/env/apps-www";
 
 type DaemonEventEnvelopeV2 = {
@@ -80,7 +70,6 @@ type DaemonEventEnvelopeV2 = {
 
 const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
 const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
-const DELTA_SEQ_MAX_TTL_SECONDS = 60 * 60 * 24;
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
 const DAEMON_TEST_AUTH_ENABLED_VALUE = "enabled";
@@ -120,90 +109,6 @@ type CanonicalPersistenceSummary = {
 type CanonicalEventsPayload = NonNullable<
   DaemonEventAPIBody["canonicalEvents"]
 >;
-
-function getDeltaSeqMaxRedisKey(sequenceKey: string): string {
-  return `sdlc:delta-seq-max:${sequenceKey}`;
-}
-
-function isMissingSchemaError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  if (!("code" in error)) {
-    return false;
-  }
-  const code = (error as { code?: string }).code;
-  return code === "42P01" || code === "42703";
-}
-
-async function getKnownMaxDeltaSeqByKey(params: {
-  runId: string;
-  deltas: DaemonEventAPIBody["deltas"];
-}): Promise<Map<DeltaSequenceKey, number>> {
-  const result = new Map<DeltaSequenceKey, number>();
-  if (!params.deltas || params.deltas.length === 0 || isLocalRedisHttpMode()) {
-    return result;
-  }
-
-  for (const delta of params.deltas) {
-    const sequenceKey = buildDeltaSequenceKey({
-      runId: params.runId,
-      messageId: delta.messageId,
-      partIndex: delta.partIndex,
-      kind: delta.kind === "thinking" ? "thinking" : "text",
-    });
-    if (result.has(sequenceKey)) {
-      continue;
-    }
-    try {
-      const raw = await redis.get<string>(getDeltaSeqMaxRedisKey(sequenceKey));
-      const parsed = raw == null ? Number.NaN : Number(raw);
-      if (Number.isFinite(parsed)) {
-        result.set(sequenceKey, parsed);
-      }
-    } catch (error) {
-      if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-        console.warn(
-          "[daemon-event] local redis delta max-seq read parse failure, bypassing",
-          { sequenceKey },
-        );
-        return new Map();
-      }
-      throw error;
-    }
-  }
-
-  return result;
-}
-
-async function persistKnownMaxDeltaSeqByKey(params: {
-  runId: string;
-  deltas: DaemonEventAPIBody["deltas"];
-}): Promise<void> {
-  if (!params.deltas || params.deltas.length === 0 || isLocalRedisHttpMode()) {
-    return;
-  }
-  const maxByKey = computeMaxSeqByKey({
-    runId: params.runId,
-    deltas: params.deltas,
-  });
-  for (const [sequenceKey, maxSeq] of maxByKey) {
-    try {
-      await redis.set(getDeltaSeqMaxRedisKey(sequenceKey), String(maxSeq), {
-        ex: DELTA_SEQ_MAX_TTL_SECONDS,
-      });
-    } catch (error) {
-      if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-        console.warn(
-          "[daemon-event] local redis delta max-seq write parse failure, bypassing",
-          { sequenceKey, maxSeq },
-        );
-        return;
-      }
-      throw error;
-    }
-  }
-}
 
 function buildTerminalAckState(
   base: TerminalAckBase,
@@ -452,24 +357,6 @@ function getDaemonEventEnvelopeV2(
   };
 }
 
-function canonicalEventFailureStatus(
-  code:
-    | "invalid_envelope"
-    | "invalid_event"
-    | "seq_violation"
-    | "database_error",
-): number {
-  switch (code) {
-    case "invalid_envelope":
-    case "invalid_event":
-      return 400;
-    case "seq_violation":
-      return 409;
-    case "database_error":
-      return 500;
-  }
-}
-
 function findCanonicalEventContextMismatch(params: {
   canonicalEvents: CanonicalEventsPayload;
   runId: string;
@@ -544,45 +431,41 @@ async function persistCanonicalEventsOrResponse(params: {
     };
   }
 
-  const canonicalResults = await appendCanonicalEventsBatch({
-    db,
-    events: canonicalEvents,
-  });
-  const canonicalFailure = canonicalResults.find((result) => !result.success);
-  if (canonicalFailure && !canonicalFailure.success) {
+  const rows = canonicalEventsToAgUiRows(canonicalEvents);
+  try {
+    const result = await persistAndPublishAgUiEvents({
+      db,
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      rows,
+    });
+    return {
+      summary: {
+        attempted: canonicalEvents.length,
+        inserted: result.inserted,
+        deduplicated: result.skipped,
+      },
+    };
+  } catch (error) {
+    console.error("[daemon-event] AG-UI canonical persistence failed", {
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
     return {
       response: Response.json(
         {
           success: false,
           error: "daemon_event_canonical_event_persist_failed",
-          code: canonicalFailure.code,
-          detail: canonicalFailure.error,
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
         },
-        { status: canonicalEventFailureStatus(canonicalFailure.code) },
+        { status: 500 },
       ),
     };
   }
-
-  let inserted = 0;
-  let deduplicated = 0;
-  for (const result of canonicalResults) {
-    if (!result.success) {
-      continue;
-    }
-    if (result.inserted) {
-      inserted += 1;
-    } else {
-      deduplicated += 1;
-    }
-  }
-
-  return {
-    summary: {
-      attempted: canonicalEvents.length,
-      inserted,
-      deduplicated,
-    },
-  };
 }
 
 function deriveSessionIdFromMessages(
@@ -596,51 +479,6 @@ function deriveSessionIdFromMessages(
     }
   }
   return null;
-}
-
-function hasMaterializedAssistantMessage(
-  messages: DaemonEventAPIBody["messages"],
-): boolean {
-  for (const message of messages) {
-    if (message?.type !== "assistant") {
-      continue;
-    }
-    const content = message.message?.content;
-    if (typeof content === "string") {
-      if (content.length > 0) {
-        return true;
-      }
-      continue;
-    }
-    if (!Array.isArray(content)) {
-      continue;
-    }
-    for (const block of content) {
-      if (!block || typeof block !== "object") {
-        continue;
-      }
-      const record = block as {
-        type?: unknown;
-        text?: unknown;
-        thinking?: unknown;
-      };
-      if (
-        record.type === "text" &&
-        typeof record.text === "string" &&
-        record.text.length > 0
-      ) {
-        return true;
-      }
-      if (
-        record.type === "thinking" &&
-        typeof record.thinking === "string" &&
-        record.thinking.length > 0
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 function deriveRunStatusFromMessages(
@@ -923,36 +761,25 @@ export async function POST(request: Request) {
   // Meta events (token usage, rate limits, model re-routing, MCP health,
   // config warnings) are fire-and-forget operational signals. They don't
   // need DB persistence — the chip UI displays only the current value.
-  // Broadcast them immediately so the UI updates without waiting for the
-  // downstream DB write or delivery-loop processing.
+  // Publish as AG-UI CUSTOM events on the thread-chat stream so the chat
+  // UI receives them via the SSE subscription.
   const metaEvents = Array.isArray(json.metaEvents) ? json.metaEvents : null;
   if (metaEvents && metaEvents.length > 0) {
-    publishBroadcastUserMessage({
-      type: "user",
-      id: userId,
-      data: {
-        threadPatches: [
-          {
+    for (const agUi of metaEventsToAgUiEvents(metaEvents)) {
+      broadcastAgUiEventEphemeral({ threadChatId, event: agUi }).catch(
+        (error) => {
+          console.warn("[daemon-event] meta-event AG-UI broadcast failed", {
             threadId,
             threadChatId,
-            op: "upsert",
-            metaEvents,
-          },
-        ],
-      },
-    }).catch((error) => {
-      console.warn("[daemon-event] meta-event broadcast failed", {
-        threadId,
-        threadChatId,
-        count: metaEvents.length,
-        error,
-      });
-    });
+            error,
+          });
+        },
+      );
+    }
   }
 
   const dbPreflight = await getDaemonEventDbPreflight(db);
   const canPersistCanonicalEvents = dbPreflight.agentEventLogReady;
-  const canPersistTokenStreamEvents = dbPreflight.tokenStreamEventReady;
   const canPersistRunContextFailureMeta =
     dbPreflight.agentRunContextFailureColumnsReady;
 
@@ -1220,146 +1047,49 @@ export async function POST(request: Request) {
     );
   }
 
-  const shouldFinalizeMaterializedAssistantTokens =
-    canPersistTokenStreamEvents && hasMaterializedAssistantMessage(messages);
-  let tokenFinalizationUpperBound: number | null = null;
-
+  // Daemon deltas → AG-UI TEXT_MESSAGE_CONTENT / REASONING_MESSAGE_CONTENT
+  // rows. Persisted to agent_event_log with per-thread-chat seq and
+  // XADD'd to the live-tail stream. The legacy token_stream_event table
+  // and the deltaSeq broadcast patch are gone — AG-UI replay via
+  // /api/ag-ui/[threadId] covers both live tail and reconnection catch-up.
   if (deltas && deltas.length > 0) {
-    const deltaRunId = authoritativeRunId;
-    const normalizedDeltas = normalizeDeltasForPersistence(deltas);
-    const knownMaxSeqByKey = await getKnownMaxDeltaSeqByKey({
-      runId: deltaRunId,
-      deltas: normalizedDeltas,
-    });
-    const acceptedDeltas = filterDeltasByKnownMaxSeq({
-      deltas: normalizedDeltas,
-      runId: deltaRunId,
-      maxSeqByKey: knownMaxSeqByKey,
-    });
-
-    if (acceptedDeltas.length > 0) {
-      await persistKnownMaxDeltaSeqByKey({
-        runId: deltaRunId,
-        deltas: acceptedDeltas,
-      });
+    if (!canPersistCanonicalEvents) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+        { status: 503 },
+      );
     }
-
-    if (acceptedDeltas.length > 0) {
-      if (canPersistTokenStreamEvents) {
-        try {
-          const tokenEvents = await appendTokenStreamEvents({
-            db,
-            events: acceptedDeltas.map((delta, index) => ({
-              userId,
-              runId: deltaRunId,
-              threadId,
-              threadChatId,
-              messageId: delta.messageId,
-              partIndex: delta.partIndex,
-              partType: delta.kind === "thinking" ? "thinking" : "text",
-              text: delta.text,
-              idempotencyKey:
-                envelopeV2 !== null
-                  ? `${threadChatId}:${envelopeV2.eventId}:${envelopeV2.seq}:${index}`
-                  : `${threadChatId}:${deltaRunId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-            })),
-          });
-
-          const orderedTokenEvents = [...tokenEvents].sort(
-            (a, b) => a.streamSeq - b.streamSeq,
-          );
-          for (const tokenEvent of orderedTokenEvents) {
-            await publishDeltaBroadcast({
-              userId,
-              threadId,
-              threadChatId,
-              messageId: tokenEvent.messageId,
-              partIndex: tokenEvent.partIndex,
-              deltaSeq: tokenEvent.streamSeq,
-              deltaIdempotencyKey: tokenEvent.idempotencyKey,
-              deltaKind:
-                tokenEvent.partType === "thinking" ? "thinking" : "text",
-              text: tokenEvent.text,
-            }).catch((error) => {
-              console.warn("[daemon-event] delta broadcast failed", {
-                threadId,
-                threadChatId,
-                messageId: tokenEvent.messageId,
-                streamSeq: tokenEvent.streamSeq,
-                error,
-              });
-            });
-          }
-        } catch (error) {
-          if (!isMissingSchemaError(error)) {
-            throw error;
-          }
-          console.error(
-            "[daemon-event] token stream persistence unavailable, falling back to direct broadcast",
-            {
-              threadId,
-              threadChatId,
-              error,
-            },
-          );
-          for (const [index, delta] of acceptedDeltas.entries()) {
-            await publishDeltaBroadcast({
-              userId,
-              threadId,
-              threadChatId,
-              messageId: delta.messageId,
-              partIndex: delta.partIndex,
-              deltaSeq: delta.deltaSeq,
-              deltaIdempotencyKey: `${threadChatId}:${deltaRunId}:fallback:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-              deltaKind: delta.kind === "thinking" ? "thinking" : "text",
-              text: delta.text,
-            }).catch((broadcastError) => {
-              console.warn("[daemon-event] fallback delta broadcast failed", {
-                threadId,
-                threadChatId,
-                messageId: delta.messageId,
-                deltaSeq: delta.deltaSeq,
-                error: broadcastError,
-              });
-            });
-          }
-        }
-      } else {
-        for (const [index, delta] of acceptedDeltas.entries()) {
-          await publishDeltaBroadcast({
-            userId,
-            threadId,
-            threadChatId,
-            messageId: delta.messageId,
-            partIndex: delta.partIndex,
-            deltaSeq: delta.deltaSeq,
-            deltaIdempotencyKey: `${threadChatId}:${deltaRunId}:preflight-fallback:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-            deltaKind: delta.kind === "thinking" ? "thinking" : "text",
-            text: delta.text,
-          }).catch((error) => {
-            console.warn(
-              "[daemon-event] preflight fallback delta broadcast failed",
-              {
-                threadId,
-                threadChatId,
-                messageId: delta.messageId,
-                deltaSeq: delta.deltaSeq,
-                error,
-              },
-            );
-          });
-        }
-      }
-    }
-  }
-
-  if (shouldFinalizeMaterializedAssistantTokens) {
-    tokenFinalizationUpperBound =
-      await getPendingTokenStreamEventFinalizationUpperBound({
+    try {
+      await persistAndPublishAgUiEvents({
         db,
         runId: authoritativeRunId,
+        threadId,
         threadChatId,
+        rows: daemonDeltasToAgUiRows({
+          runId: authoritativeRunId,
+          deltas,
+        }),
       });
+    } catch (error) {
+      console.error("[daemon-event] AG-UI delta persistence failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 500 },
+      );
+    }
   }
 
   // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
@@ -1601,19 +1331,19 @@ export async function POST(request: Request) {
   }
 
   if (result.threadChatMessageSeq != null) {
-    if (tokenFinalizationUpperBound !== null) {
-      await assignPendingTokenStreamEventsToThreadChatMessageSeq({
-        db,
-        runId: authoritativeRunId,
-        threadChatId,
-        threadChatMessageSeq: result.threadChatMessageSeq,
-        maxStreamSeq: tokenFinalizationUpperBound,
-      });
-    }
     if (canonicalEvents && canonicalEvents.length > 0) {
+      // The canonicalEvents the daemon sent were expanded into multiple
+      // AG-UI rows (START / CONTENT / END). Build the set of agent_event_log
+      // eventIds so threadChatMessageSeq attaches to all of them.
+      const expandedEventIds: string[] = [];
+      for (const canonical of canonicalEvents) {
+        for (const expanded of canonicalEventsToAgUiRows([canonical])) {
+          expandedEventIds.push(expanded.eventId);
+        }
+      }
       await assignThreadChatMessageSeqToCanonicalEvents({
         db,
-        eventIds: canonicalEvents.map((event) => event.eventId),
+        eventIds: expandedEventIds,
         threadChatMessageSeq: result.threadChatMessageSeq,
       });
     }
@@ -1901,6 +1631,29 @@ export async function POST(request: Request) {
         threadId,
         threadChatId,
         loopId: effectiveLoopId,
+        error,
+      });
+    });
+  }
+
+  // Emit a terminal AG-UI marker (RUN_FINISHED or RUN_ERROR) on the thread
+  // chat stream. Ephemeral: not persisted to agent_event_log — the status
+  // of the run is already in delivery-loop head / agentRunContext.status.
+  if (daemonRunStatusFromMessages !== "processing") {
+    broadcastAgUiEventEphemeral({
+      threadChatId,
+      event: buildRunTerminalAgUi({
+        threadId,
+        runId: authoritativeRunId,
+        daemonRunStatus: daemonRunStatusFromMessages,
+        errorMessage: daemonTerminalErrorInfo.errorMessage,
+        errorCode: daemonTerminalErrorInfo.errorCategory,
+      }),
+    }).catch((error) => {
+      console.warn("[daemon-event] run-terminal AG-UI broadcast failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
         error,
       });
     });

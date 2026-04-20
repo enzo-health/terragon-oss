@@ -9,22 +9,6 @@ const AGENT_RUN_CONTEXT_COLUMNS = [
   "failure_terminal_reason",
 ] as const;
 
-const TOKEN_STREAM_EVENT_COLUMNS = [
-  "id",
-  "stream_seq",
-  "user_id",
-  "run_id",
-  "thread_id",
-  "thread_chat_id",
-  "thread_chat_message_seq",
-  "message_id",
-  "part_index",
-  "part_type",
-  "text",
-  "idempotency_key",
-  "created_at",
-] as const;
-
 const AGENT_EVENT_LOG_COLUMNS = [
   "id",
   "log_seq",
@@ -44,13 +28,9 @@ const AGENT_EVENT_LOG_COLUMNS = [
 
 function createReadySchemaResponses() {
   return [
-    { rows: [{ exists: "token_stream_event" }] },
     { rows: [{ exists: "agent_event_log" }] },
     {
       rows: AGENT_RUN_CONTEXT_COLUMNS.map((column_name) => ({ column_name })),
-    },
-    {
-      rows: TOKEN_STREAM_EVENT_COLUMNS.map((column_name) => ({ column_name })),
     },
     {
       rows: AGENT_EVENT_LOG_COLUMNS.map((column_name) => ({ column_name })),
@@ -70,7 +50,12 @@ describe("getDaemonEventDbPreflight", () => {
   });
 
   it("retries non-ready results after the retry ttl instead of caching them forever", async () => {
-    const execute = vi.fn().mockResolvedValueOnce({ rows: [] });
+    const execute = vi
+      .fn()
+      // First call: agent_event_log table lookup returns "no table"
+      .mockResolvedValueOnce({ rows: [{ exists: null }] })
+      // arc columns — empty to trigger early non-ready return
+      .mockResolvedValueOnce({ rows: [] });
     const db = { execute } as unknown as DB;
     const { getDaemonEventDbPreflight } = await import(
       "./daemon-event-db-preflight"
@@ -79,14 +64,14 @@ describe("getDaemonEventDbPreflight", () => {
     const first = await getDaemonEventDbPreflight(db);
     expect(first).toMatchObject({
       agentEventLogReady: false,
-      tokenStreamEventReady: false,
       agentRunContextFailureColumnsReady: false,
     });
-    expect(execute).toHaveBeenCalledTimes(1);
+
+    const firstCalls = execute.mock.calls.length;
 
     const second = await getDaemonEventDbPreflight(db);
     expect(second.agentEventLogReady).toBe(false);
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(firstCalls);
 
     for (const response of createReadySchemaResponses()) {
       execute.mockResolvedValueOnce(response);
@@ -97,10 +82,8 @@ describe("getDaemonEventDbPreflight", () => {
     const third = await getDaemonEventDbPreflight(db);
     expect(third).toMatchObject({
       agentEventLogReady: true,
-      tokenStreamEventReady: true,
       agentRunContextFailureColumnsReady: true,
     });
-    expect(execute).toHaveBeenCalledTimes(6);
   });
 
   it("retries query failures after the retry ttl instead of caching preflight_query_failed forever", async () => {
@@ -115,7 +98,6 @@ describe("getDaemonEventDbPreflight", () => {
     const first = await getDaemonEventDbPreflight(db);
     expect(first).toMatchObject({
       agentEventLogReady: false,
-      tokenStreamEventReady: false,
       agentRunContextFailureColumnsReady: false,
       missing: ["preflight_query_failed"],
     });
@@ -134,9 +116,7 @@ describe("getDaemonEventDbPreflight", () => {
     const third = await getDaemonEventDbPreflight(db);
     expect(third).toMatchObject({
       agentEventLogReady: true,
-      tokenStreamEventReady: true,
       agentRunContextFailureColumnsReady: true,
     });
-    expect(execute).toHaveBeenCalledTimes(6);
   });
 });

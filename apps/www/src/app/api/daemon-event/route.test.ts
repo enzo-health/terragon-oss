@@ -23,17 +23,9 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
 import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import { appendCanonicalEventsBatch } from "@terragon/shared/model/agent-event-log";
 import { assignThreadChatMessageSeqToCanonicalEvents } from "@terragon/shared/model/agent-event-log";
-import {
-  appendTokenStreamEvents,
-  assignPendingTokenStreamEventsToThreadChatMessageSeq,
-  getPendingTokenStreamEventFinalizationUpperBound,
-} from "@terragon/shared/model/token-stream-event";
-import {
-  publishBroadcastUserMessage,
-  publishDeltaBroadcast,
-} from "@terragon/shared/broadcast-server";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import { persistAndPublishAgUiEvents } from "@/server-lib/ag-ui-publisher";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
@@ -132,19 +124,23 @@ const deliveryLoopModelMocks = vi.hoisted(() => ({
   markDispatchIntentFailed: vi.fn(),
 }));
 
-const tokenStreamMocks = vi.hoisted(() => ({
-  appendTokenStreamEvents: vi.fn(),
-  assignPendingTokenStreamEventsToThreadChatMessageSeq: vi.fn(),
-  getPendingTokenStreamEventFinalizationUpperBound: vi.fn(),
-}));
-
 const canonicalEventLogMocks = vi.hoisted(() => ({
-  appendCanonicalEventsBatch: vi.fn(),
   assignThreadChatMessageSeqToCanonicalEvents: vi.fn(),
 }));
 
-const deltaBroadcastMocks = vi.hoisted(() => ({
-  publishDeltaBroadcast: vi.fn(),
+const agUiPublisherMocks = vi.hoisted(() => ({
+  persistAndPublishAgUiEvents: vi.fn(),
+  broadcastAgUiEventEphemeral: vi.fn(),
+  canonicalEventsToAgUiRows: vi.fn((events: Array<{ eventId: string }>) =>
+    events.map((e) => ({
+      event: { type: "STUB" } as unknown,
+      eventId: `${e.eventId}:STUB`,
+      timestamp: new Date(),
+    })),
+  ),
+  daemonDeltasToAgUiRows: vi.fn(() => []),
+  metaEventsToAgUiEvents: vi.fn(() => []),
+  buildRunTerminalAgUi: vi.fn(() => ({ type: "RUN_FINISHED" })),
 }));
 
 const v3BridgeMocks = vi.hoisted(() => ({
@@ -220,22 +216,14 @@ vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
   getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@terragon/shared/model/token-stream-event", () => ({
-  appendTokenStreamEvents: tokenStreamMocks.appendTokenStreamEvents,
-  assignPendingTokenStreamEventsToThreadChatMessageSeq:
-    tokenStreamMocks.assignPendingTokenStreamEventsToThreadChatMessageSeq,
-  getPendingTokenStreamEventFinalizationUpperBound:
-    tokenStreamMocks.getPendingTokenStreamEventFinalizationUpperBound,
-}));
-
 vi.mock("@terragon/shared/model/agent-event-log", () => ({
-  appendCanonicalEventsBatch: canonicalEventLogMocks.appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents:
     canonicalEventLogMocks.assignThreadChatMessageSeqToCanonicalEvents,
 }));
 
+vi.mock("@/server-lib/ag-ui-publisher", () => agUiPublisherMocks);
+
 vi.mock("@terragon/shared/broadcast-server", () => ({
-  publishDeltaBroadcast: deltaBroadcastMocks.publishDeltaBroadcast,
   publishBroadcastUserMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -475,19 +463,14 @@ describe("daemon-event route", () => {
     vi.mocked(extendSandboxLife).mockResolvedValue(undefined);
     vi.mocked(getDaemonEventDbPreflight).mockResolvedValue({
       agentEventLogReady: true,
-      tokenStreamEventReady: true,
       agentRunContextFailureColumnsReady: true,
       missing: [],
     });
-    vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([]);
-    vi.mocked(appendTokenStreamEvents).mockResolvedValue([]);
-    vi.mocked(
-      assignPendingTokenStreamEventsToThreadChatMessageSeq,
-    ).mockResolvedValue(undefined);
-    vi.mocked(
-      getPendingTokenStreamEventFinalizationUpperBound,
-    ).mockResolvedValue(9);
-    vi.mocked(publishDeltaBroadcast).mockResolvedValue(undefined);
+    agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValue({
+      inserted: 0,
+      skipped: 0,
+    });
+    agUiPublisherMocks.broadcastAgUiEventEphemeral.mockResolvedValue(undefined);
   });
 
   it("returns 401 when daemon token auth fails", async () => {
@@ -624,55 +607,7 @@ describe("daemon-event route", () => {
     }
   });
 
-  it("persists deltas with deterministic idempotency and broadcasts in stream order", async () => {
-    vi.mocked(appendTokenStreamEvents).mockResolvedValue([
-      {
-        id: "e-5",
-        streamSeq: 5,
-        userId: "user-1",
-        runId: "run-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        threadChatMessageSeq: null,
-        messageId: "m",
-        partIndex: 0,
-        partType: "text",
-        text: "c",
-        idempotencyKey: "k-5",
-        createdAt: new Date(),
-      },
-      {
-        id: "e-3",
-        streamSeq: 3,
-        userId: "user-1",
-        runId: "run-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        threadChatMessageSeq: null,
-        messageId: "m",
-        partIndex: 0,
-        partType: "text",
-        text: "a",
-        idempotencyKey: "k-3",
-        createdAt: new Date(),
-      },
-      {
-        id: "e-4",
-        streamSeq: 4,
-        userId: "user-1",
-        runId: "run-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        threadChatMessageSeq: null,
-        messageId: "m",
-        partIndex: 0,
-        partType: "text",
-        text: "b",
-        idempotencyKey: "k-4",
-        createdAt: new Date(),
-      },
-    ]);
-
+  it("routes daemon deltas through the AG-UI publisher", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -703,165 +638,21 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(appendTokenStreamEvents).toHaveBeenCalledWith(
+    expect(agUiPublisherMocks.daemonDeltasToAgUiRows).toHaveBeenCalledWith(
       expect.objectContaining({
-        events: [
-          expect.objectContaining({
-            runId: "run-1",
-            idempotencyKey: "chat-1:event-1:8:0",
-          }),
-          expect.objectContaining({
-            runId: "run-1",
-            idempotencyKey: "chat-1:event-1:8:1",
-          }),
-        ],
+        runId: "run-1",
+        deltas: expect.arrayContaining([
+          expect.objectContaining({ messageId: "m", deltaSeq: 10 }),
+          expect.objectContaining({ messageId: "m", deltaSeq: 11 }),
+        ]),
       }),
     );
-    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
-      1,
+    expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
       expect.objectContaining({
-        deltaSeq: 3,
-        deltaIdempotencyKey: "k-3",
-        deltaKind: "text",
-      }),
-    );
-    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ deltaSeq: 4, deltaIdempotencyKey: "k-4" }),
-    );
-    expect(publishDeltaBroadcast).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({ deltaSeq: 5, deltaIdempotencyKey: "k-5" }),
-    );
-  });
-
-  it("skips token replay assignment when token-stream schema is not ready", async () => {
-    vi.mocked(getDaemonEventDbPreflight).mockResolvedValue({
-      agentEventLogReady: true,
-      tokenStreamEventReady: false,
-      agentRunContextFailureColumnsReady: true,
-      missing: ["token_stream_event.thread_chat_message_seq"],
-    });
-    vi.mocked(handleDaemonEvent).mockResolvedValue({
-      success: true,
-      threadChatMessageSeq: 12,
-    });
-
-    const response = await POST(
-      createDaemonRequest({
+        runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
       }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(
-      assignPendingTokenStreamEventsToThreadChatMessageSeq,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("does not finalize pending token replay rows on terminal-only appends", async () => {
-    vi.mocked(handleDaemonEvent).mockResolvedValue({
-      success: true,
-      threadChatMessageSeq: 12,
-    });
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(
-      assignPendingTokenStreamEventsToThreadChatMessageSeq,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("finalizes pending token replay rows when an assistant message materializes", async () => {
-    vi.mocked(handleDaemonEvent).mockResolvedValue({
-      success: true,
-      threadChatMessageSeq: 12,
-    });
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          {
-            type: "assistant",
-            message: { content: "working" },
-            session_id: "s-1",
-            parent_tool_use_id: null,
-          },
-        ],
-        timezone: "UTC",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(
-      assignPendingTokenStreamEventsToThreadChatMessageSeq,
-    ).toHaveBeenCalledWith({
-      db: dbMocks.db,
-      runId: "run-1",
-      threadChatId: "chat-1",
-      threadChatMessageSeq: 12,
-      maxStreamSeq: 9,
-    });
-    expect(
-      vi.mocked(getPendingTokenStreamEventFinalizationUpperBound).mock
-        .invocationCallOrder[0] ?? Infinity,
-    ).toBeLessThan(
-      vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
-    );
-  });
-
-  it("finalizes pending token replay rows for thinking-only assistant materialization", async () => {
-    vi.mocked(handleDaemonEvent).mockResolvedValue({
-      success: true,
-      threadChatMessageSeq: 12,
-    });
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          {
-            type: "assistant",
-            message: {
-              content: [{ type: "thinking", thinking: "private chain" }],
-            },
-            session_id: "s-1",
-            parent_tool_use_id: null,
-          },
-        ],
-        timezone: "UTC",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(
-      assignPendingTokenStreamEventsToThreadChatMessageSeq,
-    ).toHaveBeenCalledWith({
-      db: dbMocks.db,
-      runId: "run-1",
-      threadChatId: "chat-1",
-      threadChatMessageSeq: 12,
-      maxStreamSeq: 9,
-    });
-    expect(
-      vi.mocked(getPendingTokenStreamEventFinalizationUpperBound).mock
-        .invocationCallOrder[0] ?? Infinity,
-    ).toBeLessThan(
-      vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
     );
   });
 
@@ -1115,15 +906,10 @@ describe("daemon-event route", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);
-    vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
-      {
-        success: true,
-        inserted: true,
-        eventId: "canonical-event-1",
-        seq: 0,
-        runId: "run-1",
-      },
-    ]);
+    agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValue({
+      inserted: 1,
+      skipped: 0,
+    });
 
     const response = await POST(
       createDaemonRequest({
@@ -1142,12 +928,16 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(202);
     expect(data.reason).toBe("run_terminal_ignored");
-    expect(appendCanonicalEventsBatch).toHaveBeenCalledWith({
-      db: dbMocks.db,
-      events: [createCanonicalRunStartedEvent()],
-    });
+    expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      }),
+    );
     expect(
-      vi.mocked(appendCanonicalEventsBatch).mock.invocationCallOrder[0],
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mock
+        .invocationCallOrder[0] ?? 0,
     ).toBeLessThan(
       dispatchIntentMocks.getReplayableSelfDispatch.mock
         .invocationCallOrder[0] ?? Infinity,
@@ -2538,13 +2328,17 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(appendCanonicalEventsBatch).toHaveBeenCalledWith({
-        db: dbMocks.db,
-        events: [createCanonicalRunStartedEvent()],
-      });
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
       expect(
-        vi.mocked(appendCanonicalEventsBatch).mock.invocationCallOrder[0],
+        agUiPublisherMocks.persistAndPublishAgUiEvents.mock
+          .invocationCallOrder[0] ?? 0,
       ).toBeLessThan(
         vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
       );
@@ -2577,12 +2371,12 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(
-        assignPendingTokenStreamEventsToThreadChatMessageSeq,
-      ).not.toHaveBeenCalled();
       expect(assignThreadChatMessageSeqToCanonicalEvents).toHaveBeenCalledWith({
         db: dbMocks.db,
-        eventIds: [canonicalEvent.eventId],
+        // The route expands each canonical event into AG-UI rows and attaches
+        // thread-chat message seq to every resulting eventId. The
+        // canonicalEventsToAgUiRows mock returns `${eventId}:STUB`.
+        eventIds: [`${canonicalEvent.eventId}:STUB`],
         threadChatMessageSeq: 12,
       });
       expect(
@@ -2676,7 +2470,7 @@ describe("daemon-event route", () => {
         eventId: "canonical-event-1",
         reason: "threadChatId",
       });
-      expect(appendCanonicalEventsBatch).not.toHaveBeenCalled();
+      expect(persistAndPublishAgUiEvents).not.toHaveBeenCalled();
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
@@ -2717,15 +2511,10 @@ describe("daemon-event route", () => {
         codesandboxId: "sandbox-2",
         sandboxProvider: "docker",
       } as unknown as Awaited<ReturnType<typeof getThreadMinimal>>);
-      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
-        {
-          success: true,
-          inserted: true,
-          eventId: "canonical-event-1",
-          seq: 0,
-          runId: "run-1",
-        },
-      ]);
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
+        inserted: 1,
+        skipped: 0,
+      });
 
       const response = await POST(
         createDaemonRequest({
@@ -2747,7 +2536,7 @@ describe("daemon-event route", () => {
         canonicalEventsPersisted: 1,
         canonicalEventsDeduplicated: 0,
       });
-      expect(appendCanonicalEventsBatch).toHaveBeenCalledTimes(1);
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledTimes(1);
       await vi.waitFor(() => {
         expect(touchThreadChatUpdatedAt).toHaveBeenCalledWith({
           db: dbMocks.db,
@@ -2770,17 +2559,10 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
-        {
-          success: true,
-          inserted: false,
-          deduplicated: true,
-          reason: "duplicate_event",
-          eventId: "canonical-event-1",
-          seq: 0,
-          runId: "run-1",
-        },
-      ]);
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
+        inserted: 0,
+        skipped: 1,
+      });
 
       const response = await POST(
         createDaemonRequest({
@@ -2811,15 +2593,10 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
-        {
-          success: true,
-          inserted: true,
-          eventId: "canonical-event-1",
-          seq: 0,
-          runId: "run-1",
-        },
-      ]);
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
+        inserted: 1,
+        skipped: 0,
+      });
       vi.mocked(touchThreadChatUpdatedAt).mockRejectedValue(
         new Error("touch failed"),
       );
@@ -2860,13 +2637,9 @@ describe("daemon-event route", () => {
           ReturnType<typeof getActiveWorkflowForThread>
         >,
       );
-      vi.mocked(appendCanonicalEventsBatch).mockResolvedValue([
-        {
-          success: false,
-          code: "seq_violation",
-          error: "Sequence collision",
-        },
-      ]);
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockRejectedValueOnce(
+        new Error("Sequence collision"),
+      );
 
       const response = await POST(
         createDaemonRequest({
@@ -2882,11 +2655,11 @@ describe("daemon-event route", () => {
         }),
       );
 
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(500);
       expect(await response.json()).toMatchObject({
         success: false,
         error: "daemon_event_canonical_event_persist_failed",
-        code: "seq_violation",
+        code: "database_error",
       });
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });

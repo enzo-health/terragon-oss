@@ -13,13 +13,11 @@
 --      agent_event_log as AG-UI TEXT_MESSAGE_CONTENT / REASONING_MESSAGE_CONTENT
 --      events.
 --
--- !! DO NOT APPLY until Task 2C (per-thread-chat seq assignment + runtime
--- !! collision check in appendCanonicalEvent + writer-side AG-UI payload
--- !! emission + deletion of token_stream_event model/callers) has landed.
--- !! The migration + daemon + www changes ship together as a big-bang cutover.
--- !! Applying this migration alone will cause unique-violation failures on any
--- !! second run within a single thread_chat (the writer still emits per-run
--- !! seq values until 2C).
+-- !! APPLY WITH Task 2C cutover. Task 2C lands the writer-side AG-UI payload
+-- !! emission, per-thread-chat seq allocation, updated collision check, and
+-- !! deletion of the token_stream_event model + all callers. Apply this
+-- !! migration atomically with the deploy of apps/www that contains Task 2C.
+-- !! Do NOT apply to any DB that has not received the Task 2C commit.
 
 CREATE UNIQUE INDEX IF NOT EXISTS "agent_event_log_thread_chat_seq_unique"
   ON "agent_event_log" USING btree ("thread_chat_id", "seq");

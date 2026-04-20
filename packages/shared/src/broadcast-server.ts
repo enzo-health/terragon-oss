@@ -45,53 +45,6 @@ function getBroadcastPublishUrl(rawUrl: string): string {
   return normalizedUrl.toString().replace(/\/$/, "");
 }
 
-/**
- * Publish a delta broadcast for token-level streaming.
- * Deltas are already persisted and sequenced before publish in API routes.
- * This function only emits the realtime patch.
- */
-export async function publishDeltaBroadcast({
-  userId,
-  threadId,
-  threadChatId,
-  messageId,
-  partIndex,
-  deltaSeq,
-  deltaIdempotencyKey,
-  deltaKind,
-  text,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  messageId: string;
-  partIndex: number;
-  deltaSeq?: number;
-  deltaIdempotencyKey?: string;
-  deltaKind?: "text" | "thinking";
-  text: string;
-}): Promise<void> {
-  return publishBroadcastUserMessage({
-    type: "user",
-    id: userId,
-    data: {
-      threadPatches: [
-        {
-          threadId,
-          threadChatId,
-          op: "delta",
-          messageId,
-          partIndex,
-          ...(deltaSeq !== undefined ? { deltaSeq } : {}),
-          ...(deltaIdempotencyKey ? { deltaIdempotencyKey } : {}),
-          ...(deltaKind ? { deltaKind } : {}),
-          text,
-        },
-      ],
-    },
-  });
-}
-
 export async function publishBroadcastUserMessage(
   message: BroadcastUserMessage,
 ) {
