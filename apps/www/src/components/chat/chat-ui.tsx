@@ -76,6 +76,7 @@ import {
   useChatFromCollection,
 } from "@/collections/thread-chat-collection";
 import { applyThreadPatchToCollection } from "@/collections/thread-info-collection";
+import { reduceThreadPatchesForChat } from "@/collections/patch-helpers";
 import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
 
@@ -338,28 +339,14 @@ function ChatUI({
   const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
   const handleThreadPatches = useCallback(
     (patches: BroadcastThreadPatch[]) => {
-      let hasMaterializedMessages = false;
-      let latestPatchedStatus: ThreadStatus | null = null;
+      const transcriptReduction =
+        threadChat != null
+          ? reduceThreadPatchesForChat(threadChat, patches)
+          : null;
       for (const patch of patches) {
         if (patch.op === "delta") {
           applyDelta(patch);
         } else {
-          if (patch.chat?.status) {
-            latestPatchedStatus = patch.chat.status;
-          }
-          if (
-            patch.appendMessages !== undefined &&
-            patch.appendMessages.length > 0 &&
-            patch.appendMessages.some(
-              (message) =>
-                typeof message === "object" &&
-                message !== null &&
-                "type" in message &&
-                (message as { type?: unknown }).type === "agent",
-            )
-          ) {
-            hasMaterializedMessages = true;
-          }
           // Write to TanStack DB collections (primary data path)
           applyShellPatchToCollection(patch);
           applyChatPatchToCollection(patch);
@@ -371,14 +358,14 @@ function ChatUI({
       // When a complete message arrives, clear accumulated deltas since the
       // DB message now contains the full text.
       if (
-        hasMaterializedMessages &&
-        latestPatchedStatus != null &&
-        !isThreadStatusWorking(latestPatchedStatus)
+        transcriptReduction?.hasMaterializedMessages &&
+        transcriptReduction.latestPatchedStatus != null &&
+        !isThreadStatusWorking(transcriptReduction.latestPatchedStatus)
       ) {
         clearDeltasForThread();
       }
     },
-    [applyDelta, clearDeltasForThread, queryClient],
+    [applyDelta, clearDeltasForThread, queryClient, threadChat],
   );
   useDeliveryLoopStatusRealtime({
     threadId,

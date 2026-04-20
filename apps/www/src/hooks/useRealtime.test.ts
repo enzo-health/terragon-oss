@@ -4,10 +4,22 @@ import type {
   BroadcastThreadPatch,
   BroadcastUserMessage,
 } from "@terragon/types/broadcast";
-import { act, createElement } from "react";
+import type { ThreadStatus } from "@terragon/shared";
+import type { ThreadPageChat } from "@terragon/shared/db/types";
+import {
+  act,
+  createElement,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reduceThreadPatchesForChat } from "@/collections/patch-helpers";
+import { useIncrementalUIMessages } from "@/components/chat/toUIMessages";
 import { resetRealtimeStateForTests } from "./realtime-socket-state";
+import { useDeltaAccumulator } from "./useDeltaAccumulator";
 import { shouldProcessThreadPatch, useRealtimeThread } from "./useRealtime";
 
 interface MockPartySocketLike extends EventTarget {
@@ -114,8 +126,153 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-afterEach(() => {
-  root?.unmount();
+function createThreadChat(
+  overrides: Partial<ThreadPageChat> = {},
+): ThreadPageChat {
+  const fallbackMessages = [
+    {
+      type: "user" as const,
+      model: null,
+      parts: [{ type: "text" as const, text: "Initial prompt" }],
+    },
+  ];
+  const transcriptMessages =
+    overrides.projectedMessages ?? overrides.messages ?? fallbackMessages;
+  return {
+    id: "chat-1",
+    userId: "user-1",
+    threadId: "thread-1",
+    title: null,
+    createdAt: new Date("2026-04-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-20T00:00:00.000Z"),
+    agent: "claudeCode",
+    agentVersion: 1,
+    status: "working",
+    sessionId: null,
+    errorMessage: null,
+    errorMessageInfo: null,
+    scheduleAt: null,
+    reattemptQueueAt: null,
+    contextLength: null,
+    permissionMode: "allowAll",
+    codexPreviousResponseId: null,
+    isUnread: false,
+    messageSeq: 5,
+    messages: transcriptMessages,
+    projectedMessages: transcriptMessages,
+    queuedMessages: [],
+    messageCount: transcriptMessages.length,
+    chatSequence: 5,
+    patchVersion: 0,
+    ...overrides,
+  };
+}
+
+function isThreadWorking(status: ThreadStatus): boolean {
+  return [
+    "queued",
+    "queued-tasks-concurrency",
+    "queued-sandbox-creation-rate-limit",
+    "queued-agent-rate-limit",
+    "booting",
+    "working",
+    "stopping",
+    "checkpointing",
+  ].includes(status);
+}
+
+function getVisibleTranscriptText(
+  containerNode: HTMLDivElement | null,
+): string {
+  return (
+    containerNode?.querySelector("[data-testid='transcript']")?.textContent ??
+    ""
+  );
+}
+
+function TranscriptHarness({
+  activeThreadChatId = "chat-1",
+  baselineMessageSeq = 5,
+}: {
+  activeThreadChatId?: string;
+  baselineMessageSeq?: number;
+}) {
+  const [chat, setChat] = useState<ThreadPageChat>(() =>
+    createThreadChat({
+      id: activeThreadChatId,
+      threadId: "thread-1",
+      messageSeq: baselineMessageSeq,
+      chatSequence: baselineMessageSeq,
+      patchVersion: baselineMessageSeq,
+    }),
+  );
+  const chatRef = useRef(chat);
+  useLayoutEffect(() => {
+    chatRef.current = chat;
+  }, [chat]);
+
+  const { deltas, applyDelta, clearDeltasForThread } = useDeltaAccumulator();
+
+  const handleThreadPatches = useCallback(
+    (patches: BroadcastThreadPatch[]) => {
+      for (const patch of patches) {
+        if (patch.op === "delta") {
+          applyDelta(patch);
+        }
+      }
+      const reduction = reduceThreadPatchesForChat(chatRef.current, patches);
+      const nextChat = reduction.nextChat;
+
+      if (nextChat !== chatRef.current) {
+        chatRef.current = nextChat;
+        setChat(nextChat);
+      }
+
+      if (
+        reduction.hasMaterializedMessages &&
+        reduction.latestPatchedStatus != null &&
+        !isThreadWorking(reduction.latestPatchedStatus)
+      ) {
+        clearDeltasForThread();
+      }
+    },
+    [applyDelta, clearDeltasForThread],
+  );
+
+  useRealtimeThread("thread-1", activeThreadChatId, handleThreadPatches, {
+    messageSeq: baselineMessageSeq,
+  });
+
+  const uiMessages = useIncrementalUIMessages({
+    dbMessages: chat.projectedMessages ?? chat.messages ?? [],
+    agent: "claudeCode",
+    threadStatus: chat.status,
+    cacheKey: `${chat.threadId}:${chat.id}:${chat.messageSeq ?? 0}`,
+    deltas,
+  });
+
+  const transcript = uiMessages
+    .flatMap((message) =>
+      message.parts.flatMap((part) => {
+        switch (part.type) {
+          case "text":
+            return [part.text];
+          case "thinking":
+            return [part.thinking];
+          default:
+            return [];
+        }
+      }),
+    )
+    .join("\n");
+
+  return createElement("div", { "data-testid": "transcript" }, transcript);
+}
+
+afterEach(async () => {
+  await act(async () => {
+    root?.unmount();
+  });
   root = null;
   container?.remove();
   container = null;
@@ -537,6 +694,186 @@ describe("useRealtimeThread", () => {
     expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
     expect(replayUrl.searchParams.get("fromSeq")).toBe("2");
     expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-2");
+  });
+
+  it("renders replayed transcript state after reconnect using only thread-replay", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            seq: 6,
+            messages: [
+              {
+                type: "agent",
+                parts: [{ type: "text", text: "Replayed assistant answer" }],
+                parent_tool_use_id: null,
+              },
+            ],
+          },
+        ],
+        deltaEntries: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messageId: "agent-replay-1",
+            partIndex: 0,
+            partType: "text",
+            streamSeq: 7,
+            idempotencyKey: "delta-replay-7",
+            text: " pending replay tail",
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(createElement(TranscriptHarness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const replayUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(replayUrl.pathname).toBe("/api/thread-replay");
+    expect(replayUrl.searchParams.get("threadId")).toBe("thread-1");
+    expect(replayUrl.searchParams.get("threadChatId")).toBe("chat-1");
+    expect(replayUrl.searchParams.get("fromSeq")).toBe("5");
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(
+      "/api/daemon-delta",
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(
+      "message-stream",
+    );
+
+    expect(getVisibleTranscriptText(container)).toContain(
+      "Replayed assistant answer",
+    );
+    expect(getVisibleTranscriptText(container)).toContain(
+      "pending replay tail",
+    );
+  });
+
+  it("keeps the replayed delta tail through non-materializing patches and clears it after assistant materialization", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        deltaEntries: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            messageId: "agent-replay-2",
+            partIndex: 0,
+            partType: "text",
+            streamSeq: 6,
+            idempotencyKey: "delta-replay-6",
+            text: "pending replay tail",
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(createElement(TranscriptHarness));
+    });
+
+    const socket = mockPartySocketState.sockets.at(-1);
+    expect(socket).toBeDefined();
+
+    await act(async () => {
+      socket?.dispatchClose();
+      socket?.dispatchOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getVisibleTranscriptText(container)).toContain(
+      "pending replay tail",
+    );
+
+    const terminalOnlyPatchMessage: BroadcastUserMessage = {
+      type: "user",
+      id: "message-terminal-only",
+      data: {
+        threadPatches: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            op: "upsert",
+            chatSequence: 6,
+            messageSeq: 6,
+            chat: {
+              status: "complete",
+            },
+          },
+        ],
+      },
+    };
+
+    await act(async () => {
+      socket?.dispatchUserMessage(terminalOnlyPatchMessage);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getVisibleTranscriptText(container)).toContain(
+      "pending replay tail",
+    );
+
+    const finalPatchMessage: BroadcastUserMessage = {
+      type: "user",
+      id: "message-finalize-tail",
+      data: {
+        threadPatches: [
+          {
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            op: "upsert",
+            chatSequence: 7,
+            messageSeq: 7,
+            appendMessages: [
+              {
+                type: "agent",
+                parts: [{ type: "text", text: "Finalized assistant answer" }],
+                parent_tool_use_id: null,
+              },
+            ],
+            chat: {
+              status: "complete",
+            },
+          },
+        ],
+      },
+    };
+
+    await act(async () => {
+      socket?.dispatchUserMessage(finalPatchMessage);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const transcriptText = getVisibleTranscriptText(container);
+    expect(transcriptText).toContain("Finalized assistant answer");
+    expect(transcriptText).not.toContain("pending replay tail");
   });
 
   it("applies live patches immediately when a replay gap arrives during an in-flight replay", async () => {
