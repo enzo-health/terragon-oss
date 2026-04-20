@@ -480,6 +480,7 @@ export const agentEventLog = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    logSeq: bigserial("log_seq", { mode: "number" }).notNull(),
     eventId: text("event_id").notNull(),
     runId: text("run_id").notNull(),
     threadId: text("thread_id")
@@ -497,16 +498,20 @@ export const agentEventLog = pgTable(
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex("agent_event_log_log_seq_unique").on(table.logSeq),
     uniqueIndex("agent_event_log_run_event_unique").on(
       table.runId,
       table.eventId,
     ),
     uniqueIndex("agent_event_log_run_seq_unique").on(table.runId, table.seq),
     index("agent_event_log_run_seq_idx").on(table.runId, table.seq),
-    index("agent_event_log_thread_seq_idx").on(table.threadId, table.seq),
-    index("agent_event_log_thread_chat_seq_idx").on(
+    index("agent_event_log_thread_log_seq_idx").on(
+      table.threadId,
+      table.logSeq,
+    ),
+    index("agent_event_log_thread_chat_log_seq_idx").on(
       table.threadChatId,
-      table.seq,
+      table.logSeq,
     ),
     index("agent_event_log_timestamp_idx").on(table.timestamp),
   ],
