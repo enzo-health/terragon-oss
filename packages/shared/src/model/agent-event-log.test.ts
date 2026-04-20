@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "@terragon/env/pkg-shared";
 import type {
   AssistantMessageEvent,
@@ -374,5 +374,52 @@ describe("agent-event-log", () => {
         ],
       },
     ]);
+  });
+
+  it("treats a missing agent_event_log relation as no canonical replay projection", async () => {
+    const fixture = await createRunFixture();
+    const findFirstSpy = vi
+      .spyOn(db.query.agentEventLog, "findFirst")
+      .mockRejectedValue(
+        Object.assign(new Error('relation "agent_event_log" does not exist'), {
+          code: "42P01",
+        }),
+      );
+
+    try {
+      await expect(
+        hasCanonicalReplayProjection({
+          db,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+        }),
+      ).resolves.toBe(false);
+    } finally {
+      findFirstSpy.mockRestore();
+    }
+  });
+
+  it("returns no replay entries when the agent_event_log relation is unavailable", async () => {
+    const fixture = await createRunFixture();
+    const findManySpy = vi
+      .spyOn(db.query.agentEventLog, "findMany")
+      .mockRejectedValue(
+        Object.assign(new Error('relation "agent_event_log" does not exist'), {
+          code: "42P01",
+        }),
+      );
+
+    try {
+      await expect(
+        getThreadReplayEntriesFromCanonicalEvents({
+          db,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          fromThreadChatMessageSeq: 0,
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      findManySpy.mockRestore();
+    }
   });
 });

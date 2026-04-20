@@ -141,7 +141,7 @@ async function getThreadsInner({
           'agent', ${schema.threadChat.agent},
           'status', ${schema.threadChat.status},
           'errorMessage', ${schema.threadChat.errorMessage}
-        ))
+        ) ORDER BY ${schema.threadChat.createdAt} DESC, ${schema.threadChat.id} DESC)
       `.as("threadChats"),
     })
     .from(schema.threadChat)

@@ -63,6 +63,15 @@ const ENVELOPE_FIELDS = [
   "idempotencyKey",
 ] as const;
 
+function isMissingAgentEventLogSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return false;
+  }
+
+  const code = Reflect.get(error, "code");
+  return code === "42P01" || code === "42703";
+}
+
 function extractEnvelopePayload(payload: unknown): unknown {
   if (
     payload === null ||
@@ -347,20 +356,27 @@ export async function hasCanonicalReplayProjection({
   threadId: string;
   threadChatId?: string;
 }): Promise<boolean> {
-  const row = await db.query.agentEventLog.findFirst({
-    where: and(
-      eq(schema.agentEventLog.threadId, threadId),
-      isNotNull(schema.agentEventLog.threadChatMessageSeq),
-      ...(threadChatId
-        ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
-        : []),
-    ),
-    columns: {
-      eventId: true,
-    },
-  });
+  try {
+    const row = await db.query.agentEventLog.findFirst({
+      where: and(
+        eq(schema.agentEventLog.threadId, threadId),
+        isNotNull(schema.agentEventLog.threadChatMessageSeq),
+        ...(threadChatId
+          ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
+          : []),
+      ),
+      columns: {
+        eventId: true,
+      },
+    });
 
-  return row !== undefined;
+    return row !== undefined;
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function canonicalEventToReplayMessage(
@@ -406,24 +422,37 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
   fromThreadChatMessageSeq: number;
   threadChatId?: string;
 }): Promise<ThreadReplayEntry[]> {
-  const rows = await db.query.agentEventLog.findMany({
-    where: and(
-      eq(schema.agentEventLog.threadId, threadId),
-      gt(schema.agentEventLog.threadChatMessageSeq, fromThreadChatMessageSeq),
-      ...(threadChatId
-        ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
-        : []),
-    ),
-    orderBy: [
-      asc(schema.agentEventLog.threadChatMessageSeq),
-      asc(schema.agentEventLog.seq),
-    ],
-    columns: {
-      threadChatMessageSeq: true,
-      payloadJson: true,
-      seq: true,
-    },
-  });
+  let rows: Array<{
+    threadChatMessageSeq: number | null;
+    payloadJson: Record<string, unknown>;
+    seq: number;
+  }>;
+
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: and(
+        eq(schema.agentEventLog.threadId, threadId),
+        gt(schema.agentEventLog.threadChatMessageSeq, fromThreadChatMessageSeq),
+        ...(threadChatId
+          ? [eq(schema.agentEventLog.threadChatId, threadChatId)]
+          : []),
+      ),
+      orderBy: [
+        asc(schema.agentEventLog.threadChatMessageSeq),
+        asc(schema.agentEventLog.seq),
+      ],
+      columns: {
+        threadChatMessageSeq: true,
+        payloadJson: true,
+        seq: true,
+      },
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
 
   const entries: ThreadReplayEntry[] = [];
   let activeSeq: number | null = null;

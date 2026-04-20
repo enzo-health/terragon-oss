@@ -3612,9 +3612,9 @@ describe("thread", () => {
       expect(threads.length).toBe(1);
       expect(threads[0]!.id).toBe(threadId);
       expect(threads[0]!.threadChats).toHaveLength(2);
-      expect(threads[0]!.threadChats[0]!.status).toBe("working");
-      expect(threads[0]!.threadChats[1]!.id).toBe(chat2!.id);
-      expect(threads[0]!.threadChats[1]!.status).toBe("complete");
+      expect(threads[0]!.threadChats[0]!.id).toBe(chat2!.id);
+      expect(threads[0]!.threadChats[0]!.status).toBe("complete");
+      expect(threads[0]!.threadChats[1]!.status).toBe("working");
     });
 
     it("should include visibility when set", async () => {
