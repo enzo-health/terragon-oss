@@ -2,12 +2,10 @@ import { publicBroadcastHost } from "@terragon/env/next-public";
 import {
   type BroadcastClientMessage,
   type BroadcastMessage,
-  BroadcastSandboxMessage,
   type BroadcastThreadPatch,
   type BroadcastUserMessage,
   getBroadcastChannelStr,
 } from "@terragon/types/broadcast";
-import { SandboxProvider } from "@terragon/types/sandbox";
 import { useAtomValue } from "jotai";
 import PartySocket from "partysocket";
 import {
@@ -125,7 +123,7 @@ function usePartySocket({
   return socket;
 }
 
-function useRealtimeBase({
+export function useRealtimeBase({
   party,
   channel,
   matches,
@@ -701,37 +699,7 @@ export function useRealtimeThreadMatch({
   });
 }
 
-export function useRealtimeSandbox({
-  threadId,
-  sandboxId,
-  sandboxProvider,
-  matches,
-  onMessage,
-}: {
-  threadId: string;
-  sandboxId: string;
-  sandboxProvider: SandboxProvider;
-  matches: (message: BroadcastSandboxMessage) => boolean;
-  onMessage: (message: BroadcastSandboxMessage) => void;
-}) {
-  const user = useAtomValue(userAtom);
-  return useRealtimeBase({
-    party: "sandbox",
-    channel: getBroadcastChannelStr({
-      type: "sandbox",
-      userId: user?.id ?? "",
-      threadId,
-      sandboxId,
-      sandboxProvider,
-    }),
-    debounceMs: 0,
-    matches: (message) => message.type === "sandbox" && matches(message),
-    onMessage: (message) => {
-      if (message.type === "sandbox") {
-        onMessage(message);
-      }
-    },
-    disconnectOnDismount: true,
-    trackReadyState: true,
-  });
-}
+// `useRealtimeSandbox` lives in its own module so it can survive the
+// Phase 6 deletion of the thread/user realtime hooks. Re-exported here to
+// preserve existing import paths.
+export { useRealtimeSandbox } from "./use-realtime-sandbox";
