@@ -2,16 +2,15 @@
 
 import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
-import { useAtomValue } from "jotai";
 import { useMemo } from "react";
-import { bearerTokenAtom } from "@/atoms/user";
 
 /**
  * Browser-side AG-UI transport hook.
  *
  * Wraps `@ag-ui/client`'s `HttpAgent` and points it at the SSE endpoint at
  * `/api/ag-ui/[threadId]`. The endpoint expects `threadChatId` and `fromSeq`
- * query params for replay cursor, plus a Bearer token for auth.
+ * query params for replay cursor. Uses browser session cookies for auth
+ * (same-origin fetch), so no Authorization header is set.
  *
  * The returned `HttpAgent` instance is memoized on the inputs: same inputs →
  * same instance, different inputs → new instance. Callers wiring this into
@@ -30,20 +29,15 @@ export function useAgUiTransport(args: {
 }): HttpAgent {
   const { threadId, threadChatId, fromSeq, initialMessages, initialState } =
     args;
-  const bearerToken = useAtomValue(bearerTokenAtom);
 
   return useMemo(() => {
     const query = new URLSearchParams({
       threadChatId,
       fromSeq: String(fromSeq),
     });
-    const url = `/api/ag-ui/${threadId}?${query.toString()}`;
-    const headers: Record<string, string> = bearerToken
-      ? { Authorization: `Bearer ${bearerToken}` }
-      : {};
+    const url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
     return new HttpAgent({
       url,
-      headers,
       threadId,
       initialMessages,
       initialState,
@@ -52,5 +46,5 @@ export function useAgUiTransport(args: {
     // are seed values used once at construction. If callers want to reset
     // seeds they should change threadId/threadChatId/fromSeq.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, threadChatId, fromSeq, bearerToken]);
+  }, [threadId, threadChatId, fromSeq]);
 }

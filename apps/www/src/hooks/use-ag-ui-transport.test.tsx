@@ -1,12 +1,9 @@
 /* @vitest-environment jsdom */
 
 import type { Message, State } from "@ag-ui/core";
-import { Provider, useSetAtom } from "jotai";
-import type { ReactElement } from "react";
 import { act, createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bearerTokenAtom } from "@/atoms/user";
 import { useAgUiTransport } from "./use-ag-ui-transport";
 
 // Mock @ag-ui/client so we can assert constructor args without pulling in
@@ -56,35 +53,6 @@ interface CapturedAgent {
 function Harness({
   args,
   onAgent,
-  bearerToken,
-}: {
-  args: TransportArgs;
-  onAgent: (agent: CapturedAgent) => void;
-  bearerToken: string | null;
-}): ReactElement {
-  return createElement(TokenSetter, { bearerToken, args, onAgent });
-}
-
-function TokenSetter({
-  args,
-  onAgent,
-  bearerToken,
-}: {
-  args: TransportArgs;
-  onAgent: (agent: CapturedAgent) => void;
-  bearerToken: string | null;
-}): ReactElement | null {
-  const setBearer = useSetAtom(bearerTokenAtom);
-  // Set the atom in-render so the subsequent hook reads the intended
-  // token on its FIRST render. Jotai supports in-render setters and
-  // will not trigger infinite re-renders if the value is stable.
-  setBearer(bearerToken);
-  return createElement(Inner, { args, onAgent });
-}
-
-function Inner({
-  args,
-  onAgent,
 }: {
   args: TransportArgs;
   onAgent: (agent: CapturedAgent) => void;
@@ -96,20 +64,11 @@ function Inner({
   return null;
 }
 
-async function renderHarness({
-  args,
-  bearerToken,
-}: {
-  args: TransportArgs;
-  bearerToken: string | null;
-}): Promise<{
+async function renderHarness({ args }: { args: TransportArgs }): Promise<{
   container: HTMLDivElement;
   root: Root;
   captured: CapturedAgent[];
-  rerender: (next: {
-    args: TransportArgs;
-    bearerToken: string | null;
-  }) => Promise<void>;
+  rerender: (next: { args: TransportArgs }) => Promise<void>;
 }> {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -121,31 +80,12 @@ async function renderHarness({
   };
 
   await act(async () => {
-    root.render(
-      createElement(
-        Provider,
-        null,
-        createElement(Harness, { args, onAgent, bearerToken }),
-      ),
-    );
+    root.render(createElement(Harness, { args, onAgent }));
   });
 
-  const rerender = async (next: {
-    args: TransportArgs;
-    bearerToken: string | null;
-  }) => {
+  const rerender = async (next: { args: TransportArgs }) => {
     await act(async () => {
-      root.render(
-        createElement(
-          Provider,
-          null,
-          createElement(Harness, {
-            args: next.args,
-            onAgent,
-            bearerToken: next.bearerToken,
-          }),
-        ),
-      );
+      root.render(createElement(Harness, { args: next.args, onAgent }));
     });
   };
 
@@ -162,7 +102,6 @@ describe("useAgUiTransport", () => {
   it("returns an HttpAgent instance", async () => {
     const { captured, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: "bearer-123",
     });
 
     expect(captured.length).toBeGreaterThan(0);
@@ -178,7 +117,6 @@ describe("useAgUiTransport", () => {
   it("uses URL /api/ag-ui/{threadId}?threadChatId=X&fromSeq=0", async () => {
     const { captured, root, container } = await renderHarness({
       args: { threadId: "thread-abc", threadChatId: "chat-xyz", fromSeq: 0 },
-      bearerToken: "tok",
     });
 
     const agent = captured.at(-1)!;
@@ -192,31 +130,21 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("includes Authorization header with Bearer token from jotai atom", async () => {
+  it("URL-encodes threadId and threadChatId query params", async () => {
     const { captured, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: "super-secret-token",
+      args: {
+        threadId: "thread/with space",
+        threadChatId: "a&b=c",
+        fromSeq: 7,
+      },
     });
 
     const agent = captured.at(-1)!;
-    expect(agent.headers).toEqual({
-      Authorization: "Bearer super-secret-token",
-    });
-
-    await act(async () => {
-      root.unmount();
-    });
-    container.remove();
-  });
-
-  it("omits Authorization header when bearer token is null", async () => {
-    const { captured, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: null,
-    });
-
-    const agent = captured.at(-1)!;
-    expect(agent.headers).toEqual({});
+    // URLSearchParams encodes '&' → %26, '=' → %3D.
+    // encodeURIComponent encodes '/' → %2F, ' ' → %20.
+    expect(agent.url).toBe(
+      "/api/ag-ui/thread%2Fwith%20space?threadChatId=a%26b%3Dc&fromSeq=7",
+    );
 
     await act(async () => {
       root.unmount();
@@ -238,7 +166,6 @@ describe("useAgUiTransport", () => {
         initialMessages,
         initialState,
       },
-      bearerToken: "tok",
     });
 
     const agent = captured.at(-1)!;
@@ -260,11 +187,10 @@ describe("useAgUiTransport", () => {
     };
     const { captured, rerender, root, container } = await renderHarness({
       args,
-      bearerToken: "tok",
     });
     const firstId = captured[0]!.__mockId;
 
-    await rerender({ args: { ...args }, bearerToken: "tok" });
+    await rerender({ args: { ...args } });
 
     // Every captured agent so far should be the same instance (same __mockId).
     for (const agent of captured) {
@@ -282,13 +208,11 @@ describe("useAgUiTransport", () => {
   it("returns a new HttpAgent when threadId changes", async () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "thread-A", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: "tok",
     });
     const firstId = captured.at(-1)!.__mockId;
 
     await rerender({
       args: { threadId: "thread-B", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: "tok",
     });
     const secondId = captured.at(-1)!.__mockId;
 
@@ -304,13 +228,11 @@ describe("useAgUiTransport", () => {
   it("returns a new HttpAgent when fromSeq changes", async () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
-      bearerToken: "tok",
     });
     const firstId = captured.at(-1)!.__mockId;
 
     await rerender({
       args: { threadId: "t1", threadChatId: "c1", fromSeq: 42 },
-      bearerToken: "tok",
     });
     const secondId = captured.at(-1)!.__mockId;
 
@@ -327,13 +249,11 @@ describe("useAgUiTransport", () => {
   it("returns a new HttpAgent when threadChatId changes", async () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: "chat-A", fromSeq: 0 },
-      bearerToken: "tok",
     });
     const firstId = captured.at(-1)!.__mockId;
 
     await rerender({
       args: { threadId: "t1", threadChatId: "chat-B", fromSeq: 0 },
-      bearerToken: "tok",
     });
     const secondId = captured.at(-1)!.__mockId;
 

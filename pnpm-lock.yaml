@@ -237,6 +237,12 @@ importers:
 
   apps/www:
     dependencies:
+      '@ag-ui/client':
+        specifier: 0.0.52
+        version: 0.0.52
+      '@ag-ui/core':
+        specifier: 0.0.52
+        version: 0.0.52
       '@ai-sdk/openai':
         specifier: ^2.0.42
         version: 2.0.42(zod@4.1.11)

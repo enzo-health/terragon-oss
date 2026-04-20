@@ -123,6 +123,9 @@ function usePartySocket({
   return socket;
 }
 
+// TODO(phase-6): only exported for use-realtime-sandbox.ts; re-privatize once
+// useRealtime.ts is deleted and useRealtimeBase is inlined into
+// use-realtime-sandbox.
 export function useRealtimeBase({
   party,
   channel,
