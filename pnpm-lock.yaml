@@ -40,7 +40,7 @@ importers:
         version: 0.0.52
       '@assistant-ui/react-ag-ui':
         specifier: ^0.0.26
-        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
+        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
     devDependencies:
       '@biomejs/biome':
         specifier: 2.4.6
@@ -252,6 +252,9 @@ importers:
       '@assistant-ui/react':
         specifier: ^0.12.24
         version: 0.12.24(@types/react-dom@19.1.6(@types/react@19.1.8))(@types/react@19.1.8)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
+      '@assistant-ui/react-ag-ui':
+        specifier: 0.0.26
+        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
       '@aws-sdk/client-s3':
         specifier: ^3.803.0
         version: 3.820.0
@@ -11550,7 +11553,7 @@ snapshots:
     dependencies:
       '@assistant-ui/store': 0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)
       '@assistant-ui/tap': 0.5.7(@types/react@19.1.8)(react@19.1.2)
-      assistant-stream: 0.3.10
+      assistant-stream: 0.3.11
       nanoid: 5.1.6
     optionalDependencies:
       '@types/react': 19.1.8
@@ -11558,7 +11561,7 @@ snapshots:
       react: 19.1.2
       zustand: 5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
 
-  '@assistant-ui/core@0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
+  '@assistant-ui/core@0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
     dependencies:
       '@assistant-ui/store': 0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)
       '@assistant-ui/tap': 0.5.7(@types/react@19.1.8)(react@19.1.2)
@@ -11566,13 +11569,14 @@ snapshots:
       nanoid: 5.1.6
     optionalDependencies:
       '@types/react': 19.1.8
+      assistant-cloud: 0.1.25
       react: 19.1.2
       zustand: 5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
 
-  '@assistant-ui/react-ag-ui@0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
+  '@assistant-ui/react-ag-ui@0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
     dependencies:
       '@ag-ui/client': 0.0.52
-      '@assistant-ui/core': 0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
+      '@assistant-ui/core': 0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
       assistant-stream: 0.3.11
       react: 19.1.2
     optionalDependencies:
@@ -17495,7 +17499,7 @@ snapshots:
 
   assistant-cloud@0.1.25:
     dependencies:
-      assistant-stream: 0.3.10
+      assistant-stream: 0.3.11
 
   assistant-stream@0.3.10:
     dependencies:

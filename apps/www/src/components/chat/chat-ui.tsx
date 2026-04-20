@@ -20,6 +20,8 @@ import {
 import { AIAgent } from "@terragon/agent/types";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { useIncrementalUIMessages } from "./toUIMessages";
+import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
+import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatHeader } from "./chat-header";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
@@ -485,6 +487,31 @@ function ChatUI({
     cacheKey: threadChatId ?? threadId,
     deltas,
   });
+
+  // Snapshot the DB messages + seq for AG-UI `initialMessages` seed. These are
+  // captured at first mount per (threadId, threadChatId); subsequent updates
+  // arrive via the SSE stream. We pass stable identity fields so the
+  // `useAgUiTransport` memo won't thrash.
+  const agUiInitialMessages = useMemo(
+    () => dbMessagesToAgUiMessages(dbMessages),
+    // Memo only on threadChatId so we seed once per chat — live updates come
+    // through the AG-UI SSE stream.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [threadChatId],
+  );
+  const agUiFromSeq = useMemo(
+    () => threadChat?.messageSeq ?? 0,
+    // Same rationale: freeze at mount time so the SSE replay cursor stays
+    // stable across re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [threadChatId],
+  );
+  const agent = useAgUiTransport({
+    threadId,
+    threadChatId: threadChatId ?? "",
+    fromSeq: agUiFromSeq,
+    initialMessages: agUiInitialMessages,
+  });
   const artifactDescriptors = useMemo(
     () =>
       getArtifactDescriptors({
@@ -688,6 +715,7 @@ function ChatUI({
               >
                 <div ref={transcriptRef} className="min-h-full flex flex-col">
                   <TerragonThread
+                    agent={agent}
                     messages={messages}
                     threadStatus={effectiveThreadStatus}
                     thread={thread}
@@ -695,7 +723,6 @@ function ChatUI({
                     isAgentWorking={isAgentCurrentlyWorking}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={handleOpenArtifact}
-                    onNew={async () => {}}
                     onCancel={async () => {
                       await stopThread({
                         threadId: thread.id,

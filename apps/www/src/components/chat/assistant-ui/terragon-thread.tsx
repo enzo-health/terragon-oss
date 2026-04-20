@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import type { HttpAgent } from "@ag-ui/client";
 import type { ThreadInfoFull, UIMessage, ThreadStatus } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { RedoDialogData, ForkDialogData } from "../chat-message.types";
@@ -21,6 +22,16 @@ import type { BootingSubstatus } from "@terragon/sandbox/types";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
 
 type TerragonThreadProps = {
+  /**
+   * AG-UI transport agent powering the `AssistantRuntime`. Built by
+   * `useAgUiTransport` in the parent and passed down.
+   */
+  agent: HttpAgent;
+  /**
+   * Rendered messages. In Phase 4 these still come from the external realtime
+   * projection (useIncrementalUIMessages) rather than the AG-UI runtime — the
+   * migration to runtime-driven rendering lands in Phase 6.
+   */
   messages: UIMessage[];
   threadStatus: ThreadStatus | null;
   thread: ThreadInfoFull;
@@ -28,7 +39,6 @@ type TerragonThreadProps = {
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
-  onNew: (text: string) => Promise<void>;
   onCancel?: () => Promise<void>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
@@ -54,6 +64,7 @@ type TerragonThreadProps = {
 };
 
 export function TerragonThread({
+  agent,
   messages,
   threadStatus,
   thread,
@@ -61,7 +72,6 @@ export function TerragonThread({
   isAgentWorking,
   artifactDescriptors,
   onOpenArtifact,
-  onNew,
   onCancel,
   redoDialogData,
   forkDialogData,
@@ -82,10 +92,8 @@ export function TerragonThread({
   children,
 }: TerragonThreadProps) {
   const runtime = useTerragonRuntime({
-    messages,
-    threadStatus,
-    onNew,
-    onCancel,
+    agent,
+    ...(onCancel && { onCancel }),
   });
 
   const planOccurrences = useMemo(
