@@ -39,8 +39,8 @@ export default async function EnvironmentPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const userId = await getUserIdOrRedirect();
-  const { id } = await params;
+  // Auth + params in parallel so the environment fetch starts ~5-10ms sooner.
+  const [userId, { id }] = await Promise.all([getUserIdOrRedirect(), params]);
   const environment = await getEnvironment({
     db,
     environmentId: id,

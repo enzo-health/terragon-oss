@@ -41,8 +41,16 @@ export default async function TaskPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ readonly?: boolean }>;
 }) {
-  const userId = await getUserIdOrRedirect();
-  const [{ id }, { readonly }] = await Promise.all([params, searchParams]);
+  // Resolve params + searchParams + auth in parallel. `params` and
+  // `searchParams` are fast (already-resolved promises in Next 15);
+  // `getUserIdOrRedirect()` is a session cookie check. Serializing them
+  // added unnecessary TTFB; Promise.all lets the shell prefetch below
+  // start as soon as we have `id`.
+  const [userId, { id }, { readonly }] = await Promise.all([
+    getUserIdOrRedirect(),
+    params,
+    searchParams,
+  ]);
   const queryClient = new QueryClient();
   const shellOptions = threadShellQueryOptions(id);
   await queryClient.prefetchQuery(shellOptions);
