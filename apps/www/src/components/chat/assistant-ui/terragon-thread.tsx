@@ -19,7 +19,7 @@ import {
 import { TerragonUserMessage } from "./user-message";
 import { TerragonAssistantMessage } from "./assistant-message";
 import { TerragonSystemMessage } from "./system-message";
-import { ChatError } from "../chat-error";
+import { ChatError, isSandboxErrorType } from "../chat-error";
 import {
   WorkingMessage,
   MessageScheduled,
@@ -185,9 +185,17 @@ export function TerragonThread({
   //
   // Hidden (terminal states: done/stopped/terminated): skip the footer
   // entirely — nothing is happening.
+  // Sandbox errors are a hard "sandbox is NOT ready" signal. When one is
+  // the latest error on the thread, suppress the "Assistant is working"
+  // footer: the red error box (which now carries its own inline Retry)
+  // is the only accurate status cue. Previously the two rendered side by
+  // side, leaving users unsure whether anything was actually happening.
+  const hasSandboxError = isSandboxErrorType(errorType ?? null);
+
   const baseShowWorking =
     isAgentWorking &&
     !hasPendingToolCall &&
+    !hasSandboxError &&
     !(
       hasAgentMessages &&
       threadStatus !== null &&
