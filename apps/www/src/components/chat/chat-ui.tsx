@@ -21,6 +21,7 @@ import { AIAgent } from "@terragon/agent/types";
 import { toUIMessages } from "./toUIMessages";
 import { useAgUiMessages } from "./use-ag-ui-messages";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
+import { useCurrentRunId } from "@/hooks/use-current-run-id";
 import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatHeader } from "./chat-header";
@@ -477,11 +478,6 @@ function ChatUIContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
-  const agUiFromSeq = useMemo(
-    () => threadChat.messageSeq ?? 0,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
   const initialUiMessages = useMemo(
     () =>
       toUIMessages({
@@ -493,12 +489,25 @@ function ChatUIContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  // runId state is maintained across renders by subscribing to the agent's
+  // RUN_STARTED events (see `useCurrentRunId`). The transport hook reads
+  // the latest runId and mirrors it into `agent.url` so reconnects pick it
+  // up without forcing an `HttpAgent` reconstruction.
+  const [capturedRunId, setCapturedRunId] = useState<string | null>(null);
   const agent = useAgUiTransport({
     threadId,
     threadChatId,
-    fromSeq: agUiFromSeq,
+    runId: capturedRunId,
     initialMessages: agUiInitialMessages,
   });
+  const observedRunId = useCurrentRunId(agent);
+  useEffect(() => {
+    // Keep the captured runId pinned to the latest RUN_STARTED observed on
+    // the current HttpAgent. Reset to null on agent identity change (thread
+    // switch) so a stale runId from the previous thread chat never leaks
+    // into a new thread's reconnect URL.
+    setCapturedRunId(observedRunId);
+  }, [observedRunId, agent]);
   const messages = useAgUiMessages({
     agent,
     agentKind: chatAgent,

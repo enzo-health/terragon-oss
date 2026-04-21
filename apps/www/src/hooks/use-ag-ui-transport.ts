@@ -2,69 +2,66 @@
 
 import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 /**
  * Browser-side AG-UI transport hook.
  *
  * Wraps `@ag-ui/client`'s `HttpAgent` and points it at the SSE endpoint at
- * `/api/ag-ui/[threadId]`. The endpoint expects `threadChatId` and either
- * `runId` (preferred, Phase A "Replay from Run Start" path) or `fromSeq`
- * (legacy cursor path) as query params for the replay cursor. Uses browser
- * session cookies for auth (same-origin fetch), so no Authorization header is
- * set.
+ * `/api/ag-ui/[threadId]`. The endpoint expects `threadChatId` and optionally
+ * `runId` as query params. Uses browser session cookies for auth (same-origin
+ * fetch), so no Authorization header is set.
  *
- * The returned `HttpAgent` instance is memoized on the inputs: same inputs →
- * same instance, different inputs → new instance. Callers wiring this into
- * `@assistant-ui/react-ag-ui`'s `useAgUiRuntime` will re-attach when the
- * identity changes (e.g. thread switch).
+ * ### RunId injection (ref-like, via post-commit effect)
+ *
+ * `HttpAgent` is expensive to reconstruct (each instance closes over its own
+ * subscribers, abort controller, and RxJS pipeline). Reconstructing on every
+ * `runId` change would tear down the live connection and double the number
+ * of in-flight subscriptions the caller has to reason about.
+ *
+ * Instead we construct `HttpAgent` once per `(threadId, threadChatId)` and
+ * mutate `agent.url` imperatively in a post-commit effect whenever the
+ * caller-supplied `runId` changes. The next reconnect inside that
+ * `HttpAgent` instance picks up the newest runId verbatim; React consumers
+ * don't see a new agent reference and don't re-subscribe.
+ *
+ * ### Initial-connect semantics
+ *
+ * On fresh mount the client has no captured runId (null). The server falls
+ * back to `getLatestRunIdForThreadChat`; on empty thread chats it keeps the
+ * stream open and live-tails for the first real RUN_STARTED. Once the
+ * client has observed a RUN_STARTED via `useCurrentRunId`, it supplies the
+ * captured runId on the next reconnect so the server replays from that
+ * run's actual start.
  *
  * Returns `null` when `threadChatId` is `null` or empty — this lets callers
  * render the hook unconditionally while thread/chat data is still loading
- * without constructing an `HttpAgent` pointed at an invalid URL (which the
- * backend would reject with a 400 the first time any eager prefetch fired).
+ * without constructing an `HttpAgent` pointed at an invalid URL.
  */
 export function useAgUiTransport(args: {
   threadId: string;
   threadChatId: string | null;
   /**
-   * Preferred replay cursor. When provided, the server replays every event
-   * in the run (starting with its real RUN_STARTED) and live-tails if the
-   * run is still active. Takes precedence over `fromSeq` when both are
-   * provided — both sides prefer runId because it avoids RUN_STARTED
-   * synthesis at reconnect time.
+   * Captured RUN_STARTED.runId from the current stream, or null when no
+   * RUN_STARTED has been observed yet. When non-null the URL carries
+   * `?runId=X` so the server replays from the run's real start; when null
+   * the server uses its "latest run" default.
    */
   runId?: string | null;
-  /**
-   * Starting seq for initial replay (legacy cursor). 0 means "from the
-   * beginning". Ignored when `runId` is also provided.
-   */
-  fromSeq: number;
   /** Historical messages to seed the agent with (optional). */
   initialMessages?: Message[];
   /** Initial state snapshot (optional). */
   initialState?: State;
 }): HttpAgent | null {
-  const {
-    threadId,
-    threadChatId,
-    runId,
-    fromSeq,
-    initialMessages,
-    initialState,
-  } = args;
+  const { threadId, threadChatId, runId, initialMessages, initialState } = args;
 
-  return useMemo(() => {
+  const agent = useMemo(() => {
     if (!threadChatId) return null;
     const query = new URLSearchParams({ threadChatId });
-    if (runId) {
-      // Prefer the runId cursor. The server uses the run's stored
-      // RUN_STARTED as the first event, eliminating the synthesis cascade
-      // that plagued the fromSeq path.
-      query.set("runId", runId);
-    } else {
-      query.set("fromSeq", String(fromSeq));
-    }
+    // On construction we intentionally do NOT include `runId` in the URL:
+    // the `useEffect` below mirrors the latest runId into `agent.url`
+    // before any reconnect fires, so the initial URL is a safe default
+    // ("latest run" semantics, server-side).
     const url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
     return new HttpAgent({
       url,
@@ -72,9 +69,27 @@ export function useAgUiTransport(args: {
       initialMessages,
       initialState,
     });
-    // Intentionally excluding initialMessages / initialState from deps: those
-    // are seed values used once at construction. If callers want to reset
-    // seeds they should change threadId/threadChatId/runId/fromSeq.
+    // `runId` intentionally excluded from deps: we do NOT want to
+    // reconstruct `HttpAgent` on every RUN_STARTED. The URL is updated
+    // imperatively via the sync block below so the NEXT reconnect uses
+    // the latest runId without disturbing the active subscription.
+    // `initialMessages` / `initialState` are seed values — same deal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, threadChatId, runId, fromSeq]);
+  }, [threadId, threadChatId]);
+
+  // Imperatively mirror the latest runId into `agent.url`. The next time
+  // `HttpAgent#run(input)` fires (runtime reconnects after an abort,
+  // disconnect, or initial-mount resume) the updated URL is read from
+  // `this.url` and the `?runId=X` query param reflects reality. Done in
+  // `useEffect` so render stays pure.
+  useEffect(() => {
+    if (!agent || !threadChatId) return;
+    const query = new URLSearchParams({ threadChatId });
+    if (runId) {
+      query.set("runId", runId);
+    }
+    agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
+  }, [agent, threadId, threadChatId, runId]);
+
+  return agent;
 }

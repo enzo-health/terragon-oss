@@ -68,6 +68,14 @@ function Harness({
   useEffect(() => {
     onAgent(agent as unknown as CapturedValue);
   }, [agent, onAgent]);
+  // Also capture on URL changes so runId-driven URL mutations are
+  // observable to the test harness. The ref-identity-stable agent is
+  // mutated in place, so react's effect-deps on the agent alone won't
+  // re-fire; we dispatch whenever the args change instead.
+  useEffect(() => {
+    onAgent(agent as unknown as CapturedValue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args.runId]);
   return null;
 }
 
@@ -108,7 +116,7 @@ describe("useAgUiTransport", () => {
 
   it("returns an HttpAgent instance", async () => {
     const { captured, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "c1" },
     });
 
     expect(captured.length).toBeGreaterThan(0);
@@ -121,15 +129,13 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("uses URL /api/ag-ui/{threadId}?threadChatId=X&fromSeq=0", async () => {
+  it("constructs the initial URL without a runId param (server falls back to latest-run)", async () => {
     const { captured, root, container } = await renderHarness({
-      args: { threadId: "thread-abc", threadChatId: "chat-xyz", fromSeq: 0 },
+      args: { threadId: "thread-abc", threadChatId: "chat-xyz" },
     });
 
     const agent = requireAgent(captured.at(-1)!);
-    expect(agent.url).toBe(
-      "/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=0",
-    );
+    expect(agent.url).toBe("/api/ag-ui/thread-abc?threadChatId=chat-xyz");
 
     await act(async () => {
       root.unmount();
@@ -142,7 +148,6 @@ describe("useAgUiTransport", () => {
       args: {
         threadId: "thread/with space",
         threadChatId: "a&b=c",
-        fromSeq: 7,
       },
     });
 
@@ -150,7 +155,7 @@ describe("useAgUiTransport", () => {
     // URLSearchParams encodes '&' → %26, '=' → %3D.
     // encodeURIComponent encodes '/' → %2F, ' ' → %20.
     expect(agent.url).toBe(
-      "/api/ag-ui/thread%2Fwith%20space?threadChatId=a%26b%3Dc&fromSeq=7",
+      "/api/ag-ui/thread%2Fwith%20space?threadChatId=a%26b%3Dc",
     );
 
     await act(async () => {
@@ -169,7 +174,6 @@ describe("useAgUiTransport", () => {
       args: {
         threadId: "t1",
         threadChatId: "c1",
-        fromSeq: 5,
         initialMessages,
         initialState,
       },
@@ -190,7 +194,6 @@ describe("useAgUiTransport", () => {
     const args: TransportArgs = {
       threadId: "t1",
       threadChatId: "c1",
-      fromSeq: 0,
     };
     const { captured, rerender, root, container } = await renderHarness({
       args,
@@ -214,12 +217,12 @@ describe("useAgUiTransport", () => {
 
   it("returns a new HttpAgent when threadId changes", async () => {
     const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "thread-A", threadChatId: "c1", fromSeq: 0 },
+      args: { threadId: "thread-A", threadChatId: "c1" },
     });
     const firstId = requireAgent(captured.at(-1)!).__mockId;
 
     await rerender({
-      args: { threadId: "thread-B", threadChatId: "c1", fromSeq: 0 },
+      args: { threadId: "thread-B", threadChatId: "c1" },
     });
     const secondId = requireAgent(captured.at(-1)!).__mockId;
 
@@ -232,20 +235,18 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("returns a new HttpAgent when fromSeq changes", async () => {
+  it("returns a new HttpAgent when threadChatId changes", async () => {
     const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "chat-A" },
     });
     const firstId = requireAgent(captured.at(-1)!).__mockId;
 
     await rerender({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 42 },
+      args: { threadId: "t1", threadChatId: "chat-B" },
     });
     const secondId = requireAgent(captured.at(-1)!).__mockId;
 
     expect(secondId).not.toBe(firstId);
-    const lastAgent = requireAgent(captured.at(-1)!);
-    expect(lastAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42");
 
     await act(async () => {
       root.unmount();
@@ -253,18 +254,55 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("returns a new HttpAgent when threadChatId changes", async () => {
+  it("mutates agent.url in place on runId change — does NOT reconstruct HttpAgent", async () => {
+    // RunId captured off the live RUN_STARTED stream must be reflected in
+    // the URL used for the next reconnect. But the hot HttpAgent instance
+    // closes over its subscribers and abort controller, so we MUST NOT
+    // reconstruct on each runId change (that would tear down active
+    // subscriptions and double the load on the server).
     const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "chat-A", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "c1", runId: null },
     });
-    const firstId = requireAgent(captured.at(-1)!).__mockId;
+    const firstAgent = requireAgent(captured.at(-1)!);
+    expect(firstAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1");
 
     await rerender({
-      args: { threadId: "t1", threadChatId: "chat-B", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-xyz" },
     });
-    const secondId = requireAgent(captured.at(-1)!).__mockId;
 
-    expect(secondId).not.toBe(firstId);
+    // Same HttpAgent instance (no reconstruction).
+    expect(httpAgentInstances.length).toBe(1);
+    expect(requireAgent(captured.at(-1)!).__mockId).toBe(firstAgent.__mockId);
+    // URL mutated in place to include the captured runId.
+    expect(firstAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-xyz");
+
+    // And again on a subsequent runId update — still the same instance.
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-next" },
+    });
+    expect(httpAgentInstances.length).toBe(1);
+    expect(firstAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-next");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("clears runId from the URL when runId becomes null (thread-switch reset)", async () => {
+    const { captured, rerender, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-xyz" },
+    });
+    const firstAgent = requireAgent(captured.at(-1)!);
+    // First render: useEffect syncs the URL to include runId.
+    expect(firstAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-xyz");
+
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: null },
+    });
+    // runId cleared — URL drops the query param so the server re-runs its
+    // "latest run" fallback on the next reconnect.
+    expect(firstAgent.url).toBe("/api/ag-ui/t1?threadChatId=c1");
 
     await act(async () => {
       root.unmount();
@@ -274,7 +312,7 @@ describe("useAgUiTransport", () => {
 
   it("returns null when threadChatId is null", async () => {
     const { captured, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: null, fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: null },
     });
 
     expect(captured.length).toBeGreaterThan(0);
@@ -290,7 +328,7 @@ describe("useAgUiTransport", () => {
 
   it("returns null when threadChatId is an empty string", async () => {
     const { captured, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "" },
     });
 
     expect(captured.length).toBeGreaterThan(0);
@@ -305,18 +343,18 @@ describe("useAgUiTransport", () => {
 
   it("transitions from null to HttpAgent when threadChatId becomes available", async () => {
     const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: null, fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: null },
     });
 
     expect(captured.at(-1)!).toBeNull();
     expect(httpAgentInstances.length).toBe(0);
 
     await rerender({
-      args: { threadId: "t1", threadChatId: "c1", fromSeq: 0 },
+      args: { threadId: "t1", threadChatId: "c1" },
     });
 
     const latest = requireAgent(captured.at(-1)!);
-    expect(latest.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=0");
+    expect(latest.url).toBe("/api/ag-ui/t1?threadChatId=c1");
     expect(httpAgentInstances.length).toBe(1);
 
     await act(async () => {
