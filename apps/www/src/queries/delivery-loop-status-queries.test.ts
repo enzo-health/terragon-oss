@@ -57,6 +57,7 @@ function createMockDeliveryLoopStatus(updatedAtIso: string) {
     planApprovalPolicy: "auto" as const,
     stateLabel: "Planning",
     explanation: "Agent is drafting an implementation plan before coding.",
+    blockedReason: null,
     progressPercent: 10,
     actions: {
       canResume: false,

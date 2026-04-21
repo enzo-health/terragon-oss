@@ -77,4 +77,35 @@ describe("WorkingMessage passive-wait rendering", () => {
     expect(html).toContain("Assistant is working");
     expect(html).toContain("typing-dots");
   });
+
+  it("renders the blocked reason as secondary text when provided", () => {
+    const html = renderToStaticMarkup(
+      <WorkingMessage
+        agent="claudeCode"
+        status="working"
+        reattemptQueueAt={null}
+        passiveWait={{
+          message: "Waiting for your input",
+          reason: "CI gate did not complete within polling budget",
+        }}
+      />,
+    );
+    expect(html).toContain("Waiting for your input");
+    expect(html).toContain("CI gate did not complete within polling budget");
+  });
+
+  it("omits the secondary reason line when reason is null", () => {
+    const html = renderToStaticMarkup(
+      <WorkingMessage
+        agent="claudeCode"
+        status="working"
+        reattemptQueueAt={null}
+        passiveWait={{ message: "Waiting for your input", reason: null }}
+      />,
+    );
+    expect(html).toContain("Waiting for your input");
+    // When reason is null, no secondary span with the muted-xs class should
+    // render — the generic line is the only content.
+    expect(html).not.toContain("text-muted-foreground/60");
+  });
 });

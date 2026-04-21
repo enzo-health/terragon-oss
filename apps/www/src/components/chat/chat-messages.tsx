@@ -368,7 +368,7 @@ export function WorkingMessage({
    * loop is in a passive state (awaiting PR merge, waiting for human
    * input) so users aren't misled into thinking the agent is stuck.
    */
-  passiveWait?: { message: string } | null;
+  passiveWait?: { message: string; reason?: string | null } | null;
 }) {
   const isTouchDevice = useTouchDevice();
   const [_, setForceUpdate] = useState(0);
@@ -385,7 +385,12 @@ export function WorkingMessage({
   // status (which may still read "working" due to broadcast-before-
   // persist timing) we show the accurate delivery-loop-derived message.
   if (passiveWait) {
-    return <PassiveWaitFooter message={passiveWait.message} />;
+    return (
+      <PassiveWaitFooter
+        message={passiveWait.message}
+        reason={passiveWait.reason ?? null}
+      />
+    );
   }
 
   // The booting status renders a persistent checklist instead of a single line.
