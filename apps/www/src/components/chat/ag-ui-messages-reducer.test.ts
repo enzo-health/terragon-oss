@@ -1,5 +1,5 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
-import type { UIMessage } from "@terragon/shared";
+import type { UIAgentMessage, UIMessage } from "@terragon/shared";
 import { describe, expect, it } from "vitest";
 import {
   agUiMessagesReducer,
@@ -377,6 +377,87 @@ describe("agUiMessagesReducer", () => {
       const next = apply(state, [customEvent, customEvent]);
       const parts = (next.messages[0] as { parts: unknown[] }).parts;
       expect(parts).toHaveLength(1);
+    });
+  });
+
+  describe("reference preservation invariants", () => {
+    it("TEXT_MESSAGE_CONTENT preserves refs of non-streaming messages", () => {
+      const initialMessages: UIMessage[] = [
+        {
+          id: "msg-a",
+          role: "agent",
+          agent: "claudeCode",
+          parts: [{ type: "text", text: "a" }],
+        },
+        {
+          id: "msg-b",
+          role: "agent",
+          agent: "claudeCode",
+          parts: [{ type: "text", text: "b" }],
+        },
+        {
+          id: "msg-c",
+          role: "agent",
+          agent: "claudeCode",
+          parts: [{ type: "text", text: "c" }],
+        },
+      ];
+      const initial = mkState(initialMessages);
+      const nextState = agUiMessagesReducer(initial, {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-b",
+        delta: "hello",
+      } as BaseEvent);
+
+      expect(nextState.messages[0]).toBe(initial.messages[0]);
+      expect(nextState.messages[2]).toBe(initial.messages[2]);
+      expect(nextState.messages[1]).not.toBe(initial.messages[1]);
+    });
+
+    it("TEXT_MESSAGE_CONTENT preserves refs of non-streaming parts in streaming message", () => {
+      const toolPart = {
+        type: "tool",
+        id: "t1",
+        agent: "claudeCode",
+        name: "Read",
+        parameters: { file_path: "/tmp/a" },
+        status: "completed",
+        parts: [],
+        result: "ok",
+      } as unknown as UIAgentMessage["parts"][number];
+      const thinkingPart = {
+        type: "thinking",
+        thinking: "pondering",
+      } as UIAgentMessage["parts"][number];
+      const textPart = {
+        type: "text",
+        text: "hello ",
+      } as UIAgentMessage["parts"][number];
+      const initialMessage: UIMessage = {
+        id: "msg-streaming",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [toolPart, thinkingPart, textPart],
+      };
+      const initial = mkState([initialMessage]);
+      const nextState = agUiMessagesReducer(initial, {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-streaming",
+        delta: "world",
+      } as BaseEvent);
+
+      const updated = nextState.messages.find((m) => m.id === "msg-streaming");
+      expect(updated).toBeDefined();
+      const updatedParts = (updated as UIAgentMessage).parts;
+      const initialParts = (initial.messages[0] as UIAgentMessage).parts;
+
+      expect(updatedParts[0]).toBe(initialParts[0]);
+      expect(updatedParts[1]).toBe(initialParts[1]);
+      expect(updatedParts[2]).not.toBe(initialParts[2]);
+      expect(updatedParts[2]).toMatchObject({
+        type: "text",
+        text: "hello world",
+      });
     });
   });
 });

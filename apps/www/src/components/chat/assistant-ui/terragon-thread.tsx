@@ -5,7 +5,11 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
 import type { ThreadInfoFull, UIMessage, ThreadStatus } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { RedoDialogData, ForkDialogData } from "../chat-message.types";
+import type {
+  RedoDialogData,
+  ForkDialogData,
+  MessagePartRenderProps,
+} from "../chat-message.types";
 import { useTerragonRuntime } from "../assistant-runtime";
 import {
   TerragonThreadProvider,
@@ -20,6 +24,8 @@ import { isQueuedStatus } from "@/agent/thread-status";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
+import { useStableRef } from "@/hooks/use-stable-ref";
+import { isEqualPlanMap, isEqualArtifactList } from "./ctx-stability";
 
 type TerragonThreadProps = {
   /**
@@ -102,9 +108,19 @@ export function TerragonThread({
     ...(onCancel && { onCancel }),
   });
 
-  const planOccurrences = useMemo(
+  // Reference-stabilize plan occurrences and artifact descriptors. Both
+  // reallocate on every `messages` change (i.e. every token delta) but
+  // rarely change *semantically* during text streaming. We return the
+  // prior reference whenever the content is equivalent, so downstream
+  // memoized components (`ChatMessage`) skip re-renders.
+  const planOccurrencesRaw = useMemo(
     () => buildThreadPlanOccurrenceMap(messages),
     [messages],
+  );
+  const planOccurrences = useStableRef(planOccurrencesRaw, isEqualPlanMap);
+  const stableArtifactDescriptors = useStableRef(
+    artifactDescriptors,
+    isEqualArtifactList,
   );
 
   const latestAgentMessageIndex = useMemo(() => {
@@ -127,14 +143,32 @@ export function TerragonThread({
       isQueuedStatus(threadStatus)
     );
 
+  // Pre-assembled `messagePartProps`. Per-message components read this as
+  // a single stable reference instead of reconstructing the object inline
+  // (which broke `ChatMessage`'s memo every render).
+  const messagePartProps = useMemo<MessagePartRenderProps>(
+    () => ({
+      githubRepoFullName: thread.githubRepoFullName,
+      branchName: thread.branchName,
+      baseBranchName: thread.repoBaseBranchName,
+      hasCheckpoint,
+      toolProps,
+    }),
+    [
+      thread.githubRepoFullName,
+      thread.branchName,
+      thread.repoBaseBranchName,
+      hasCheckpoint,
+      toolProps,
+    ],
+  );
+
   const ctx = useMemo<TerragonThreadContext>(
     () => ({
-      messages,
       thread,
       latestGitDiffTimestamp,
       isAgentWorking,
-      latestAgentMessageIndex,
-      artifactDescriptors,
+      artifactDescriptors: stableArtifactDescriptors,
       onOpenArtifact,
       planOccurrences,
       redoDialogData,
@@ -144,28 +178,34 @@ export function TerragonThread({
       branchName: thread.branchName,
       baseBranchName: thread.repoBaseBranchName,
       hasCheckpoint,
+      messagePartProps,
     }),
     [
-      messages,
       thread,
       latestGitDiffTimestamp,
       isAgentWorking,
-      latestAgentMessageIndex,
-      artifactDescriptors,
+      stableArtifactDescriptors,
       onOpenArtifact,
       planOccurrences,
       redoDialogData,
       forkDialogData,
       toolProps,
       hasCheckpoint,
+      messagePartProps,
     ],
   );
+
+  // Pre-compute once per `messages` update to avoid doing it inside the
+  // render closure for each message (and so the per-message prop is a
+  // stable primitive that React.memo can compare).
+  const lastIndex = messages.length - 1;
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <TerragonThreadProvider value={ctx}>
         <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-6 mt-12 mb-4">
           {messages.map((message, index) => {
+            const isLatestMessage = index === lastIndex;
             switch (message.role) {
               case "user":
                 return (
@@ -173,6 +213,8 @@ export function TerragonThread({
                     key={message.id}
                     message={message}
                     messageIndex={index}
+                    isLatestMessage={isLatestMessage}
+                    isFirstUserMessage={index === 0}
                   />
                 );
               case "agent":
@@ -181,6 +223,8 @@ export function TerragonThread({
                     key={message.id}
                     message={message}
                     messageIndex={index}
+                    isLatestMessage={isLatestMessage}
+                    isLatestAgentMessage={index === latestAgentMessageIndex}
                   />
                 );
               case "system":
@@ -189,6 +233,7 @@ export function TerragonThread({
                     key={message.id}
                     message={message}
                     messageIndex={index}
+                    isLatestMessage={isLatestMessage}
                   />
                 );
               default:
