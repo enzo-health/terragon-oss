@@ -36,6 +36,47 @@ const CHECK_SUMMARY_PAYLOAD_SCHEMA = z.object({
 const SDLC_STATUS_COMMENT_MARKER_PREFIX = "terragon-sdlc-loop-status-comment:";
 const SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX = "terragon-sdlc-loop-check-run:";
 
+/**
+ * The default `name` of the Terragon Delivery Loop GitHub check. This is the
+ * self-check published by {@link upsertDeliveryCanonicalCheckSummary}. Any
+ * aggregator that decides "are all CI checks green?" must EXCLUDE this check
+ * — otherwise the CI gate deadlocks waiting on itself, since the self-check
+ * is `in_progress` for the duration of `gating_ci`.
+ */
+export const DELIVERY_LOOP_CHECK_RUN_NAME = "Terragon Delivery Loop";
+
+/**
+ * Any check run whose `external_id` starts with this prefix is owned by the
+ * Terragon delivery loop. Prefer this over a name match when the check run's
+ * `external_id` is available — it's immune to name customization.
+ */
+export const DELIVERY_LOOP_CHECK_RUN_EXTERNAL_ID_PREFIX =
+  SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX;
+
+/**
+ * Returns true if the given check run name / external_id identifies the
+ * Terragon delivery loop's own self-check. Used by the CI gate aggregator
+ * to exclude the self-check from "all green?" evaluation.
+ */
+export function isDeliveryLoopSelfCheck(input: {
+  name?: string | null;
+  externalId?: string | null;
+}): boolean {
+  if (
+    typeof input.externalId === "string" &&
+    input.externalId.startsWith(SDLC_CHECK_RUN_EXTERNAL_ID_PREFIX)
+  ) {
+    return true;
+  }
+  if (
+    typeof input.name === "string" &&
+    input.name.trim() === DELIVERY_LOOP_CHECK_RUN_NAME
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function getErrorStatus(error: unknown): number | null {
   if (!error || typeof error !== "object" || !("status" in error)) {
     return null;
