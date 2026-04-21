@@ -796,5 +796,117 @@ describe("agent-event-log", () => {
         }),
       ).resolves.toBeNull();
     });
+
+    it("skips runs whose first event is not RUN_STARTED", async () => {
+      const fixture = await createRunFixture();
+      const legacyRunId = newId("run");
+
+      // Seed a "legacy" run whose first (min-seq) row is TEXT_MESSAGE_CONTENT
+      // rather than RUN_STARTED, and give it the highest seq overall so the
+      // old implementation would pick it. The new impl MUST skip it and
+      // return the well-formed run (fixture.runId) instead.
+      await db.insert(schema.agentEventLog).values([
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 0,
+          eventType: "RUN_STARTED",
+          category: "agui",
+          payloadJson: {
+            type: EventType.RUN_STARTED,
+            runId: fixture.runId,
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: legacyRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 5,
+          eventType: "TEXT_MESSAGE_CONTENT",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "legacy-msg",
+            delta: "from before START/END brackets",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: legacyRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 6,
+          eventType: "TEXT_MESSAGE_END",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: "legacy-msg",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+      ]);
+
+      await expect(
+        getLatestRunIdForThreadChat({
+          db,
+          threadChatId: fixture.threadChatId,
+        }),
+      ).resolves.toBe(fixture.runId);
+    });
+
+    it("returns null when every run is legacy-shaped", async () => {
+      const fixture = await createRunFixture();
+      const otherLegacyRunId = newId("run");
+
+      await db.insert(schema.agentEventLog).values([
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 0,
+          eventType: "TEXT_MESSAGE_CONTENT",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "a",
+            delta: "legacy a",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: otherLegacyRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 1,
+          eventType: "TEXT_MESSAGE_CONTENT",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "b",
+            delta: "legacy b",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+      ]);
+
+      await expect(
+        getLatestRunIdForThreadChat({
+          db,
+          threadChatId: fixture.threadChatId,
+        }),
+      ).resolves.toBeNull();
+    });
   });
 });

@@ -1,14 +1,4 @@
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type {
   BaseEventEnvelope,
@@ -651,27 +641,59 @@ export async function getAgUiEventsForRun({
 }
 
 /**
- * Return the runId of the most recent run for a thread chat, or null if the
- * thread chat has no agent events yet. "Most recent" is determined by the
- * highest `seq` value across all rows for that thread chat.
+ * Return the runId of the most recent **well-formed** run for a thread chat,
+ * or null if the thread chat has no eligible runs. "Well-formed" means the
+ * run's first (minimum-seq) event is `RUN_STARTED`; legacy runs whose first
+ * event is `TEXT_MESSAGE_CONTENT` (etc.) predate the START/END-bracketing
+ * writer and are intentionally skipped — the strict replay route would emit
+ * `RUN_ERROR` for them, so the UI treats those transcripts as empty.
+ *
+ * Ordering: among eligible runs, pick the one with the greatest max(seq) in
+ * the thread chat, matching the previous "latest by seq" semantic.
+ *
+ * Runs with a single `RUN_STARTED` row (START but nothing after) still
+ * qualify — their min_seq == max_seq == START, which is a valid (if empty)
+ * run projection.
  *
  * Used by the AG-UI SSE endpoint as the default "latest run" semantic when a
- * client connects without an explicit `?runId=X` cursor.
+ * client connects without an explicit `?runId=X` cursor. Null return engages
+ * the live-tail path (keepalive + Redis subscribe), which is correct both
+ * for brand-new thread chats and for thread chats where every prior run is
+ * legacy-shaped.
  */
 export async function getLatestRunIdForThreadChat({
   db,
   threadChatId,
 }: {
-  db: Pick<DB, "query">;
+  db: Pick<DB, "query" | "execute">;
   threadChatId: string;
 }): Promise<RunId | null> {
   try {
-    const row = await db.query.agentEventLog.findFirst({
-      where: eq(schema.agentEventLog.threadChatId, threadChatId),
-      orderBy: [desc(schema.agentEventLog.seq)],
-      columns: { runId: true },
-    });
-    return (row?.runId as RunId | undefined) ?? null;
+    // Find each run's (min_seq, max_seq) within the thread chat, then keep
+    // only those whose min-seq row has event_type = 'RUN_STARTED', and
+    // return the run_id with the greatest max_seq.
+    const result = await db.execute<{ run_id: string }>(sql`
+      WITH run_bounds AS (
+        SELECT
+          ${schema.agentEventLog.runId} AS run_id,
+          MIN(${schema.agentEventLog.seq}) AS min_seq,
+          MAX(${schema.agentEventLog.seq}) AS max_seq
+        FROM ${schema.agentEventLog}
+        WHERE ${schema.agentEventLog.threadChatId} = ${threadChatId}
+        GROUP BY ${schema.agentEventLog.runId}
+      )
+      SELECT rb.run_id
+      FROM run_bounds rb
+      JOIN ${schema.agentEventLog} ael
+        ON ael.run_id = rb.run_id
+        AND ael.seq = rb.min_seq
+      WHERE ael.event_type = 'RUN_STARTED'
+      ORDER BY rb.max_seq DESC
+      LIMIT 1
+    `);
+
+    const first = result.rows[0];
+    return first ? (first.run_id as RunId) : null;
   } catch (error) {
     if (isMissingAgentEventLogSchemaError(error)) {
       return null;
