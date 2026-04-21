@@ -286,6 +286,17 @@ export function isTerminalState(state: WorkflowState): boolean {
   return TERMINAL_WORKFLOW_STATE_SET.has(state);
 }
 
+/**
+ * States in which the Terragon Delivery Loop GitHub check should be reported
+ * as `status: "completed"`. This is a superset of `isTerminalState`: we also
+ * include `awaiting_pr_lifecycle` so branch-protection rules that gate merge
+ * on Terragon's check can see a green signal while the workflow waits for the
+ * user to merge / close the PR.
+ */
+export function shouldReportCheckCompleted(state: WorkflowState): boolean {
+  return isTerminalState(state) || state === "awaiting_pr_lifecycle";
+}
+
 export function normalizePlanApprovalPolicy(
   policy: string | null | undefined,
 ): NormalizedPlanApprovalPolicy {

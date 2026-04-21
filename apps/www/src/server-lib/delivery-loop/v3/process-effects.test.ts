@@ -12,7 +12,11 @@ import { db } from "@/lib/db";
 import * as dispatchIntentModule from "@/server-lib/delivery-loop/dispatch-intent";
 import * as followUpQueueModule from "@/server-lib/process-follow-up-queue";
 import * as kernelModule from "./kernel";
-import { drainDueEffects, effectResultToEvent } from "./process-effects";
+import {
+  computeDeliveryCheckStatus,
+  drainDueEffects,
+  effectResultToEvent,
+} from "./process-effects";
 import {
   ensureWorkflowHead,
   getWorkflowHead,
@@ -320,6 +324,96 @@ describe("effectResultToEvent", () => {
       // Should not throw
       effectResultToEvent(r);
     }
+  });
+});
+
+describe("computeDeliveryCheckStatus", () => {
+  // Green-before-merge: branch-protection friendly. While awaiting the user
+  // to merge / close the PR, the Terragon self-check must report success so
+  // rules gating merge on that check can pass.
+  it("awaiting_pr_lifecycle → completed + success", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "awaiting_pr_lifecycle",
+        blockedReason: null,
+      }),
+    ).toEqual({ status: "completed", conclusion: "success" });
+  });
+
+  // Merged PR: reducer sets blockedReason to "PR merged" when `pr_closed`
+  // fires with `merged: true`. Surface that as success, not cancelled.
+  it("terminated + merged → completed + success", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "terminated",
+        blockedReason: "PR merged",
+      }),
+    ).toEqual({ status: "completed", conclusion: "success" });
+  });
+
+  it("terminated + closed-without-merge → completed + cancelled", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "terminated",
+        blockedReason: "PR closed",
+      }),
+    ).toEqual({ status: "completed", conclusion: "cancelled" });
+  });
+
+  // Defensive: if blockedReason is missing on a terminated workflow (e.g.
+  // terminated via a path that didn't set it), default to cancelled rather
+  // than falsely report success.
+  it("terminated + null blockedReason → completed + cancelled", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "terminated",
+        blockedReason: null,
+      }),
+    ).toEqual({ status: "completed", conclusion: "cancelled" });
+  });
+
+  it("stopped → completed + cancelled", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "stopped",
+        blockedReason: "Stopped by user",
+      }),
+    ).toEqual({ status: "completed", conclusion: "cancelled" });
+  });
+
+  it("done → completed + success", () => {
+    expect(
+      computeDeliveryCheckStatus({ state: "done", blockedReason: null }),
+    ).toEqual({ status: "completed", conclusion: "success" });
+  });
+
+  // Blocked / waiting on human — real work is pending, leave the check
+  // in_progress so branch protection still gates merge.
+  it("awaiting_manual_fix → in_progress", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "awaiting_manual_fix",
+        blockedReason: "Fix budget exhausted",
+      }),
+    ).toEqual({ status: "in_progress", conclusion: undefined });
+  });
+
+  it("awaiting_operator_action → in_progress", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "awaiting_operator_action",
+        blockedReason: "Infra budget exhausted",
+      }),
+    ).toEqual({ status: "in_progress", conclusion: undefined });
+  });
+
+  it("implementing → in_progress", () => {
+    expect(
+      computeDeliveryCheckStatus({
+        state: "implementing",
+        blockedReason: null,
+      }),
+    ).toEqual({ status: "in_progress", conclusion: undefined });
   });
 });
 
