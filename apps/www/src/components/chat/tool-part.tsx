@@ -26,6 +26,7 @@ import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
+import { getToolVerb } from "./tools/utils";
 import { Badge } from "@/components/ui/badge";
 import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
@@ -293,7 +294,7 @@ const ToolPart = memo(function ToolPart({
       )}
       {isInProgress && !progressChunks?.length && (
         <span className="text-xs text-muted-foreground animate-pulse">
-          Working…
+          {getToolVerb(toolPart.name, "pending")}
         </span>
       )}
     </>

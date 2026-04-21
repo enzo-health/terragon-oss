@@ -683,6 +683,133 @@ describe("ChatUI streaming render budget", () => {
   });
 });
 
+describe("ChatUI tool-call rendering polish", () => {
+  it("clamps long tool prompts and shows a 'Show more' toggle", async () => {
+    const longPrompt =
+      "You are the PR-linking agent for delivery-loop phase awaiting_pr_link. Follow repo instructions from AGENTS/CLAUDE conventions and produce a structured plan that covers every edge case, failure mode, retry budget, and observability hook for the downstream delivery pipeline.";
+    const messages: DBMessage[] = [
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "spin up a subagent" }],
+      },
+      {
+        type: "tool-call",
+        id: "tc-long",
+        name: "codex-subagent",
+        parameters: { prompt: longPrompt },
+        parent_tool_use_id: null,
+        status: "completed",
+        startedAt: TS.toISOString(),
+        completedAt: TS.toISOString(),
+      },
+      {
+        type: "tool-result",
+        id: "tc-long",
+        is_error: false,
+        parent_tool_use_id: null,
+        result: "ok",
+      } as DBMessage,
+    ];
+
+    mockShellState.current = makeShell();
+    mockChatState.current = makeChat(messages);
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    // Full prompt is in the DOM (clamp is purely visual)…
+    expect(text).toContain("You are the PR-linking agent");
+    // …and the "Show more" affordance is rendered because the prompt is
+    // past the long-arg threshold.
+    expect(text).toContain("Show more");
+  });
+
+  it("renders a tool-specific verb for pending tool calls", async () => {
+    const messages: DBMessage[] = [
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "look it up" }],
+      },
+      {
+        type: "tool-call",
+        id: "tc-pending-bash",
+        name: "Bash",
+        parameters: { command: "ls" },
+        parent_tool_use_id: null,
+        // No completedAt + no tool-result companion → renders pending.
+        status: "in_progress",
+        startedAt: TS.toISOString(),
+      },
+    ];
+
+    mockShellState.current = makeShell();
+    mockChatState.current = makeChat(messages);
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Running...");
+    expect(text).not.toContain("Working...");
+  });
+
+  it("renders a summary line for JSON tool results and hides raw body", async () => {
+    const jsonResult = JSON.stringify({
+      phaseComplete: true,
+      prUrl: "https://github.com/acme/app/pull/5630",
+      prNumber: 5630,
+      status: "linked",
+      summary: "Linked the existing open draft PR.",
+    });
+    const messages: DBMessage[] = [
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "link the PR" }],
+      },
+      {
+        type: "tool-call",
+        id: "tc-json",
+        name: "codex-subagent",
+        parameters: { prompt: "link pr" },
+        parent_tool_use_id: null,
+        status: "completed",
+        startedAt: TS.toISOString(),
+        completedAt: TS.toISOString(),
+      },
+      {
+        type: "tool-result",
+        id: "tc-json",
+        is_error: false,
+        parent_tool_use_id: null,
+        result: jsonResult,
+      } as DBMessage,
+    ];
+
+    mockShellState.current = makeShell();
+    mockChatState.current = makeChat(messages);
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const text = container?.textContent ?? "";
+    // Collapsed preview summarizes the payload…
+    expect(text).toMatch(/JSON result \(5 fields\)/);
+    // …and does NOT dump raw JSON values unrolled by default.
+    expect(text).not.toContain("Linked the existing open draft PR.");
+    expect(text).not.toContain("https://github.com/acme/app/pull/5630");
+  });
+});
+
 describe("ChatUI historical hydration fallback", () => {
   it("falls back to legacy `messages` when `projectedMessages` is empty", async () => {
     // Simulate the failure mode: server returned an empty projection (e.g.
