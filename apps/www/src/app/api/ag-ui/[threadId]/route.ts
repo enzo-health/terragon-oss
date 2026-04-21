@@ -312,3 +312,13 @@ export async function GET(
     },
   });
 }
+
+// AG-UI's HttpAgent POSTs RunAgentInput to the run URL. We route through
+// the same SSE handler because:
+//   1. All cursor state lives in query params (threadChatId, fromSeq),
+//      which are on the URL for both methods.
+//   2. Backend run state is authoritative; client-provided run input is
+//      discarded here. Runs are initiated via server actions (followUp,
+//      retry, etc.), not by the client's runAgent POST. The POST body
+//      is the ceremony that opens the SSE stream.
+export const POST = GET;

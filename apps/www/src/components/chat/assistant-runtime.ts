@@ -44,5 +44,26 @@ export function useTerragonRuntime({
         void onCancel();
       },
     }),
+    // History adapter is required to open the SSE stream on mount.
+    // `HttpAgent#subscribe()` only registers a callback — it does NOT open
+    // a connection. The core opens one only when `agent.runAgent(...)` is
+    // called, which happens on mount iff `historyAdapter.load()` returns
+    // `{ unstable_resume: true }`. See
+    // AgUiThreadRuntimeCore.__internal_load in @assistant-ui/react-ag-ui.
+    //
+    // Returning `messages: []` to the core is safe: our render path reads
+    // from `useAgUiMessages` (the reducer seeded from threadChat), not
+    // from `core.getMessages()`. `append` is a no-op because follow-ups
+    // flow through the `followUp` server action, not through the runtime.
+    adapters: {
+      history: {
+        load: async () => ({
+          messages: [],
+          unstable_resume: true,
+          headId: null,
+        }),
+        append: async () => {},
+      },
+    },
   });
 }
