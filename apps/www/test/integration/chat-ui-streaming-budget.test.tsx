@@ -682,3 +682,45 @@ describe("ChatUI streaming render budget", () => {
     expect(totalCommits).toBeLessThanOrEqual(20);
   });
 });
+
+describe("ChatUI historical hydration fallback", () => {
+  it("falls back to legacy `messages` when `projectedMessages` is empty", async () => {
+    // Simulate the failure mode: server returned an empty projection (e.g.
+    // canonical replay rows missing `threadChatMessageSeq`) but the legacy
+    // `messages` snapshot still holds the full DB-backed history. Before
+    // the fix, `dbMessages = projectedMessages ?? messages` would pick the
+    // empty array (not null/undefined → ?? doesn't fall back) and the
+    // transcript would render blank.
+    const history = makeHistoricalMessages(); // 5 messages
+    const shell = makeShell();
+    // Mark the chat as complete so the UI is in the "completed task"
+    // shape the user observed.
+    shell.primaryThreadChat = {
+      ...shell.primaryThreadChat,
+      status: "complete",
+    };
+    const chat: ThreadPageChat = {
+      ...makeChat(history),
+      status: "complete",
+      messages: history,
+      projectedMessages: [],
+    };
+    mockShellState.current = shell;
+    mockChatState.current = chat;
+
+    const hookSpy = spyOnThreadHook();
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // With the fallback in place, each historical row should render
+    // exactly once, invoking `useTerragonThread` for each agent/user row.
+    // If the fallback is missing, zero rows render.
+    expect(hookSpy).toHaveBeenCalled();
+    // DOM sanity: the transcript text is present.
+    expect(container?.textContent ?? "").toContain("first agent reply");
+    expect(container?.textContent ?? "").toContain("second agent reply");
+  });
+});

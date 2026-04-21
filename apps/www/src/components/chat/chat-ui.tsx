@@ -244,13 +244,19 @@ function ChatUIContent({
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const dbMessages = useMemo(
-    () =>
-      (threadChat.projectedMessages as DBMessage[]) ??
-      (threadChat.messages as DBMessage[]) ??
-      [],
-    [threadChat.messages, threadChat.projectedMessages],
-  );
+  const dbMessages = useMemo(() => {
+    // Prefer the canonical-event projection, but fall back to the legacy
+    // `messages` snapshot when `projectedMessages` is empty. Without this
+    // fallback, a completed thread whose canonical replay rows are missing
+    // `threadChatMessageSeq` (old data, or a replay projection that skipped
+    // rows) renders an empty transcript even though `messages` still holds
+    // the full DB-backed history.
+    const projected = threadChat.projectedMessages as DBMessage[] | null;
+    const legacy = threadChat.messages as DBMessage[] | null;
+    if (projected && projected.length > 0) return projected;
+    if (legacy && legacy.length > 0) return legacy;
+    return projected ?? legacy ?? [];
+  }, [threadChat.messages, threadChat.projectedMessages]);
   const queuedMessages = useMemo(
     () =>
       threadChat.queuedMessages?.length
