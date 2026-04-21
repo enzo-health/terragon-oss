@@ -75,6 +75,14 @@ type TerragonThreadProps = {
    * footer behavior for non-delivery-loop threads.
    */
   deliveryLoopState?: DeliveryLoopState | null;
+  /**
+   * Human-readable reason the loop is blocked (e.g. "PR closed", "CI gate
+   * did not complete within polling budget"). Rendered as secondary text in
+   * the passive-wait footer so users see the specific reason instead of a
+   * generic "Waiting for your input" line. Null when no reason is
+   * available.
+   */
+  deliveryLoopBlockedReason?: string | null;
   // Scheduled
   threadChatId?: string;
   scheduleAt?: Date | null;
@@ -107,6 +115,7 @@ export function TerragonThread({
   bootingSubstatus,
   reattemptQueueAt,
   deliveryLoopState,
+  deliveryLoopBlockedReason,
   threadChatId,
   scheduleAt,
   threadChatStatus,
@@ -211,7 +220,10 @@ export function TerragonThread({
 
   const passiveWaitProp =
     deliveryLoopFooter.kind === "passive"
-      ? { message: deliveryLoopFooter.message }
+      ? {
+          message: deliveryLoopFooter.message,
+          reason: deliveryLoopBlockedReason ?? null,
+        }
       : null;
 
   // Pre-assembled `messagePartProps`. Per-message components read this as

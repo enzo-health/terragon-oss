@@ -1,0 +1,1 @@
+{"type":"config","name":"Daemon Streaming Latency Optimization","metricName":"e2e_latency_p50","metricUnit":"ms","bestDirection":"lower"}

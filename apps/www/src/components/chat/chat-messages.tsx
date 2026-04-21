@@ -331,10 +331,19 @@ export function classifyDeliveryLoopFooter(
   }
 }
 
-export function PassiveWaitFooter({ message }: { message: string }) {
+export function PassiveWaitFooter({
+  message,
+  reason,
+}: {
+  message: string;
+  reason?: string | null;
+}) {
   return (
-    <div className="flex items-center gap-2.5 px-2 text-muted-foreground/70 text-sm">
+    <div className="flex flex-col gap-0.5 px-2 text-muted-foreground/70 text-sm">
       <span>{message}</span>
+      {reason ? (
+        <span className="text-muted-foreground/60 text-xs">{reason}</span>
+      ) : null}
     </div>
   );
 }
