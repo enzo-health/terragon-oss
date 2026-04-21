@@ -18,11 +18,16 @@ export const dynamic = "force-dynamic";
 // typical usage will not hit this ceiling.
 export const maxDuration = 300;
 
-// XREAD poll tuning. blockMS is capped by the resilient-redis client's
-// localHttpCommandTimeoutMs (3_000) in dev, so we stay under that to
-// avoid noisy "Local redis-http command timeout" warnings. Production
-// Upstash has a higher ceiling; 2s is conservative everywhere.
-const XREAD_BLOCK_MS = 2_000;
+// XREAD poll tuning. Adaptive backoff: start at MIN_XREAD_BLOCK_MS and
+// grow linearly up to MAX_XREAD_BLOCK_MS while the stream is idle, then
+// reset on any received event. This cuts Upstash read costs on long-idle
+// SSE streams without trading off live-tail latency on active threads.
+//
+// Note: production Upstash HTTP timeout permits up to ~30s block windows;
+// dev's resilient-redis client caps at ~3s (localHttpCommandTimeoutMs)
+// so the MIN value stays under that ceiling to avoid noisy warnings.
+const MIN_XREAD_BLOCK_MS = 2_000;
+const MAX_XREAD_BLOCK_MS = 10_000;
 const XREAD_COUNT = 32;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 const XREAD_BACKOFF_MS = 1_000;
@@ -260,18 +265,29 @@ export async function GET(
       // writer work; the subscribe path here is intentionally shape-compatible
       // with that contract but not exercised by unit tests.
       let lastId = initialLastId;
+      let consecutiveEmpty = 0;
       while (!closed) {
+        // Linear growth from MIN → MAX: 2s, 4s, 6s, 8s, 10s, 10s, …
+        const blockMS = Math.min(
+          MAX_XREAD_BLOCK_MS,
+          MIN_XREAD_BLOCK_MS * (1 + consecutiveEmpty),
+        );
         try {
           const raw = await redis.xread(streamKey, lastId, {
             count: XREAD_COUNT,
-            blockMS: XREAD_BLOCK_MS,
+            blockMS,
           });
           if (closed) break;
           const entries = parseStreamEntries(raw);
-          for (const entry of entries) {
-            lastId = entry.id;
-            if (entry.event != null) {
-              enqueue(encodeSseEvent(entry.event));
+          if (entries.length === 0) {
+            consecutiveEmpty++;
+          } else {
+            consecutiveEmpty = 0;
+            for (const entry of entries) {
+              lastId = entry.id;
+              if (entry.event != null) {
+                enqueue(encodeSseEvent(entry.event));
+              }
             }
           }
         } catch (error) {

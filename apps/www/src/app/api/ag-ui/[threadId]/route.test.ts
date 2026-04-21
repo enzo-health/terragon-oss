@@ -355,6 +355,66 @@ describe("ag-ui SSE route", () => {
     await response.body!.cancel();
   });
 
+  it("progresses XREAD blockMS 2s → 4s → 6s on consecutive idle polls and resets after an event", async () => {
+    // Empty, empty, empty, one entry, empty. Block values should be:
+    //   2000 (first call, consecutiveEmpty=0)
+    //   4000 (consecutiveEmpty=1)
+    //   6000 (consecutiveEmpty=2)
+    //   8000 (consecutiveEmpty=3) ← the one that RETURNS an entry
+    //   2000 (reset after entry)
+    //   4000 (growing again)
+    // We assert the first 5 observed blockMS values.
+    const blockValues: number[] = [];
+    const deferred: Array<{ resolve: (v: unknown) => void }> = [];
+
+    redisMocks.xread.mockImplementation((...args: unknown[]) => {
+      const opts = args[2] as { blockMS?: number; count?: number } | undefined;
+      blockValues.push(opts?.blockMS ?? -1);
+      // Return different results based on call index so we can drive the
+      // empty/non-empty progression deterministically.
+      const callIndex = redisMocks.xread.mock.calls.length - 1;
+      if (callIndex === 3) {
+        // 4th call (0-indexed): return one entry, seq resets to MIN on next loop.
+        return Promise.resolve([
+          [
+            "agui:thread:chat-1",
+            [["1700000000000-0", ["event", JSON.stringify({ type: "TEST" })]]],
+          ],
+        ]);
+      }
+      // Empty result for all other calls — but hang on the 5th so the loop
+      // doesn't busy-cycle before the test assertions run.
+      if (callIndex >= 5) {
+        return new Promise((resolve) => {
+          deferred.push({ resolve });
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=0",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    // Allow the microtask queue to flush through the first 5 XREAD calls.
+    // Each xread call resolves synchronously (for idx 0..4) so the while
+    // loop should progress quickly without any real timer waits.
+    await vi.waitFor(() => {
+      expect(blockValues.length).toBeGreaterThanOrEqual(5);
+    });
+
+    // Pin the progression: 2s, 4s, 6s, 8s, reset to 2s after non-empty.
+    expect(blockValues.slice(0, 5)).toEqual([2000, 4000, 6000, 8000, 2000]);
+
+    // Clean up: cancel the response body so the pending xread promise is GC'd.
+    await response.body!.cancel();
+    for (const d of deferred) d.resolve(null);
+  });
+
   it("emits a RUN_ERROR event when the replay query fails", async () => {
     vi.mocked(getAgUiEventsForReplay).mockRejectedValue(
       new Error("db exploded"),
