@@ -4307,11 +4307,11 @@ export class TerragonDaemon {
     token: string;
   }): void {
     this.metaEventBuffer.push(entry);
-    // Trigger a prompt flush so meta events are delivered quickly.
+    // Fast-path: flush meta events immediately at 16ms (60fps) for smooth streaming
     if (!this.isFlushInProgress && !this.messageFlushTimer) {
       this.messageFlushTimer = setTimeout(() => {
         this.flushMessageBuffer();
-      }, 50);
+      }, 16);
     }
   }
 
@@ -4331,10 +4331,12 @@ export class TerragonDaemon {
       ...entry,
       deltaSeq,
     });
+    // Fast-path: flush deltas immediately at 16ms (60fps) for smooth streaming
+    // This is independent of message buffer flush timing
     if (!this.isFlushInProgress && !this.messageFlushTimer) {
       this.messageFlushTimer = setTimeout(() => {
         this.flushMessageBuffer();
-      }, 50);
+      }, 16);
     }
   }
 

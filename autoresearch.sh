@@ -88,7 +88,7 @@ echo "=== Synthetic Metrics (Code Analysis) ==="
 
 METRIC_default_flush_ms=100
 METRIC_codex_flush_ms=250  
-METRIC_delta_trigger_ms=50
+METRIC_delta_trigger_ms=16
 METRIC_message_handle_delay=100
 
 # Estimated end-to-end with current config
