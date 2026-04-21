@@ -13,6 +13,7 @@ import {
   agUiStreamKey,
   getActiveAgUiLifecycleAt,
   getAgUiEventsForReplay,
+  getAgUiEventsForRun,
 } from "@terragon/shared/model/agent-event-log";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
@@ -147,6 +148,7 @@ export async function GET(
   const { threadId } = await context.params;
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const fromSeqStr = request.nextUrl.searchParams.get("fromSeq");
+  const runIdParam = request.nextUrl.searchParams.get("runId");
 
   if (!threadChatId) {
     return NextResponse.json(
@@ -155,15 +157,27 @@ export async function GET(
     );
   }
 
-  if (fromSeqStr == null) {
-    return NextResponse.json(
-      { error: "Missing replay cursor (fromSeq)" },
-      { status: 400 },
-    );
-  }
-  const fromSeq = Number(fromSeqStr);
-  if (!Number.isInteger(fromSeq) || fromSeq < 0) {
-    return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+  // Phase A of the AG-UI reconnect refactor: new `?runId=X` path replays an
+  // entire run from its real RUN_STARTED event, removing the need to
+  // synthesize one at reconnect time. When both cursors are present we
+  // prefer `?runId` — it is strictly more correct (the events query result
+  // naturally begins with RUN_STARTED, no mid-run synthesis).
+  const useRunIdPath = runIdParam !== null;
+
+  // fromSeq is only validated when we are actually taking the fromSeq
+  // path. On the runId path the cursor is ignored entirely.
+  let fromSeq = 0;
+  if (!useRunIdPath) {
+    if (fromSeqStr == null) {
+      return NextResponse.json(
+        { error: "Missing replay cursor (fromSeq)" },
+        { status: 400 },
+      );
+    }
+    fromSeq = Number(fromSeqStr);
+    if (!Number.isInteger(fromSeq) || fromSeq < 0) {
+      return NextResponse.json({ error: "Invalid fromSeq" }, { status: 400 });
+    }
   }
 
   // Verify BOTH that the thread belongs to the session user AND that the
@@ -233,6 +247,164 @@ export async function GET(
         return;
       }
       abortSignal.addEventListener("abort", () => close(), { once: true });
+
+      // ---------------------------------------------------------------
+      // Phase A: "Replay from Run Start" path (`?runId=X` query param).
+      //
+      // Design goal: the events query result naturally begins with the
+      // real RUN_STARTED for that run, so we never have to synthesize
+      // one. If the run is already terminal (RUN_FINISHED / RUN_ERROR in
+      // the log) we still start live-tailing — additional events after a
+      // terminal marker are rare but the stream stays conservative and
+      // lets the client decide when to disconnect.
+      //
+      // The fromSeq path below is left 100% untouched for backwards
+      // compatibility; Phase B will delete it once we've verified the
+      // runId path end-to-end in production.
+      // ---------------------------------------------------------------
+      if (useRunIdPath) {
+        let resolvedRunId = runIdParam;
+        if (resolvedRunId === null) {
+          // Defensive: useRunIdPath implies runIdParam !== null. Kept as a
+          // type-narrowing guard and logged so a regression in branch
+          // conditions is loud rather than silent.
+          console.error("[ag-ui] runId path reached with null runIdParam");
+          close();
+          return;
+        }
+
+        let runEvents: BaseEvent[];
+        try {
+          runEvents = await getAgUiEventsForRun({
+            db,
+            runId: resolvedRunId,
+          });
+        } catch (error) {
+          console.error(
+            "[ag-ui] runId replay failed",
+            { threadId, threadChatId, runId: resolvedRunId },
+            error,
+          );
+          const errorEvent = mapRunErrorToAgui(
+            error instanceof Error ? error.message : "Replay failed",
+            "replay_failed",
+          );
+          enqueue(encodeSseEvent(errorEvent));
+          close();
+          return;
+        }
+
+        // If the caller asked for a runId that doesn't exist in this
+        // thread chat, we have two reasonable options: (a) 404, (b) emit
+        // a RUN_ERROR and close. We chose (b) so the client sees a
+        // protocol-valid first event and can react via its existing
+        // error-handler plumbing rather than debugging a mystery 404 on
+        // a long-lived SSE connection.
+        if (runEvents.length === 0) {
+          const errorEvent = mapRunErrorToAgui(
+            `Run ${resolvedRunId} has no events for thread chat ${threadChatId}`,
+            "run_not_found",
+          );
+          enqueue(encodeSseEvent(errorEvent));
+          close();
+          return;
+        }
+
+        // Contract: events for a run MUST start with RUN_STARTED. If not,
+        // surface loudly — the fix lives in the writer, not here. Callers
+        // landing on a non-RUN_STARTED first event almost certainly
+        // indicate log corruption or a bug in the write path.
+        if (runEvents[0]?.type !== EventType.RUN_STARTED) {
+          console.error(
+            "[ag-ui] runId replay: first event was not RUN_STARTED",
+            {
+              threadId,
+              threadChatId,
+              runId: resolvedRunId,
+              firstType: runEvents[0]?.type,
+            },
+          );
+          const errorEvent = mapRunErrorToAgui(
+            `Run ${resolvedRunId} log is malformed: first event is ${runEvents[0]?.type ?? "empty"}, expected RUN_STARTED`,
+            "replay_failed",
+          );
+          enqueue(encodeSseEvent(errorEvent));
+          close();
+          return;
+        }
+
+        const isRunComplete = runEvents.some(
+          (event) =>
+            event.type === EventType.RUN_FINISHED ||
+            event.type === EventType.RUN_ERROR,
+        );
+
+        for (const event of runEvents) {
+          enqueue(encodeSseEvent(event));
+        }
+
+        if (isRunComplete) {
+          // The run already terminated before connect. Close the stream
+          // so the client's SSE consumer knows the server has nothing
+          // more to say. Live-tail here would block on an XREAD poll
+          // forever without producing useful output.
+          close();
+          return;
+        }
+
+        // Keepalive + live-tail the same stream key the fromSeq path
+        // uses. The cursor we captured at the top of `start()` is still
+        // valid: it pins the Redis XREAD position to BEFORE any writes
+        // that happened while we loaded runEvents, so the at-least-once
+        // contract holds even though runEvents already covered the
+        // historical window.
+        keepaliveTimer = setInterval(() => {
+          enqueue(encodeSseComment("keepalive"));
+        }, KEEPALIVE_INTERVAL_MS);
+
+        let lastId = initialLastId;
+        let consecutiveEmpty = 0;
+        while (!closed) {
+          const blockMS = Math.min(
+            MAX_XREAD_BLOCK_MS,
+            MIN_XREAD_BLOCK_MS * (1 + consecutiveEmpty),
+          );
+          try {
+            const raw = await redis.xread(streamKey, lastId, {
+              count: XREAD_COUNT,
+              blockMS,
+            });
+            if (closed) break;
+            const entries = parseStreamEntries(raw);
+            if (entries.length === 0) {
+              consecutiveEmpty++;
+            } else {
+              consecutiveEmpty = 0;
+              for (const entry of entries) {
+                lastId = entry.id;
+                if (entry.event != null) {
+                  enqueue(encodeSseEvent(entry.event));
+                }
+              }
+            }
+          } catch (error) {
+            if (closed) break;
+            console.warn(
+              "[ag-ui] XREAD failed, backing off",
+              { streamKey },
+              error,
+            );
+            await new Promise((resolve) =>
+              setTimeout(resolve, XREAD_BACKOFF_MS),
+            );
+          }
+        }
+        return;
+      }
+
+      // ---------------------------------------------------------------
+      // Legacy `?fromSeq=N` path. Untouched in Phase A — Phase B deletes.
+      // ---------------------------------------------------------------
 
       // 1) Load the stored replay FIRST so we can inspect whether it already
       // contains a real RUN_STARTED event. The AG-UI client's verifier (see

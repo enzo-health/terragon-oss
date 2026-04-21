@@ -17,6 +17,8 @@ import {
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
   getActiveAgUiLifecycleAt,
+  getAgUiEventsForRun,
+  getLatestRunIdForThreadChat,
   getThreadReplayEntriesFromCanonicalEvents,
   getAgUiEventsForReplay,
   getRunEvents,
@@ -889,6 +891,238 @@ describe("agent-event-log", () => {
 
       const ids = active.textMessages.map((m) => m.messageId).sort();
       expect(ids).toEqual(["msg-open", "msg-orphan"]);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Phase A: `getAgUiEventsForRun` — "Replay from Run Start" helper.
+  // -------------------------------------------------------------------
+  describe("getAgUiEventsForRun", () => {
+    async function insertAgUiRow({
+      fixture,
+      seq,
+      payload,
+      eventType,
+      category = "agui",
+    }: {
+      fixture: RunFixture;
+      seq: number;
+      payload: Record<string, unknown>;
+      eventType: string;
+      category?: string;
+    }): Promise<void> {
+      const now = new Date();
+      await db.insert(schema.agentEventLog).values({
+        eventId: newId("event"),
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq,
+        eventType,
+        category,
+        payloadJson: payload,
+        idempotencyKey: newId("idempotency"),
+        timestamp: now,
+      });
+    }
+
+    it("returns all AG-UI events for the run in seq ascending order", async () => {
+      const fixture = await createRunFixture();
+      // Insert out of seq order to verify the helper sorts.
+      await insertAgUiRow({
+        fixture,
+        seq: 2,
+        eventType: "TEXT_MESSAGE_END",
+        payload: {
+          type: EventType.TEXT_MESSAGE_END,
+          timestamp: 2,
+          messageId: "m-1",
+        },
+      });
+      await insertAgUiRow({
+        fixture,
+        seq: 0,
+        eventType: "RUN_STARTED",
+        payload: {
+          type: EventType.RUN_STARTED,
+          timestamp: 0,
+          threadId: fixture.threadChatId,
+          runId: fixture.runId,
+        },
+      });
+      await insertAgUiRow({
+        fixture,
+        seq: 1,
+        eventType: "TEXT_MESSAGE_START",
+        payload: {
+          type: EventType.TEXT_MESSAGE_START,
+          timestamp: 1,
+          messageId: "m-1",
+          role: "assistant",
+        },
+      });
+
+      const events = await getAgUiEventsForRun({
+        db,
+        runId: fixture.runId,
+      });
+      expect(events).toHaveLength(3);
+      expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+      expect(events[1]?.type).toBe(EventType.TEXT_MESSAGE_START);
+      expect(events[2]?.type).toBe(EventType.TEXT_MESSAGE_END);
+    });
+
+    it("filters events by runId — other runs in the same thread chat are excluded", async () => {
+      const fixture = await createRunFixture();
+      const otherRunId = newId("run");
+
+      await insertAgUiRow({
+        fixture,
+        seq: 0,
+        eventType: "RUN_STARTED",
+        payload: {
+          type: EventType.RUN_STARTED,
+          timestamp: 0,
+          threadId: fixture.threadChatId,
+          runId: fixture.runId,
+        },
+      });
+      // Same thread chat but a different run. Must NOT appear in results.
+      await db.insert(schema.agentEventLog).values({
+        eventId: newId("event"),
+        runId: otherRunId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 1,
+        eventType: "RUN_STARTED",
+        category: "agui",
+        payloadJson: {
+          type: EventType.RUN_STARTED,
+          timestamp: 1,
+          threadId: fixture.threadChatId,
+          runId: otherRunId,
+        },
+        idempotencyKey: newId("idempotency"),
+        timestamp: new Date(),
+      });
+
+      const events = await getAgUiEventsForRun({
+        db,
+        runId: fixture.runId,
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: EventType.RUN_STARTED,
+        runId: fixture.runId,
+      });
+    });
+
+    it("expands canonical-event rows via readAllAgUiPayloads (START + CONTENT + END)", async () => {
+      const fixture = await createRunFixture();
+      // Canonical assistant-message — expands to START + CONTENT + END.
+      const canonical = createAssistantMessageEvent({ ...fixture, seq: 1 });
+      await db.insert(schema.agentEventLog).values({
+        eventId: canonical.eventId,
+        runId: canonical.runId,
+        threadId: canonical.threadId,
+        threadChatId: canonical.threadChatId,
+        seq: canonical.seq,
+        eventType: canonical.type,
+        category: canonical.category,
+        payloadJson: canonical as unknown as Record<string, unknown>,
+        idempotencyKey: canonical.eventId,
+        timestamp: new Date(),
+      });
+
+      const events = await getAgUiEventsForRun({
+        db,
+        runId: fixture.runId,
+      });
+      // assistant-message → TEXT_MESSAGE_START + _CONTENT + _END.
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+      ]);
+    });
+
+    it("returns [] when the agent_event_log relation is unavailable", async () => {
+      const findManySpy = vi
+        .spyOn(db.query.agentEventLog, "findMany")
+        .mockRejectedValue(
+          Object.assign(
+            new Error('relation "agent_event_log" does not exist'),
+            {
+              code: "42P01",
+            },
+          ),
+        );
+      try {
+        await expect(
+          getAgUiEventsForRun({ db, runId: "missing-run" }),
+        ).resolves.toEqual([]);
+      } finally {
+        findManySpy.mockRestore();
+      }
+    });
+
+    it("returns [] for a run with no events", async () => {
+      await expect(
+        getAgUiEventsForRun({ db, runId: "definitely-not-a-real-run" }),
+      ).resolves.toEqual([]);
+    });
+  });
+
+  describe("getLatestRunIdForThreadChat", () => {
+    it("returns the runId of the highest-seq row for the thread chat", async () => {
+      const fixture = await createRunFixture();
+      const laterRunId = newId("run");
+
+      await db.insert(schema.agentEventLog).values([
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 0,
+          eventType: "RUN_STARTED",
+          category: "agui",
+          payloadJson: {
+            type: EventType.RUN_STARTED,
+            runId: fixture.runId,
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: laterRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 3,
+          eventType: "RUN_STARTED",
+          category: "agui",
+          payloadJson: { type: EventType.RUN_STARTED, runId: laterRunId },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+      ]);
+
+      await expect(
+        getLatestRunIdForThreadChat({
+          db,
+          threadChatId: fixture.threadChatId,
+        }),
+      ).resolves.toBe(laterRunId);
+    });
+
+    it("returns null when the thread chat has no events", async () => {
+      await expect(
+        getLatestRunIdForThreadChat({
+          db,
+          threadChatId: "chat-with-no-events",
+        }),
+      ).resolves.toBeNull();
     });
   });
 });

@@ -6,6 +6,7 @@ import { getSessionOrNull } from "@/lib/auth-server";
 import {
   getActiveAgUiLifecycleAt,
   getAgUiEventsForReplay,
+  getAgUiEventsForRun,
 } from "@terragon/shared/model/agent-event-log";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
   agUiStreamKey: (threadChatId: string) => `agui:thread:${threadChatId}`,
   getAgUiEventsForReplay: vi.fn(),
   getActiveAgUiLifecycleAt: vi.fn(),
+  getAgUiEventsForRun: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -135,6 +137,7 @@ describe("ag-ui SSE route", () => {
       textMessages: [],
       toolCalls: [],
     });
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue([]);
     redisMocks.xread.mockImplementation(() => new Promise(() => {}));
     redisMocks.xrevrange.mockImplementation(() => Promise.resolve({}));
   });
@@ -573,6 +576,261 @@ describe("ag-ui SSE route", () => {
       messageId: "msg-1",
     });
     warnSpy.mockRestore();
+  });
+
+  // -------------------------------------------------------------------
+  // Phase A: new `?runId=X` replay path. Additive — runs beside the
+  // legacy `?fromSeq` path. Existing tests above pin the legacy flow.
+  // -------------------------------------------------------------------
+
+  it("runId path: streams the full run event log without synthesis when replay starts with RUN_STARTED", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-42",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "msg-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "msg-1",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-42",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(getAgUiEventsForRun).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      runId: "run-42",
+    });
+    // The legacy replay helper must NOT be called on the runId path.
+    expect(getAgUiEventsForReplay).not.toHaveBeenCalled();
+    expect(getActiveAgUiLifecycleAt).not.toHaveBeenCalled();
+
+    const received = await readReplayBurst(response, runEvents.length);
+    // Natural bracket: events as stored, no synthetic RUN_STARTED prepend.
+    expect(received).toEqual(runEvents);
+    const runStartedCount = received.filter(
+      (e) => e.type === EventType.RUN_STARTED,
+    ).length;
+    expect(runStartedCount).toBe(1);
+  });
+
+  it("runId path: closes the stream immediately after RUN_FINISHED on a complete run", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-done",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "chat-1",
+        runId: "run-done",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-done",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    // Drain the stream fully. If the route failed to close, this read
+    // would stall on the live-tail XREAD poll; `readReplayBurst`'s 1s
+    // timeout would cancel it. We assert `done:true` is reached, which
+    // requires a clean close — not a timeout cancel.
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const events: BaseEvent[] = [];
+    // We also want to observe the natural stream end (no hang), so poll
+    // with a generous timeout and break on done.
+    const timeout = setTimeout(() => reader.cancel("test-timeout"), 2_000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split("\n\n");
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          events.push(JSON.parse(line.slice("data: ".length)) as BaseEvent);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      reader.releaseLock();
+    }
+    expect(events).toEqual(runEvents);
+    // Live tail was NOT entered — xread must not have been called.
+    expect(redisMocks.xread).not.toHaveBeenCalled();
+  });
+
+  it("runId path: lives-tails via XREAD when the run is still active (no RUN_FINISHED yet)", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-live",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "msg-live",
+        role: "assistant",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    // xread hangs (default) — we just need to observe it was called.
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-live",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, runEvents.length);
+    expect(received).toEqual(runEvents);
+    // Allow the async loop to settle so the xread call has been issued.
+    // readReplayBurst cancels the reader on cleanup, which also releases
+    // the lock on response.body — no further cleanup needed here.
+    await vi.waitFor(() => {
+      expect(redisMocks.xread).toHaveBeenCalled();
+    });
+  });
+
+  it("runId path: emits RUN_ERROR and closes when the run has no events", async () => {
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue([]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-missing",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, 1);
+    expect(received[0]).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "run_not_found",
+    });
+    expect(redisMocks.xread).not.toHaveBeenCalled();
+  });
+
+  it("runId path: emits RUN_ERROR when the stored log does not start with RUN_STARTED", async () => {
+    // This is a loud surface for log corruption — the contract for the
+    // runId path is that the events query naturally begins with
+    // RUN_STARTED. If it doesn't, the fix lives in the writer, not in
+    // reader synthesis. We assert the route refuses to paper over the
+    // bug.
+    const malformed: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 10,
+        messageId: "msg-x",
+        delta: "hi",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(malformed);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-broken",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, 1);
+    expect(received[0]).toMatchObject({
+      type: EventType.RUN_ERROR,
+      code: "replay_failed",
+    });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("runId path: prefers runId over fromSeq when both are provided", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-pref",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "chat-1",
+        runId: "run-pref",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-pref&fromSeq=99",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    // runId path was taken — legacy helpers must not have fired.
+    expect(getAgUiEventsForRun).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      runId: "run-pref",
+    });
+    expect(getAgUiEventsForReplay).not.toHaveBeenCalled();
+
+    // Drain to let the stream close on RUN_FINISHED.
+    const reader = response.body!.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    reader.releaseLock();
+  });
+
+  it("runId path: emits RUN_ERROR when getAgUiEventsForRun throws", async () => {
+    vi.mocked(getAgUiEventsForRun).mockRejectedValue(new Error("db exploded"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-boom",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, 1);
+    expect(received[0]).toMatchObject({
+      type: EventType.RUN_ERROR,
+      message: "db exploded",
+      code: "replay_failed",
+    });
+    errorSpy.mockRestore();
   });
 
   it("emits a RUN_ERROR event when the replay query fails", async () => {

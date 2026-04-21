@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   gt,
   gte,
@@ -648,6 +649,86 @@ export async function getAgUiEventsForReplay({
     }
   }
   return events;
+}
+
+/**
+ * Fetch every AG-UI BaseEvent for a single run, ordered by seq ascending.
+ *
+ * This is the workhorse for the "Replay from Run Start" reconnect path (Phase
+ * A of the AG-UI streaming refactor): the caller passes the client's
+ * known `runId` and the response is guaranteed to start with the real
+ * `RUN_STARTED` event that opened the run — no synthesis required.
+ *
+ * Contrast with `getAgUiEventsForReplay`, which uses a `fromSeq` cursor and
+ * therefore can land mid-run (requiring the SSE route to synthesize a
+ * `RUN_STARTED` + lifecycle STARTs). That cursor semantic is preserved for
+ * backwards compatibility; new code should prefer this helper.
+ *
+ * Rows that cannot be mapped to an AG-UI event (e.g. operational canonical
+ * events with no user-facing projection, or unknown payload shapes) are
+ * silently skipped — readAgUiPayload already warns on truly unrecognized
+ * payloads.
+ */
+export async function getAgUiEventsForRun({
+  db,
+  runId,
+}: {
+  db: Pick<DB, "query">;
+  runId: RunId;
+}): Promise<BaseEvent[]> {
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: eq(schema.agentEventLog.runId, runId),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  const events: BaseEvent[] = [];
+  for (const row of rows) {
+    // Canonical rows expand to multiple events (START + CONTENT + END); use
+    // the full-expansion helper so callers get a faithful event sequence,
+    // not just the head of each row.
+    for (const event of readAllAgUiPayloads(row)) {
+      events.push(event);
+    }
+  }
+  return events;
+}
+
+/**
+ * Return the runId of the most recent run for a thread chat, or null if the
+ * thread chat has no agent events yet. "Most recent" is determined by the
+ * highest `seq` value across all rows for that thread chat.
+ *
+ * Used by the AG-UI SSE endpoint as the default "latest run" semantic when a
+ * client connects without an explicit `?runId=X` cursor.
+ */
+export async function getLatestRunIdForThreadChat({
+  db,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+}): Promise<RunId | null> {
+  try {
+    const row = await db.query.agentEventLog.findFirst({
+      where: eq(schema.agentEventLog.threadChatId, threadChatId),
+      orderBy: [desc(schema.agentEventLog.seq)],
+      columns: { runId: true },
+    });
+    return (row?.runId as RunId | undefined) ?? null;
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**
