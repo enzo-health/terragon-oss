@@ -75,6 +75,9 @@ grep -c "enqueueDelta\|deltaBuffer" packages/daemon/src/daemon.ts || echo "0"
 echo "Meta event buffer:"
 grep -c "enqueueMetaEvent\|metaEventBuffer" packages/daemon/src/daemon.ts || echo "0"
 
+echo "Sandbox communication tests:"
+grep -c "it(" packages/daemon/src/daemon-sandbox-communication.test.ts || echo "0"
+
 # Output synthetic metrics based on current configuration
 # These represent the theoretical minimum latency based on code analysis
 
