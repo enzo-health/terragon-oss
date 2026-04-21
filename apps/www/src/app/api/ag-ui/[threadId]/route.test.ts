@@ -286,16 +286,13 @@ describe("ag-ui SSE route", () => {
       fromSeq: 0,
     });
 
-    // The route prepends a synthetic RUN_STARTED before the stored replay
-    // so that reconnects (fromSeq > 0) still satisfy the AG-UI client's
-    // "first event must be RUN_STARTED" protocol requirement. Drop the
-    // synthetic here and assert the stored events come through unchanged.
-    const received = await readReplayBurst(response, replayEvents.length + 1);
-    expect(received[0]).toMatchObject({
-      type: EventType.RUN_STARTED,
-      threadId: "chat-1",
-    });
-    expect(received.slice(1)).toEqual(replayEvents);
+    // When the replay already contains a RUN_STARTED event (the natural
+    // fromSeq=0 case), the route does NOT prepend a synthetic one — the
+    // AG-UI client's verifier rejects two RUN_STARTEDs in the same run
+    // with "Cannot send 'RUN_STARTED' while a run is still active".
+    // The stored events pass through unchanged, in order.
+    const received = await readReplayBurst(response, replayEvents.length);
+    expect(received).toEqual(replayEvents);
   });
 
   it("streams replay events from the shared helper regardless of underlying row shape", async () => {
@@ -334,15 +331,66 @@ describe("ag-ui SSE route", () => {
         fromSeq: 3,
       }),
     );
-    // Skip the synthetic RUN_STARTED prepended by the route (see the
-    // adjacent test for the rationale) and assert the shared-helper output
-    // comes through unchanged.
+    // Mid-run reconnect: replay has no RUN_STARTED (client consumed the
+    // original in a prior stream), so the route prepends a synthetic one.
+    // Skip the synthetic here and assert the shared-helper output comes
+    // through unchanged.
     const received = await readReplayBurst(response, replayEvents.length + 1);
     expect(received[0]).toMatchObject({
       type: EventType.RUN_STARTED,
       threadId: "chat-1",
     });
     expect(received.slice(1)).toEqual(replayEvents);
+  });
+
+  it("does NOT prepend a synthetic RUN_STARTED when the replay already contains one", async () => {
+    // Regression: the AG-UI client's verifier closes over per-run state
+    // and throws "Cannot send 'RUN_STARTED' while a run is still active"
+    // when a second RUN_STARTED arrives before a RUN_FINISHED. The route
+    // must skip the synthetic prepend whenever the replay window carries
+    // a real RUN_STARTED — that natural bracket opens the run for the
+    // client.
+    const replayEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-real",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "msg-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "msg-1",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-real",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForReplay).mockResolvedValue(replayEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=0",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, replayEvents.length);
+    // Exactly one RUN_STARTED in the output, and it's the real one.
+    const runStartedCount = received.filter(
+      (e) => e.type === EventType.RUN_STARTED,
+    ).length;
+    expect(runStartedCount).toBe(1);
+    expect(received).toEqual(replayEvents);
   });
 
   it("captures the stream cursor BEFORE the replay query so in-flight writes are not dropped", async () => {
@@ -543,15 +591,15 @@ describe("ag-ui SSE route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The route prepends a synthetic RUN_STARTED before running the replay
-    // query, so on failure the stream is: [RUN_STARTED, RUN_ERROR].
-    const received = await readReplayBurst(response, 2);
-    expect(received).toHaveLength(2);
+    // The route now loads the replay BEFORE deciding whether to prepend
+    // a synthetic RUN_STARTED (so it can inspect the replay for an
+    // existing one). When the replay query fails, the error path emits
+    // only RUN_ERROR — which the AG-UI verifier accepts as a valid
+    // first event (see the "First event must be RUN_STARTED or RUN_ERROR"
+    // check in @ag-ui/client/dist/index.mjs).
+    const received = await readReplayBurst(response, 1);
+    expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({
-      type: EventType.RUN_STARTED,
-      threadId: "chat-1",
-    });
-    expect(received[1]).toMatchObject({
       type: EventType.RUN_ERROR,
       message: "db exploded",
       code: "replay_failed",

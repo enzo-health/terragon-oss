@@ -234,20 +234,71 @@ export async function GET(
       }
       abortSignal.addEventListener("abort", () => close(), { once: true });
 
-      // 1) Prepend a synthetic RUN_STARTED so the client accepts the stream
-      // on reconnect. The AG-UI client protocol requires every SSE stream to
-      // begin with RUN_STARTED to establish run context. When `fromSeq > 0`,
-      // the stored replay starts mid-run, so the original RUN_STARTED is not
-      // re-sent. This synthetic event is per-connection and not persisted.
-      const syntheticRunStarted: RunStartedEvent = {
-        type: EventType.RUN_STARTED,
-        timestamp: Date.now(),
-        threadId: threadChatId,
-        runId: `resume-${threadChatId}-${Date.now()}`,
-      };
-      enqueue(encodeSseEvent(syntheticRunStarted));
+      // 1) Load the stored replay FIRST so we can inspect whether it already
+      // contains a real RUN_STARTED event. The AG-UI client's verifier (see
+      // `L=` in @ag-ui/client/dist/index.mjs) tracks per-run state with a
+      // `runStarted` flag that is only cleared by RUN_FINISHED. Emitting a
+      // synthetic RUN_STARTED followed by a real one from the log causes the
+      // verifier to throw:
+      //     Cannot send 'RUN_STARTED' while a run is still active. The
+      //     previous run must be finished with 'RUN_FINISHED' before
+      //     starting a new run.
+      //
+      // The verifier's state is per-runAgent-invocation (fresh on each
+      // SSE connect — it closes over local `let p=!1,s=!1,...`), so there
+      // is no cross-stream state to worry about. The only way to trigger
+      // the "still active" error within a single stream is to emit two
+      // RUN_STARTEDs before a RUN_FINISHED. Skip the synthetic prepend
+      // when the replay window already contains a real RUN_STARTED; the
+      // log's natural bracket covers it.
+      let replay: BaseEvent[];
+      try {
+        replay = await getAgUiEventsForReplay({
+          db,
+          threadChatId,
+          fromSeq,
+        });
+      } catch (error) {
+        console.error(
+          "[ag-ui] replay burst failed",
+          { threadId, threadChatId, fromSeq },
+          error,
+        );
+        // The route's error path must still satisfy the verifier's
+        // "first event must be RUN_STARTED or RUN_ERROR" rule. RUN_ERROR
+        // alone is accepted as the first event.
+        const errorEvent = mapRunErrorToAgui(
+          error instanceof Error ? error.message : "Replay failed",
+          "replay_failed",
+        );
+        enqueue(encodeSseEvent(errorEvent));
+        close();
+        return;
+      }
 
-      // 2) If reconnecting mid-turn (fromSeq > 0), re-emit synthetic
+      const replayHasRunStarted = replay.some(
+        (event) => event.type === EventType.RUN_STARTED,
+      );
+
+      // 2) Prepend a synthetic RUN_STARTED ONLY when the replay doesn't
+      // already contain one. This covers:
+      //   - Mid-run reconnects (fromSeq > 0 and the original RUN_STARTED
+      //     has already been consumed by the client in an earlier stream).
+      //   - Replay windows trimmed at the head so no RUN_STARTED remains.
+      // The AG-UI client protocol requires every SSE stream to begin with
+      // RUN_STARTED to establish run context. This synthetic event is
+      // per-connection and not persisted.
+      if (!replayHasRunStarted) {
+        const syntheticRunStarted: RunStartedEvent = {
+          type: EventType.RUN_STARTED,
+          timestamp: Date.now(),
+          threadId: threadChatId,
+          runId: `resume-${threadChatId}-${Date.now()}`,
+        };
+        enqueue(encodeSseEvent(syntheticRunStarted));
+      }
+
+      // 3) If reconnecting mid-turn (fromSeq > 0), re-emit synthetic
       // TEXT_MESSAGE_START / TOOL_CALL_START events for any lifecycle still
       // "active" at the cursor (STARTed in the pre-cursor history but not
       // ENDed). Without these, subsequent TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS
@@ -298,29 +349,9 @@ export async function GET(
         );
       }
 
-      // 3) Initial replay burst from agent_event_log.
-      try {
-        const replay = await getAgUiEventsForReplay({
-          db,
-          threadChatId,
-          fromSeq,
-        });
-        for (const event of replay) {
-          enqueue(encodeSseEvent(event));
-        }
-      } catch (error) {
-        console.error(
-          "[ag-ui] replay burst failed",
-          { threadId, threadChatId, fromSeq },
-          error,
-        );
-        const errorEvent = mapRunErrorToAgui(
-          error instanceof Error ? error.message : "Replay failed",
-          "replay_failed",
-        );
-        enqueue(encodeSseEvent(errorEvent));
-        close();
-        return;
+      // 4) Flush the replay burst we loaded at step 1.
+      for (const event of replay) {
+        enqueue(encodeSseEvent(event));
       }
 
       // 4) Keepalive pings so proxies don't close idle connections.
