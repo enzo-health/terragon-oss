@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
 import type { ThreadInfoFull, UIMessage, ThreadStatus } from "@terragon/shared";
+import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type {
   RedoDialogData,
@@ -19,7 +20,11 @@ import { TerragonUserMessage } from "./user-message";
 import { TerragonAssistantMessage } from "./assistant-message";
 import { TerragonSystemMessage } from "./system-message";
 import { ChatError } from "../chat-error";
-import { WorkingMessage, MessageScheduled } from "../chat-messages";
+import {
+  WorkingMessage,
+  MessageScheduled,
+  classifyDeliveryLoopFooter,
+} from "../chat-messages";
 import { isQueuedStatus } from "@/agent/thread-status";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
@@ -62,6 +67,14 @@ type TerragonThreadProps = {
   chatAgent: AIAgent;
   bootingSubstatus?: BootingSubstatus;
   reattemptQueueAt: Date | null;
+  /**
+   * Current delivery-loop state, used to override the "Assistant is
+   * working" footer when the workflow is actually in a passive-wait
+   * state (e.g. awaiting PR merge) so users aren't misled into thinking
+   * the system is stuck. Null/undefined preserves the pre-existing
+   * footer behavior for non-delivery-loop threads.
+   */
+  deliveryLoopState?: DeliveryLoopState | null;
   // Scheduled
   threadChatId?: string;
   scheduleAt?: Date | null;
@@ -93,6 +106,7 @@ export function TerragonThread({
   chatAgent,
   bootingSubstatus,
   reattemptQueueAt,
+  deliveryLoopState,
   threadChatId,
   scheduleAt,
   threadChatStatus,
@@ -147,6 +161,14 @@ export function TerragonThread({
     return false;
   }, [messages, latestAgentMessageIndex]);
 
+  // Classify the delivery-loop state so we can override the footer when the
+  // workflow is in a passive-wait or terminal state. Active states fall
+  // through to the default isAgentWorking-based logic below.
+  const deliveryLoopFooter = useMemo(
+    () => classifyDeliveryLoopFooter(deliveryLoopState),
+    [deliveryLoopState],
+  );
+
   // Hide the "Waiting to start" indicator when the agent has already produced
   // messages — the status DB field may still be "queued" while the agent is
   // actively working due to broadcast-before-persist timing.
@@ -156,7 +178,14 @@ export function TerragonThread({
   // "working" cues on screen was overwhelming. The retry pill (if present)
   // is a historical log entry in the transcript and is orthogonal to this
   // live-activity footer.
-  const showWorkingMessage =
+  //
+  // Passive-wait: show the quieter footer regardless of isAgentWorking so
+  // users see an accurate "Waiting for PR merge" / "Waiting for your input"
+  // line instead of the misleading "Assistant is working" animation.
+  //
+  // Hidden (terminal states: done/stopped/terminated): skip the footer
+  // entirely — nothing is happening.
+  const baseShowWorking =
     isAgentWorking &&
     !hasPendingToolCall &&
     !(
@@ -164,6 +193,18 @@ export function TerragonThread({
       threadStatus !== null &&
       isQueuedStatus(threadStatus)
     );
+
+  const showWorkingMessage =
+    deliveryLoopFooter.kind === "passive"
+      ? true
+      : deliveryLoopFooter.kind === "hidden"
+        ? false
+        : baseShowWorking;
+
+  const passiveWaitProp =
+    deliveryLoopFooter.kind === "passive"
+      ? { message: deliveryLoopFooter.message }
+      : null;
 
   // Pre-assembled `messagePartProps`. Per-message components read this as
   // a single stable reference instead of reconstructing the object inline
@@ -279,6 +320,7 @@ export function TerragonThread({
               bootingSubstatus={bootingSubstatus}
               reattemptQueueAt={reattemptQueueAt}
               threadId={thread.id}
+              passiveWait={passiveWaitProp}
             />
           )}
           {threadChatStatus === "scheduled" && scheduleAt && threadChatId && (

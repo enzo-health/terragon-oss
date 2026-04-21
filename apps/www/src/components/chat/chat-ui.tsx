@@ -724,6 +724,7 @@ function ChatUIContent({
                     thread={thread}
                     latestGitDiffTimestamp={latestGitDiffTimestamp}
                     isAgentWorking={isAgentCurrentlyWorking}
+                    deliveryLoopState={deliveryLoopStatus?.state ?? null}
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={handleOpenArtifact}
                     onCancel={async () => {

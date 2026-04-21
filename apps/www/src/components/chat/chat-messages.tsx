@@ -7,6 +7,7 @@ import {
   ThreadStatus,
   UIMessage,
 } from "@terragon/shared";
+import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 
 import { AIAgent, AIModel } from "@terragon/agent/types";
@@ -286,12 +287,65 @@ function getStatusMessage({
   }
 }
 
+/**
+ * Classifies a delivery-loop state into footer behavior buckets. Active
+ * states keep the current "Assistant is working" footer; passive-wait
+ * states show a quieter line with no interrupt hint and no animation;
+ * terminal states hide the footer entirely.
+ *
+ * Note: `blocked` covers both `awaiting_manual_fix` and
+ * `awaiting_operator_action` — the underlying v3 distinction is collapsed
+ * at the API boundary (see `stateToDeliveryLoopState`), so we render a
+ * single "Waiting for your input" message for both.
+ */
+export type DeliveryLoopFooterKind =
+  | { kind: "active" }
+  | { kind: "passive"; message: string }
+  | { kind: "hidden" };
+
+export function classifyDeliveryLoopFooter(
+  state: DeliveryLoopState | null | undefined,
+): DeliveryLoopFooterKind {
+  if (state === null || state === undefined) {
+    return { kind: "active" };
+  }
+  switch (state) {
+    case "planning":
+    case "implementing":
+    case "review_gate":
+    case "ci_gate":
+    case "babysitting":
+      return { kind: "active" };
+    case "awaiting_pr_link":
+      return { kind: "passive", message: "Waiting for PR merge" };
+    case "blocked":
+      return { kind: "passive", message: "Waiting for your input" };
+    case "done":
+    case "stopped":
+    case "terminated_pr_closed":
+    case "terminated_pr_merged":
+      return { kind: "hidden" };
+    default:
+      // Unknown state -> preserve current "Assistant is working" behavior.
+      return { kind: "active" };
+  }
+}
+
+export function PassiveWaitFooter({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-2.5 px-2 text-muted-foreground/70 text-sm">
+      <span>{message}</span>
+    </div>
+  );
+}
+
 export function WorkingMessage({
   agent,
   status,
   bootingSubstatus,
   reattemptQueueAt,
   threadId,
+  passiveWait,
 }: {
   agent: AIAgent;
   status: ThreadStatus;
@@ -299,6 +353,13 @@ export function WorkingMessage({
   reattemptQueueAt: Date | null;
   /** Required when status === "booting" to power the BootChecklist. */
   threadId?: string;
+  /**
+   * When provided, render a quieter passive-wait line instead of the
+   * animated "Assistant is working" indicator. Used when the delivery
+   * loop is in a passive state (awaiting PR merge, waiting for human
+   * input) so users aren't misled into thinking the agent is stuck.
+   */
+  passiveWait?: { message: string } | null;
 }) {
   const isTouchDevice = useTouchDevice();
   const [_, setForceUpdate] = useState(0);
@@ -310,6 +371,13 @@ export function WorkingMessage({
       return () => clearInterval(interval);
     }
   }, [status, reattemptQueueAt]);
+
+  // Passive-wait takes precedence: regardless of the underlying thread
+  // status (which may still read "working" due to broadcast-before-
+  // persist timing) we show the accurate delivery-loop-derived message.
+  if (passiveWait) {
+    return <PassiveWaitFooter message={passiveWait.message} />;
+  }
 
   // The booting status renders a persistent checklist instead of a single line.
   if (status === "booting" && threadId) {
