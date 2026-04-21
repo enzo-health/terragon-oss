@@ -31,16 +31,6 @@ patchedDependencies:
 importers:
 
   .:
-    dependencies:
-      '@ag-ui/client':
-        specifier: ^0.0.52
-        version: 0.0.52
-      '@ag-ui/core':
-        specifier: ^0.0.52
-        version: 0.0.52
-      '@assistant-ui/react-ag-ui':
-        specifier: ^0.0.26
-        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
     devDependencies:
       '@biomejs/biome':
         specifier: 2.4.6
@@ -534,6 +524,9 @@ importers:
       resend:
         specifier: ^4.5.1
         version: 4.5.1(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
+      shiki:
+        specifier: 3.23.0
+        version: 3.23.0
       sonner:
         specifier: ^2.0.5
         version: 2.0.5(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -18920,7 +18913,7 @@ snapshots:
       remark-gfm: 4.0.1
       remark-rehype: 11.1.2
       scroll-into-view-if-needed: 3.1.0
-      shiki: 3.6.0
+      shiki: 3.23.0
       unist-util-visit: 5.0.0
     optionalDependencies:
       '@types/react': 19.1.8

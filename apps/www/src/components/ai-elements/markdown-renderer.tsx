@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { Streamdown } from "streamdown";
-import { createCodePlugin } from "@streamdown/code";
+import { createCodePlugin } from "./code-plugin";
 import { createMathPlugin } from "@streamdown/math";
 import type { StreamdownProps } from "streamdown";
 import "streamdown/styles.css";
