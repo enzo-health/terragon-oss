@@ -778,6 +778,110 @@ export async function getActiveAgUiLifecycleAt({
   };
 }
 
+/**
+ * Describes a (messageId, kind) pair that had a TEXT_MESSAGE_START /
+ * REASONING_MESSAGE_START written for a given run but does not yet have the
+ * matching _END event. Used by the daemon-event route at run-terminal time
+ * to emit synthetic ENDs so the AG-UI event log stays protocol-compliant.
+ */
+export type OpenAgUiMessage = {
+  messageId: string;
+  kind: "text" | "thinking";
+};
+
+/**
+ * Scan every agent_event_log row for `runId` and compute which TEXT_MESSAGE
+ * and REASONING_MESSAGE lifecycles are still "open" — STARTed but not ENDed.
+ *
+ * Bounded to a single run so the query only touches rows written by that
+ * run. Canonical-event rows always expand atomically (START + CONTENT + END
+ * share the same row), so they cannot appear open here — open messages are
+ * exclusively those written by the daemon-delta path without their
+ * corresponding ENDs.
+ */
+export async function findOpenAgUiMessagesForRun({
+  db,
+  runId,
+}: {
+  db: Pick<DB, "query">;
+  runId: RunId;
+}): Promise<OpenAgUiMessage[]> {
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: eq(schema.agentEventLog.runId, runId),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  // Preserve insertion order for deterministic END emission.
+  const openText = new Map<string, true>();
+  const openThinking = new Map<string, true>();
+  for (const row of rows) {
+    const events = readAllAgUiPayloads(row);
+    for (const event of events) {
+      switch (event.type) {
+        case EventType.TEXT_MESSAGE_START: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            openText.set(messageId, true);
+          }
+          break;
+        }
+        case EventType.TEXT_MESSAGE_END: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            openText.delete(messageId);
+          }
+          break;
+        }
+        case EventType.REASONING_MESSAGE_START: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            openThinking.set(messageId, true);
+          }
+          break;
+        }
+        case EventType.REASONING_MESSAGE_END: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            openThinking.delete(messageId);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+
+  const open: OpenAgUiMessage[] = [];
+  for (const messageId of openText.keys()) {
+    open.push({ messageId, kind: "text" });
+  }
+  for (const messageId of openThinking.keys()) {
+    open.push({ messageId, kind: "thinking" });
+  }
+  return open;
+}
+
 export async function getRunEvents({
   db,
   runId,

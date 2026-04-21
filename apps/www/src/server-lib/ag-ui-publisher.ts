@@ -1,4 +1,11 @@
-import type { BaseEvent } from "@ag-ui/core";
+import {
+  EventType,
+  type BaseEvent,
+  type ReasoningMessageEndEvent,
+  type ReasoningMessageStartEvent,
+  type TextMessageEndEvent,
+  type TextMessageStartEvent,
+} from "@ag-ui/core";
 import {
   dbAgentMessagePartsToAgUi,
   mapCanonicalEventToAgui,
@@ -218,6 +225,16 @@ export function canonicalEventsToAgUiRows(
  * one TEXT_MESSAGE_CONTENT or REASONING_MESSAGE_CONTENT row. We synthesize a
  * per-delta eventId from the composite (runId:messageId:partIndex:deltaSeq)
  * so retries from the daemon dedupe on (runId, eventId).
+ *
+ * AG-UI's strict lifecycle requires every CONTENT event to be bracketed by a
+ * matching _START and _END. The daemon delta channel only carries content
+ * chunks, so this helper synthesizes a per-(messageId, kind) START event on
+ * the FIRST delta seen for that pair within the batch and prepends it to the
+ * output. Duplicate STARTs across batches are cheap and client-tolerant (the
+ * reducer treats a repeated START for an already-active message as a no-op),
+ * so we intentionally skip a DB roundtrip to check for prior STARTs. END
+ * events are emitted at run-terminal time in the route handler (see
+ * `findOpenAgUiMessagesForRun` in `agent-event-log`).
  */
 export function daemonDeltasToAgUiRows(params: {
   runId: string;
@@ -226,17 +243,85 @@ export function daemonDeltasToAgUiRows(params: {
   const { runId, deltas } = params;
   const rows: AgUiPublishRow[] = [];
   const now = new Date();
+  // Track (messageId, kind) pairs for which we've already emitted a START in
+  // THIS batch. Key format: `${kind}:${messageId}` to keep text vs thinking
+  // lifecycles distinct even when the daemon re-uses the same messageId.
+  const startedPairs = new Set<string>();
   for (const delta of deltas) {
+    const kind = delta.kind === "thinking" ? "thinking" : "text";
+    const pairKey = `${kind}:${delta.messageId}`;
+    if (!startedPairs.has(pairKey)) {
+      const startEvent: BaseEvent =
+        kind === "thinking"
+          ? ({
+              type: EventType.REASONING_MESSAGE_START,
+              timestamp: now.getTime(),
+              messageId: delta.messageId,
+              role: "reasoning",
+            } as ReasoningMessageStartEvent)
+          : ({
+              type: EventType.TEXT_MESSAGE_START,
+              timestamp: now.getTime(),
+              messageId: delta.messageId,
+              role: "assistant",
+            } as TextMessageStartEvent);
+      // Unique eventId for the synthetic START. Keyed on runId, messageId,
+      // and kind so that retried batches re-attempt an insert that dedupes
+      // on (runId, eventId) — the first writer wins and all further attempts
+      // become no-ops in the persist layer.
+      const startEventId = `delta-start:${runId}:${delta.messageId}:${kind}`;
+      rows.push({ event: startEvent, eventId: startEventId, timestamp: now });
+      startedPairs.add(pairKey);
+    }
+
     const agUi = mapDaemonDeltaToAgui({
       messageId: delta.messageId,
       partIndex: delta.partIndex,
       deltaSeq: delta.deltaSeq,
-      kind: delta.kind === "thinking" ? "thinking" : "text",
+      kind,
       text: delta.text,
     });
-    const kind = delta.kind === "thinking" ? "thinking" : "text";
     const eventId = `delta:${runId}:${delta.messageId}:${delta.partIndex}:${kind}:${delta.deltaSeq}`;
     rows.push({ event: agUi, eventId, timestamp: now });
+  }
+  return rows;
+}
+
+/**
+ * Build synthetic END rows for (messageId, kind) pairs that were opened by
+ * delta STARTs earlier in the run but never closed. Called from the
+ * daemon-event route at run-terminal time after scanning the event log via
+ * `findOpenAgUiMessagesForRun`.
+ *
+ * Each END row has a deterministic eventId so retried terminal events dedupe
+ * on (runId, eventId).
+ */
+export function buildDeltaRunEndRows(params: {
+  runId: string;
+  openMessages: ReadonlyArray<{
+    messageId: string;
+    kind: "text" | "thinking";
+  }>;
+  timestamp?: Date;
+}): AgUiPublishRow[] {
+  const { runId, openMessages } = params;
+  const ts = params.timestamp ?? new Date();
+  const rows: AgUiPublishRow[] = [];
+  for (const { messageId, kind } of openMessages) {
+    const endEvent: BaseEvent =
+      kind === "thinking"
+        ? ({
+            type: EventType.REASONING_MESSAGE_END,
+            timestamp: ts.getTime(),
+            messageId,
+          } as ReasoningMessageEndEvent)
+        : ({
+            type: EventType.TEXT_MESSAGE_END,
+            timestamp: ts.getTime(),
+            messageId,
+          } as TextMessageEndEvent);
+    const endEventId = `delta-end:${runId}:${messageId}:${kind}`;
+    rows.push({ event: endEvent, eventId: endEventId, timestamp: ts });
   }
   return rows;
 }

@@ -24,7 +24,9 @@ vi.mock("@/lib/redis", () => ({
 const {
   persistAndPublishAgUiEvents,
   buildAgUiEventId,
+  buildDeltaRunEndRows,
   canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
 } = await import("./ag-ui-publisher");
 
@@ -437,6 +439,149 @@ describe("ag-ui-publisher", () => {
         { messageId: "m", parts: [{ type: "text", text: "only text" }] },
       ]),
     ).toEqual([]);
+  });
+
+  it("daemonDeltasToAgUiRows: prepends exactly one synthetic START per (messageId, kind) within the batch", () => {
+    const runId = "run-delta-1";
+    const rows = daemonDeltasToAgUiRows({
+      runId,
+      deltas: [
+        {
+          messageId: "m-1",
+          partIndex: 0,
+          deltaSeq: 0,
+          kind: "text",
+          text: "a",
+        },
+        {
+          messageId: "m-1",
+          partIndex: 0,
+          deltaSeq: 1,
+          kind: "text",
+          text: "b",
+        },
+        {
+          messageId: "m-1",
+          partIndex: 0,
+          deltaSeq: 2,
+          kind: "thinking",
+          text: "t1",
+        },
+        {
+          messageId: "m-2",
+          partIndex: 0,
+          deltaSeq: 0,
+          kind: "text",
+          text: "c",
+        },
+      ],
+    });
+
+    // Expect interleaved STARTs prepended at first occurrence of each pair:
+    //   [TEXT_START(m-1), TEXT_CONTENT(m-1,"a"), TEXT_CONTENT(m-1,"b"),
+    //    REASONING_START(m-1), REASONING_CONTENT(m-1,"t1"),
+    //    TEXT_START(m-2), TEXT_CONTENT(m-2,"c")]
+    expect(rows.map((r) => r.event.type)).toEqual([
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+    ]);
+
+    // Synthetic START eventIds are deterministic and distinguishable from
+    // content eventIds.
+    const startRows = rows.filter(
+      (r) =>
+        r.event.type === EventType.TEXT_MESSAGE_START ||
+        r.event.type === EventType.REASONING_MESSAGE_START,
+    );
+    expect(startRows.map((r) => r.eventId)).toEqual([
+      `delta-start:${runId}:m-1:text`,
+      `delta-start:${runId}:m-1:thinking`,
+      `delta-start:${runId}:m-2:text`,
+    ]);
+  });
+
+  it("daemonDeltasToAgUiRows: persisting two batches deduplicates the synthetic START via (runId, eventId)", async () => {
+    const fixture = await createRunFixture();
+    const firstBatch = daemonDeltasToAgUiRows({
+      runId: fixture.runId,
+      deltas: [
+        {
+          messageId: "m-x",
+          partIndex: 0,
+          deltaSeq: 0,
+          kind: "text",
+          text: "a",
+        },
+      ],
+    });
+    await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: firstBatch,
+    });
+
+    const secondBatch = daemonDeltasToAgUiRows({
+      runId: fixture.runId,
+      deltas: [
+        {
+          messageId: "m-x",
+          partIndex: 0,
+          deltaSeq: 1,
+          kind: "text",
+          text: "b",
+        },
+      ],
+    });
+    redisMocks.xadd.mockClear();
+    const result = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: secondBatch,
+    });
+
+    // Second batch tries to re-insert the same synthetic START (dedupe on
+    // (runId, eventId)) plus one new CONTENT row. Only the CONTENT inserts.
+    expect(result.inserted).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.insertedEventIds).toEqual([
+      `delta:${fixture.runId}:m-x:0:text:1`,
+    ]);
+
+    const persisted = await fetchRowsForThreadChat(fixture.threadChatId);
+    // 1 synthetic START + 2 CONTENT rows total across both batches.
+    expect(persisted.map((r) => r.eventType)).toEqual([
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_CONTENT,
+    ]);
+  });
+
+  it("buildDeltaRunEndRows: produces END rows with deterministic eventIds for each open message", () => {
+    const runId = "run-end-1";
+    const endRows = buildDeltaRunEndRows({
+      runId,
+      openMessages: [
+        { messageId: "m-1", kind: "text" },
+        { messageId: "m-2", kind: "thinking" },
+      ],
+    });
+    expect(endRows.map((r) => r.event.type)).toEqual([
+      EventType.TEXT_MESSAGE_END,
+      EventType.REASONING_MESSAGE_END,
+    ]);
+    expect(endRows.map((r) => r.eventId)).toEqual([
+      `delta-end:${runId}:m-1:text`,
+      `delta-end:${runId}:m-2:thinking`,
+    ]);
   });
 
   it("seq continuity: two sequential calls for same threadChatId produce contiguous seqs", async () => {

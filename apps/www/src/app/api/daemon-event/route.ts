@@ -32,7 +32,10 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { assignThreadChatMessageSeqToCanonicalEvents } from "@terragon/shared/model/agent-event-log";
+import {
+  assignThreadChatMessageSeqToCanonicalEvents,
+  findOpenAgUiMessagesForRun,
+} from "@terragon/shared/model/agent-event-log";
 import {
   getThreadMinimal,
   touchThreadChatUpdatedAt,
@@ -53,6 +56,7 @@ import {
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
   broadcastAgUiEventEphemeral,
+  buildDeltaRunEndRows,
   buildRunTerminalAgUi,
   canonicalEventsToAgUiRows,
   daemonDeltasToAgUiRows,
@@ -1696,6 +1700,51 @@ export async function POST(request: Request) {
         error,
       });
     });
+  }
+
+  // Before the terminal marker, close any (messageId, kind) lifecycles that
+  // the delta ingestion path opened for this run but never closed. Without
+  // the synthetic ENDs the AG-UI event log is not protocol-compliant and the
+  // client rejects follow-up CONTENT/END events on replay. Scoped to the
+  // current run so we only touch rows this run wrote.
+  if (
+    canPersistCanonicalEvents &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    try {
+      const openMessages = await findOpenAgUiMessagesForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      if (openMessages.length > 0) {
+        const endRows = buildDeltaRunEndRows({
+          runId: authoritativeRunId,
+          openMessages,
+        });
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: endRows,
+        });
+      }
+    } catch (error) {
+      // Best-effort: END synthesis is a consistency guarantee, but the
+      // surrounding terminal path (status persistence, run finish marker)
+      // must not be blocked by a read/write failure here. The AG-UI replay
+      // synthesis in the SSE route serves as a secondary safety net for any
+      // rows that slip through.
+      console.warn(
+        "[daemon-event] AG-UI run-terminal END synthesis failed, continuing",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
+    }
   }
 
   // Emit a terminal AG-UI marker (RUN_FINISHED or RUN_ERROR) on the thread
