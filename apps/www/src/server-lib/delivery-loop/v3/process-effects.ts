@@ -176,6 +176,8 @@ export function effectResultToEvent(
           headSha: result.headSha,
           reason: result.reason,
         };
+      if (result.outcome === "budget_exhausted")
+        return { type: "gate_ci_stale", reason: result.reason };
       return null; // pending or stale — no state transition yet
 
     default: {
@@ -1216,7 +1218,11 @@ async function handleGateStalenessCheck(params: {
   const pollCount = params.payload.pollCount ?? 0;
 
   if (pollCount >= MAX_GATE_STALENESS_POLLS) {
-    return { kind: "gate_staleness_check", outcome: "stale" } as const;
+    return {
+      kind: "gate_staleness_check",
+      outcome: "budget_exhausted",
+      reason: `CI gate did not complete within polling budget (${MAX_GATE_STALENESS_POLLS} polls)`,
+    } as const;
   }
 
   const [head, workflow] = await Promise.all([

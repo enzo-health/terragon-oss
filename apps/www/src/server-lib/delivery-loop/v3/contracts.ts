@@ -196,6 +196,12 @@ export function serializeLoopEvent(event: LoopEvent): Record<string, unknown> {
         headSha: event.headSha ?? null,
         reason: event.reason ?? null,
       };
+    case "gate_ci_stale":
+      return {
+        type: event.type,
+        headSha: event.headSha ?? null,
+        reason: event.reason,
+      };
     case "pr_closed":
       return {
         type: event.type,
@@ -492,6 +498,22 @@ export function parseLoopEvent(payload: unknown): LoopEvent | null {
         runId: (payload.runId as string | null | undefined) ?? null,
         runSeq: toOptionalInteger(payload.runSeq) ?? null,
         headSha: (payload.headSha as string | null | undefined) ?? null,
+      };
+    case "gate_ci_stale":
+      if (typeof payload.reason !== "string") {
+        return null;
+      }
+      if (
+        payload.headSha !== undefined &&
+        payload.headSha !== null &&
+        typeof payload.headSha !== "string"
+      ) {
+        return null;
+      }
+      return {
+        type: "gate_ci_stale",
+        headSha: (payload.headSha as string | null | undefined) ?? null,
+        reason: payload.reason,
       };
     case "pr_closed":
       if (typeof payload.merged !== "boolean") {

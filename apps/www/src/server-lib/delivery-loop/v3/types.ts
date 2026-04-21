@@ -89,6 +89,15 @@ export type LoopEvent =
       headSha?: string | null;
       reason?: string | null;
     }
+  | {
+      // Emitted when the CI gate polling budget (MAX_GATE_STALENESS_POLLS) is
+      // exhausted without CI completing. Surfaces the workflow as
+      // awaiting_operator_action instead of silently soft-deadlocking in
+      // gating_ci.
+      type: "gate_ci_stale";
+      headSha?: string | null;
+      reason: string;
+    }
   | { type: "resume_requested" }
   | { type: "stop_requested" }
   | { type: "pr_closed"; merged: boolean }
@@ -194,7 +203,15 @@ export type EffectResult =
       reason: string;
     }
   | { kind: "gate_staleness_check"; outcome: "pending" }
-  | { kind: "gate_staleness_check"; outcome: "stale" };
+  | { kind: "gate_staleness_check"; outcome: "stale" }
+  // Polling budget exhausted without CI completing — surfaces the workflow as
+  // awaiting_operator_action so an operator can investigate the stuck gate
+  // instead of leaving it sitting silently in gating_ci.
+  | {
+      kind: "gate_staleness_check";
+      outcome: "budget_exhausted";
+      reason: string;
+    };
 
 export type WorkflowHead = {
   workflowId: string;

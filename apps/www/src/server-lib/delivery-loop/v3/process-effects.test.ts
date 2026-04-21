@@ -277,6 +277,18 @@ describe("effectResultToEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("gate staleness budget_exhausted → gate_ci_stale with reason", () => {
+    const result = effectResultToEvent({
+      kind: "gate_staleness_check",
+      outcome: "budget_exhausted",
+      reason: "CI gate did not complete within polling budget (50 polls)",
+    });
+    expect(result).toEqual({
+      type: "gate_ci_stale",
+      reason: "CI gate did not complete within polling budget (50 polls)",
+    });
+  });
+
   it("exhaustiveness: every EffectResult kind is handled (compile-time check)", () => {
     // This test verifies that the default `never` branch in effectResultToEvent
     // compiles. If a new EffectResult kind is added without a corresponding
@@ -319,6 +331,11 @@ describe("effectResultToEvent", () => {
       },
       { kind: "gate_staleness_check", outcome: "pending" },
       { kind: "gate_staleness_check", outcome: "stale" },
+      {
+        kind: "gate_staleness_check",
+        outcome: "budget_exhausted",
+        reason: "x",
+      },
     ];
     for (const r of allResults) {
       // Should not throw
