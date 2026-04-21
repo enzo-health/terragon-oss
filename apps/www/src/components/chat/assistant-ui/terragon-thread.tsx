@@ -132,11 +132,33 @@ export function TerragonThread({
 
   const hasAgentMessages = latestAgentMessageIndex >= 0;
 
+  // True when the latest agent message has a tool call in flight. Used to
+  // suppress the footer "Assistant is working" indicator, since the inline
+  // tool chip ("Working...") on that tool part already conveys activity. We
+  // only need to check the latest agent message: the reducer marks prior
+  // tool parts as completed once a newer agent message or tool starts.
+  const hasPendingToolCall = useMemo(() => {
+    if (latestAgentMessageIndex < 0) return false;
+    const msg = messages[latestAgentMessageIndex];
+    if (!msg || msg.role !== "agent") return false;
+    for (const part of msg.parts) {
+      if (part.type === "tool" && part.status === "pending") return true;
+    }
+    return false;
+  }, [messages, latestAgentMessageIndex]);
+
   // Hide the "Waiting to start" indicator when the agent has already produced
   // messages — the status DB field may still be "queued" while the agent is
   // actively working due to broadcast-before-persist timing.
+  //
+  // Also suppress the footer entirely while a tool call is streaming: the
+  // inline tool chip is a more specific indicator and three concurrent
+  // "working" cues on screen was overwhelming. The retry pill (if present)
+  // is a historical log entry in the transcript and is orthogonal to this
+  // live-activity footer.
   const showWorkingMessage =
     isAgentWorking &&
+    !hasPendingToolCall &&
     !(
       hasAgentMessages &&
       threadStatus !== null &&
