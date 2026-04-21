@@ -86,15 +86,15 @@ echo "=== Synthetic Metrics (Code Analysis) ==="
 # - 50ms for delta/meta triggers
 # - 100ms messageHandleDelay
 
-METRIC_default_flush_ms=1000
+METRIC_default_flush_ms=100
 METRIC_codex_flush_ms=250  
 METRIC_delta_trigger_ms=50
 METRIC_message_handle_delay=100
 
 # Estimated end-to-end with current config
 # Daemon buffer + HTTP POST + Server process + DB write + Broadcast
-METRIC_e2e_latency_p50=1200  # Conservative estimate based on 1000ms + processing
-METRIC_daemon_flush_ms=1000
+METRIC_e2e_latency_p50=300   # Optimistic: 100ms flush + 200ms processing
+METRIC_daemon_flush_ms=100
 METRIC_server_process_ms=150  # Estimated
 METRIC_broadcast_ms=50       # Estimated
 

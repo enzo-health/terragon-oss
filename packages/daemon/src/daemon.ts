@@ -418,7 +418,7 @@ export class TerragonDaemon {
   private agentFrontmatterReader: AgentFrontmatterReader;
 
   constructor({
-    messageFlushDelay = 1000,
+    messageFlushDelay = 100,
     messageHandleDelay = 100,
     uptimeReportingInterval = 5000,
     runtime,
@@ -1717,7 +1717,7 @@ export class TerragonDaemon {
           }
 
           // Intermediate flush for codex: coalesce rapid-fire completions
-          // at 250ms instead of the default 1000ms messageFlushDelay
+          // at 250ms instead of the default 100ms messageFlushDelay
           if (threadEvent.type === "item.completed") {
             if (this.messageFlushTimer) {
               clearTimeout(this.messageFlushTimer);
