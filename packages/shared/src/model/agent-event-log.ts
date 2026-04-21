@@ -1,4 +1,14 @@
-import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  lte,
+  sql,
+} from "drizzle-orm";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type {
   BaseEventEnvelope,
@@ -200,6 +210,34 @@ export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
     },
   );
   return null;
+}
+
+/**
+ * Read an agent_event_log row's payload as the full list of AG-UI BaseEvents
+ * it expands to. Unlike `readAgUiPayload` (which returns only the first),
+ * this surfaces every event in the expansion so callers reconstructing
+ * lifecycle state (e.g. active TEXT_MESSAGE / TOOL_CALL IDs) don't miss the
+ * END events that close a canonical row.
+ *
+ * - AG-UI-native rows: returns the single BaseEvent wrapped in an array.
+ * - Canonical rows: returns the full `mapCanonicalEventToAgui` expansion,
+ *   which is atomic (every START has its matching END in the same row).
+ * - Unrecognized rows: returns `[]` (warning already surfaced by
+ *   `readAgUiPayload`).
+ */
+export function readAllAgUiPayloads(row: AgentEventLogRow): BaseEvent[] {
+  const payload = row.payloadJson;
+
+  if (isAgUiBaseEvent(payload)) {
+    return [payload];
+  }
+
+  const canonical = CanonicalEventSchema.safeParse(payload);
+  if (canonical.success) {
+    return mapCanonicalEventToAgui(canonical.data);
+  }
+
+  return [];
 }
 
 function toIdempotencyKey(envelope: BaseEventEnvelope): string {
@@ -610,6 +648,134 @@ export async function getAgUiEventsForReplay({
     }
   }
   return events;
+}
+
+/**
+ * Describes a text message or tool call that was opened (START emitted) but
+ * not yet closed (END not emitted) at or before the given cursor. The AG-UI
+ * SSE endpoint uses this to synthesize replay-time START events so that
+ * subsequent CONTENT/ARGS events are accepted by the client's reducer.
+ */
+export type ActiveAgUiLifecycleState = {
+  textMessages: Array<{ messageId: string }>;
+  toolCalls: Array<{ toolCallId: string; toolCallName: string }>;
+};
+
+/**
+ * Scan every agent_event_log row for this thread chat with `seq <= fromSeq`
+ * and compute which TEXT_MESSAGE / TOOL_CALL lifecycles are still "active"
+ * (STARTed but not ENDed) at the cursor point.
+ *
+ * The AG-UI client protocol rejects TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS /
+ * *_END events that reference an unknown message/tool call. On reconnect
+ * mid-stream the client has no memory of STARTs that fired before the
+ * cursor, so we must re-emit synthetic STARTs for any lifecycle still
+ * "open" at cursor time before feeding the `seq > fromSeq` replay.
+ *
+ * Canonical-event rows always expand atomically (START + CONTENT/ARGS + END
+ * come from the same row), so those can never be "active mid-row". Only
+ * AG-UI-native rows, where each event is its own row, can leave a
+ * lifecycle open across the cursor boundary.
+ */
+export async function getActiveAgUiLifecycleAt({
+  db,
+  threadChatId,
+  fromSeq,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+  fromSeq: number;
+}): Promise<ActiveAgUiLifecycleState> {
+  // Nothing prior can be active at fromSeq = 0.
+  if (fromSeq <= 0) {
+    return { textMessages: [], toolCalls: [] };
+  }
+
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: and(
+        eq(schema.agentEventLog.threadChatId, threadChatId),
+        lte(schema.agentEventLog.seq, fromSeq),
+      ),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return { textMessages: [], toolCalls: [] };
+    }
+    throw error;
+  }
+
+  // Track active IDs via Maps so we preserve insertion order for the caller.
+  const activeTextMessages = new Map<string, true>();
+  const activeToolCalls = new Map<string, { toolCallName: string }>();
+
+  for (const row of rows) {
+    const events = readAllAgUiPayloads(row);
+    for (const event of events) {
+      switch (event.type) {
+        case EventType.TEXT_MESSAGE_START: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            activeTextMessages.set(messageId, true);
+          }
+          break;
+        }
+        case EventType.TEXT_MESSAGE_END: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId === "string") {
+            activeTextMessages.delete(messageId);
+          }
+          break;
+        }
+        case EventType.TOOL_CALL_START: {
+          const toolCallId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "toolCallId",
+          );
+          const toolCallName = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "toolCallName",
+          );
+          if (
+            typeof toolCallId === "string" &&
+            typeof toolCallName === "string"
+          ) {
+            activeToolCalls.set(toolCallId, { toolCallName });
+          }
+          break;
+        }
+        case EventType.TOOL_CALL_END: {
+          const toolCallId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "toolCallId",
+          );
+          if (typeof toolCallId === "string") {
+            activeToolCalls.delete(toolCallId);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+
+  return {
+    textMessages: Array.from(activeTextMessages.keys()).map((messageId) => ({
+      messageId,
+    })),
+    toolCalls: Array.from(activeToolCalls.entries()).map(
+      ([toolCallId, { toolCallName }]) => ({ toolCallId, toolCallName }),
+    ),
+  };
 }
 
 export async function getRunEvents({

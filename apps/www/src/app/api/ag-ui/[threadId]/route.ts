@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import { EventType, type BaseEvent, type RunStartedEvent } from "@ag-ui/core";
+import {
+  EventType,
+  type BaseEvent,
+  type RunStartedEvent,
+  type TextMessageStartEvent,
+  type ToolCallStartEvent,
+} from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import * as schema from "@terragon/shared/db/schema";
 import {
   agUiStreamKey,
+  getActiveAgUiLifecycleAt,
   getAgUiEventsForReplay,
 } from "@terragon/shared/model/agent-event-log";
 import { getSessionOrNull } from "@/lib/auth-server";
@@ -240,7 +247,58 @@ export async function GET(
       };
       enqueue(encodeSseEvent(syntheticRunStarted));
 
-      // 2) Initial replay burst from agent_event_log.
+      // 2) If reconnecting mid-turn (fromSeq > 0), re-emit synthetic
+      // TEXT_MESSAGE_START / TOOL_CALL_START events for any lifecycle still
+      // "active" at the cursor (STARTed in the pre-cursor history but not
+      // ENDed). Without these, subsequent TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS
+      // events from the `seq > fromSeq` replay reference IDs the client's
+      // reducer has never seen and are rejected with an AGUIError.
+      //
+      // Limitation: TOOL_CALL_ARGS accumulated pre-cursor are not
+      // reconstructed. The client's args buffer will start empty; if the
+      // end-of-call is also pre-cursor this is fine, but for an in-flight
+      // call partial args are lost. Acceptable for now — args are usually
+      // emitted as a single batch at end-of-call.
+      //
+      // These synthetic events are per-connection and NOT persisted.
+      try {
+        const active = await getActiveAgUiLifecycleAt({
+          db,
+          threadChatId,
+          fromSeq,
+        });
+        const replayStartTimestamp = Date.now();
+        for (const { messageId } of active.textMessages) {
+          const startEvent: TextMessageStartEvent = {
+            type: EventType.TEXT_MESSAGE_START,
+            timestamp: replayStartTimestamp,
+            messageId,
+            role: "assistant",
+          } as TextMessageStartEvent;
+          enqueue(encodeSseEvent(startEvent));
+        }
+        for (const { toolCallId, toolCallName } of active.toolCalls) {
+          const startEvent: ToolCallStartEvent = {
+            type: EventType.TOOL_CALL_START,
+            timestamp: replayStartTimestamp,
+            toolCallId,
+            toolCallName,
+          } as ToolCallStartEvent;
+          enqueue(encodeSseEvent(startEvent));
+        }
+      } catch (error) {
+        // Active-state reconstruction is best-effort: if it fails, log and
+        // continue with the normal replay. Worst case the client will
+        // reject a few CONTENT events — same outcome as pre-fix — but we
+        // don't take down the whole stream over a lifecycle-scan hiccup.
+        console.warn(
+          "[ag-ui] active-state reconstruction failed; continuing without synthetic STARTs",
+          { threadId, threadChatId, fromSeq },
+          error,
+        );
+      }
+
+      // 3) Initial replay burst from agent_event_log.
       try {
         const replay = await getAgUiEventsForReplay({
           db,
@@ -265,12 +323,12 @@ export async function GET(
         return;
       }
 
-      // 3) Keepalive pings so proxies don't close idle connections.
+      // 4) Keepalive pings so proxies don't close idle connections.
       keepaliveTimer = setInterval(() => {
         enqueue(encodeSseComment("keepalive"));
       }, KEEPALIVE_INTERVAL_MS);
 
-      // 4) Live tail via XREAD, starting from the cursor captured BEFORE
+      // 5) Live tail via XREAD, starting from the cursor captured BEFORE
       // the DB replay query so nothing XADD'd during replay is lost.
       // Task 2C publishes to this stream with
       // XADD `${streamKey} * event <json>`.

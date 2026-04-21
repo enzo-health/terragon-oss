@@ -3,7 +3,10 @@ import { NextRequest } from "next/server";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { GET } from "./route";
 import { getSessionOrNull } from "@/lib/auth-server";
-import { getAgUiEventsForReplay } from "@terragon/shared/model/agent-event-log";
+import {
+  getActiveAgUiLifecycleAt,
+  getAgUiEventsForReplay,
+} from "@terragon/shared/model/agent-event-log";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -58,6 +61,7 @@ vi.mock("@/lib/redis", () => ({
 vi.mock("@terragon/shared/model/agent-event-log", () => ({
   agUiStreamKey: (threadChatId: string) => `agui:thread:${threadChatId}`,
   getAgUiEventsForReplay: vi.fn(),
+  getActiveAgUiLifecycleAt: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -127,6 +131,10 @@ describe("ag-ui SSE route", () => {
     // Default: ownership join returns one row (authorized).
     dbMocks.limit.mockResolvedValue([{ id: "chat-1" }]);
     vi.mocked(getAgUiEventsForReplay).mockResolvedValue([]);
+    vi.mocked(getActiveAgUiLifecycleAt).mockResolvedValue({
+      textMessages: [],
+      toolCalls: [],
+    });
     redisMocks.xread.mockImplementation(() => new Promise(() => {}));
     redisMocks.xrevrange.mockImplementation(() => Promise.resolve({}));
   });
@@ -428,6 +436,95 @@ describe("ag-ui SSE route", () => {
     // Clean up: cancel the response body so the pending xread promise is GC'd.
     await response.body!.cancel();
     for (const d of deferred) d.resolve(null);
+  });
+
+  it("emits synthetic TEXT_MESSAGE_START and TOOL_CALL_START for lifecycles active at the cursor", async () => {
+    // Simulate a reconnect mid-turn: the client's cursor sits inside an
+    // in-progress assistant text message and an in-progress tool call. The
+    // route must re-open both lifecycles so the subsequent CONTENT/ARGS
+    // events from the stored replay don't reference unknown IDs.
+    vi.mocked(getActiveAgUiLifecycleAt).mockResolvedValue({
+      textMessages: [{ messageId: "msg-active" }],
+      toolCalls: [{ toolCallId: "tc-active", toolCallName: "Bash" }],
+    });
+    const replayEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 20,
+        messageId: "msg-active",
+        delta: "more text",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForReplay).mockResolvedValue(replayEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=47",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(getActiveAgUiLifecycleAt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadChatId: "chat-1",
+        fromSeq: 47,
+      }),
+    );
+
+    // Expected stream: RUN_STARTED → synthetic TEXT_MESSAGE_START →
+    // synthetic TOOL_CALL_START → stored replay CONTENT.
+    const received = await readReplayBurst(response, 4);
+    expect(received).toHaveLength(4);
+    expect(received[0]).toMatchObject({ type: EventType.RUN_STARTED });
+    expect(received[1]).toMatchObject({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg-active",
+      role: "assistant",
+    });
+    expect(received[2]).toMatchObject({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tc-active",
+      toolCallName: "Bash",
+    });
+    expect(received[3]).toMatchObject({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "msg-active",
+      delta: "more text",
+    });
+  });
+
+  it("continues the replay when active-state reconstruction throws", async () => {
+    // Best-effort contract: a failure in the active-state scan must not
+    // take down the whole stream — the existing RUN_STARTED + replay flow
+    // should still proceed.
+    vi.mocked(getActiveAgUiLifecycleAt).mockRejectedValue(
+      new Error("scan failed"),
+    );
+    const replayEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 30,
+        messageId: "msg-1",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForReplay).mockResolvedValue(replayEvents);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=5",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, 2);
+    expect(received[0]).toMatchObject({ type: EventType.RUN_STARTED });
+    expect(received[1]).toMatchObject({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "msg-1",
+    });
+    warnSpy.mockRestore();
   });
 
   it("emits a RUN_ERROR event when the replay query fails", async () => {
