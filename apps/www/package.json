@@ -52,7 +52,6 @@
     "@radix-ui/react-tabs": "^1.1.12",
     "@radix-ui/react-tooltip": "^1.2.7",
     "@radix-ui/react-visually-hidden": "^1.2.3",
-    "@streamdown/code": "^1.0.3",
     "@streamdown/math": "^1.0.2",
     "@tanstack/db": "^0.6.2",
     "@tanstack/react-db": "^0.1.80",

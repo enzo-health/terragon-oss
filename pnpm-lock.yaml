@@ -335,9 +335,6 @@ importers:
       '@radix-ui/react-visually-hidden':
         specifier: ^1.2.3
         version: 1.2.3(@types/react-dom@19.1.6(@types/react@19.1.8))(@types/react@19.1.8)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
-      '@streamdown/code':
-        specifier: ^1.0.3
-        version: 1.0.3(react@19.1.2)
       '@streamdown/math':
         specifier: ^1.0.2
         version: 1.0.2(react@19.1.2)
@@ -5573,11 +5570,6 @@ packages:
 
   '@standard-schema/utils@0.3.0':
     resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
-
-  '@streamdown/code@1.0.3':
-    resolution: {integrity: sha512-3Ym5TCLcGhrHY2qBaUVWpqNRtxnZvqh4Y5Qm/pTIKA4AmEWwAAoYjZnxG7mOsvOpWVWiDwETjUtchNL1XzQEAw==}
-    peerDependencies:
-      react: 19.1.2
 
   '@streamdown/math@1.0.2':
     resolution: {integrity: sha512-r8Ur9/lBuFnzZAFdEWrLUF2s/gRwRRRwruqltdZibyjbCBnuW7SJbFm26nXqvpJPW/gzpBUMrBVBzd88z05D5g==}
@@ -16746,11 +16738,6 @@ snapshots:
   '@standard-schema/spec@1.1.0': {}
 
   '@standard-schema/utils@0.3.0': {}
-
-  '@streamdown/code@1.0.3(react@19.1.2)':
-    dependencies:
-      react: 19.1.2
-      shiki: 3.23.0
 
   '@streamdown/math@1.0.2(react@19.1.2)':
     dependencies:
