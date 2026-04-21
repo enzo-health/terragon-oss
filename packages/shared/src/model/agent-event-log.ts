@@ -664,18 +664,37 @@ export type ActiveAgUiLifecycleState = {
 /**
  * Scan every agent_event_log row for this thread chat with `seq <= fromSeq`
  * and compute which TEXT_MESSAGE / TOOL_CALL lifecycles are still "active"
- * (STARTed but not ENDed) at the cursor point.
+ * (i.e. the client must treat the id as an open message at replay time).
+ *
+ * Two cases produce an active id:
+ *
+ *  1. **START-without-END** — a START was written before or at the cursor
+ *     and no matching END followed. Classic mid-stream reconnect case.
+ *
+ *  2. **Orphan-CONTENT** — a CONTENT event exists for an id that has NO
+ *     preceding START and no closing END. This happens for threads whose
+ *     event log was written before commit 4e7559a introduced proper
+ *     START/END bracketing for daemon delta runs. The log is malformed but
+ *     in-flight at fixup time, so we synthesize a START for those ids too
+ *     to prevent the client from rejecting CONTENT events for an id its
+ *     reducer has never seen.
  *
  * The AG-UI client protocol rejects TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS /
  * *_END events that reference an unknown message/tool call. On reconnect
  * mid-stream the client has no memory of STARTs that fired before the
  * cursor, so we must re-emit synthetic STARTs for any lifecycle still
- * "open" at cursor time before feeding the `seq > fromSeq` replay.
+ * active at cursor time before feeding the `seq > fromSeq` replay.
  *
  * Canonical-event rows always expand atomically (START + CONTENT/ARGS + END
  * come from the same row), so those can never be "active mid-row". Only
  * AG-UI-native rows, where each event is its own row, can leave a
- * lifecycle open across the cursor boundary.
+ * lifecycle open across the cursor boundary — and only the legacy
+ * pre-4e7559a writer could leave orphan-CONTENT without a START.
+ *
+ * Tool calls don't need orphan-ARGS detection: the only writer that emits
+ * TOOL_CALL_ARGS without a preceding TOOL_CALL_START would be canonical
+ * rows, which expand atomically. The daemon-delta path does not emit
+ * tool-call events.
  */
 export async function getActiveAgUiLifecycleAt({
   db,
@@ -708,7 +727,17 @@ export async function getActiveAgUiLifecycleAt({
   }
 
   // Track active IDs via Maps so we preserve insertion order for the caller.
+  //
+  // `activeTextMessages`: ids with a START that has not yet seen its END.
+  // `orphanContentTextMessages`: ids seen via CONTENT without a matching
+  //   START (and not yet closed by an END). Merged into the final result.
+  // `closedTextMessages`: ids that have seen an END at any point. Once
+  //   closed, further CONTENT for the same id is treated as malformed-
+  //   but-already-terminated (do NOT re-orphan it) — the client would
+  //   reject it regardless and this is legacy-data territory.
   const activeTextMessages = new Map<string, true>();
+  const orphanContentTextMessages = new Map<string, true>();
+  const closedTextMessages = new Set<string>();
   const activeToolCalls = new Map<string, { toolCallName: string }>();
 
   for (const row of rows) {
@@ -722,7 +751,30 @@ export async function getActiveAgUiLifecycleAt({
           );
           if (typeof messageId === "string") {
             activeTextMessages.set(messageId, true);
+            // A real START supersedes any prior orphan-CONTENT bookkeeping
+            // for the same id — drop it from the orphan set so we don't
+            // emit two synthetic STARTs for one id.
+            orphanContentTextMessages.delete(messageId);
           }
+          break;
+        }
+        case EventType.TEXT_MESSAGE_CONTENT: {
+          const messageId = Reflect.get(
+            event as unknown as Record<string, unknown>,
+            "messageId",
+          );
+          if (typeof messageId !== "string") {
+            break;
+          }
+          if (activeTextMessages.has(messageId)) {
+            // Normal path: CONTENT under an open START. Nothing to do.
+            break;
+          }
+          if (closedTextMessages.has(messageId)) {
+            // Malformed legacy data: CONTENT after END. Do not re-open.
+            break;
+          }
+          orphanContentTextMessages.set(messageId, true);
           break;
         }
         case EventType.TEXT_MESSAGE_END: {
@@ -732,6 +784,8 @@ export async function getActiveAgUiLifecycleAt({
           );
           if (typeof messageId === "string") {
             activeTextMessages.delete(messageId);
+            orphanContentTextMessages.delete(messageId);
+            closedTextMessages.add(messageId);
           }
           break;
         }
@@ -768,10 +822,24 @@ export async function getActiveAgUiLifecycleAt({
     }
   }
 
+  // Merge active-STARTs with orphan-CONTENT ids. Both need a synthetic
+  // START at replay time; the route doesn't need to know which bucket
+  // they came from. Iteration order: START-without-END first (insertion
+  // order of their STARTs), then orphan-CONTENT (insertion order of the
+  // first CONTENT). Map dedupes if an id somehow lands in both — it
+  // shouldn't, because a real START removes the orphan entry above.
+  const synthesizedTextMessageIds = new Map<string, true>();
+  for (const id of activeTextMessages.keys()) {
+    synthesizedTextMessageIds.set(id, true);
+  }
+  for (const id of orphanContentTextMessages.keys()) {
+    synthesizedTextMessageIds.set(id, true);
+  }
+
   return {
-    textMessages: Array.from(activeTextMessages.keys()).map((messageId) => ({
-      messageId,
-    })),
+    textMessages: Array.from(synthesizedTextMessageIds.keys()).map(
+      (messageId) => ({ messageId }),
+    ),
     toolCalls: Array.from(activeToolCalls.entries()).map(
       ([toolCallId, { toolCallName }]) => ({ toolCallId, toolCallName }),
     ),
