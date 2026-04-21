@@ -31,6 +31,7 @@ import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
 import { stopThread } from "@/server-actions/stop-thread";
 import { TerragonThread } from "./assistant-ui/terragon-thread";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
+import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
 import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -56,7 +57,6 @@ import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
 import { LeafLoading } from "./leaf-loading";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { useDeliveryLoopStatusRealtime } from "@/hooks/use-delivery-loop-status-realtime";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
 import { ensureAgent } from "@terragon/agent/utils";
@@ -312,17 +312,12 @@ function ChatUI({
     threadIsUnread: !!shell?.isUnread,
     isReadOnly,
   });
-  // Delivery-loop status invalidation only — the legacy broadcast socket
-  // was removed with the AG-UI migration. Status / queuedMessages / error
-  // updates ride on React Query refetches plus AG-UI events
-  // (`RUN_FINISHED` from `useAgUiRunEvents`, `thread.status_changed` via
-  // `use-thread-meta-events`). This hook provides a low-frequency polling
-  // fallback for the delivery-loop progress stepper.
-  useDeliveryLoopStatusRealtime({
-    threadId,
-    enabled: shouldShowDeliveryLoopStatus,
-  });
-
+  // Status / queuedMessages / error / delivery-loop freshness all ride on
+  // the AG-UI event stream: `useAgUiQueryInvalidator` (mounted below, once
+  // the transport is constructed) refetches thread-shell, thread-chat, and
+  // delivery-loop-status query keys on `thread.status_changed` CUSTOM
+  // events and on `RUN_FINISHED` / `RUN_ERROR`. No polling fallback — the
+  // AG-UI SSE stream is the push channel.
   const chatAgent = ensureAgent(threadChat?.agent);
   const hasCheckpoint = useMemo(
     () => dbMessages.some((message) => message.type === "git-diff"),
@@ -428,33 +423,42 @@ function ChatUI({
   );
   // Snapshot the DB messages for both the AG-UI transport hydration seed
   // (so the HttpAgent starts from a non-empty state) AND the aggregator's
-  // initial UIMessage[] seed. Memoized on threadChatId — we freeze at mount
-  // time so the SSE replay cursor stays stable and the reducer's initial
-  // state isn't clobbered by incoming React Query refetches.
+  // initial UIMessage[] seed. Memoized on `hydrationKey` — a gate that
+  // becomes non-null only when the currently-loaded `threadChat` matches
+  // the shell's `primaryThreadChatId`. Without this gate, switching from
+  // chat A → chat B would seed the new HttpAgent with chat A's messages
+  // for the render where `threadChatId` has advanced but `threadChat`
+  // still points at the previous chat's collection snapshot.
+  const hydrationKey: string | null =
+    threadChatId && threadChat?.id === threadChatId ? threadChatId : null;
   const agUiInitialMessages = useMemo(
-    () => dbMessagesToAgUiMessages(dbMessages),
+    () => (hydrationKey ? dbMessagesToAgUiMessages(dbMessages) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [threadChatId],
+    [hydrationKey],
   );
   const agUiFromSeq = useMemo(
-    () => threadChat?.messageSeq ?? 0,
+    () => (hydrationKey ? (threadChat?.messageSeq ?? 0) : 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [threadChatId],
+    [hydrationKey],
   );
   const initialUiMessages = useMemo(
     () =>
-      toUIMessages({
-        dbMessages,
-        agent: chatAgent,
-        threadStatus: threadChat?.status,
-      }),
+      hydrationKey
+        ? toUIMessages({
+            dbMessages,
+            agent: chatAgent,
+            threadStatus: threadChat?.status,
+          })
+        : [],
     // Seed once per chat; subsequent updates come through the AG-UI stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [threadChatId],
+    [hydrationKey],
   );
   const agent = useAgUiTransport({
     threadId,
-    threadChatId: threadChatId ?? null,
+    // Gate the HttpAgent construction on `hydrationKey` so we never open
+    // an SSE stream with a seed that belongs to a different chat.
+    threadChatId: hydrationKey,
     fromSeq: agUiFromSeq,
     initialMessages: agUiInitialMessages,
   });
@@ -642,6 +646,10 @@ function ChatUI({
   }
   return (
     <AgUiAgentProvider agent={agent}>
+      <AgUiQueryInvalidatorMount
+        threadId={threadId}
+        threadChatId={threadChatId ?? null}
+      />
       <div className="flex flex-col h-full w-full">
         <ChatHeader
           thread={thread}
@@ -771,6 +779,19 @@ function ChatUI({
       )}
     </AgUiAgentProvider>
   );
+}
+
+function AgUiQueryInvalidatorMount({
+  threadId,
+  threadChatId,
+}: {
+  threadId: string;
+  threadChatId: string | null;
+}): null {
+  // Must be rendered INSIDE `AgUiAgentProvider` so the hook can read the
+  // current `HttpAgent` from context.
+  useAgUiQueryInvalidator({ threadId, threadChatId });
+  return null;
 }
 
 const ChatPromptBox = memo(function ChatPromptBox({
