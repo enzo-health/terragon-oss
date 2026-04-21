@@ -278,8 +278,16 @@ describe("ag-ui SSE route", () => {
       fromSeq: 0,
     });
 
-    const received = await readReplayBurst(response, replayEvents.length);
-    expect(received).toEqual(replayEvents);
+    // The route prepends a synthetic RUN_STARTED before the stored replay
+    // so that reconnects (fromSeq > 0) still satisfy the AG-UI client's
+    // "first event must be RUN_STARTED" protocol requirement. Drop the
+    // synthetic here and assert the stored events come through unchanged.
+    const received = await readReplayBurst(response, replayEvents.length + 1);
+    expect(received[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      threadId: "chat-1",
+    });
+    expect(received.slice(1)).toEqual(replayEvents);
   });
 
   it("streams replay events from the shared helper regardless of underlying row shape", async () => {
@@ -318,8 +326,15 @@ describe("ag-ui SSE route", () => {
         fromSeq: 3,
       }),
     );
-    const received = await readReplayBurst(response, replayEvents.length);
-    expect(received).toEqual(replayEvents);
+    // Skip the synthetic RUN_STARTED prepended by the route (see the
+    // adjacent test for the rationale) and assert the shared-helper output
+    // comes through unchanged.
+    const received = await readReplayBurst(response, replayEvents.length + 1);
+    expect(received[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      threadId: "chat-1",
+    });
+    expect(received.slice(1)).toEqual(replayEvents);
   });
 
   it("captures the stream cursor BEFORE the replay query so in-flight writes are not dropped", async () => {
@@ -431,9 +446,15 @@ describe("ag-ui SSE route", () => {
     );
 
     expect(response.status).toBe(200);
-    const received = await readReplayBurst(response, 1);
-    expect(received).toHaveLength(1);
+    // The route prepends a synthetic RUN_STARTED before running the replay
+    // query, so on failure the stream is: [RUN_STARTED, RUN_ERROR].
+    const received = await readReplayBurst(response, 2);
+    expect(received).toHaveLength(2);
     expect(received[0]).toMatchObject({
+      type: EventType.RUN_STARTED,
+      threadId: "chat-1",
+    });
+    expect(received[1]).toMatchObject({
       type: EventType.RUN_ERROR,
       message: "db exploded",
       code: "replay_failed",

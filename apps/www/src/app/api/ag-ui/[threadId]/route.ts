@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import type { BaseEvent } from "@ag-ui/core";
+import { EventType, type BaseEvent, type RunStartedEvent } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import * as schema from "@terragon/shared/db/schema";
 import {
@@ -227,7 +227,20 @@ export async function GET(
       }
       abortSignal.addEventListener("abort", () => close(), { once: true });
 
-      // 1) Initial replay burst from agent_event_log.
+      // 1) Prepend a synthetic RUN_STARTED so the client accepts the stream
+      // on reconnect. The AG-UI client protocol requires every SSE stream to
+      // begin with RUN_STARTED to establish run context. When `fromSeq > 0`,
+      // the stored replay starts mid-run, so the original RUN_STARTED is not
+      // re-sent. This synthetic event is per-connection and not persisted.
+      const syntheticRunStarted: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        timestamp: Date.now(),
+        threadId: threadChatId,
+        runId: `resume-${threadChatId}-${Date.now()}`,
+      };
+      enqueue(encodeSseEvent(syntheticRunStarted));
+
+      // 2) Initial replay burst from agent_event_log.
       try {
         const replay = await getAgUiEventsForReplay({
           db,
@@ -252,12 +265,12 @@ export async function GET(
         return;
       }
 
-      // 2) Keepalive pings so proxies don't close idle connections.
+      // 3) Keepalive pings so proxies don't close idle connections.
       keepaliveTimer = setInterval(() => {
         enqueue(encodeSseComment("keepalive"));
       }, KEEPALIVE_INTERVAL_MS);
 
-      // 3) Live tail via XREAD, starting from the cursor captured BEFORE
+      // 4) Live tail via XREAD, starting from the cursor captured BEFORE
       // the DB replay query so nothing XADD'd during replay is lost.
       // Task 2C publishes to this stream with
       // XADD `${streamKey} * event <json>`.
