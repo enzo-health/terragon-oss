@@ -13,6 +13,9 @@ import type {
 import type { ThreadStatus } from "@terragon/shared";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import type { WorkflowHead } from "@/server-lib/delivery-loop/v3/types";
+
+export const DELIVERY_LOOP_LIVENESS_WINDOW_MS = 2 * 60 * 1000;
+
 export type DeliveryLoopStatusCheckKey =
   | "ci"
   | "review_threads"
@@ -259,11 +262,118 @@ export function isDeliveryLoopStateActivelyWorking(
   }
 }
 
+function parseDateLike(value: Date | string | null | undefined): Date | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+export type LivenessEvidence =
+  | {
+      kind: "fresh";
+      latestEvidenceAt: Date;
+      ageMs: number;
+    }
+  | {
+      kind: "stale";
+      latestEvidenceAt: Date;
+      ageMs: number;
+    }
+  | {
+      kind: "unknown";
+    };
+
+export function classifyLivenessEvidence(params: {
+  now: Date;
+  threadChatUpdatedAt?: Date | string | null;
+  deliveryLoopUpdatedAtIso?: string | null;
+  windowMs?: number;
+}): LivenessEvidence {
+  const windowMs = params.windowMs ?? DELIVERY_LOOP_LIVENESS_WINDOW_MS;
+  const chatUpdatedAt = parseDateLike(params.threadChatUpdatedAt);
+  const loopUpdatedAt = parseDateLike(params.deliveryLoopUpdatedAtIso ?? null);
+  const candidates = [chatUpdatedAt, loopUpdatedAt].filter(
+    (value): value is Date => value !== null,
+  );
+  if (candidates.length === 0) {
+    return { kind: "unknown" };
+  }
+  const latestEvidenceAt = candidates.reduce((latest, current) =>
+    current.getTime() > latest.getTime() ? current : latest,
+  );
+  const ageMs = params.now.getTime() - latestEvidenceAt.getTime();
+  if (ageMs <= windowMs) {
+    return { kind: "fresh", latestEvidenceAt, ageMs };
+  }
+  return { kind: "stale", latestEvidenceAt, ageMs };
+}
+
+export type WorkingFooterFreshness =
+  | { kind: "fresh" }
+  | { kind: "uncertain"; message: string };
+
+export function getWorkingFooterFreshness(params: {
+  now: Date;
+  isWorkingCandidate: boolean;
+  threadChatUpdatedAt?: Date | string | null;
+  deliveryLoopUpdatedAtIso?: string | null;
+  windowMs?: number;
+  uncertainMessage?: string;
+}): WorkingFooterFreshness {
+  if (!params.isWorkingCandidate) {
+    return { kind: "fresh" };
+  }
+
+  const evidence = classifyLivenessEvidence({
+    now: params.now,
+    threadChatUpdatedAt: params.threadChatUpdatedAt,
+    deliveryLoopUpdatedAtIso: params.deliveryLoopUpdatedAtIso ?? null,
+    windowMs: params.windowMs,
+  });
+
+  if (evidence.kind === "fresh") {
+    return { kind: "fresh" };
+  }
+
+  return {
+    kind: "uncertain",
+    message: params.uncertainMessage ?? "Waiting for updates",
+  };
+}
+
 export function getDeliveryLoopAwareThreadStatus(params: {
   threadStatus: ThreadStatus | null;
   deliveryLoopState: DeliveryLoopState | null | undefined;
+  deliveryLoopUpdatedAtIso?: string | null;
+  threadChatUpdatedAt?: Date | string | null;
+  now?: Date;
+  windowMs?: number;
 }): ThreadStatus | null {
   if (!isDeliveryLoopStateActivelyWorking(params.deliveryLoopState)) {
+    return params.threadStatus;
+  }
+
+  const now = params.now ?? new Date();
+  const windowMs = params.windowMs ?? DELIVERY_LOOP_LIVENESS_WINDOW_MS;
+  const loopUpdatedAt = parseDateLike(params.deliveryLoopUpdatedAtIso ?? null);
+
+  // Liveness contract: never coerce a thread into "working" from a delivery-loop
+  // hint unless we have fresh durable evidence that the workflow head itself is
+  // recent. This prevents stale workflow heads from overriding fresher terminal
+  // chat/run state.
+  if (!loopUpdatedAt || now.getTime() - loopUpdatedAt.getTime() > windowMs) {
+    return params.threadStatus;
+  }
+
+  const chatUpdatedAt = parseDateLike(params.threadChatUpdatedAt ?? null);
+  if (chatUpdatedAt && chatUpdatedAt.getTime() >= loopUpdatedAt.getTime()) {
+    // Chat evidence is as-new-or-newer than the workflow head; trust the chat's
+    // own status over the delivery-loop hint.
     return params.threadStatus;
   }
 

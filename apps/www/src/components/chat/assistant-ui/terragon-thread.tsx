@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
 import type { ThreadInfoFull, UIMessage, ThreadStatus } from "@terragon/shared";
@@ -31,6 +31,10 @@ import type { BootingSubstatus } from "@terragon/sandbox/types";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isEqualPlanMap, isEqualArtifactList } from "./ctx-stability";
+import {
+  classifyLivenessEvidence,
+  getWorkingFooterFreshness,
+} from "@/lib/delivery-loop-status";
 
 type TerragonThreadProps = {
   /**
@@ -75,6 +79,10 @@ type TerragonThreadProps = {
    * footer behavior for non-delivery-loop threads.
    */
   deliveryLoopState?: DeliveryLoopState | null;
+  /** `delivery_workflow_head_v3.updatedAt` (durable) as an ISO string. */
+  deliveryLoopUpdatedAtIso?: string | null;
+  /** `thread_chat.updatedAt` (durable). */
+  threadChatUpdatedAt?: Date | string | null;
   /**
    * Human-readable reason the loop is blocked (e.g. "PR closed", "CI gate
    * did not complete within polling budget"). Rendered as secondary text in
@@ -115,6 +123,8 @@ export function TerragonThread({
   bootingSubstatus,
   reattemptQueueAt,
   deliveryLoopState,
+  deliveryLoopUpdatedAtIso,
+  threadChatUpdatedAt,
   deliveryLoopBlockedReason,
   threadChatId,
   scheduleAt,
@@ -170,12 +180,37 @@ export function TerragonThread({
     return false;
   }, [messages, latestAgentMessageIndex]);
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const shouldTickFreshnessClock = isAgentWorking || deliveryLoopState !== null;
+  useEffect(() => {
+    if (!shouldTickFreshnessClock) return;
+    const interval = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, [shouldTickFreshnessClock]);
+
+  const loopEvidence = useMemo(
+    () =>
+      deliveryLoopUpdatedAtIso
+        ? classifyLivenessEvidence({
+            now: new Date(nowMs),
+            deliveryLoopUpdatedAtIso,
+          })
+        : { kind: "unknown" as const },
+    [deliveryLoopUpdatedAtIso, nowMs],
+  );
+  const hasFreshDeliveryLoopEvidence = loopEvidence.kind === "fresh";
+
   // Classify the delivery-loop state so we can override the footer when the
   // workflow is in a passive-wait or terminal state. Active states fall
   // through to the default isAgentWorking-based logic below.
+  // If workflow-head freshness is uncertain/stale, ignore it entirely so a
+  // stale head cannot hide/override fresher terminal chat/run state.
   const deliveryLoopFooter = useMemo(
-    () => classifyDeliveryLoopFooter(deliveryLoopState),
-    [deliveryLoopState],
+    () =>
+      classifyDeliveryLoopFooter(
+        hasFreshDeliveryLoopEvidence ? deliveryLoopState : null,
+      ),
+    [deliveryLoopState, hasFreshDeliveryLoopEvidence],
   );
 
   // Hide the "Waiting to start" indicator when the agent has already produced
@@ -211,6 +246,18 @@ export function TerragonThread({
       isQueuedStatus(threadStatus)
     );
 
+  const footerFreshness = useMemo(
+    () =>
+      getWorkingFooterFreshness({
+        now: new Date(nowMs),
+        isWorkingCandidate: baseShowWorking,
+        threadChatUpdatedAt: threadChatUpdatedAt ?? null,
+        deliveryLoopUpdatedAtIso: deliveryLoopUpdatedAtIso ?? null,
+        uncertainMessage: "Waiting for updates",
+      }),
+    [baseShowWorking, deliveryLoopUpdatedAtIso, nowMs, threadChatUpdatedAt],
+  );
+
   const showWorkingMessage =
     deliveryLoopFooter.kind === "passive"
       ? true
@@ -224,7 +271,9 @@ export function TerragonThread({
           message: deliveryLoopFooter.message,
           reason: deliveryLoopBlockedReason ?? null,
         }
-      : null;
+      : footerFreshness.kind === "uncertain"
+        ? { message: footerFreshness.message, reason: null }
+        : null;
 
   // Pre-assembled `messagePartProps`. Per-message components read this as
   // a single stable reference instead of reconstructing the object inline

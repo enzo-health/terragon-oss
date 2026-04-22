@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import {
+  classifyLivenessEvidence,
   getDeliveryLoopAwareThreadStatus,
+  getWorkingFooterFreshness,
   isDeliveryLoopStateActivelyWorking,
   shouldRefreshDeliveryLoopStatusFromThreadPatch,
 } from "./delivery-loop-status";
@@ -34,40 +36,57 @@ describe("delivery-loop-status runtime helpers", () => {
   });
 
   describe("getDeliveryLoopAwareThreadStatus", () => {
-    it("upgrades inactive transport states to working when the loop is active", () => {
+    const now = new Date("2026-04-22T00:05:00.000Z");
+
+    it("upgrades inactive transport states to working when the loop is active and head evidence is fresh", () => {
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "complete",
           deliveryLoopState: "implementing",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("working");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "scheduled",
           deliveryLoopState: "planning",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("working");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: null,
           deliveryLoopState: "review_gate",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("working");
     });
 
-    it("preserves transport-specific working detail when it already exists", () => {
+    it("preserves transport-specific working detail when it already exists (fresh head)", () => {
       // booting is overridden to working when delivery loop is active,
       // since stale booting status shouldn't show "Waiting for assistant"
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "booting",
           deliveryLoopState: "implementing",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("working");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "queued-agent-rate-limit",
           deliveryLoopState: "ci_gate",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("queued-agent-rate-limit");
     });
@@ -77,14 +96,89 @@ describe("delivery-loop-status runtime helpers", () => {
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "complete",
           deliveryLoopState: "awaiting_pr_link",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("complete");
       expect(
         getDeliveryLoopAwareThreadStatus({
           threadStatus: "error",
           deliveryLoopState: "blocked",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+          now,
         }),
       ).toBe("error");
+    });
+
+    it("does not override when the workflow head evidence is stale", () => {
+      expect(
+        getDeliveryLoopAwareThreadStatus({
+          threadStatus: "complete",
+          deliveryLoopState: "implementing",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:00:00.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:04:59.000Z",
+          now,
+        }),
+      ).toBe("complete");
+    });
+
+    it("does not override when chat evidence is as-new-or-newer than the workflow head", () => {
+      expect(
+        getDeliveryLoopAwareThreadStatus({
+          threadStatus: "complete",
+          deliveryLoopState: "implementing",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:04:00.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:04:30.000Z",
+          now,
+        }),
+      ).toBe("complete");
+    });
+  });
+
+  describe("liveness evidence helpers", () => {
+    it("classifies the latest durable evidence as fresh within the window", () => {
+      const now = new Date("2026-04-22T00:02:00.000Z");
+      expect(
+        classifyLivenessEvidence({
+          now,
+          threadChatUpdatedAt: "2026-04-22T00:01:30.000Z",
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:00:00.000Z",
+        }).kind,
+      ).toBe("fresh");
+    });
+
+    it("classifies the latest durable evidence as stale outside the window", () => {
+      const now = new Date("2026-04-22T00:05:00.000Z");
+      expect(
+        classifyLivenessEvidence({
+          now,
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+        }).kind,
+      ).toBe("stale");
+    });
+
+    it("returns an uncertainty override for working candidates without fresh evidence", () => {
+      const now = new Date("2026-04-22T00:05:00.000Z");
+      expect(
+        getWorkingFooterFreshness({
+          now,
+          isWorkingCandidate: true,
+          threadChatUpdatedAt: "2026-04-22T00:01:00.000Z",
+        }),
+      ).toEqual({ kind: "uncertain", message: "Waiting for updates" });
+    });
+
+    it("does not override when the footer is not a working candidate", () => {
+      const now = new Date("2026-04-22T00:05:00.000Z");
+      expect(
+        getWorkingFooterFreshness({
+          now,
+          isWorkingCandidate: false,
+          threadChatUpdatedAt: "2026-04-22T00:00:00.000Z",
+        }),
+      ).toEqual({ kind: "fresh" });
     });
   });
 

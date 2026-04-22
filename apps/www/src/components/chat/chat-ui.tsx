@@ -469,8 +469,15 @@ function ChatUIContent({
       getDeliveryLoopAwareThreadStatus({
         threadStatus: threadChat.status ?? null,
         deliveryLoopState: deliveryLoopStatus?.state,
+        deliveryLoopUpdatedAtIso: deliveryLoopStatus?.updatedAtIso ?? null,
+        threadChatUpdatedAt: threadChat.updatedAt ?? null,
       }),
-    [deliveryLoopStatus?.state, threadChat.status],
+    [
+      deliveryLoopStatus?.state,
+      deliveryLoopStatus?.updatedAtIso,
+      threadChat.status,
+      threadChat.updatedAt,
+    ],
   );
   // Snapshot the DB messages for both the AG-UI transport hydration seed
   // (so the HttpAgent starts from a non-empty state) AND the aggregator's
@@ -718,6 +725,10 @@ function ChatUIContent({
                     latestGitDiffTimestamp={latestGitDiffTimestamp}
                     isAgentWorking={isAgentCurrentlyWorking}
                     deliveryLoopState={deliveryLoopStatus?.state ?? null}
+                    deliveryLoopUpdatedAtIso={
+                      deliveryLoopStatus?.updatedAtIso ?? null
+                    }
+                    threadChatUpdatedAt={threadChat.updatedAt ?? null}
                     deliveryLoopBlockedReason={
                       deliveryLoopStatus?.blockedReason ?? null
                     }
