@@ -21,6 +21,7 @@ import type {
   AssistantMessageEvent,
   CanonicalEvent,
   OperationalRunStartedEvent,
+  OperationalRunTerminalEvent,
   ToolCallResultEvent as CanonicalToolCallResultEvent,
   ToolCallStartEvent as CanonicalToolCallStartEvent,
 } from "./canonical-events";
@@ -43,6 +44,8 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
   switch (event.type) {
     case "run-started":
       return [mapRunStarted(event, timestamp)];
+    case "run-terminal":
+      return [mapRunTerminal(event, timestamp)];
     case "assistant-message":
       return mapAssistantMessage(event, timestamp);
     case "tool-call-start":
@@ -62,6 +65,23 @@ function mapRunStarted(
     threadId: event.threadId,
     runId: event.runId,
   } as RunStartedEvent;
+}
+
+function mapRunTerminal(
+  event: OperationalRunTerminalEvent,
+  timestamp: number,
+): RunFinishedEvent | RunErrorEvent {
+  if (event.status === "completed") {
+    return mapRunFinishedToAgui(event.threadId, event.runId, false, timestamp);
+  }
+  if (event.status === "stopped") {
+    return mapRunFinishedToAgui(event.threadId, event.runId, true, timestamp);
+  }
+  return mapRunErrorToAgui(
+    event.errorMessage ?? "Run failed",
+    event.errorCode ?? undefined,
+    timestamp,
+  );
 }
 
 function mapAssistantMessage(

@@ -359,6 +359,27 @@ function createCanonicalRunStartedEvent(
   };
 }
 
+function createCanonicalRunTerminalEvent(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    payloadVersion: 2,
+    eventId: "canonical-terminal-1",
+    runId: "run-1",
+    threadId: "thread-1",
+    threadChatId: "chat-1",
+    seq: 99,
+    timestamp: "2026-04-19T20:00:01.000Z",
+    category: "operational",
+    type: "run-terminal",
+    status: "completed",
+    errorMessage: null,
+    errorCode: null,
+    headShaAtCompletion: null,
+    ...overrides,
+  };
+}
+
 const MOCK_SELF_DISPATCH_REPLAY_PAYLOAD = {
   token: "token-1",
   prompt: "Please address this feedback.",
@@ -2674,6 +2695,79 @@ describe("daemon-event route", () => {
       expect(response.status).toBe(409);
       expect(data.error).toBe("daemon_event_terminal_thread_chat_cas_failed");
       expect(updateAgentRunContext).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("routes canonical-only run-terminal payloads through the fenced terminal transition", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: 7,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+      v3BridgeMocks.getWorkflowHead.mockResolvedValue({
+        state: "implementing",
+        activeRunId: "run-1",
+        activeRunSeq: 7,
+      });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [
+            createCanonicalRunStartedEvent(),
+            createCanonicalRunTerminalEvent({ status: "completed" }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done",
+        }),
+      );
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: expect.objectContaining({
+            type: "run_completed",
+            runId: "run-1",
+            runSeq: 7,
+          }),
+        }),
+      );
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
         expect.objectContaining({
           updates: expect.objectContaining({ status: "completed" }),
         }),

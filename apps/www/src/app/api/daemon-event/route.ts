@@ -559,6 +559,27 @@ function deriveDaemonTerminalErrorInfo(
   };
 }
 
+function findCanonicalRunTerminalEvent(
+  canonicalEvents: CanonicalEventsPayload,
+): {
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCode: string | null;
+  headShaAtCompletion: string | null;
+} | null {
+  for (const event of canonicalEvents) {
+    if (event.category !== "operational") continue;
+    if (event.type !== "run-terminal") continue;
+    return {
+      status: event.status,
+      errorMessage: event.errorMessage ?? null,
+      errorCode: event.errorCode ?? null,
+      headShaAtCompletion: event.headShaAtCompletion ?? null,
+    };
+  }
+  return null;
+}
+
 function isTerminalOnlyDaemonMessages(
   messages: DaemonEventAPIBody["messages"],
 ): boolean {
@@ -1227,48 +1248,80 @@ export async function POST(request: Request) {
     canonicalEvents &&
     canonicalEvents.length > 0
   ) {
-    waitUntil(
-      (async () => {
-        try {
-          await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
-        } catch (error) {
-          console.warn("[daemon-event] canonical-only freshness touch failed", {
-            threadId,
-            threadChatId,
-            error,
-          });
-        }
-      })(),
-    );
-    waitUntil(
-      (async () => {
-        try {
-          const thread = await getThreadMinimal({ db, threadId, userId });
-          if (thread?.codesandboxId && thread.sandboxProvider) {
-            await extendSandboxLife({
-              sandboxId: thread.codesandboxId,
-              sandboxProvider: thread.sandboxProvider,
-            });
+    const canonicalTerminal = findCanonicalRunTerminalEvent(canonicalEvents);
+    if (canonicalTerminal) {
+      // Canonical-only terminal batches must not take the freshness-touch
+      // shortcut; they need the fenced terminal transition contract below.
+    } else {
+      waitUntil(
+        (async () => {
+          try {
+            await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only freshness touch failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
           }
-        } catch (error) {
-          console.warn("[daemon-event] canonical-only thread refresh failed", {
-            threadId,
-            threadChatId,
-            error,
-          });
-        }
-      })(),
-    );
-    return Response.json({
-      success: true,
-      canonicalEventsPersisted: canonicalPersistence.summary.inserted,
-      canonicalEventsDeduplicated: canonicalPersistence.summary.deduplicated,
-    });
+        })(),
+      );
+      waitUntil(
+        (async () => {
+          try {
+            const thread = await getThreadMinimal({ db, threadId, userId });
+            if (thread?.codesandboxId && thread.sandboxProvider) {
+              await extendSandboxLife({
+                sandboxId: thread.codesandboxId,
+                sandboxProvider: thread.sandboxProvider,
+              });
+            }
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only thread refresh failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
+          }
+        })(),
+      );
+      return Response.json({
+        success: true,
+        canonicalEventsPersisted: canonicalPersistence.summary.inserted,
+        canonicalEventsDeduplicated: canonicalPersistence.summary.deduplicated,
+      });
+    }
   }
 
-  const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
-  const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
-  const terminalFailureSource = deriveTerminalFailureSource(messages);
+  const canonicalTerminal = canonicalEvents
+    ? findCanonicalRunTerminalEvent(canonicalEvents)
+    : null;
+  const daemonRunStatusFromMessages = canonicalTerminal
+    ? canonicalTerminal.status
+    : deriveRunStatusFromMessages(messages);
+  const daemonTerminalErrorInfo = canonicalTerminal
+    ? {
+        errorMessage: canonicalTerminal.errorMessage,
+        errorCategory: canonicalTerminal.errorMessage
+          ? classifyDaemonTerminalErrorCategory(canonicalTerminal.errorMessage)
+          : "unknown",
+      }
+    : deriveDaemonTerminalErrorInfo(messages);
+  const terminalFailureSource = canonicalTerminal
+    ? daemonRunStatusFromMessages === "stopped"
+      ? ("custom-stop" as const)
+      : daemonRunStatusFromMessages === "failed"
+        ? ("custom-error" as const)
+        : null
+    : deriveTerminalFailureSource(messages);
+  const effectiveHeadShaAtCompletion =
+    daemonHeadShaAtCompletion ?? canonicalTerminal?.headShaAtCompletion ?? null;
 
   const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId =
@@ -1396,18 +1449,24 @@ export async function POST(request: Request) {
     });
   }
   try {
-    result = await handleDaemonEvent({
-      messages,
-      threadId,
-      threadChatId,
-      userId,
-      timezone,
-      contextUsage: computedContextUsage ?? null,
-      runId: authoritativeRunId,
-      runContext,
-      workflowId: effectiveLoopId,
-      deferTerminalTransitionToRoute: fenceTerminalTransition,
-    });
+    const isCanonicalOnlyTerminalBatch =
+      canonicalTerminal != null &&
+      messages.length === 0 &&
+      (!deltas || deltas.length === 0);
+    result = isCanonicalOnlyTerminalBatch
+      ? { success: true, threadChatMessageSeq: null }
+      : await handleDaemonEvent({
+          messages,
+          threadId,
+          threadChatId,
+          userId,
+          timezone,
+          contextUsage: computedContextUsage ?? null,
+          runId: authoritativeRunId,
+          runContext,
+          workflowId: effectiveLoopId,
+          deferTerminalTransitionToRoute: fenceTerminalTransition,
+        });
   } catch (error) {
     console.error(
       "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
@@ -1684,7 +1743,7 @@ export async function POST(request: Request) {
             terminalState,
             envelopeV2.runId,
             terminalRunSeq,
-            daemonHeadShaAtCompletion,
+            effectiveHeadShaAtCompletion,
             hasToolCallsInMessages(messages),
           ),
           behavior: {
@@ -1705,7 +1764,7 @@ export async function POST(request: Request) {
             terminalState,
             envelopeV2.runId,
             terminalRunSeq,
-            daemonHeadShaAtCompletion,
+            effectiveHeadShaAtCompletion,
             daemonTerminalErrorInfo.errorMessage ?? undefined,
             daemonTerminalErrorInfo.errorCategory,
           ),
