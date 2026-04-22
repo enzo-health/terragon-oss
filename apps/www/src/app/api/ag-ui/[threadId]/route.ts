@@ -3,14 +3,17 @@ import { and, eq } from "drizzle-orm";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import * as schema from "@terragon/shared/db/schema";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import {
   agUiStreamKey,
   getAgUiEventsForRun,
   getLatestRunIdForThreadChat,
+  isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
+import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -327,6 +330,29 @@ export async function GET(
         return;
       }
 
+      let terminalRunContext: Awaited<
+        ReturnType<typeof getAgentRunContextByRunId>
+      > = null;
+      if (runEvents.length > 0) {
+        try {
+          terminalRunContext = await getAgentRunContextByRunId({
+            db,
+            runId: resolvedRunId,
+            userId: session.user.id,
+          });
+        } catch (error) {
+          console.warn(
+            "[ag-ui] run context lookup failed; continuing without durable terminal fallback",
+            {
+              threadId,
+              threadChatId,
+              runId: resolvedRunId,
+            },
+            error,
+          );
+        }
+      }
+
       // Caller-supplied runId that doesn't exist in this thread chat:
       // emit a RUN_ERROR rather than 404ing. The client sees a
       // protocol-valid first event and can react via its existing
@@ -339,6 +365,27 @@ export async function GET(
         enqueue(encodeSseEvent(errorEvent));
         close();
         return;
+      }
+
+      const runHasTerminalEvent = runEvents.some(
+        (event) =>
+          event.type === EventType.RUN_FINISHED ||
+          event.type === EventType.RUN_ERROR,
+      );
+
+      if (
+        !runHasTerminalEvent &&
+        terminalRunContext !== null &&
+        isTerminalAgentRunStatus(terminalRunContext.status)
+      ) {
+        const terminalEvent = buildRunTerminalAgUi({
+          threadId,
+          runId: resolvedRunId,
+          daemonRunStatus: terminalRunContext.status,
+          errorMessage: terminalRunContext.failureTerminalReason ?? null,
+          errorCode: terminalRunContext.failureCategory ?? null,
+        });
+        runEvents = [...runEvents, terminalEvent];
       }
 
       // Contract: events for a run MUST start with RUN_STARTED. If not,

@@ -24,6 +24,7 @@ import {
   hasCanonicalReplayProjection,
   peekNextThreadChatSeqLocked,
   readAgUiPayload,
+  isTerminalAgentRunStatus,
   validateCanonicalEnvelope,
   validateCanonicalEvent,
 } from "./agent-event-log";
@@ -907,6 +908,20 @@ describe("agent-event-log", () => {
           threadChatId: fixture.threadChatId,
         }),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe("isTerminalAgentRunStatus", () => {
+    it("recognizes completed, failed, and stopped as terminal", () => {
+      expect(isTerminalAgentRunStatus("completed")).toBe(true);
+      expect(isTerminalAgentRunStatus("failed")).toBe(true);
+      expect(isTerminalAgentRunStatus("stopped")).toBe(true);
+    });
+
+    it("rejects non-terminal run statuses", () => {
+      expect(isTerminalAgentRunStatus("pending")).toBe(false);
+      expect(isTerminalAgentRunStatus("dispatched")).toBe(false);
+      expect(isTerminalAgentRunStatus("processing")).toBe(false);
     });
   });
 });

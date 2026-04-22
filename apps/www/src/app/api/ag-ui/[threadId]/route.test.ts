@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { EventType, type BaseEvent } from "@ag-ui/core";
+import type { AgentRunContext } from "@terragon/shared/db/types";
 import { GET } from "./route";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
   getAgUiEventsForRun,
   getLatestRunIdForThreadChat,
 } from "@terragon/shared/model/agent-event-log";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -62,6 +64,12 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
   agUiStreamKey: (threadChatId: string) => `agui:thread:${threadChatId}`,
   getAgUiEventsForRun: vi.fn(),
   getLatestRunIdForThreadChat: vi.fn(),
+  isTerminalAgentRunStatus: (status: string) =>
+    status === "completed" || status === "failed" || status === "stopped",
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getAgentRunContextByRunId: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -106,6 +114,40 @@ function makeRequest(url: string): NextRequest {
   return new NextRequest(url);
 }
 
+function makeRunContext(
+  overrides: Partial<AgentRunContext> &
+    Pick<AgentRunContext, "runId" | "status">,
+): AgentRunContext {
+  const now = new Date();
+  const { runId, status, ...rest } = overrides;
+  return {
+    runId,
+    workflowId: null,
+    runSeq: null,
+    userId: "user-1",
+    threadId: "thread-1",
+    threadChatId: "chat-1",
+    sandboxId: "sandbox-1",
+    transportMode: "legacy",
+    protocolVersion: 2,
+    agent: "codex",
+    permissionMode: "allowAll",
+    requestedSessionId: null,
+    resolvedSessionId: null,
+    status,
+    tokenNonce: "nonce-1",
+    daemonTokenKeyId: null,
+    failureCategory: null,
+    failureSource: null,
+    failureRetryable: null,
+    failureSignatureHash: null,
+    failureTerminalReason: null,
+    createdAt: now,
+    updatedAt: now,
+    ...rest,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -132,6 +174,7 @@ describe("ag-ui SSE route", () => {
     dbMocks.limit.mockResolvedValue([{ id: "chat-1" }]);
     vi.mocked(getAgUiEventsForRun).mockResolvedValue([]);
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(null);
     redisMocks.xread.mockImplementation(() => new Promise(() => {}));
     redisMocks.xrevrange.mockImplementation(() => Promise.resolve({}));
   });
@@ -234,6 +277,40 @@ describe("ag-ui SSE route", () => {
     expect(runStartedCount).toBe(1);
   });
 
+  it("synthesizes a terminal SSE event from durable run status when replay misses it", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-terminal",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-terminal", status: "completed" }),
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-terminal",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 2);
+    expect(received).toEqual([
+      runEvents[0],
+      expect.objectContaining({
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-1",
+        runId: "run-terminal",
+      }),
+    ]);
+    expect(redisMocks.xread).not.toHaveBeenCalled();
+  });
+
   it("closes the stream immediately after RUN_FINISHED on a complete run", async () => {
     const runEvents: BaseEvent[] = [
       {
@@ -323,6 +400,34 @@ describe("ag-ui SSE route", () => {
     await vi.waitFor(() => {
       expect(redisMocks.xread).toHaveBeenCalled();
     });
+  });
+
+  it("keeps live-tailing a RUN_STARTED-only run when durable status is still processing", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-processing",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-processing", status: "processing" }),
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-processing",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(redisMocks.xread).toHaveBeenCalled();
+    });
+    await response.body!.cancel();
   });
 
   it("emits RUN_ERROR and closes when the run has no events", async () => {

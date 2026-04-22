@@ -14,6 +14,7 @@ import {
 import { mapCanonicalEventToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DB } from "../db";
 import type { DBMessage } from "../db/db-message";
+import type { AgentRunStatus } from "../db/types";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import * as schema from "../db/schema";
 
@@ -705,6 +706,18 @@ export async function getLatestRunIdForThreadChat({
     }
     throw error;
   }
+}
+
+const TERMINAL_AGENT_RUN_STATUSES: ReadonlySet<AgentRunStatus> = new Set([
+  "completed",
+  "failed",
+  "stopped",
+]);
+
+export function isTerminalAgentRunStatus(
+  status: AgentRunStatus,
+): status is Extract<AgentRunStatus, "completed" | "failed" | "stopped"> {
+  return TERMINAL_AGENT_RUN_STATUSES.has(status);
 }
 
 /**
