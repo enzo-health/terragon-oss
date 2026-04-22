@@ -341,6 +341,33 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
+  it("survives rapid successive runId changes — same agent, final URL wins", async () => {
+    const { captured, rerender, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: "c1", runId: null },
+    });
+    const agent = requireAgent(captured.at(-1)!);
+    const originalId = agent.__mockId;
+
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-1" },
+    });
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-2" },
+    });
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-3" },
+    });
+
+    expect(httpAgentInstances.length).toBe(1);
+    expect(requireAgent(captured.at(-1)!).__mockId).toBe(originalId);
+    expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-3");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("transitions from null to HttpAgent when threadChatId becomes available", async () => {
     const { captured, rerender, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: null },

@@ -23,11 +23,14 @@ vi.mock("@/lib/redis", () => ({
 // Import AFTER vi.mock so the publisher picks up the mocked redis.
 const {
   persistAndPublishAgUiEvents,
+  broadcastAgUiEventEphemeral,
   buildAgUiEventId,
   buildDeltaRunEndRows,
+  buildRunTerminalAgUi,
   canonicalEventsToAgUiRows,
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
+  metaEventsToAgUiEvents,
 } = await import("./ag-ui-publisher");
 
 const db = createDb(env.DATABASE_URL);
@@ -637,5 +640,290 @@ describe("ag-ui-publisher", () => {
     // 3 rows per batch (START / CONTENT / END) × 2 batches = 6 rows,
     // contiguous seqs 0..5.
     expect(persisted.map((r) => r.seq)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  // -------------------------------------------------------------------
+  // buildAgUiEventId — format invariant + collision safety
+  // -------------------------------------------------------------------
+
+  describe("buildAgUiEventId", () => {
+    it("produces canonical:type:index format", () => {
+      expect(buildAgUiEventId("ce-1", "TEXT_MESSAGE_START", 0)).toBe(
+        "ce-1:TEXT_MESSAGE_START:0",
+      );
+    });
+
+    it("expansion index prevents collision for same-type events", () => {
+      const id0 = buildAgUiEventId("ce-1", "TOOL_CALL_ARGS", 0);
+      const id1 = buildAgUiEventId("ce-1", "TOOL_CALL_ARGS", 1);
+      expect(id0).not.toBe(id1);
+      expect(id0).toBe("ce-1:TOOL_CALL_ARGS:0");
+      expect(id1).toBe("ce-1:TOOL_CALL_ARGS:1");
+    });
+
+    it("different event types from same source produce different ids", () => {
+      const start = buildAgUiEventId("ce-1", "TEXT_MESSAGE_START", 0);
+      const content = buildAgUiEventId("ce-1", "TEXT_MESSAGE_CONTENT", 0);
+      expect(start).not.toBe(content);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // buildRunTerminalAgUi — status dispatch logic
+  // -------------------------------------------------------------------
+
+  describe("buildRunTerminalAgUi", () => {
+    it("maps completed → RUN_FINISHED", () => {
+      const event = buildRunTerminalAgUi({
+        threadId: "t-1",
+        runId: "r-1",
+        daemonRunStatus: "completed",
+        errorMessage: null,
+      });
+      expect(event.type).toBe(EventType.RUN_FINISHED);
+      expect((event as Record<string, unknown>).threadId).toBe("t-1");
+      expect((event as Record<string, unknown>).runId).toBe("r-1");
+      expect(event).not.toHaveProperty("result");
+    });
+
+    it("maps stopped → RUN_FINISHED with stopped marker", () => {
+      const event = buildRunTerminalAgUi({
+        threadId: "t-1",
+        runId: "r-1",
+        daemonRunStatus: "stopped",
+        errorMessage: null,
+      });
+      expect(event.type).toBe(EventType.RUN_FINISHED);
+      expect((event as Record<string, unknown>).result).toEqual({
+        stopped: true,
+      });
+    });
+
+    it("maps failed → RUN_ERROR with error message", () => {
+      const event = buildRunTerminalAgUi({
+        threadId: "t-1",
+        runId: "r-1",
+        daemonRunStatus: "failed",
+        errorMessage: "context too long",
+      });
+      expect(event.type).toBe(EventType.RUN_ERROR);
+      expect((event as Record<string, unknown>).message).toBe(
+        "context too long",
+      );
+    });
+
+    it("defaults error message to 'Run failed' when null", () => {
+      const event = buildRunTerminalAgUi({
+        threadId: "t-1",
+        runId: "r-1",
+        daemonRunStatus: "failed",
+        errorMessage: null,
+      });
+      expect(event.type).toBe(EventType.RUN_ERROR);
+      expect((event as Record<string, unknown>).message).toBe("Run failed");
+    });
+
+    it("passes errorCode through when provided", () => {
+      const event = buildRunTerminalAgUi({
+        threadId: "t-1",
+        runId: "r-1",
+        daemonRunStatus: "failed",
+        errorMessage: "rate limited",
+        errorCode: "RATE_LIMIT",
+      });
+      expect((event as Record<string, unknown>).code).toBe("RATE_LIMIT");
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // broadcastAgUiEventEphemeral — fire-and-forget XADD
+  // -------------------------------------------------------------------
+
+  describe("broadcastAgUiEventEphemeral", () => {
+    it("XADDs a single event to the stream key without DB persistence", async () => {
+      const event = {
+        type: EventType.RUN_FINISHED,
+        timestamp: Date.now(),
+        threadId: "t-1",
+        runId: "r-1",
+      } as BaseEvent;
+
+      await broadcastAgUiEventEphemeral({
+        threadChatId: "tc-ephemeral",
+        event,
+      });
+
+      expect(redisMocks.xadd).toHaveBeenCalledTimes(1);
+      const [streamKey, id, data] = redisMocks.xadd.mock.calls[0]!;
+      expect(streamKey).toBe("agui:thread:tc-ephemeral");
+      expect(id).toBe("*");
+      const parsed = JSON.parse((data as { event: string }).event);
+      expect(parsed.type).toBe(EventType.RUN_FINISHED);
+    });
+
+    it("logs error without crashing on XADD failure", async () => {
+      redisMocks.xadd.mockRejectedValueOnce(new Error("redis timeout"));
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        await broadcastAgUiEventEphemeral({
+          threadChatId: "tc-fail",
+          event: {
+            type: EventType.CUSTOM,
+            timestamp: Date.now(),
+            name: "test",
+            value: {},
+          } as BaseEvent,
+        });
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy.mock.calls[0]![0]).toMatch(/ephemeral XADD failed/);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // metaEventsToAgUiEvents — CUSTOM event conversion
+  // -------------------------------------------------------------------
+
+  describe("metaEventsToAgUiEvents", () => {
+    it("converts meta events to CUSTOM AG-UI events preserving kind as name", () => {
+      const events = metaEventsToAgUiEvents([
+        {
+          kind: "thread.token_usage_updated",
+          usage: { input: 100 },
+        } as never,
+        { kind: "thread.rate_limit", remaining: 5 } as never,
+      ]);
+
+      expect(events).toHaveLength(2);
+      expect(events[0]!.type).toBe(EventType.CUSTOM);
+      expect((events[0] as Record<string, unknown>).name).toBe(
+        "thread.token_usage_updated",
+      );
+      expect(events[1]!.type).toBe(EventType.CUSTOM);
+      expect((events[1] as Record<string, unknown>).name).toBe(
+        "thread.rate_limit",
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Empty batch early-return
+  // -------------------------------------------------------------------
+
+  it("empty batch returns zero counts without DB or Redis calls", async () => {
+    const fixture = await createRunFixture();
+    const result = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows: [],
+    });
+
+    expect(result).toEqual({
+      inserted: 0,
+      skipped: 0,
+      insertedEventIds: [],
+    });
+    expect(redisMocks.xadd).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------
+  // Daemon delta content eventId format contract
+  // -------------------------------------------------------------------
+
+  it("daemon delta content eventIds encode runId:messageId:partIndex:kind:deltaSeq", () => {
+    const rows = daemonDeltasToAgUiRows({
+      runId: "run-fmt",
+      deltas: [
+        {
+          messageId: "m-fmt",
+          partIndex: 2,
+          deltaSeq: 7,
+          kind: "thinking",
+          text: "x",
+        },
+      ],
+    });
+    const contentRow = rows.find(
+      (r) => r.event.type === EventType.REASONING_MESSAGE_CONTENT,
+    );
+    expect(contentRow!.eventId).toBe("delta:run-fmt:m-fmt:2:thinking:7");
+  });
+
+  // -------------------------------------------------------------------
+  // Daemon delta: mixed text+thinking in same batch
+  // -------------------------------------------------------------------
+
+  it("daemon deltas: mixed text+thinking for same messageId get separate STARTs", () => {
+    const rows = daemonDeltasToAgUiRows({
+      runId: "run-mix",
+      deltas: [
+        {
+          messageId: "m-1",
+          partIndex: 0,
+          deltaSeq: 0,
+          kind: "text",
+          text: "hello",
+        },
+        {
+          messageId: "m-1",
+          partIndex: 1,
+          deltaSeq: 0,
+          kind: "thinking",
+          text: "hmm",
+        },
+      ],
+    });
+
+    const types = rows.map((r) => r.event.type);
+    expect(types).toEqual([
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_CONTENT,
+    ]);
+
+    const startEventIds = rows
+      .filter(
+        (r) =>
+          r.event.type === EventType.TEXT_MESSAGE_START ||
+          r.event.type === EventType.REASONING_MESSAGE_START,
+      )
+      .map((r) => r.eventId);
+    expect(startEventIds).toEqual([
+      "delta-start:run-mix:m-1:text",
+      "delta-start:run-mix:m-1:thinking",
+    ]);
+  });
+
+  // -------------------------------------------------------------------
+  // Timestamp preservation through row conversion
+  // -------------------------------------------------------------------
+
+  it("timestamps are preserved through row conversion", () => {
+    const ts = new Date("2026-01-15T12:00:00Z");
+    const rows = canonicalEventsToAgUiRows([
+      {
+        payloadVersion: 2,
+        eventId: "ce-ts",
+        runId: "run-ts",
+        threadId: "thread-ts",
+        threadChatId: "tc-ts",
+        seq: 0,
+        timestamp: ts.toISOString(),
+        category: "transcript",
+        type: "assistant-message",
+        messageId: "m-ts",
+        content: "test",
+      },
+    ]);
+
+    for (const row of rows) {
+      expect(row.timestamp.getTime()).toBe(ts.getTime());
+    }
   });
 });

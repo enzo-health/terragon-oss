@@ -2,12 +2,7 @@
 
 import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
-import { publicBroadcastHost } from "@terragon/env/next-public";
-import { useAtomValue } from "jotai";
 import { useEffect, useMemo } from "react";
-import { bearerTokenAtom } from "@/atoms/user";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { WebSocketAgent } from "@/lib/websocket-agent";
 
 /**
  * Browser-side AG-UI transport hook.
@@ -59,25 +54,11 @@ export function useAgUiTransport(args: {
   initialState?: State;
 }): HttpAgent | null {
   const { threadId, threadChatId, runId, initialMessages, initialState } = args;
-  const useWebSocket = useFeatureFlag("aguiWebSocket");
-  const authToken = useAtomValue(bearerTokenAtom);
 
   const agent = useMemo(() => {
     if (!threadChatId) return null;
     const query = new URLSearchParams({ threadChatId });
     const url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
-
-    if (useWebSocket && authToken) {
-      return new WebSocketAgent({
-        url,
-        threadId,
-        threadChatId,
-        partyHost: publicBroadcastHost(),
-        authToken,
-        initialMessages,
-        initialState,
-      });
-    }
 
     return new HttpAgent({
       url,
@@ -86,7 +67,7 @@ export function useAgUiTransport(args: {
       initialState,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, threadChatId, useWebSocket, authToken]);
+  }, [threadId, threadChatId]);
 
   useEffect(() => {
     if (!agent || !threadChatId) return;
@@ -95,11 +76,7 @@ export function useAgUiTransport(args: {
       query.set("runId", runId);
     }
     agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
-
-    if (agent instanceof WebSocketAgent && authToken) {
-      agent.authToken = authToken;
-    }
-  }, [agent, threadId, threadChatId, runId, authToken]);
+  }, [agent, threadId, threadChatId, runId]);
 
   return agent;
 }

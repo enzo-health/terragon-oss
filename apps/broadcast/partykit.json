@@ -3,8 +3,7 @@
   "name": "broadcast",
   "main": "src/server.ts",
   "parties": {
-    "sandbox": "src/sandbox.ts",
-    "agui": "src/agui.ts"
+    "sandbox": "src/sandbox.ts"
   },
   "compatibilityDate": "2025-05-24",
   "port": 1999
