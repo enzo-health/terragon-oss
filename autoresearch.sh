@@ -14,6 +14,12 @@ cleanup() {
     docker compose -p terragon-db down 2>/dev/null || true
 }
 cleanup
+
+# Optional: clear Next.js cache for fresh measurement
+if [ "${CLEAR_NEXT_CACHE:-}" = "1" ]; then
+    rm -rf apps/www/.next 2>/dev/null || true
+fi
+
 sleep 1
 trap cleanup EXIT
 
