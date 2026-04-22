@@ -9,6 +9,7 @@ import { ThreadError } from "./error";
 import { handleTransition, ThreadEvent } from "./machine";
 import { ThreadChatInsert, ThreadInsert, ThreadStatus } from "@terragon/shared";
 import { markThreadChatAsUnread } from "@terragon/shared/model/thread-read-status";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 
 export async function updateThreadChatWithTransition({
   userId,
@@ -21,6 +22,7 @@ export async function updateThreadChatWithTransition({
   chatUpdates,
   requireStatusTransitionForChatUpdates = false,
   skipAppendMessagesInBroadcast = false,
+  skipBroadcast = false,
 }: {
   threadId: string;
   userId: string;
@@ -35,10 +37,12 @@ export async function updateThreadChatWithTransition({
   >;
   requireStatusTransitionForChatUpdates?: boolean;
   skipAppendMessagesInBroadcast?: boolean;
+  skipBroadcast?: boolean;
 }): Promise<{
   didUpdateStatus: boolean;
   updatedStatus: ThreadStatus | undefined;
   chatSequence?: number;
+  broadcastData?: Parameters<typeof publishBroadcastUserMessage>[0];
 }> {
   const threadChat = await getThreadChat({
     db,
@@ -88,6 +92,9 @@ export async function updateThreadChatWithTransition({
       updates,
     });
   }
+  let broadcastData:
+    | Parameters<typeof publishBroadcastUserMessage>[0]
+    | undefined;
   if (
     chatUpdates &&
     (!requireStatusTransitionForChatUpdates || didUpdateStatus)
@@ -99,8 +106,10 @@ export async function updateThreadChatWithTransition({
       threadChatId,
       updates: chatUpdates,
       skipAppendMessagesInBroadcast,
+      skipBroadcast,
     });
     chatSequence = chatUpdateResult.chatSequence;
+    broadcastData = chatUpdateResult.broadcastData;
   }
   if (didUpdateStatus && (updates || chatUpdates)) {
     if (markAsUnread) {
@@ -117,5 +126,6 @@ export async function updateThreadChatWithTransition({
     didUpdateStatus,
     updatedStatus: updatedStatus ?? undefined,
     ...(chatSequence !== undefined ? { chatSequence } : {}),
+    ...(broadcastData !== undefined ? { broadcastData } : {}),
   };
 }
