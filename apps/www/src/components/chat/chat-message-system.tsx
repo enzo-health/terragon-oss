@@ -105,7 +105,7 @@ export function SystemMessage({
     <div className="py-2 px-4 rounded-xl mr-auto w-fit flex flex-col gap-2">
       <div className="flex flex-col gap-2">
         <div
-          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/60 transition-colors hover:text-muted-foreground cursor-pointer group/system"
+          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/70 transition-colors hover:text-muted-foreground cursor-pointer group/system"
           onClick={() => setIsCollapsed(!isCollapsed)}
         >
           <span className="h-5 flex items-center">

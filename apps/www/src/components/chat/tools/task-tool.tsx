@@ -121,7 +121,7 @@ function TaskToolContent({
       toolStatus={toolPart.status}
       className="text-foreground"
     >
-      <div className="col-span-full border-l-2 border-border pl-2">
+      <div className="col-span-full pl-3">
         {numToolsToHide > 0 && !expanded && (
           <GenericToolPartContentRow index={0}>
             <div className="text-sm text-muted-foreground italic">

@@ -152,6 +152,7 @@ export function SimplePromptBox({
       >
         <EditorContent
           editor={editor}
+          aria-label="Describe a task for the AI"
           className={cn("min-h-[44px] px-3 pb-1.5 pt-2.5 md:px-4", className)}
         />
       </ScrollArea>

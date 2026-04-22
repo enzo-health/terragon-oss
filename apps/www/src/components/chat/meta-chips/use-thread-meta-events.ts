@@ -6,6 +6,7 @@ import type {
 import type { CustomEvent as AgUiCustomEvent } from "@ag-ui/core";
 import { useAgUiAgent } from "../ag-ui-agent-context";
 import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
+import { useRealtimeThreadMatch } from "@/hooks/useRealtime";
 
 /**
  * Snapshot of the latest known meta event values for a thread.
@@ -200,16 +201,11 @@ function isThreadMetaKind(name: string): boolean {
  * Accumulates `ThreadMetaEvent`s emitted from the daemon and exposes the
  * latest snapshot for each category.
  *
- * Subscribes to the AG-UI `HttpAgent` (via `AgUiAgentProvider` in ChatUI)
- * and filters for CUSTOM events whose `name` matches a known
- * `ThreadMetaEvent` kind. Each event's `value` is cast to `ThreadMetaEvent`
- * and dispatched through the reducer so chips re-render without touching
- * the chat message stream.
- *
- * The AG-UI stream is already scoped to a single thread, so no threadId
- * argument is needed.
+ * Subscribes to AG-UI CUSTOM events (daemon path) and user-channel broadcast
+ * thread patches (server-side setup path) so setup telemetry remains visible
+ * before/while daemon streaming starts.
  */
-export function useThreadMetaEvents(): {
+export function useThreadMetaEvents(threadId?: string): {
   snapshot: ThreadMetaSnapshot;
   dispatch: (action: Action) => void;
 } {
@@ -224,6 +220,38 @@ export function useThreadMetaEvents(): {
   }, []);
 
   useAgUiCustomEvents(agent, isThreadMetaKind, onCustomEvent);
+
+  const matchThread = useCallback(
+    (patch: { threadId: string }) =>
+      threadId !== undefined && patch.threadId === threadId,
+    [threadId],
+  );
+  const onRealtimeThreadChange = useCallback(
+    (patches: Array<{ metaEvents?: unknown[] }>) => {
+      for (const patch of patches) {
+        const metaEvents = patch.metaEvents;
+        if (!Array.isArray(metaEvents) || metaEvents.length === 0) {
+          continue;
+        }
+        for (const metaEvent of metaEvents) {
+          if (
+            metaEvent &&
+            typeof metaEvent === "object" &&
+            "kind" in metaEvent &&
+            typeof metaEvent.kind === "string" &&
+            isThreadMetaKind(metaEvent.kind)
+          ) {
+            dispatch({ event: metaEvent as ThreadMetaEvent });
+          }
+        }
+      }
+    },
+    [],
+  );
+  useRealtimeThreadMatch({
+    matchThread,
+    onThreadChange: onRealtimeThreadChange,
+  });
 
   return { snapshot, dispatch };
 }

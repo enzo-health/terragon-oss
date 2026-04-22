@@ -98,6 +98,7 @@ export const SendButton = memo(function SendButton({
         submitForm({ saveAsDraft: false, scheduleAt: null });
       }}
       title={title}
+      aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
       className={cn(
         "size-auto h-8 px-2 transition-all duration-200",

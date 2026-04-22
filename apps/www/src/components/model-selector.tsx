@@ -415,7 +415,7 @@ function ModelDisplay({ model }: { model: AIModel }) {
     <span className="flex items-baseline gap-1">
       <span className="text-xs text-foreground/90">{mainName}</span>
       {subName && (
-        <span className="text-xs text-muted-foreground/60">{subName}</span>
+        <span className="text-xs text-muted-foreground/70">{subName}</span>
       )}
     </span>
   );

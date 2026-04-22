@@ -783,12 +783,31 @@ export class TerragonDaemon {
     input: DaemonMessageClaude;
   }): void {
     const existing = this.daemonEventRunStates.get(input.threadChatId);
+    const incomingRunId = input.runId ?? null;
+    const existingRunId = existing?.runId ?? null;
+    const runIdChanged =
+      incomingRunId !== null &&
+      existingRunId !== null &&
+      incomingRunId !== existingRunId;
     if (existing?.pendingEnvelope) {
-      existing.agent = input.agent;
-      existing.model = input.model;
-      existing.cleanupRequested = false;
-      this.daemonEventRunStates.set(input.threadChatId, existing);
-      return;
+      if (runIdChanged) {
+        this.runtime.logger.warn(
+          "Discarding stale pending daemon envelope because run changed",
+          {
+            threadChatId: input.threadChatId,
+            previousRunId: existingRunId,
+            nextRunId: incomingRunId,
+            staleEventId: existing.pendingEnvelope.eventId,
+            staleSeq: existing.pendingEnvelope.seq,
+          },
+        );
+      } else {
+        existing.agent = input.agent;
+        existing.model = input.model;
+        existing.cleanupRequested = false;
+        this.daemonEventRunStates.set(input.threadChatId, existing);
+        return;
+      }
     }
     this.daemonEventRunStates.set(input.threadChatId, {
       runId: input.runId ?? randomUUID(),
@@ -905,12 +924,29 @@ export class TerragonDaemon {
     this.messageBuffer = this.messageBuffer.filter(
       (entry) => entry.threadChatId !== input.threadChatId,
     );
-    if (this.messageBuffer.length !== bufferedBefore) {
+    const droppedMessageEntries = bufferedBefore - this.messageBuffer.length;
+    const deltaBefore = this.deltaBuffer.length;
+    this.deltaBuffer = this.deltaBuffer.filter(
+      (entry) => entry.threadChatId !== input.threadChatId,
+    );
+    const droppedDeltaEntries = deltaBefore - this.deltaBuffer.length;
+    const metaBefore = this.metaEventBuffer.length;
+    this.metaEventBuffer = this.metaEventBuffer.filter(
+      (entry) => entry.threadChatId !== input.threadChatId,
+    );
+    const droppedMetaEntries = metaBefore - this.metaEventBuffer.length;
+    if (
+      droppedMessageEntries > 0 ||
+      droppedDeltaEntries > 0 ||
+      droppedMetaEntries > 0
+    ) {
       this.runtime.logger.warn(
-        "Dropped buffered daemon messages from previous run before starting new run",
+        "Dropped buffered daemon events from previous run before starting new run",
         {
           threadChatId: input.threadChatId,
-          droppedEntries: bufferedBefore - this.messageBuffer.length,
+          droppedMessageEntries,
+          droppedDeltaEntries,
+          droppedMetaEntries,
         },
       );
       this.clearPendingDaemonEventEnvelope(input.threadChatId);
@@ -4298,6 +4334,28 @@ export class TerragonDaemon {
     return entries;
   }
 
+  private getActiveTokenForThread(threadChatId: string): string | null {
+    const activeProcessState = this.activeProcesses.get(threadChatId);
+    if (
+      activeProcessState &&
+      !activeProcessState.isCompleted &&
+      !activeProcessState.isStopping
+    ) {
+      return activeProcessState.token;
+    }
+
+    const appServerContext = this.appServerRunContexts.get(threadChatId);
+    if (
+      appServerContext &&
+      !appServerContext.isCompleted &&
+      !appServerContext.isStopping
+    ) {
+      return appServerContext.token;
+    }
+
+    return null;
+  }
+
   /**
    * Queue a meta event for delivery on the next daemon-event POST.
    * Meta events are piggybacked on the existing `/api/daemon-event` endpoint
@@ -4438,14 +4496,44 @@ export class TerragonDaemon {
         if (entriesToSend.length === 0) {
           continue;
         }
-        const lastEntry = entriesToSend[entriesToSend.length - 1]!;
+        const activeToken = this.getActiveTokenForThread(group.threadChatId);
+        const canonicalToken =
+          activeToken ?? entriesToSend[entriesToSend.length - 1]!.token;
+        const staleTokenEntries: MessageBufferEntry[] = [];
+        const tokenScopedEntries: MessageBufferEntry[] = [];
+        for (const entry of entriesToSend) {
+          if (entry.token === canonicalToken) {
+            tokenScopedEntries.push(entry);
+          } else {
+            staleTokenEntries.push(entry);
+          }
+        }
+        if (staleTokenEntries.length > 0) {
+          this.runtime.logger.warn(
+            "Dropping stale buffered daemon messages with superseded token",
+            {
+              threadChatId: group.threadChatId,
+              droppedEntries: staleTokenEntries.length,
+            },
+          );
+          for (const staleEntry of staleTokenEntries) {
+            handledEntries.add(staleEntry);
+          }
+        }
+        if (tokenScopedEntries.length === 0) {
+          if (entriesToSend.length < group.entries.length) {
+            this.pendingFlushRequired = true;
+          }
+          continue;
+        }
+        const lastEntry = tokenScopedEntries[tokenScopedEntries.length - 1]!;
         const threadId = lastEntry.threadId;
         const threadChatId = lastEntry.threadChatId;
         const token = lastEntry.token;
         const processedEntriesToSend =
-          this.processMessagesForSending(entriesToSend);
+          this.processMessagesForSending(tokenScopedEntries);
         if (processedEntriesToSend.length === 0) {
-          for (const entry of entriesToSend) {
+          for (const entry of tokenScopedEntries) {
             handledEntries.add(entry);
           }
           if (entriesToSend.length < group.entries.length) {
@@ -4466,7 +4554,7 @@ export class TerragonDaemon {
             : undefined;
           const selfDispatchResult = await this.sendMessagesToAPI({
             messages: messagesToSend,
-            entryCount: entriesToSend.length,
+            entryCount: tokenScopedEntries.length,
             timezone,
             token,
             threadId,
@@ -4534,7 +4622,15 @@ export class TerragonDaemon {
           }
           return t;
         };
+        const droppedDeltaCounts = new Map<string, number>();
+        const droppedMetaCounts = new Map<string, number>();
         for (const d of this.deltaBuffer) {
+          const activeToken = this.getActiveTokenForThread(d.threadChatId);
+          if (activeToken && d.token !== activeToken) {
+            const previous = droppedDeltaCounts.get(d.threadChatId) ?? 0;
+            droppedDeltaCounts.set(d.threadChatId, previous + 1);
+            continue;
+          }
           ensure(d.threadChatId, d.threadId, d.token).deltas.push({
             messageId: d.messageId,
             partIndex: d.partIndex,
@@ -4544,11 +4640,35 @@ export class TerragonDaemon {
           });
         }
         for (const entry of this.metaEventBuffer) {
+          const activeToken = this.getActiveTokenForThread(entry.threadChatId);
+          if (activeToken && entry.token !== activeToken) {
+            const previous = droppedMetaCounts.get(entry.threadChatId) ?? 0;
+            droppedMetaCounts.set(entry.threadChatId, previous + 1);
+            continue;
+          }
           ensure(
             entry.threadChatId,
             entry.threadId,
             entry.token,
           ).metaEvents.push(entry.metaEvent);
+        }
+        for (const [threadChatId, droppedCount] of droppedDeltaCounts) {
+          this.runtime.logger.warn(
+            "Dropping stale daemon deltas with superseded token",
+            {
+              threadChatId,
+              droppedCount,
+            },
+          );
+        }
+        for (const [threadChatId, droppedCount] of droppedMetaCounts) {
+          this.runtime.logger.warn(
+            "Dropping stale daemon meta events with superseded token",
+            {
+              threadChatId,
+              droppedCount,
+            },
+          );
         }
         this.deltaBuffer = [];
         this.metaEventBuffer = [];
@@ -4605,7 +4725,9 @@ export class TerragonDaemon {
       if (failedGroups.length > 0) {
         // Detect permanent auth errors (401/403) — drop messages instead of retrying forever.
         // These indicate an invalid token that won't become valid on its own.
-        const retryableGroups = failedGroups.filter((g) => {
+        const retryableGroups: typeof failedGroups = [];
+        const authDroppedThreadChatIds = new Set<string>();
+        for (const g of failedGroups) {
           if (isNonRetryableAuthError(g.error)) {
             this.runtime.logger.error(
               "Permanent auth error — dropping messages (token is invalid, retrying won't help)",
@@ -4622,10 +4744,38 @@ export class TerragonDaemon {
               (entry) => entry.threadChatId !== g.threadChatId,
             );
             this.clearPendingDaemonEventEnvelope(g.threadChatId);
-            return false;
+            authDroppedThreadChatIds.add(g.threadChatId);
+            continue;
           }
-          return true;
-        });
+          retryableGroups.push(g);
+        }
+        for (const threadChatId of authDroppedThreadChatIds) {
+          this.stopHeartbeat(threadChatId);
+          this.killActiveProcess(threadChatId);
+          const appServerContext = this.appServerRunContexts.get(threadChatId);
+          if (!appServerContext) {
+            this.markDaemonEventRunStateForCleanup(threadChatId);
+            continue;
+          }
+          appServerContext.isStopping = true;
+          this.clearAppServerWatchdog(appServerContext);
+          appServerContext.rejectTurnComplete(
+            new Error(
+              "Codex app-server turn stopped after non-retryable daemon auth failure",
+            ),
+          );
+          this.appServerRunContexts.delete(threadChatId);
+          void appServerContext.manager.kill().catch((error) => {
+            this.runtime.logger.error(
+              "Failed to kill codex app-server after non-retryable auth failure",
+              {
+                threadChatId,
+                error: formatError(error),
+              },
+            );
+          });
+          this.markDaemonEventRunStateForCleanup(threadChatId);
+        }
 
         const allClaimInProgress =
           retryableGroups.length > 0 &&

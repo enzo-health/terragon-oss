@@ -780,6 +780,20 @@ function hasValidThreadChatId(threadChatId: unknown): threadChatId is string {
   );
 }
 
+function logDaemonAuthReject(params: {
+  reason: string;
+  threadId: string;
+  threadChatId: string;
+  runId: string | null;
+}): void {
+  console.warn("[daemon-event] auth reject", {
+    reason: params.reason,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+    runId: params.runId,
+  });
+}
+
 function getDaemonTestAuthContextOrNull(
   request: Pick<Request, "headers">,
 ): DaemonTokenAuthContext | null {
@@ -859,6 +873,12 @@ export async function POST(request: Request) {
   const daemonAuthContext = daemonTokenAuthContext ?? daemonTestAuthContext;
   const usingDaemonTestAuth = daemonTestAuthContext !== null;
   if (!daemonAuthContext) {
+    logDaemonAuthReject({
+      reason: "daemon_auth_context_missing",
+      threadId,
+      threadChatId,
+      runId: envelopeV2?.runId ?? null,
+    });
     return new Response("Unauthorized", { status: 401 });
   }
   const userId = daemonAuthContext.userId;
@@ -968,6 +988,12 @@ export async function POST(request: Request) {
   };
 
   if (envelopeV2 && claims && envelopeV2.runId !== claims.runId) {
+    logDaemonAuthReject({
+      reason: "daemon_event_run_id_claim_mismatch",
+      threadId,
+      threadChatId,
+      runId: envelopeV2.runId,
+    });
     return Response.json(
       {
         success: false,
@@ -980,6 +1006,12 @@ export async function POST(request: Request) {
 
   if (envelopeV2 && !claims) {
     if (!usingDaemonTestAuth) {
+      logDaemonAuthReject({
+        reason: "daemon_token_claims_required",
+        threadId,
+        threadChatId,
+        runId: envelopeV2.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -1029,6 +1061,12 @@ export async function POST(request: Request) {
 
   if (claims) {
     if (claims.exp <= Date.now()) {
+      logDaemonAuthReject({
+        reason: "daemon_token_expired",
+        threadId,
+        threadChatId,
+        runId: claims.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -1073,6 +1111,12 @@ export async function POST(request: Request) {
       claims.transportMode !== runContext.transportMode ||
       claims.protocolVersion !== runContext.protocolVersion
     ) {
+      logDaemonAuthReject({
+        reason: "daemon_token_claim_mismatch",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -1083,6 +1127,12 @@ export async function POST(request: Request) {
       );
     }
     if (!daemonAuthContext.keyId || !runContext.daemonTokenKeyId) {
+      logDaemonAuthReject({
+        reason: "daemon_token_key_missing",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -1093,6 +1143,12 @@ export async function POST(request: Request) {
       );
     }
     if (daemonAuthContext.keyId !== runContext.daemonTokenKeyId) {
+      logDaemonAuthReject({
+        reason: "daemon_token_key_mismatch",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,

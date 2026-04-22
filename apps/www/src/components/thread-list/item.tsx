@@ -117,6 +117,7 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
       ref={triggerRef}
       variant="ghost"
       size="icon"
+      aria-label="Thread options"
       className="w-fit px-1 hover:bg-transparent cursor-pointer"
     >
       <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />

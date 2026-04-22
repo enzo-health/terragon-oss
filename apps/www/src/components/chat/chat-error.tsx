@@ -64,6 +64,7 @@ export function ChatError({
             variant="ghost"
             className="size-6 hover:bg-transparent hover:text-foreground flex-shrink-0"
             title="Retry"
+            aria-label="Retry"
             disabled={isRetrying}
           >
             {isRetrying ? (

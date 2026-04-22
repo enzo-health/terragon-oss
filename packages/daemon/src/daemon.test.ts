@@ -2285,7 +2285,7 @@ describe("daemon", () => {
     );
   });
 
-  it("preserves pending envelope identity when a same-thread run restarts before retry", async () => {
+  it("drops stale pending envelope state when a same-thread run restarts with a new token", async () => {
     let apiCallCount = 0;
     serverPostMock.mockImplementation(async () => {
       apiCallCount += 1;
@@ -2305,6 +2305,7 @@ describe("daemon", () => {
       ...firstRunInput,
       prompt: "second run while retry is pending",
       runId: "run-restart-before-retry-2",
+      token: "TEST_TOKEN_STRING_SECOND_RUN",
     };
 
     await daemon.start();
@@ -2328,23 +2329,43 @@ describe("daemon", () => {
       dataStr: JSON.stringify(secondRunInput),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+    const secondRunStdout =
+      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
+    expect(secondRunStdout).toBeTypeOf("function");
+    secondRunStdout?.(
+      JSON.stringify({ role: "assistant", content: "RUN_2_MSG" }),
+    );
 
-    await sleepUntil(() => serverPostMock.mock.calls.length === 2);
+    await sleepUntil(() =>
+      serverPostMock.mock.calls.some(([payload]) =>
+        payloadHasAssistantStringMessage(
+          payload as DaemonEventAPIBody,
+          "RUN_2_MSG",
+        ),
+      ),
+    );
 
-    const retryPayloads = serverPostMock.mock.calls
+    const runOnePayloads = serverPostMock.mock.calls
       .map(([payload]) => payload as DaemonEventAPIBody)
       .filter((payload) =>
         payloadHasAssistantStringMessage(payload, "RUN_1_MSG"),
       );
-    expect(retryPayloads).toHaveLength(2);
-
-    const firstPayload = retryPayloads[0]!;
-    const retryPayload = retryPayloads[1]!;
-
+    expect(runOnePayloads.length).toBeGreaterThan(0);
+    const firstPayload = runOnePayloads[0]!;
+    const runTwoPayload = serverPostMock.mock.calls
+      .map(([payload]) => payload as DaemonEventAPIBody)
+      .find((payload) =>
+        payloadHasAssistantStringMessage(payload, "RUN_2_MSG"),
+      );
+    const staleRunOneOnRunTwo = runOnePayloads.find(
+      (payload) => payload.runId === "run-restart-before-retry-2",
+    );
+    if (!runTwoPayload) {
+      throw new Error("Expected second run payload");
+    }
+    expect(staleRunOneOnRunTwo).toBeUndefined();
     expect(JSON.stringify(firstPayload.messages)).toContain("RUN_1_MSG");
-    expect(retryPayload.messages).toEqual(firstPayload.messages);
     expect(firstPayload.canonicalEvents).toHaveLength(1);
-    expect(retryPayload.canonicalEvents).toHaveLength(1);
     expect(firstPayload.canonicalEvents?.[0]).toEqual(
       expect.objectContaining({
         eventId: createHash("sha256")
@@ -2354,16 +2375,24 @@ describe("daemon", () => {
         type: "run-started",
       }),
     );
-    expect(retryPayload.canonicalEvents).toStrictEqual(
-      firstPayload.canonicalEvents,
-    );
-
     expect(firstPayload.payloadVersion).toBe(2);
-    expect(retryPayload.payloadVersion).toBe(2);
     expect(firstPayload.runId).toBe("run-restart-before-retry-1");
-    expect(retryPayload.runId).toBe(firstPayload.runId);
-    expect(retryPayload.seq).toBe(firstPayload.seq);
-    expect(retryPayload.eventId).toBe(firstPayload.eventId);
+    expect(runTwoPayload.payloadVersion).toBe(2);
+    expect(runTwoPayload.runId).toBe("run-restart-before-retry-2");
+    expect(runTwoPayload.seq).toBe(0);
+    expect(runTwoPayload.eventId).toBe(
+      createHash("sha256").update("run-restart-before-retry-2:0").digest("hex"),
+    );
+    expect(runTwoPayload.canonicalEvents).toHaveLength(1);
+    expect(runTwoPayload.canonicalEvents?.[0]).toEqual(
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-restart-before-retry-2:canonical:0")
+          .digest("hex"),
+        seq: 0,
+        type: "run-started",
+      }),
+    );
   });
 
   it("clears abandoned canonical batches after a non-retryable auth drop", async () => {
@@ -2407,11 +2436,12 @@ describe("daemon", () => {
     );
 
     await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
-    await sleepUntil(
-      () =>
-        internals.daemonEventRunStates.get(firstRunInput.threadChatId)
-          ?.pendingEnvelope === null,
-    );
+    await sleepUntil(() => {
+      const runState = internals.daemonEventRunStates.get(
+        firstRunInput.threadChatId,
+      );
+      return !runState || runState.pendingEnvelope === null;
+    });
 
     await writeToUnixSocket({
       unixSocketPath: runtime.unixSocketPath,

@@ -9,7 +9,7 @@ import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-quer
 import { threadQueryKeys } from "@/queries/thread-queries";
 import type { DeliveryLoopState, ThreadStatus } from "@terragon/shared";
 
-const HEARTBEAT_MS = 15_000;
+const HEARTBEAT_MS = 5_000;
 
 const LIVE_THREAD_STATUSES = new Set<ThreadStatus>([
   // Legacy/deprecated: keep polling for safety while these are still in play.

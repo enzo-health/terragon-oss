@@ -342,7 +342,7 @@ export function PassiveWaitFooter({
     <div className="flex flex-col gap-0.5 px-2 text-muted-foreground/70 text-sm">
       <span>{message}</span>
       {reason ? (
-        <span className="text-muted-foreground/60 text-xs">{reason}</span>
+        <span className="text-muted-foreground/70 text-xs">{reason}</span>
       ) : null}
     </div>
   );

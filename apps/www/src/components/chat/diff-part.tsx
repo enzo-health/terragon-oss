@@ -32,7 +32,7 @@ function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-green-400 text-green-600"
+          className="gap-1 text-xs border-[var(--diff-added-border)] text-[var(--diff-added-fg)]"
           data-status="applied"
         >
           <CheckCircle className="size-3" />
@@ -43,7 +43,7 @@ function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-red-400 text-red-600"
+          className="gap-1 text-xs border-[var(--diff-removed-border)] text-[var(--diff-removed-fg)]"
           data-status="rejected"
         >
           <XCircle className="size-3" />
@@ -81,7 +81,7 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
                 <button
                   type="button"
                   onClick={onAccept}
-                  className="rounded px-2 py-0.5 text-xs bg-green-500/10 text-green-600 hover:bg-green-500/20 transition-colors border border-green-400"
+                  className="rounded px-2 py-0.5 text-xs bg-[var(--diff-added-bg)] text-[var(--diff-added-fg)] hover:bg-[var(--diff-added-bg-hover)] transition-colors border border-[var(--diff-added-border)]"
                 >
                   Accept
                 </button>
@@ -90,7 +90,7 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
                 <button
                   type="button"
                   onClick={onReject}
-                  className="rounded px-2 py-0.5 text-xs bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors border border-red-400"
+                  className="rounded px-2 py-0.5 text-xs bg-[var(--diff-removed-bg)] text-[var(--diff-removed-fg)] hover:bg-[var(--diff-removed-bg-hover)] transition-colors border border-[var(--diff-removed-border)]"
                 >
                   Reject
                 </button>
@@ -113,9 +113,9 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
                   key={i}
                   className={`block ${
                     line.startsWith("+")
-                      ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                      ? "bg-[var(--diff-added-bg)] text-[var(--diff-added-fg)]"
                       : line.startsWith("-")
-                        ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                        ? "bg-[var(--diff-removed-bg)] text-[var(--diff-removed-fg)]"
                         : line.startsWith("@@")
                           ? "text-blue-600 dark:text-blue-400"
                           : "text-muted-foreground"

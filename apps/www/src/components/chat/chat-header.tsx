@@ -49,7 +49,7 @@ export const ChatHeader = memo(function ChatHeader({
   onTerminalClick?: () => void;
 }) {
   const { isMobile } = useSidebar();
-  const { snapshot: metaSnapshot } = useThreadMetaEvents();
+  const { snapshot: metaSnapshot } = useThreadMetaEvents(thread.id);
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(thread.name || "");
   const inputRef = useRef<HTMLInputElement>(null);

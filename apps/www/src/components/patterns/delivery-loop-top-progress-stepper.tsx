@@ -175,7 +175,7 @@ function PlanTaskStatusIcon({
       return <AlertTriangleIcon className="size-3 shrink-0 text-destructive" />;
     default:
       return (
-        <CircleIcon className="size-3 shrink-0 text-muted-foreground/50" />
+        <CircleIcon className="size-3 shrink-0 text-muted-foreground/70" />
       );
   }
 }
@@ -371,7 +371,7 @@ export function DeliveryLoopTopProgressStepper({
             <span className="text-[10px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
               Delivery
             </span>
-            <span className="text-muted-foreground/30">·</span>
+            <span className="text-muted-foreground/60">·</span>
             <span className="text-[12px] font-medium text-foreground">
               {stateLabel}
             </span>

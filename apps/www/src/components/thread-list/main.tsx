@@ -194,7 +194,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
         <ChevronDown className="size-3 opacity-50" />
       )}
       {title}
-      <span className="text-muted-foreground/50 font-sans text-[10px] font-medium">
+      <span className="text-muted-foreground/70 font-sans text-[10px] font-medium">
         {numThreads}
       </span>
     </h3>
@@ -285,7 +285,7 @@ function EmptyThreadList({
       <div className="bg-muted/20 rounded-md p-8 flex flex-col items-center justify-center gap-2">
         <div className="flex items-center gap-2">
           <WorkflowIcon className="size-4 text-muted-foreground/70" />
-          <span className="text-sm text-muted-foreground/50">
+          <span className="text-sm text-muted-foreground/70">
             No tasks for this automation
           </span>
         </div>
@@ -300,7 +300,7 @@ function EmptyThreadList({
         ) : (
           <List className="size-4 text-muted-foreground/70" />
         )}
-        <span className="text-sm text-muted-foreground/50">
+        <span className="text-sm text-muted-foreground/70">
           {queryFilters.archived ? "No archived tasks" : "No tasks"}
         </span>
       </div>

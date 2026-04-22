@@ -123,12 +123,12 @@ function InstallProgressBar({
           // Indeterminate: pulse the filled portion to signal ongoing activity
           <span>
             <span className="animate-pulse text-primary/70">{filledChars}</span>
-            <span className="text-muted-foreground/30">{emptyChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         ) : (
           <span>
             <span className="text-primary/70">{filledChars}</span>
-            <span className="text-muted-foreground/30">{emptyChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         )}{" "}
         {total !== undefined ? (
@@ -173,8 +173,11 @@ export interface BootChecklistProps {
  * - Shows an install progress bar under the `installing-agent` step while
  *   that step is in-progress.
  */
-export function BootChecklist({ currentSubstatus }: BootChecklistProps) {
-  const { snapshot } = useThreadMetaEvents();
+export function BootChecklist({
+  threadId,
+  currentSubstatus,
+}: BootChecklistProps) {
+  const { snapshot } = useThreadMetaEvents(threadId);
   const { bootSteps, installProgress } = snapshot;
 
   // Determine which step is currently active using meta events when available,
@@ -255,7 +258,7 @@ export function BootChecklist({ currentSubstatus }: BootChecklistProps) {
               {/* Duration: static badge for completed steps, live timer for active */}
               {isCompleted && durationMs !== undefined && (
                 <span
-                  className="font-mono text-[11px] text-muted-foreground/60 flex-shrink-0 tabular-nums"
+                  className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}

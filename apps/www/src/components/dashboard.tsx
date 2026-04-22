@@ -16,6 +16,7 @@ import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
 import { useCreateThreadMutation } from "@/queries/thread-mutations";
+import { Rocket } from "lucide-react";
 
 export function Dashboard({
   showArchived = false,
@@ -54,7 +55,7 @@ export function Dashboard({
         toast.success("Task saved as draft successfully.");
       } else {
         toast.success("Task created! Getting to work...", {
-          icon: "🚀",
+          icon: <Rocket className="size-4" />,
           duration: 3000,
         });
       }
@@ -115,9 +116,9 @@ export function Dashboard({
       </div>
       {showRecommendedTasks && (
         <div className="space-y-6 hidden md:block">
-          <h3 className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground">
+          <h2 className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground">
             Suggested tasks
-          </h3>
+          </h2>
           <RecommendedTasks
             onTaskSelect={setPromptText}
             selectedModel={selectedModel}
