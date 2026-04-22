@@ -20,15 +20,13 @@ import {
   DBUserMessageWithModel,
   Thread,
 } from "@terragon/shared";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { DB } from "@terragon/shared/db";
 import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
-import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   activeThreadStatuses,
   getActiveThreadCount,
@@ -68,6 +66,8 @@ import {
   ensureDeliveryLoopEnrollmentForThreadIfEnabled,
   isDeliveryLoopEnrollmentAllowedForThread,
 } from "@/server-lib/delivery-loop/enrollment";
+import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
+import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
@@ -466,6 +466,50 @@ export async function startAgentMessage({
       // for the boot.substatus_changed meta event.
       let lastBootingSubstatus: BootingSubstatus | null = null;
       let lastBootingTransitionAt: number | null = null;
+      const emitBootSubstatusChanged = (
+        nextSubstatus: BootingSubstatus,
+        now: number,
+      ) => {
+        if (nextSubstatus === lastBootingSubstatus) {
+          return;
+        }
+        const durationMs =
+          lastBootingTransitionAt !== null
+            ? now - lastBootingTransitionAt
+            : undefined;
+        const metaEvent: ThreadMetaEvent = {
+          kind: "boot.substatus_changed",
+          threadId,
+          from: lastBootingSubstatus,
+          to: nextSubstatus,
+          timestamp: new Date(now).toISOString(),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        };
+        publishBroadcastUserMessage({
+          type: "user",
+          id: userId,
+          data: {
+            threadPatches: [
+              {
+                threadId,
+                op: "upsert",
+                metaEvents: [metaEvent],
+              },
+            ],
+          },
+        }).catch((error) => {
+          console.warn(
+            "[start-agent-message] boot.substatus_changed broadcast failed",
+            {
+              threadId,
+              to: nextSubstatus,
+              error,
+            },
+          );
+        });
+        lastBootingSubstatus = nextSubstatus;
+        lastBootingTransitionAt = now;
+      };
 
       const onStatusUpdate: CreateSandboxOptions["onStatusUpdate"] = async ({
         sandboxId,
@@ -490,49 +534,7 @@ export async function startAgentMessage({
               ? "provisioning"
               : bootingStatus;
 
-          // Skip duplicate transitions — same substatus arriving twice would
-          // corrupt the client reducer by appending a row with from === to.
-          if (normalised === lastBootingSubstatus) {
-            return;
-          }
-
-          const now = Date.now();
-          const durationMs =
-            lastBootingTransitionAt !== null
-              ? now - lastBootingTransitionAt
-              : undefined;
-          const metaEvent: ThreadMetaEvent = {
-            kind: "boot.substatus_changed",
-            threadId,
-            from: lastBootingSubstatus,
-            to: normalised,
-            timestamp: new Date(now).toISOString(),
-            ...(durationMs !== undefined ? { durationMs } : {}),
-          };
-          publishBroadcastUserMessage({
-            type: "user",
-            id: userId,
-            data: {
-              threadPatches: [
-                {
-                  threadId,
-                  op: "upsert",
-                  metaEvents: [metaEvent],
-                },
-              ],
-            },
-          }).catch((error) => {
-            console.warn(
-              "[start-agent-message] boot.substatus_changed broadcast failed",
-              {
-                threadId,
-                to: bootingStatus,
-                error,
-              },
-            );
-          });
-          lastBootingSubstatus = normalised;
-          lastBootingTransitionAt = now;
+          emitBootSubstatusChanged(normalised, Date.now());
         }
       };
       await withSandboxResource({
@@ -586,6 +588,7 @@ export async function startAgentMessage({
               bootingSubstatus: "booting-done",
             },
           });
+          emitBootSubstatusChanged("booting-done", Date.now());
           if (threadContextPromise) {
             await threadContextPromise;
           }

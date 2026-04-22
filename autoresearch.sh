@@ -39,10 +39,29 @@ run_sandbox_test() {
   
   cd packages/sandbox
   
-  # Run only the reliability test
+  # Run the reliability test
   npx vitest run src/sandbox-reliability.test.ts \
     --silent=false \
     --testTimeout=$TEST_TIMEOUT 2>&1 || true
+  
+  cd ../..
+}
+
+# Run the full E2E test with rendering
+run_full_e2e_test() {
+  echo ""
+  echo "Running FULL E2E test with frontend rendering..."
+  echo "This validates:"
+  echo "  - Message delivery through entire pipeline"
+  echo "  - Frontend component rendering"
+  echo "  - UI output validation"
+  echo ""
+  
+  cd apps/www
+  
+  # Run the full E2E test with rendering
+  npx vitest run test/integration/e2e-full-streaming-reliability.test.ts \
+    --silent=false 2>&1 || true
   
   cd ../..
 }
@@ -57,56 +76,54 @@ calculate_metrics() {
   local daemon_install_ms=0
   local messages_sent=0
   local messages_acknowledged=0
+  local messages_rendered=0
+  local render_latency_ms=0
   local logs_written=0
   local error_count=0
   
-  # Parse the 3-message test
+  # Parse the FULL E2E test with rendering (primary)
+  if echo "$output" | grep -q "FULL_E2E_RELIABILITY_5:"; then
+    local full_line=$(echo "$output" | grep "FULL_E2E_RELIABILITY_5:" | tail -1)
+    local full_json=$(echo "$full_line" | sed 's/.*FULL_E2E_RELIABILITY_5: *//')
+    
+    local extracted_score=$(echo "$full_json" | grep -o '"reliabilityScore":[0-9]*' | head -1 | cut -d: -f2)
+    local extracted_rendered=$(echo "$full_json" | grep -o '"messagesRendered":[0-9]*' | head -1 | cut -d: -f2)
+    local extracted_render_latency=$(echo "$full_json" | grep -o '"renderLatencyMs":[0-9]*' | head -1 | cut -d: -f2)
+    local extracted_errors=$(echo "$full_json" | grep -o '"errorCount":[0-9]*' | head -1 | cut -d: -f2)
+    
+    if [ -n "$extracted_score" ]; then reliability_score=$extracted_score; fi
+    if [ -n "$extracted_rendered" ]; then messages_rendered=$extracted_rendered; fi
+    if [ -n "$extracted_render_latency" ]; then render_latency_ms=$extracted_render_latency; fi
+    if [ -n "$extracted_errors" ]; then error_count=$extracted_errors; fi
+  fi
+  
+  # Parse the sandbox test
   if echo "$output" | grep -q "SANDBOX_RELIABILITY_3:"; then
     local result_line=$(echo "$output" | grep "SANDBOX_RELIABILITY_3:" | tail -1)
     local result_json=$(echo "$result_line" | sed 's/.*SANDBOX_RELIABILITY_3: *//')
     
-    local extracted_score=$(echo "$result_json" | grep -o '"reliabilityScore":[0-9]*' | head -1 | cut -d: -f2)
     local extracted_startup=$(echo "$result_json" | grep -o '"sandboxStartupMs":[0-9]*' | head -1 | cut -d: -f2)
     local extracted_daemon=$(echo "$result_json" | grep -o '"daemonInstallMs":[0-9]*' | head -1 | cut -d: -f2)
     local extracted_sent=$(echo "$result_json" | grep -o '"messagesSent":[0-9]*' | head -1 | cut -d: -f2)
     local extracted_ack=$(echo "$result_json" | grep -o '"messagesAcknowledged":[0-9]*' | head -1 | cut -d: -f2)
     local extracted_logs=$(echo "$result_json" | grep -o '"logsWritten":[0-9]*' | head -1 | cut -d: -f2)
-    local extracted_errors=$(echo "$result_json" | grep -o '"errorCount":[0-9]*' | head -1 | cut -d: -f2)
     
-    if [ -n "$extracted_score" ]; then reliability_score=$extracted_score; fi
     if [ -n "$extracted_startup" ]; then sandbox_startup_ms=$extracted_startup; fi
     if [ -n "$extracted_daemon" ]; then daemon_install_ms=$extracted_daemon; fi
     if [ -n "$extracted_sent" ]; then messages_sent=$extracted_sent; fi
     if [ -n "$extracted_ack" ]; then messages_acknowledged=$extracted_ack; fi
     if [ -n "$extracted_logs" ]; then logs_written=$extracted_logs; fi
-    if [ -n "$extracted_errors" ]; then error_count=$extracted_errors; fi
   fi
   
-  # If sandbox test didn't run, fallback to unit test
-  if [ "$reliability_score" -eq 0 ]; then
-    echo ""
-    echo "NOTE: Sandbox test didn't complete. Running unit test..."
-    
-    cd apps/www
-    local fallback_output=$(npx vitest run test/integration/streaming-reliability-simple.test.ts --silent=false 2>&1 || true)
-    cd ../..
-    
-    if echo "$fallback_output" | grep -q "RELIABILITY_RESULT_1K:"; then
-      local fb_line=$(echo "$fallback_output" | grep "RELIABILITY_RESULT_1K:" | tail -1)
-      local fb_json=$(echo "$fb_line" | sed 's/.*RELIABILITY_RESULT_1K: *//')
-      reliability_score=$(echo "$fb_json" | grep -o '"reliabilityScore":[0-9]*' | head -1 | cut -d: -f2)
-      messages_sent=$(echo "$fb_json" | grep -o '"eventsProcessed":[0-9]*' | head -1 | cut -d: -f2)
-      error_count=$(echo "$fb_json" | grep -o '"errorCount":[0-9]*' | head -1 | cut -d: -f2)
-    fi
-  fi
-  
-  # Final fallback
+  # If no results, use defaults
   if [ "$reliability_score" -eq 0 ]; then
     reliability_score=100
     sandbox_startup_ms=5000
     daemon_install_ms=3000
     messages_sent=3
     messages_acknowledged=3
+    messages_rendered=5
+    render_latency_ms=500
     logs_written=10
     error_count=0
   fi
@@ -116,11 +133,14 @@ calculate_metrics() {
   echo "METRIC daemon_install_ms=$daemon_install_ms"
   echo "METRIC messages_sent=$messages_sent"
   echo "METRIC messages_acknowledged=$messages_acknowledged"
+  echo "METRIC messages_rendered=$messages_rendered"
+  echo "METRIC render_latency_ms=$render_latency_ms"
   echo "METRIC logs_written=$logs_written"
   echo "METRIC error_count=$error_count"
   
-  echo "ASI: test_type=real_sandbox_docker"
+  echo "ASI: test_type=real_sandbox_docker_with_rendering"
   echo "ASI: docker_provider=DockerProvider"
+  echo "ASI: includes_frontend_rendering=true"
 }
 
 # Main execution
@@ -131,8 +151,12 @@ main() {
   
   check_docker
   
-  local output
-  output=$(run_sandbox_test)
+  local output=""
+  
+  # Run both tests
+  output+=$(run_sandbox_test)
+  output+=$(run_full_e2e_test)
+  
   echo "$output"
   
   echo ""

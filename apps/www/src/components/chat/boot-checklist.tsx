@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Loader2, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
+import { Check, Loader2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
 
 // ----- ordered step definitions -----
@@ -270,7 +270,8 @@ export function BootChecklist({
             </div>
 
             {/* Install progress bar — only shown when this step is active */}
-            {step.substatus === "installing-agent" &&
+            {(step.substatus === "installing-agent" ||
+              step.substatus === "running-setup-script") &&
               isActive &&
               installProgress !== null && (
                 <InstallProgressBar

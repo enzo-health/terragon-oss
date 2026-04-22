@@ -1,86 +1,86 @@
 "use client";
 
-import React, {
-  memo,
-  useState,
-  useMemo,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AIAgent } from "@terragon/agent/types";
+import { ensureAgent } from "@terragon/agent/utils";
 import {
   DBMessage,
   DBUserMessage,
-  ThreadErrorMessage,
-  ThreadStatus,
-  GithubPRStatus,
   GithubCheckStatus,
+  GithubPRStatus,
   ThreadChatInfoFull,
+  ThreadErrorMessage,
+  ThreadInfoFull,
+  ThreadStatus,
 } from "@terragon/shared";
-import { AIAgent } from "@terragon/agent/types";
-import { toUIMessages } from "./toUIMessages";
-import { useAgUiMessages } from "./use-ag-ui-messages";
+import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
+import type {
+  ThreadPageChat,
+  ThreadPageShell,
+} from "@terragon/shared/db/types";
+import { ArrowDown } from "lucide-react";
+import dynamic from "next/dynamic";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { isAgentWorking } from "@/agent/thread-status";
+import {
+  seedChat,
+  useChatFromCollection,
+} from "@/collections/thread-chat-collection";
+import {
+  seedShell,
+  useShellFromCollection,
+} from "@/collections/thread-shell-collection";
+import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import { useCurrentRunId } from "@/hooks/use-current-run-id";
-import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChatHeader } from "./chat-header";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
-import { followUp, queueFollowUp } from "@/server-actions/follow-up";
-import { retryThread } from "@/server-actions/retry-thread";
-import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
-import { stopThread } from "@/server-actions/stop-thread";
-import { TerragonThread } from "./assistant-ui/terragon-thread";
-import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
-import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  convertToPlainText,
+  getLastUserMessageModel,
+} from "@/lib/db-message-helpers";
+import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
+import { unwrapError } from "@/lib/server-actions";
+import { cn } from "@/lib/utils";
+import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
+import { useServerActionMutation } from "@/queries/server-action-helpers";
 import {
   threadChatQueryOptions,
   threadDiffQueryOptions,
   threadQueryKeys,
   threadShellQueryOptions,
 } from "@/queries/thread-queries";
-import { isAgentWorking } from "@/agent/thread-status";
+import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
+import { followUp, queueFollowUp } from "@/server-actions/follow-up";
+import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
+import { retryThread } from "@/server-actions/retry-thread";
+import { stopThread } from "@/server-actions/stop-thread";
+import { HandleSubmit } from "../promptbox/use-promptbox";
+import { AgUiAgentProvider } from "./ag-ui-agent-context";
+import { TerragonThread } from "./assistant-ui/terragon-thread";
+import { ChatHeader } from "./chat-header";
+import { ContextChip } from "./context-chip";
+import { ContextWarning } from "./context-warning";
+import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
 import {
   useMarkChatAsRead,
   useOptimisticUpdateThreadChat,
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
-import { ArrowDown } from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  convertToPlainText,
-  getLastUserMessageModel,
-} from "@/lib/db-message-helpers";
-import { ContextChip } from "./context-chip";
-import { ContextWarning } from "./context-warning";
 import { LeafLoading } from "./leaf-loading";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { HandleSubmit } from "../promptbox/use-promptbox";
-import { USER_CREDIT_BALANCE_QUERY_KEY } from "@/queries/user-credit-balance-queries";
-import { ensureAgent } from "@terragon/agent/utils";
-import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
-import { unwrapError } from "@/lib/server-actions";
-import { usePlatform } from "@/hooks/use-platform";
-import dynamic from "next/dynamic";
-import { ThreadInfoFull } from "@terragon/shared";
-import type {
-  ThreadPageShell,
-  ThreadPageChat,
-} from "@terragon/shared/db/types";
-import {
-  seedShell,
-  useShellFromCollection,
-} from "@/collections/thread-shell-collection";
-import {
-  seedChat,
-  useChatFromCollection,
-} from "@/collections/thread-chat-collection";
-import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
-import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
+import { toUIMessages } from "./toUIMessages";
+import { useAgUiMessages } from "./use-ag-ui-messages";
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -786,6 +786,7 @@ function ChatUIContent({
                 threadId={thread.id}
                 threadChatId={threadChat.id}
                 threadStatus={effectiveThreadStatus}
+                runStarted={observedRunId !== null}
                 queuedMessages={queuedMessages}
                 permissionMode={threadChat.permissionMode ?? "allowAll"}
                 prStatus={thread.prStatus}
@@ -849,6 +850,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   threadId,
   threadChatId,
   threadStatus,
+  runStarted,
   queuedMessages,
   permissionMode,
   prStatus,
@@ -869,6 +871,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   threadId: string;
   threadChatId: string;
   threadStatus: ThreadStatus | null;
+  runStarted: boolean;
   queuedMessages: DBUserMessage[] | null;
   permissionMode: "allowAll" | "plan";
   prStatus: GithubPRStatus | null;
@@ -987,6 +990,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
         threadId={threadId}
         threadChatId={threadChatId}
         status={threadStatus}
+        runStarted={runStarted}
         prStatus={prStatus}
         prChecksStatus={prChecksStatus}
         githubPRNumber={githubPRNumber}

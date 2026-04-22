@@ -1,23 +1,23 @@
 "use client";
 
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import { ensureAgent } from "@terragon/agent/utils";
+import {
+  DBUserMessage,
+  GithubCheckStatus,
+  GithubPRStatus,
+  ThreadStatus,
+} from "@terragon/shared";
 import dynamic from "next/dynamic";
-import React, { useMemo, useState, useImperativeHandle } from "react";
-import { usePromptBox, HandleSubmit, HandleStop } from "./use-promptbox";
-import { useRepositoryCache } from "./typeahead/repository-cache";
+import React, { useImperativeHandle, useMemo, useState } from "react";
 import {
   isAgentStoppable,
   isAgentWorking,
   isPreSandboxStatus,
 } from "@/agent/thread-status";
-import {
-  ThreadStatus,
-  DBUserMessage,
-  GithubPRStatus,
-  GithubCheckStatus,
-} from "@terragon/shared";
-import { AIAgent, AIModel } from "@terragon/agent/types";
 import { SimplePromptBox } from "./simple-promptbox";
-import { ensureAgent } from "@terragon/agent/utils";
+import { useRepositoryCache } from "./typeahead/repository-cache";
+import { HandleStop, HandleSubmit, usePromptBox } from "./use-promptbox";
 
 const QueuedMessages = dynamic(
   () => import("./queued-messages").then((mod) => mod.QueuedMessages),
