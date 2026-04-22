@@ -1,126 +1,113 @@
-# Autoresearch: End-to-End Streaming Reliability
+# Autoresearch: End-to-End Streaming Reliability (REAL Sandbox Testing)
 
 ## Objective
 
-Validate that the full streaming pipeline works reliably end-to-end:
-**Frontend Message → Sandbox Spin-up → Agent Start → Message Streaming → Frontend Visibility**
+Validate that the **full streaming pipeline works reliably** with REAL infrastructure:
+**Test → Docker Sandbox → Daemon → Agent → Stream → API → DB → Broadcast**
 
-Focus on **functional correctness and smoothness**, not micro-latency optimizations.
+This is NOT a unit test - we actually spin up Docker containers and measure real-world reliability.
 
 ## What "Works" Means
 
-| Stage                   | Success Criteria                              |
-| ----------------------- | --------------------------------------------- |
-| 1. Task Creation        | Frontend optimistic UI appears immediately    |
-| 2. Sandbox Provisioning | Docker sandbox starts within 30s              |
-| 3. Agent Spawn          | Daemon receives message, agent process starts |
-| 4. Message Streaming    | All agent stdout messages flush to API        |
-| 5. DB Persistence       | Messages saved with correct sequencing        |
-| 6. Broadcast Delivery   | WebSocket delivers patches to client          |
-| 7. Frontend Render      | Messages visible in chat UI                   |
-| 8. Completion Signal    | Terminal status (done/error/stop) received    |
+| Stage               | Success Criteria                         |
+| ------------------- | ---------------------------------------- |
+| 1. Sandbox Creation | Docker container starts within 60s       |
+| 2. Daemon Install   | Daemon binary written and started        |
+| 3. Daemon Ready     | Daemon responds to ping within 30s       |
+| 4. Message Send     | All messages sent to daemon successfully |
+| 5. Flush            | Daemon flushes messages to API           |
+| 6. Reliability      | ≥80% of messages delivered end-to-end    |
 
-## Failure Modes We're Hunting
-
-1. **Silent message drops** - Agent generates output but it never reaches frontend
-2. **Ordering bugs** - Messages appear out of sequence
-3. **Stuck states** - Stream hangs mid-way, no terminal signal
-4. **Frontend desync** - Backend has messages, frontend doesn't show them
-5. **Buffer overflow** - High-velocity streams lose messages
-6. **Sandbox/agent startup failures** - Silent crashes during initialization
-
-## Test Architecture
-
-### Test Setup (Integration Test)
+## Test Architecture (REAL)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Test Harness                                                │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│  │  Frontend    │───→│   Next.js    │───→│   Docker     │ │
-│  │  (simulated) │    │   API Route  │    │   Sandbox    │ │
-│  └──────────────┘    └──────────────┘    └──────────────┘ │
-│         ↑                      │                │          │
-│         │                      ↓                ↓          │
-│         │              ┌──────────────┐    ┌──────────────┐  │
-│         └──────────────│   Broadcast  │    │   Daemon     │  │
-│            (validate) │   (PartyKit) │    │   (in-sandbox)│ │
-│                       └──────────────┘    └──────────────┘  │
+│  Test Runner (Vitest)                                        │
+│  ┌──────────────────┐    ┌──────────────────────────────┐ │
+│  │  Docker Sandbox  │    │  Real Terragon Daemon        │ │
+│  │  (Node.js + Git) │───→│  - Installed in sandbox      │ │
+│  │                  │    │  - Background process          │ │
+│  └──────────────────┘    │  - Writes to log file        │ │
+│           ↑              └──────────────────────────────┘ │
+│           │                         │                      │
+│           │ Send messages           │ Flush to API         │
+│           │ (via Unix socket)       │ (HTTP POST)         │
+│           │                         ↓                      │
+│           │              ┌──────────────────────────────┐ │
+│           └──────────────│  Next.js API Route           │ │
+│              (daemon log)│  /api/daemon-event           │ │
+│                          └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Test Flow
-
-1. Create test thread via API
-2. Start Docker sandbox with daemon
-3. Send daemon message (simulating user prompt)
-4. Collect all daemon→API POSTs
-5. Validate DB state after each POST
-6. Simulate broadcast→frontend delivery
-7. Assert all messages rendered in correct order
-
 ## Metrics
 
-- **Primary**: `reliability_score` (0-100) - % of successful end-to-end deliveries
+- **Primary**: `reliability_score` (0-100) - % of messages that flow through entire pipeline
 - **Secondary**:
-  - `messages_expected` - Total messages agent should generate
-  - `messages_delivered` - Messages that reached frontend
-  - `messages_persisted` - Messages saved to DB
-  - `ordering_correct` - Boolean, all messages in sequence
-  - `terminal_received` - Boolean, completion signal arrived
-  - `sandbox_startup_ms` - Time from creation to agent start
-  - `end_to_end_ms` - Total time from prompt to completion
+  - `sandbox_startup_ms` - Time to create Docker container
+  - `daemon_ready_ms` - Time from daemon start to first ping response
+  - `messages_sent` - Messages successfully sent to daemon
+  - `messages_flushed` - Messages flushed to API (read from daemon log)
+  - `flush_latency_ms` - Time for daemon to flush all messages
+  - `error_count` - Number of errors during test
 
 ## How to Run
 
-`./autoresearch.sh` - Runs the E2E streaming reliability test
+`./autoresearch.sh` - Runs the REAL sandbox E2E test
 
 The test:
 
-1. Starts Docker services (PostgreSQL, Redis)
-2. Runs the integration test suite via vitest
-3. Measures delivery reliability across N test runs
-4. Outputs `METRIC reliability_score=X`
+1. Checks Docker is available and running
+2. Starts PostgreSQL/Redis test containers (if needed)
+3. Spins up a Docker sandbox with the Terragon daemon
+4. Sends messages to the daemon via Unix socket
+5. Reads daemon logs to verify message flushing
+6. Measures delivery reliability
 
 ## Files in Scope
 
-| File                                                | Purpose                             |
-| --------------------------------------------------- | ----------------------------------- |
-| `packages/daemon/src/daemon.ts`                     | Message buffering and flush logic   |
-| `apps/www/src/app/api/daemon-event/route.ts`        | API route receiving daemon events   |
-| `apps/www/src/server-lib/handle-daemon-event.ts`    | Event processing and DB persistence |
-| `packages/shared/src/broadcast/broadcast-server.ts` | WebSocket broadcast publishing      |
-| `apps/www/test/integration/`                        | Integration test infrastructure     |
+| File                                                        | Purpose                                    |
+| ----------------------------------------------------------- | ------------------------------------------ |
+| `packages/sandbox/src/daemon.ts`                            | Daemon installation and message sending    |
+| `packages/sandbox/src/providers/docker-provider.ts`         | Docker sandbox provider                    |
+| `apps/www/test/integration/e2e-sandbox-reliability.test.ts` | REAL E2E test                              |
+| `packages/daemon/src/daemon.ts`                             | Core daemon with buffering and flush logic |
 
 ## Off Limits
 
-- **DO NOT** change authentication logic
+- **DO NOT** change authentication/authorization logic
 - **DO NOT** modify database schema
 - **DO NOT** break backward compatibility
-- **DO NOT** require real LLM API calls (use mock agents)
+- **DO NOT** require real LLM API calls (we use mock messages)
 
 ## Constraints
 
-- All tests must pass in CI (including existing ones)
-- Docker must be available for sandbox tests
-- Tests must be deterministic (no flaky assertions)
-- Max test duration: 60 seconds per run
+- Docker must be available and running
+- Test must complete within 3 minutes per run
+- Must clean up containers after test
+- All existing tests must still pass
 
 ## What's Been Tried
 
 ### Baseline (Established)
 
-- Basic daemon message buffering with 33ms flush delay
-- Integration test framework with replayer
-- Stress tests for reducer performance
+- Unit test: 100% reliability with 1k deltas (1.4M events/sec)
+- This was just the reducer, not real infrastructure
 
-### Hypotheses to Test
+### Current: REAL Sandbox Testing
 
-1. **Message Buffer Size Limit**: Flush immediately when buffer ≥ 10 messages
-2. **Periodic Flush**: Add 100ms max-wait timer to prevent stuck buffers
-3. **Connection Health Check**: Detect and retry failed daemon-event POSTs faster
-4. **Frontend Optimistic Updates**: Show messages immediately before broadcast confirms
-5. **Startup Timeout**: Kill stuck sandbox startup after 45s
+- Test spins up actual Docker sandbox
+- Installs real daemon binary
+- Sends real messages via Unix socket
+- Measures actual daemon log output
+
+## Hypotheses to Test
+
+1. **Sandbox Startup Time**: Can we reduce from ~30s to <15s?
+2. **Daemon Ready Time**: Why does daemon take 5-10s to respond to ping?
+3. **Message Flush Reliability**: Does daemon reliably flush all messages?
+4. **Connection Stability**: Are there transient failures in daemon socket?
+5. **Burst Handling**: Can daemon handle 20 msg/sec without dropping?
 
 ## Experiment Log
 

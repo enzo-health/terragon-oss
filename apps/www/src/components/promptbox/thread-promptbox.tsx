@@ -41,6 +41,7 @@ interface ThreadPromptBoxProps {
   threadId: string;
   threadChatId: string;
   sandboxId: string | null;
+  runStarted?: boolean;
   status: ThreadStatus | null;
   repoFullName: string;
   branchName: string;
@@ -76,14 +77,19 @@ export const ThreadPromptBox = React.forwardRef<
     // "Provisioning" should only appear before the sandbox boots. After that,
     // the server knows a sandbox exists even if the client prop hasn't been
     // updated yet (e.g. broadcast race, stale props).
-    if (props.status !== null && isPreSandboxStatus(props.status)) {
+    if (
+      props.status !== null &&
+      isPreSandboxStatus(props.status) &&
+      props.sandboxId === null &&
+      !props.runStarted
+    ) {
       return "Sandbox is provisioning...";
     }
     if (props.status !== null && isAgentWorking(props.status)) {
       return "Queue a message to send when agent is done";
     }
     return "Type your message here...";
-  }, [props.placeholder, props.status]);
+  }, [props.placeholder, props.runStarted, props.sandboxId, props.status]);
 
   const shouldQueue = !!props.status && isAgentWorking(props.status);
   const {

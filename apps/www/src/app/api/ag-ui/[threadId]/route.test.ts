@@ -42,7 +42,8 @@ const redisMocks = vi.hoisted(() => {
   const xrevrange = vi.fn<(...args: unknown[]) => Promise<unknown>>(() =>
     Promise.resolve({}),
   );
-  return { xread, xrevrange };
+  const isLocalRedisHttpMode = vi.fn(() => false);
+  return { xread, xrevrange, isLocalRedisHttpMode };
 });
 
 vi.mock("@/lib/auth-server", () => ({
@@ -54,6 +55,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/redis", () => ({
+  isLocalRedisHttpMode: redisMocks.isLocalRedisHttpMode,
   redis: {
     xread: redisMocks.xread,
     xrevrange: redisMocks.xrevrange,
@@ -178,6 +180,7 @@ describe("ag-ui SSE route", () => {
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(null);
     redisMocks.xread.mockImplementation(() => new Promise(() => {}));
     redisMocks.xrevrange.mockImplementation(() => Promise.resolve({}));
+    redisMocks.isLocalRedisHttpMode.mockReturnValue(false);
   });
 
   it("returns 401 without a session", async () => {
@@ -911,6 +914,41 @@ describe("ag-ui SSE route", () => {
 
     // Pin the progression: 2s, 4s, 6s, 8s, reset to 2s after non-empty.
     expect(blockValues.slice(0, 5)).toEqual([2000, 4000, 6000, 8000, 2000]);
+
+    await response.body!.cancel();
+    for (const d of deferred) d.resolve(null);
+  });
+
+  it("keeps XREAD blockMS pinned in local redis-http mode", async () => {
+    redisMocks.isLocalRedisHttpMode.mockReturnValue(true);
+    const blockValues: number[] = [];
+    const deferred: Array<{ resolve: (v: unknown) => void }> = [];
+
+    redisMocks.xread.mockImplementation((...args: unknown[]) => {
+      const opts = args[2] as { blockMS?: number } | undefined;
+      blockValues.push(opts?.blockMS ?? -1);
+      if (redisMocks.xread.mock.calls.length > 5) {
+        return new Promise((resolve) => {
+          deferred.push({ resolve });
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-empty",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    await vi.waitFor(() => {
+      expect(blockValues.length).toBeGreaterThanOrEqual(5);
+    });
+    expect(blockValues.slice(0, 5)).toEqual([2000, 2000, 2000, 2000, 2000]);
 
     await response.body!.cancel();
     for (const d of deferred) d.resolve(null);

@@ -323,21 +323,6 @@
   }
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out;
-}
-
 @keyframes loading-progress {
   0% {
     width: 0;
@@ -385,22 +370,6 @@
 
 .animate-blink {
   animation: blink 1s infinite ease-in-out;
-}
-
-@keyframes flash-colors {
-  0% {
-    background-color: var(--primary);
-  }
-  50% {
-    background-color: var(--accent);
-  }
-  100% {
-    background-color: var(--primary);
-  }
-}
-
-.animate-flash-colors {
-  animation: flash-colors 1s infinite ease-in-out;
 }
 
 /* Tiptap editor styles */
@@ -510,57 +479,6 @@
 
 .bg-destructive {
   background-color: var(--color-destructive);
-}
-
-/* Shimmer animation that plays once on hover */
-@keyframes shimmer-once {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-.hover-shimmer:hover {
-  animation: shimmer-once 0.6s ease-in-out;
-}
-
-@keyframes slide-down {
-  from {
-    opacity: 0;
-    max-height: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    max-height: 100px;
-    transform: translateY(0);
-  }
-}
-
-@keyframes slide-up {
-  from {
-    opacity: 1;
-    max-height: 100px;
-    transform: translateY(0);
-  }
-  to {
-    opacity: 0;
-    max-height: 0;
-    transform: translateY(-10px);
-  }
-}
-
-.animate-slide-down {
-  animation: slide-down 0.3s ease-out;
-}
-
-.animate-slide-up {
-  animation: slide-up 0.3s ease-out;
 }
 
 /* Optimistic thread shimmer animation */

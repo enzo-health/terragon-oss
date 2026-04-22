@@ -12,7 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { redis } from "@/lib/redis";
+import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
@@ -257,6 +257,7 @@ export async function GET(
       // (for active runs still in progress) and the no-history path (for
       // empty thread chats awaiting their first RUN_STARTED).
       const liveTail = async (params?: { runId?: string; userId?: string }) => {
+        const localRedisHttpMode = isLocalRedisHttpMode();
         keepaliveTimer = setInterval(() => {
           enqueue(encodeSseComment("keepalive"));
         }, KEEPALIVE_INTERVAL_MS);
@@ -303,10 +304,16 @@ export async function GET(
         let consecutiveEmpty = 0;
         let emptyPollsSinceTerminalCheck = 0;
         while (!closed) {
-          const blockMS = Math.min(
+          const adaptiveBlockMS = Math.min(
             MAX_XREAD_BLOCK_MS,
             MIN_XREAD_BLOCK_MS * (1 + consecutiveEmpty),
           );
+          // Local redis-http transport has a tighter command-timeout budget than
+          // production Upstash, so keep xread block windows short in dev to
+          // avoid deterministic timeout/backoff loops.
+          const blockMS = localRedisHttpMode
+            ? MIN_XREAD_BLOCK_MS
+            : adaptiveBlockMS;
           try {
             const raw = await redis.xread(streamKey, lastId, {
               count: XREAD_COUNT,
@@ -344,6 +351,9 @@ export async function GET(
             }
           } catch (error) {
             if (closed) break;
+            // Reset adaptive growth on transport failures so the next read
+            // re-enters with the smallest block window.
+            consecutiveEmpty = 0;
             console.warn(
               "[ag-ui] XREAD failed, backing off",
               { streamKey },
