@@ -1269,15 +1269,14 @@ export async function POST(request: Request) {
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
   const terminalFailureSource = deriveTerminalFailureSource(messages);
-  const fenceTerminalOnlyTransition =
-    daemonRunStatusFromMessages !== "processing" &&
-    isTerminalOnlyDaemonMessages(messages) &&
-    (!deltas || deltas.length === 0) &&
-    (!canonicalEvents || canonicalEvents.length === 0);
 
   const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId =
     runContext?.workflowId ?? activeWorkflow?.workflow.id ?? null;
+  const fenceTerminalTransition =
+    daemonRunStatusFromMessages !== "processing" &&
+    envelopeV2 != null &&
+    effectiveLoopId != null;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this stays
@@ -1407,7 +1406,7 @@ export async function POST(request: Request) {
       runId: authoritativeRunId,
       runContext,
       workflowId: effectiveLoopId,
-      skipThreadChatPersistence: fenceTerminalOnlyTransition,
+      deferTerminalTransitionToRoute: fenceTerminalTransition,
     });
   } catch (error) {
     console.error(
@@ -1661,7 +1660,17 @@ export async function POST(request: Request) {
       }
 
       if (daemonRunStatusFromMessages === "stopped") {
-        // Preserve prior behavior: stopped terminals do not advance the v3 loop.
+        await appendEventAndAdvanceExplicit({
+          db,
+          workflowId: effectiveLoopId,
+          source: "daemon",
+          idempotencyKey: `run-stopped:${envelopeV2.eventId}`,
+          event: { type: "stop_requested" },
+          behavior: {
+            applyGateBypass: false,
+            drainEffects: true,
+          },
+        });
       } else if (daemonRunStatusFromMessages === "completed") {
         await appendEventAndAdvanceExplicit({
           db,
@@ -1707,7 +1716,7 @@ export async function POST(request: Request) {
         });
       }
     } catch (v3Err) {
-      if (fenceTerminalOnlyTransition) {
+      if (fenceTerminalTransition) {
         console.error("[daemon-event] v3 kernel bridge failed (fenced)", {
           loopId: effectiveLoopId,
           runId: envelopeV2?.runId,
@@ -1744,7 +1753,7 @@ export async function POST(request: Request) {
   {
     const terminalOps: Array<Promise<unknown>> = [];
 
-    if (fenceTerminalOnlyTransition) {
+    if (fenceTerminalTransition) {
       const eventType =
         resolvedStatus === "stopped"
           ? ("assistant.message_stop" as const)

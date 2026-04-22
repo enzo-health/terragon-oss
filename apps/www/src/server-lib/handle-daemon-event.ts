@@ -15,6 +15,8 @@ import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
+  updateThread,
+  updateThreadChat,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import {
@@ -163,6 +165,7 @@ export async function handleDaemonEvent({
   runId,
   runContext = null,
   workflowId = null,
+  deferTerminalTransitionToRoute = false,
   skipThreadChatPersistence = false,
 }: {
   messages: ClaudeMessage[];
@@ -174,6 +177,13 @@ export async function handleDaemonEvent({
   runId?: string;
   runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
   workflowId?: string | null;
+  /**
+   * When true, terminal batches persist transcript messages but do NOT commit
+   * any terminal status/metadata updates to thread_chat. The daemon-event route
+   * finalizes terminal status across thread_chat + agent_run_context +
+   * delivery-loop head in a fail-closed fenced transition.
+   */
+  deferTerminalTransitionToRoute?: boolean;
   /**
    * When true, do not mutate thread_chat or thread status (messages, updatedAt,
    * status transitions). Used by the daemon-event route for terminal-only
@@ -867,37 +877,68 @@ export async function handleDaemonEvent({
     });
   }
 
+  const shouldDeferTerminalTransition =
+    deferTerminalTransitionToRoute && isThreadFinished;
+
+  // Defer terminal metadata updates to the fenced route transition so we never
+  // write "terminal-ish" fields while status surfaces can still be stale.
+  if (shouldDeferTerminalTransition) {
+    threadChatUpdates.errorMessage = null;
+    threadChatUpdates.errorMessageInfo = null;
+  }
+
   let didUpdateStatus: boolean;
   let threadChatMessageSeq: number | null = null;
   let broadcastData:
     | Parameters<typeof publishBroadcastUserMessage>[0]
     | undefined;
   try {
-    const result = await updateThreadChatWithTransition({
-      userId,
-      threadId,
-      threadChatId: threadChat.id,
-      markAsUnread: isDone || isError,
-      updates: { bootingSubstatus: null },
-      chatUpdates: threadChatUpdates,
-      eventType: isStop
-        ? "assistant.message_stop"
-        : isRateLimited && rateLimitResetTime
-          ? "system.agent-rate-limit"
-          : isError
-            ? "assistant.message_error"
-            : isDone && shouldSkipCheckpoint
-              ? "assistant.message_done_skip_checkpoint"
-              : isDone
-                ? "assistant.message_done"
-                : "assistant.message",
-      rateLimitResetTime,
-      skipAppendMessagesInBroadcast: !!hasPreviewMessages,
-      skipBroadcast: true, // Async broadcast for faster response
-    });
-    didUpdateStatus = result.didUpdateStatus;
-    threadChatMessageSeq = result.chatSequence ?? null;
-    broadcastData = result.broadcastData;
+    if (shouldDeferTerminalTransition) {
+      await updateThread({
+        db,
+        userId,
+        threadId,
+        updates: { bootingSubstatus: null },
+      });
+      const chatUpdateResult = await updateThreadChat({
+        db,
+        userId,
+        threadId,
+        threadChatId: threadChat.id,
+        updates: threadChatUpdates,
+        skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+        skipBroadcast: true,
+      });
+      didUpdateStatus = false;
+      threadChatMessageSeq = chatUpdateResult.chatSequence ?? null;
+      broadcastData = chatUpdateResult.broadcastData;
+    } else {
+      const result = await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId: threadChat.id,
+        markAsUnread: isDone || isError,
+        updates: { bootingSubstatus: null },
+        chatUpdates: threadChatUpdates,
+        eventType: isStop
+          ? "assistant.message_stop"
+          : isRateLimited && rateLimitResetTime
+            ? "system.agent-rate-limit"
+            : isError
+              ? "assistant.message_error"
+              : isDone && shouldSkipCheckpoint
+                ? "assistant.message_done_skip_checkpoint"
+                : isDone
+                  ? "assistant.message_done"
+                  : "assistant.message",
+        rateLimitResetTime,
+        skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+        skipBroadcast: true, // Async broadcast for faster response
+      });
+      didUpdateStatus = result.didUpdateStatus;
+      threadChatMessageSeq = result.chatSequence ?? null;
+      broadcastData = result.broadcastData;
+    }
   } catch (dbError) {
     // DB write failed after pre-broadcast — tell client to refetch
     // so it doesn't keep stale optimistic messages.
