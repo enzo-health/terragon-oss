@@ -24,6 +24,8 @@ import {
   peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
 import type { DB } from "@terragon/shared/db";
+import { publicBroadcastUrl } from "@terragon/env/next-public";
+import { env } from "@terragon/env/apps-www";
 import { redis } from "@/lib/redis";
 
 /**
@@ -53,6 +55,38 @@ export type PersistAndPublishResult = {
    */
   insertedEventIds: string[];
 };
+
+function getPartyKitPublishUrl(): string | null {
+  if (process.env.NODE_ENV === "test") return null;
+  const raw = publicBroadcastUrl();
+  if (!raw) return null;
+  const url = new URL(raw);
+  if (url.protocol === "ws:") url.protocol = "http:";
+  else if (url.protocol === "wss:") url.protocol = "https:";
+  return url.toString().replace(/\/$/, "");
+}
+
+async function publishAgUiToPartyKit(
+  threadChatId: string,
+  events: BaseEvent[],
+): Promise<void> {
+  if (events.length === 0) return;
+  const baseUrl = getPartyKitPublishUrl();
+  if (!baseUrl) return;
+  try {
+    await fetch(`${baseUrl}/parties/agui/${threadChatId}`, {
+      method: "POST",
+      body: JSON.stringify(events),
+      headers: { "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET },
+    });
+  } catch (err) {
+    console.warn("[ag-ui-publisher] PartyKit publish failed", {
+      threadChatId,
+      eventCount: events.length,
+      error: err,
+    });
+  }
+}
 
 /**
  * Persist each AG-UI row to `agent_event_log` and publish to
@@ -159,6 +193,10 @@ export async function persistAndPublishAgUiEvents(params: {
     }
   }
 
+  // Dual-write: also publish to PartyKit for WebSocket clients.
+  // Fire-and-forget — PartyKit is a live-tail optimization, not source of truth.
+  void publishAgUiToPartyKit(threadChatId, persistedEvents);
+
   return { inserted, skipped, insertedEventIds };
 }
 
@@ -184,6 +222,7 @@ export async function broadcastAgUiEventEphemeral(params: {
       error: err,
     });
   }
+  void publishAgUiToPartyKit(params.threadChatId, [params.event]);
 }
 
 // ---------------------------------------------------------------------------

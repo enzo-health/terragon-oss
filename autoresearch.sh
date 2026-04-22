@@ -78,6 +78,9 @@ grep -c "enqueueMetaEvent\|metaEventBuffer" packages/daemon/src/daemon.ts || ech
 echo "Sandbox communication tests:"
 grep -c "it(" packages/daemon/src/daemon-sandbox-communication.test.ts || echo "0"
 
+echo "Connection pool tests:"
+grep -c "it(" packages/daemon/src/connection-pool.test.ts || echo "0"
+
 # Output synthetic metrics based on current configuration
 # These represent the theoretical minimum latency based on code analysis
 
@@ -89,15 +92,15 @@ echo "=== Synthetic Metrics (Code Analysis) ==="
 # - 50ms for delta/meta triggers
 # - 100ms messageHandleDelay
 
-METRIC_default_flush_ms=16
-METRIC_codex_flush_ms=50  
+METRIC_default_flush_ms=33
+METRIC_codex_flush_ms=250  
 METRIC_delta_trigger_ms=16
 METRIC_message_handle_delay=100
 
 # Estimated end-to-end with current config
 # Daemon buffer + HTTP POST + Server process + DB write + Broadcast
-METRIC_e2e_latency_p50=216   # Optimistic: 16ms flush + 200ms processing
-METRIC_daemon_flush_ms=16
+METRIC_e2e_latency_p50=233   # Optimistic: 33ms flush + 200ms processing
+METRIC_daemon_flush_ms=33
 METRIC_server_process_ms=150  # Estimated
 METRIC_broadcast_ms=50       # Estimated
 

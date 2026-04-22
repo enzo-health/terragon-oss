@@ -5,6 +5,8 @@
 import { execSync, spawn } from "node:child_process";
 import EventEmitter from "node:events";
 import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import readline from "node:readline";
 import stripAnsi from "strip-ansi";
@@ -191,6 +193,55 @@ export interface IDaemonRuntime {
   };
 }
 
+/**
+ * HTTP Connection Pool for keep-alive optimization.
+ * Reduces TCP handshake overhead by reusing connections.
+ */
+class ConnectionPool {
+  private agents: Map<string, http.Agent | https.Agent> = new Map();
+
+  /**
+   * Get or create an HTTP agent for the given URL.
+   * Agents are keyed by protocol + host (e.g., "https://api.example.com")
+   */
+  getAgent(url: string): http.Agent | https.Agent {
+    const parsed = new URL(url);
+    const key = `${parsed.protocol}//${parsed.host}`;
+
+    if (!this.agents.has(key)) {
+      const isHttps = parsed.protocol === "https:";
+
+      const agentOptions = {
+        keepAlive: true,
+        maxSockets: 10,
+        maxFreeSockets: 5,
+        timeout: 60000, // Socket timeout: 60s
+        freeSocketTimeout: 30000, // Keep idle sockets: 30s
+        scheduling: "lifo" as const, // Reuse most recent connection
+      };
+
+      const agent = isHttps
+        ? new https.Agent(agentOptions)
+        : new http.Agent(agentOptions);
+
+      this.agents.set(key, agent);
+    }
+
+    return this.agents.get(key)!;
+  }
+
+  /**
+   * Destroy all agents and close connections.
+   * Called during teardown.
+   */
+  destroy(): void {
+    for (const [key, agent] of this.agents) {
+      agent.destroy();
+      this.agents.delete(key);
+    }
+  }
+}
+
 export class DaemonRuntime implements IDaemonRuntime {
   readonly url: string;
   readonly logger: Logger;
@@ -202,6 +253,7 @@ export class DaemonRuntime implements IDaemonRuntime {
   private sigtermHandler: NodeJS.SignalsListener;
   private sigintHandler: NodeJS.SignalsListener;
   private unixSocketServer: net.Server | null = null;
+  private connectionPool: ConnectionPool;
 
   constructor({
     url,
@@ -218,6 +270,7 @@ export class DaemonRuntime implements IDaemonRuntime {
     this.unixSocketPath = unixSocketPath;
     this.logger = new Logger(outputFormat);
     this.skipReportingDaemonEvents = !!skipReportingDaemonEvents;
+    this.connectionPool = new ConnectionPool();
     this.sigtermHandler = (signal) => {
       this.logger.info("SIGTERM received", { signal });
       this.teardown();
@@ -320,10 +373,16 @@ export class DaemonRuntime implements IDaemonRuntime {
     if (allCapabilities.length > 0) {
       headers[DAEMON_EVENT_CAPABILITIES_HEADER] = allCapabilities.join(",");
     }
+
+    // Use connection pool for HTTP keep-alive optimization
+    // This reduces TCP handshake overhead for subsequent requests
+    const agent = this.connectionPool.getAgent(url);
+
     const response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      agent, // Enable connection reuse via keep-alive
     });
     if (!response.ok) {
       let responseBody: unknown = null;

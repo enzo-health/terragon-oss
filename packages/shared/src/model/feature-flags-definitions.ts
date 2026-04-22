@@ -140,6 +140,12 @@ export const featureFlagsDefinitions = {
     description:
       "Auto-bypass all delivery loop gates (review, CI, UI) so workflows skip directly to awaiting_pr or babysitting.",
   },
+  aguiWebSocket: {
+    defaultValue: false,
+    enabledForPreview: true,
+    description:
+      "Uses WebSocket transport (PartyKit) instead of SSE for AG-UI event streaming.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

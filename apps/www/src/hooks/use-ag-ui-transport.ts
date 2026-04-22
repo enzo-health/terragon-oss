@@ -2,7 +2,12 @@
 
 import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
+import { publicBroadcastHost } from "@terragon/env/next-public";
+import { useAtomValue } from "jotai";
 import { useEffect, useMemo } from "react";
+import { bearerTokenAtom } from "@/atoms/user";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { WebSocketAgent } from "@/lib/websocket-agent";
 
 /**
  * Browser-side AG-UI transport hook.
@@ -54,34 +59,35 @@ export function useAgUiTransport(args: {
   initialState?: State;
 }): HttpAgent | null {
   const { threadId, threadChatId, runId, initialMessages, initialState } = args;
+  const useWebSocket = useFeatureFlag("aguiWebSocket");
+  const authToken = useAtomValue(bearerTokenAtom);
 
   const agent = useMemo(() => {
     if (!threadChatId) return null;
     const query = new URLSearchParams({ threadChatId });
-    // On construction we intentionally do NOT include `runId` in the URL:
-    // the `useEffect` below mirrors the latest runId into `agent.url`
-    // before any reconnect fires, so the initial URL is a safe default
-    // ("latest run" semantics, server-side).
     const url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
+
+    if (useWebSocket && authToken) {
+      return new WebSocketAgent({
+        url,
+        threadId,
+        threadChatId,
+        partyHost: publicBroadcastHost(),
+        authToken,
+        initialMessages,
+        initialState,
+      });
+    }
+
     return new HttpAgent({
       url,
       threadId,
       initialMessages,
       initialState,
     });
-    // `runId` intentionally excluded from deps: we do NOT want to
-    // reconstruct `HttpAgent` on every RUN_STARTED. The URL is updated
-    // imperatively via the sync block below so the NEXT reconnect uses
-    // the latest runId without disturbing the active subscription.
-    // `initialMessages` / `initialState` are seed values — same deal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, threadChatId]);
+  }, [threadId, threadChatId, useWebSocket, authToken]);
 
-  // Imperatively mirror the latest runId into `agent.url`. The next time
-  // `HttpAgent#run(input)` fires (runtime reconnects after an abort,
-  // disconnect, or initial-mount resume) the updated URL is read from
-  // `this.url` and the `?runId=X` query param reflects reality. Done in
-  // `useEffect` so render stays pure.
   useEffect(() => {
     if (!agent || !threadChatId) return;
     const query = new URLSearchParams({ threadChatId });
@@ -89,7 +95,11 @@ export function useAgUiTransport(args: {
       query.set("runId", runId);
     }
     agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
-  }, [agent, threadId, threadChatId, runId]);
+
+    if (agent instanceof WebSocketAgent && authToken) {
+      agent.authToken = authToken;
+    }
+  }, [agent, threadId, threadChatId, runId, authToken]);
 
   return agent;
 }
