@@ -19,6 +19,7 @@ import {
   isValidThreadListFilter,
   threadQueryKeys,
 } from "./thread-queries";
+import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -946,6 +947,11 @@ export function invalidateThreadPatchRefetchTargets(
             queryKey: threadQueryKeys.chat(patch.threadId, patch.threadChatId),
           });
         }
+        break;
+      case "delivery-loop":
+        queryClient.invalidateQueries({
+          queryKey: deliveryLoopStatusQueryKeys.detail(patch.threadId),
+        });
         break;
       case "diff":
         queryClient.invalidateQueries({
