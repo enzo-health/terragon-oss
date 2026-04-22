@@ -2412,6 +2412,11 @@ describe("daemon-event route", () => {
 
       expect(response.status).toBe(200);
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deferTerminalTransitionToRoute: true,
+        }),
+      );
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           threadId: "thread-1",
@@ -2440,6 +2445,96 @@ describe("daemon-event route", () => {
           updates: expect.objectContaining({
             status: "completed",
           }),
+        }),
+      );
+    });
+
+    it("fences mixed terminal batches (assistant + result) through the terminal transition contract", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { role: "assistant", content: "hello" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+            createSuccessResultMessage(),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-mixed-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deferTerminalTransitionToRoute: true,
+        }),
+      );
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done",
+        }),
+      );
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("routes stopped terminals through v3 + terminal status updates (no divergence)", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-stop",
+              duration_ms: 10,
+            } as any,
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-stopped",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: "wf-pure-v2",
+          event: { type: "stop_requested" },
+        }),
+      );
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_stop",
+        }),
+      );
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "stopped" }),
         }),
       );
     });
@@ -2526,6 +2621,59 @@ describe("daemon-event route", () => {
 
       expect(response.status).toBe(200);
       expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("fails closed when mixed terminal batch CAS loses and thread_chat is still non-terminal", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
+        didUpdateStatus: false,
+        updatedStatus: "working-done",
+        chatSequence: undefined,
+      });
+      vi.mocked(getThreadChat).mockResolvedValue({
+        id: "chat-1",
+        threadId: "thread-1",
+        userId: "user-1",
+        status: "working",
+        messages: [],
+        queuedMessages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { role: "assistant", content: "hello" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+            createSuccessResultMessage(),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-mixed-cas-lose",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.error).toBe("daemon_event_terminal_thread_chat_cas_failed");
+      expect(updateAgentRunContext).not.toHaveBeenCalledWith(
         expect.objectContaining({
           updates: expect.objectContaining({ status: "completed" }),
         }),
