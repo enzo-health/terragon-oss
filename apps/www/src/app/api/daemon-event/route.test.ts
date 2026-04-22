@@ -2703,6 +2703,159 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("returns non-retry ack when fenced v3 bridge fails after transcript append", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(handleDaemonEvent).mockResolvedValue({
+        success: true,
+        threadChatMessageSeq: 22,
+      });
+      v3BridgeMocks.appendEventAndAdvance.mockRejectedValueOnce(
+        new Error("v3 unavailable"),
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { role: "assistant", content: "hello" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+            createSuccessResultMessage(),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-v3-fail-after-append",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data).toEqual(
+        expect.objectContaining({
+          success: true,
+          deduplicated: true,
+          reason:
+            "daemon_event_terminal_v3_bridge_failed_after_transcript_append",
+        }),
+      );
+    });
+
+    it("returns non-retry ack when fenced terminal CAS fails after transcript append", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(handleDaemonEvent).mockResolvedValue({
+        success: true,
+        threadChatMessageSeq: 33,
+      });
+      vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
+        didUpdateStatus: false,
+        updatedStatus: "working-done",
+        chatSequence: undefined,
+      });
+      vi.mocked(getThreadChat).mockResolvedValue({
+        id: "chat-1",
+        threadId: "thread-1",
+        userId: "user-1",
+        status: "working",
+        messages: [],
+        queuedMessages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { role: "assistant", content: "hello" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+            createSuccessResultMessage(),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-cas-fail-after-append",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data).toEqual(
+        expect.objectContaining({
+          success: true,
+          deduplicated: true,
+          reason:
+            "daemon_event_terminal_thread_chat_cas_failed_after_transcript_append",
+        }),
+      );
+    });
+
+    it("returns non-retry ack when fenced terminal persistence fails after transcript append", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(handleDaemonEvent).mockResolvedValue({
+        success: true,
+        threadChatMessageSeq: 44,
+      });
+      dispatchIntentMocks.updateDispatchIntent.mockRejectedValueOnce(
+        new Error("dispatch persistence failed"),
+      );
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "assistant",
+              message: { role: "assistant", content: "hello" },
+              session_id: "s-1",
+              parent_tool_use_id: null,
+            },
+            createSuccessResultMessage(),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-persist-fail-after-append",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data).toEqual(
+        expect.objectContaining({
+          success: true,
+          deduplicated: true,
+          reason:
+            "daemon_event_terminal_persistence_failed_after_transcript_append",
+        }),
+      );
+    });
+
     it("routes canonical-only run-terminal payloads through the fenced terminal transition", async () => {
       vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
         PURE_V2_WORKFLOW as Awaited<
@@ -2779,7 +2932,11 @@ describe("daemon-event route", () => {
 
     it("fences canonical-only terminals on non-enrolled runs (thread_chat still becomes terminal)", async () => {
       // No active workflow and no workflowId on the run context (non-enrolled).
-      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(null);
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        null as unknown as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
       vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
         runId: "run-1",
         workflowId: null,
@@ -2862,6 +3019,68 @@ describe("daemon-event route", () => {
           }),
         }),
       );
+    });
+
+    it("keeps terminal run-context status updates when failure metadata columns are unavailable", async () => {
+      vi.mocked(getDaemonEventDbPreflight).mockResolvedValueOnce({
+        agentEventLogReady: true,
+        agentRunContextFailureColumnsReady: false,
+        missing: [],
+      });
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: "wf-pure-v2",
+        runSeq: 7,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "context length exceeded",
+            } as any,
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-failure-columns-missing",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const statusUpdate = vi
+        .mocked(updateAgentRunContext)
+        .mock.calls.map((call) => call[0]?.updates)
+        .find((updates) => updates?.status === "failed");
+      expect(statusUpdate).toBeDefined();
+      expect(statusUpdate).toEqual(
+        expect.objectContaining({ status: "failed" }),
+      );
+      expect(statusUpdate).not.toHaveProperty("failureCategory");
+      expect(statusUpdate).not.toHaveProperty("failureSource");
+      expect(statusUpdate).not.toHaveProperty("failureRetryable");
+      expect(statusUpdate).not.toHaveProperty("failureSignatureHash");
+      expect(statusUpdate).not.toHaveProperty("failureTerminalReason");
     });
 
     it("persists canonical events before legacy handling", async () => {

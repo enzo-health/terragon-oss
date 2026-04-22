@@ -10,6 +10,7 @@ import { threadQueryKeys } from "@/queries/thread-queries";
 import type { DeliveryLoopState, ThreadStatus } from "@terragon/shared";
 
 const HEARTBEAT_MS = 15_000;
+const FRESH_EVIDENCE_MAX_AGE_MS = HEARTBEAT_MS * 3;
 
 const LIVE_THREAD_STATUSES = new Set<ThreadStatus>([
   // Legacy/deprecated: keep polling for safety while these are still in play.
@@ -38,6 +39,21 @@ const LIVE_DELIVERY_LOOP_STATES = new Set<DeliveryLoopState>([
   "babysitting",
   "blocked",
 ]);
+
+function isFreshEvidenceTimestamp(value: unknown, nowMs: number): boolean {
+  if (value == null) return true;
+
+  let timestampMs: number | null = null;
+  if (value instanceof Date) {
+    timestampMs = value.getTime();
+  } else if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value).getTime();
+    timestampMs = Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (timestampMs == null) return true;
+  return nowMs - timestampMs <= FRESH_EVIDENCE_MAX_AGE_MS;
+}
 
 /**
  * Invalidates the thread-shell, thread-chat, and delivery-loop-status
@@ -93,25 +109,45 @@ export function useAgUiQueryInvalidator(args: {
     if (!agent) return;
 
     const interval = setInterval(() => {
-      const chatStatus = threadChatId
-        ? queryClient.getQueryData<{ status?: ThreadStatus | null }>(
-            threadQueryKeys.chat(threadId, threadChatId),
-          )?.status
+      const chatSnapshot = threadChatId
+        ? queryClient.getQueryData<{
+            status?: ThreadStatus | null;
+            updatedAt?: Date | string | null;
+          }>(threadQueryKeys.chat(threadId, threadChatId))
         : undefined;
 
-      const deliveryState = queryClient.getQueryData<{
+      const deliverySnapshot = queryClient.getQueryData<{
         state?: DeliveryLoopState | null;
-      }>(deliveryLoopStatusQueryKeys.detail(threadId))?.state;
+        updatedAtIso?: string | null;
+        updatedAt?: Date | string | null;
+      }>(deliveryLoopStatusQueryKeys.detail(threadId));
 
-      const hasFreshEvidence =
+      const chatStatus = chatSnapshot?.status;
+      const deliveryState = deliverySnapshot?.state;
+
+      const hasAnyEvidence =
         chatStatus !== undefined || deliveryState !== undefined;
+      const nowMs = Date.now();
+      const chatEvidenceIsFresh =
+        chatStatus !== undefined &&
+        isFreshEvidenceTimestamp(chatSnapshot?.updatedAt, nowMs);
+      const deliveryEvidenceIsFresh =
+        deliveryState !== undefined &&
+        isFreshEvidenceTimestamp(
+          deliverySnapshot?.updatedAtIso ?? deliverySnapshot?.updatedAt,
+          nowMs,
+        );
 
-      // Heartbeat only while the task is plausibly live OR while we're still
+      // Heartbeat only while the task is plausibly live from fresh evidence OR while we're still
       // waiting for any status surface to hydrate (initial load).
       const shouldHeartbeat =
-        !hasFreshEvidence ||
-        (chatStatus != null && LIVE_THREAD_STATUSES.has(chatStatus)) ||
-        (deliveryState != null && LIVE_DELIVERY_LOOP_STATES.has(deliveryState));
+        !hasAnyEvidence ||
+        (chatEvidenceIsFresh &&
+          chatStatus != null &&
+          LIVE_THREAD_STATUSES.has(chatStatus)) ||
+        (deliveryEvidenceIsFresh &&
+          deliveryState != null &&
+          LIVE_DELIVERY_LOOP_STATES.has(deliveryState));
 
       if (!shouldHeartbeat) return;
       invalidate();

@@ -971,7 +971,23 @@ export async function POST(request: Request) {
       "failureRetryable" in updates ||
       "failureSignatureHash" in updates ||
       "failureTerminalReason" in updates;
+    let updatesToPersist = updates;
     if (touchesFailureMetadata && !canPersistRunContextFailureMeta) {
+      const failureMetadataKeys = new Set([
+        "failureCategory",
+        "failureSource",
+        "failureRetryable",
+        "failureSignatureHash",
+        "failureTerminalReason",
+      ]);
+      updatesToPersist = Object.fromEntries(
+        Object.entries(updates).filter(
+          ([key]) => !failureMetadataKeys.has(key),
+        ),
+      ) as typeof updates;
+    }
+
+    if (Object.keys(updatesToPersist).length === 0) {
       return;
     }
 
@@ -979,7 +995,7 @@ export async function POST(request: Request) {
       db,
       userId,
       runId: runContext.runId,
-      updates,
+      updates: updatesToPersist,
     });
   };
 
@@ -1502,6 +1518,41 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
+  const hasNonIdempotentTranscriptWrites = result.threadChatMessageSeq != null;
+  const buildTerminalFenceFailureResponse = (params: {
+    status: 409 | 503;
+    payload: Record<string, unknown>;
+    reason: string;
+  }): Response => {
+    if (!fenceTerminalTransition || !hasNonIdempotentTranscriptWrites) {
+      return Response.json(params.payload, { status: params.status });
+    }
+
+    console.warn(
+      "[daemon-event] fenced terminal failure after transcript append; returning non-retry ack to avoid duplicate append replay",
+      {
+        reason: params.reason,
+        threadId,
+        threadChatId,
+        runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      },
+    );
+    return jsonTerminalAckResponse(
+      buildTerminalAckState(
+        {
+          status: 202,
+          deduplicated: true,
+          reason: `${params.reason}_after_transcript_append`,
+          loopId: effectiveLoopId ?? undefined,
+          runId: runContext?.runId ?? envelopeV2?.runId ?? undefined,
+          acknowledgedEventId: envelopeV2?.eventId ?? null,
+          acknowledgedSeq: envelopeV2?.seq ?? null,
+        },
+        null,
+      ),
+    );
+  };
+
   if (result.threadChatMessageSeq != null) {
     const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
     if (insertedEventIds.length > 0) {
@@ -1782,16 +1833,17 @@ export async function POST(request: Request) {
           runId: envelopeV2?.runId,
           error: v3Err,
         });
-        return Response.json(
-          {
+        return buildTerminalFenceFailureResponse({
+          status: 503,
+          reason: "daemon_event_terminal_v3_bridge_failed",
+          payload: {
             success: false,
             error: "daemon_event_terminal_v3_bridge_failed",
             loopId: effectiveLoopId,
             runId: envelopeV2?.runId ?? null,
             detail: v3Err instanceof Error ? v3Err.message : String(v3Err),
           },
-          { status: 503 },
-        );
+        });
       } else {
         console.error("[daemon-event] v3 kernel bridge failed, continuing", {
           loopId: effectiveLoopId,
@@ -1844,15 +1896,16 @@ export async function POST(request: Request) {
           threadChatId,
         });
         if (!latest || latest.status !== transitionResult.updatedStatus) {
-          return Response.json(
-            {
+          return buildTerminalFenceFailureResponse({
+            status: 409,
+            reason: "daemon_event_terminal_thread_chat_cas_failed",
+            payload: {
               success: false,
               error: "daemon_event_terminal_thread_chat_cas_failed",
               expectedStatus: transitionResult.updatedStatus,
               actualStatus: latest?.status ?? null,
             },
-            { status: 409 },
-          );
+          });
         }
       }
 
@@ -1930,15 +1983,16 @@ export async function POST(request: Request) {
               error,
             },
           );
-          return Response.json(
-            {
+          return buildTerminalFenceFailureResponse({
+            status: 503,
+            reason: "daemon_event_terminal_persistence_failed",
+            payload: {
               success: false,
               error: "daemon_event_terminal_persistence_failed",
               runId: runContext?.runId ?? envelopeV2?.runId ?? null,
               detail: error instanceof Error ? error.message : String(error),
             },
-            { status: 503 },
-          );
+          });
         }
       }
     } else {

@@ -298,4 +298,28 @@ describe("useAgUiQueryInvalidator", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not heartbeat when delivery-loop liveness evidence is stale", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-22T20:00:00.000Z"));
+    const fake = createFakeAgent();
+    const { queryClient, unmount } = renderWith(fake, "thread-1", "chat-1");
+
+    try {
+      invalidateSpy!.mockClear();
+      queryClient.setQueryData(deliveryLoopStatusQueryKeys.detail("thread-1"), {
+        state: "implementing",
+        updatedAtIso: "2026-04-22T19:58:00.000Z",
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
 });
