@@ -52,6 +52,11 @@ export function Dashboard({
       });
       if (saveAsDraft) {
         toast.success("Task saved as draft successfully.");
+      } else {
+        toast.success("Task created! Getting to work...", {
+          icon: "🚀",
+          duration: 3000,
+        });
       }
     },
     [createThreadMutation],
@@ -80,9 +85,15 @@ export function Dashboard({
     <div
       className={cn(
         "flex flex-col h-full max-w-chat w-full mx-auto gap-6 justify-start pt-8 pb-20 px-6",
+        "animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out",
       )}
     >
-      <div className="flex flex-col gap-2">
+      <div
+        className={cn(
+          "flex flex-col gap-2",
+          "animate-in fade-in slide-in-from-bottom-2 duration-500 delay-100",
+        )}
+      >
         <h1 className="text-[32px] font-display font-semibold tracking-[-0.02em] leading-[1.1] text-foreground">
           What would you like to build?
         </h1>
@@ -91,15 +102,17 @@ export function Dashboard({
         </p>
       </div>
 
-      <DashboardPromptBox
-        placeholder={placeholder}
-        status={null}
-        threadId={null}
-        onUpdate={onUpdate}
-        handleStop={handleStop}
-        handleSubmit={handleSubmit}
-        promptText={promptText ?? undefined}
-      />
+      <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-200">
+        <DashboardPromptBox
+          placeholder={placeholder}
+          status={null}
+          threadId={null}
+          onUpdate={onUpdate}
+          handleStop={handleStop}
+          handleSubmit={handleSubmit}
+          promptText={promptText ?? undefined}
+        />
+      </div>
       {showRecommendedTasks && (
         <div className="space-y-6 hidden md:block">
           <h3 className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground">

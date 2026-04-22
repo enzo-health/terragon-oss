@@ -195,7 +195,11 @@ export const ThreadListItem = memo(function ThreadListItem({
           "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isOptimisticThread && "animate-pulse-subtle",
         )}
-        style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
+        style={{
+          contentVisibility: "auto",
+          containIntrinsicSize: "80px",
+          ...style,
+        }}
       >
         <Link
           href={`/task/${thread.id}`}

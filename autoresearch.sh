@@ -31,7 +31,9 @@ echo "LAYOUT_ANIMATIONS=$LAYOUT_ANIMATIONS"
 
 # Check 5: Thread list item enhancements
 echo "Checking thread list enhancements..."
-THREAD_ITEM_ANIMATIONS=$(grep -r "animate-in\|fade-in\|slide-in" apps/www/src/components/thread-list/item.tsx 2>/dev/null | wc -l | tr -d ' ')
+THREAD_ITEM_ANIMATIONS_ITEM=$(grep -r "animate-in\|fade-in\|slide-in" apps/www/src/components/thread-list/item.tsx 2>/dev/null | wc -l | tr -d ' ')
+THREAD_ITEM_ANIMATIONS_MAIN=$(grep -r "animate-in\|fade-in\|slide-in" apps/www/src/components/thread-list/main.tsx 2>/dev/null | wc -l | tr -d ' ')
+THREAD_ITEM_ANIMATIONS=$((THREAD_ITEM_ANIMATIONS_ITEM + THREAD_ITEM_ANIMATIONS_MAIN))
 echo "THREAD_ITEM_ANIMATIONS=$THREAD_ITEM_ANIMATIONS"
 
 # Calculate overall quality score (0-100)
@@ -44,22 +46,22 @@ if [ "$(cd apps/www && pnpm tsc --noEmit > /dev/null 2>&1 && echo "pass" || echo
 fi
 
 # Has optimistic animations: +15
-if [ "$OPTIMISTIC_ANIMATION_LINES" -gt 0 ]; then
+if [ "${OPTIMISTIC_ANIMATION_LINES:-0}" -gt 0 ] 2>/dev/null; then
     SCORE=$((SCORE + 15))
 fi
 
 # Has reduced motion support: +10
-if [ "$REDUCED_MOTION" -gt 0 ]; then
+if [ "${REDUCED_MOTION:-0}" -gt 0 ] 2>/dev/null; then
     SCORE=$((SCORE + 10))
 fi
 
 # No layout animations: +10
-if [ "$LAYOUT_ANIMATIONS" -eq 0 ]; then
+if [ "${LAYOUT_ANIMATIONS:-0}" -eq 0 ] 2>/dev/null; then
     SCORE=$((SCORE + 10))
 fi
 
 # Enhanced thread item animations: +5
-if [ "$THREAD_ITEM_ANIMATIONS" -gt 2 ]; then
+if [ "${THREAD_ITEM_ANIMATIONS:-0}" -gt 2 ] 2>/dev/null; then
     SCORE=$((SCORE + 5))
 fi
 

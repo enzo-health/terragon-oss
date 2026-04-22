@@ -63,6 +63,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
     <div
       className={cn(
         "px-4 flex items-center justify-between min-h-12 mb-1",
+        "animate-in fade-in duration-300",
         className,
       )}
     >
@@ -182,6 +183,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
     <h3
       className={cn(
         "group py-1.5 text-[11px] uppercase tracking-[0.6px] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
+        "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
       onClick={onToggle}
@@ -241,13 +243,22 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
       />
       {!isCollapsed && (
         <div className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}>
-          {threads.map((thread) => (
+          {threads.map((thread, index) => (
             <ThreadListItem
               key={thread.id}
               thread={thread}
               pathname={pathname}
-              className={!isSidebar ? "pl-1" : undefined}
+              className={cn(
+                !isSidebar ? "pl-1" : undefined,
+                thread.id.startsWith("optimistic-") &&
+                  "animate-in fade-in slide-in-from-top-2 duration-300",
+              )}
               hideRepository={groupBy === "repository"}
+              style={
+                thread.id.startsWith("optimistic-")
+                  ? { animationDelay: `${index * 50}ms` }
+                  : undefined
+              }
             />
           ))}
         </div>
