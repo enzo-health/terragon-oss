@@ -7,6 +7,9 @@
  * we can import and call POST directly without live DB / Redis / sandbox deps.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { replay, loadRecording } from "./replayer";
 import type { RecordedDaemonEvent } from "./types";
 
@@ -136,10 +139,14 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThreadChat: vi.fn().mockResolvedValue(null),
   getThreadMinimal: vi.fn().mockResolvedValue(null),
   updateThreadChat: vi.fn().mockResolvedValue(null),
+  updateThreadChatTerminalMetadataIfTerminal: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/agent/update-status", () => ({
-  updateThreadChatWithTransition: vi.fn().mockResolvedValue(undefined),
+  updateThreadChatWithTransition: vi.fn().mockResolvedValue({
+    updatedStatus: null,
+    didUpdateStatus: false,
+  }),
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
@@ -303,6 +310,21 @@ describe("replay()", () => {
     const results = await replay(makeRecording());
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.status === 200)).toBe(true);
+  });
+
+  it("replays the latest browser-failure capture when present", async () => {
+    const dirname = path.dirname(fileURLToPath(import.meta.url));
+    const capturePath = path.resolve(
+      dirname,
+      "./recordings/captures/task-liveness-latest.jsonl",
+    );
+    if (!fs.existsSync(capturePath)) {
+      expect(true).toBe(true);
+      return;
+    }
+    const results = await replay(capturePath, { mode: "fast-forward" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((result) => result.status === 200)).toBe(true);
   });
 });
 

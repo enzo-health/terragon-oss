@@ -13,7 +13,8 @@
     "tsc-check": "tsc --noEmit",
     "lint": "biome lint .",
     "analyze": "pnpm --filter bundled build && ANALYZE=true next build --webpack",
-    "recorder": "tsx test/integration/recorder.ts"
+    "recorder": "tsx test/integration/recorder.ts",
+    "test:liveness:e2e": "tsx test/integration/task-liveness-browser-e2e.ts"
   },
   "dependencies": {
     "@ag-ui/client": "0.0.52",
@@ -131,6 +132,7 @@
     "zod": "4.1.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@biomejs/biome": "2.4.6",
     "@ladle/react": "^5.0.3",
     "@next/bundle-analyzer": "^16.1.6",

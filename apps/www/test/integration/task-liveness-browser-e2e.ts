@@ -1,0 +1,224 @@
+#!/usr/bin/env tsx
+
+import { chromium } from "@playwright/test";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+type ReplayRecordingEvent = {
+  wallClockMs: number;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+};
+
+type SeededScenarioResponse = {
+  scenario: "task-liveness-terminal-vs-stale-workflow";
+  userId: string;
+  sessionToken: string;
+  threadId: string;
+  threadChatId: string;
+  runId: string;
+  replayRecording: ReplayRecordingEvent[];
+};
+
+type TaskLivenessDebugResponse = {
+  summary: string;
+  ui: {
+    threadChatStatus: string | null;
+    deliveryLoopState: string | null;
+    effectiveThreadStatus: string | null;
+    isWorking: boolean;
+    canApplyDeliveryLoopHeadOverride: boolean;
+  };
+};
+
+type CliOptions = {
+  baseUrl: string;
+  headed: boolean;
+  artifactsDir: string;
+};
+
+function parseArgs(argv: string[]): CliOptions {
+  let baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  let headed = false;
+  let artifactsDir = path.resolve(process.cwd(), "test-results/task-liveness");
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--base-url" && argv[i + 1]) {
+      baseUrl = argv[++i] ?? baseUrl;
+      continue;
+    }
+    if (arg === "--artifacts-dir" && argv[i + 1]) {
+      artifactsDir = path.resolve(argv[++i] ?? artifactsDir);
+      continue;
+    }
+    if (arg === "--headed") {
+      headed = true;
+    }
+  }
+
+  return { baseUrl, headed, artifactsDir };
+}
+
+async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`HTTP ${response.status} ${input}\n${body}`);
+  }
+  return (await response.json()) as T;
+}
+
+function toJsonl(events: ReplayRecordingEvent[]): string {
+  return events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+}
+
+async function writeFailureArtifacts(params: {
+  artifactsDir: string;
+  screenshotPng: Buffer | null;
+  scenario: SeededScenarioResponse;
+  debugPayload: TaskLivenessDebugResponse | null;
+  replayRecordingJsonl: string;
+  failureMessage: string;
+  captureFixturePath: string;
+}) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const runDir = path.join(params.artifactsDir, timestamp);
+  await fs.mkdir(runDir, { recursive: true });
+
+  await fs.writeFile(
+    path.join(runDir, "failure.txt"),
+    `${params.failureMessage}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(runDir, "scenario.json"),
+    `${JSON.stringify(params.scenario, null, 2)}\n`,
+    "utf8",
+  );
+  if (params.debugPayload) {
+    await fs.writeFile(
+      path.join(runDir, "liveness-debug.json"),
+      `${JSON.stringify(params.debugPayload, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  await fs.writeFile(
+    path.join(runDir, "daemon-event-recording.jsonl"),
+    params.replayRecordingJsonl,
+    "utf8",
+  );
+
+  await fs.mkdir(path.dirname(params.captureFixturePath), { recursive: true });
+  await fs.writeFile(
+    params.captureFixturePath,
+    params.replayRecordingJsonl,
+    "utf8",
+  );
+
+  if (params.screenshotPng) {
+    await fs.writeFile(path.join(runDir, "browser.png"), params.screenshotPng);
+  }
+
+  console.error(`[task-liveness-e2e] failure artifacts: ${runDir}`);
+  console.error(
+    `[task-liveness-e2e] replay fixture updated: ${params.captureFixturePath}`,
+  );
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const secret = process.env.INTERNAL_SHARED_SECRET ?? "123456";
+
+  const scenarioUrl = `${options.baseUrl}/api/test/task-liveness-scenario`;
+  const scenario = await fetchJson<SeededScenarioResponse>(scenarioUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Terragon-Secret": secret,
+    },
+    body: "{}",
+  });
+  const replayRecordingJsonl = toJsonl(scenario.replayRecording);
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const captureFixturePath = path.resolve(
+    __dirname,
+    "./recordings/captures/task-liveness-latest.jsonl",
+  );
+
+  const browser = await chromium.launch({
+    headless: !options.headed,
+  });
+  const context = await browser.newContext({
+    extraHTTPHeaders: {
+      Authorization: `Bearer ${scenario.sessionToken}`,
+      "X-Terragon-Secret": secret,
+    },
+  });
+  const page = await context.newPage();
+  let debugPayload: TaskLivenessDebugResponse | null = null;
+
+  try {
+    const taskUrl = `${options.baseUrl}/task/${scenario.threadId}`;
+    await page.goto(taskUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("body", { timeout: 15_000 });
+
+    const bodyText = await page.locator("body").innerText();
+    if (bodyText.includes("Assistant is working")) {
+      throw new Error(
+        `stale UI regression: found "Assistant is working" on terminal scenario task ${scenario.threadId}`,
+      );
+    }
+
+    const debugUrl = `${options.baseUrl}/api/test/task-liveness-debug/${scenario.threadId}`;
+    debugPayload = await fetchJson<TaskLivenessDebugResponse>(debugUrl, {
+      headers: {
+        Authorization: `Bearer ${scenario.sessionToken}`,
+        "X-Terragon-Secret": secret,
+      },
+    });
+
+    if (debugPayload.ui.isWorking) {
+      throw new Error(
+        `expected non-working debug payload, got isWorking=true (${debugPayload.summary})`,
+      );
+    }
+    if (debugPayload.ui.effectiveThreadStatus !== "complete") {
+      throw new Error(
+        `expected effectiveThreadStatus=complete, got ${String(debugPayload.ui.effectiveThreadStatus)}`,
+      );
+    }
+    if (debugPayload.ui.canApplyDeliveryLoopHeadOverride) {
+      throw new Error(
+        "expected stale workflow head override to be rejected, got canApplyDeliveryLoopHeadOverride=true",
+      );
+    }
+
+    console.log(
+      `[task-liveness-e2e] PASS ${scenario.threadId} (${debugPayload.summary})`,
+    );
+  } catch (error) {
+    const screenshotPng = await page.screenshot({ fullPage: true });
+    await writeFailureArtifacts({
+      artifactsDir: options.artifactsDir,
+      screenshotPng,
+      scenario,
+      debugPayload,
+      replayRecordingJsonl,
+      failureMessage:
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+      captureFixturePath,
+    });
+    throw error;
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
