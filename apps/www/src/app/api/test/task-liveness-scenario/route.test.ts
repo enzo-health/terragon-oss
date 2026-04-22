@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NextRequest } from "next/server";
+import * as schema from "@terragon/shared/db/schema";
+
+const mutableEnv = process.env as Record<string, string | undefined>;
 
 const mocks = vi.hoisted(() => ({
   createTestUser: vi.fn(),
@@ -43,26 +46,26 @@ function makeRequest(secret?: string): NextRequest {
 }
 
 describe("task-liveness scenario route guard", () => {
-  const originalNodeEnv = process.env.NODE_ENV;
-  const originalEnableFlag = process.env.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS;
-  const originalSecret = process.env.TASK_LIVENESS_TEST_SECRET;
+  const originalNodeEnv = mutableEnv.NODE_ENV;
+  const originalEnableFlag = mutableEnv.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS;
+  const originalSecret = mutableEnv.TASK_LIVENESS_TEST_SECRET;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.NODE_ENV = "test";
-    delete process.env.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS;
-    delete process.env.TASK_LIVENESS_TEST_SECRET;
+    mutableEnv.NODE_ENV = "test";
+    delete mutableEnv.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS;
+    delete mutableEnv.TASK_LIVENESS_TEST_SECRET;
   });
 
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
-    process.env.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS = originalEnableFlag;
-    process.env.TASK_LIVENESS_TEST_SECRET = originalSecret;
+    mutableEnv.NODE_ENV = originalNodeEnv;
+    mutableEnv.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS = originalEnableFlag;
+    mutableEnv.TASK_LIVENESS_TEST_SECRET = originalSecret;
   });
 
   it("returns 403 in development when explicit opt-in is missing", async () => {
-    process.env.NODE_ENV = "development";
-    process.env.TASK_LIVENESS_TEST_SECRET = "abc123";
+    mutableEnv.NODE_ENV = "development";
+    mutableEnv.TASK_LIVENESS_TEST_SECRET = "abc123";
 
     const response = await POST(makeRequest("abc123"));
 
@@ -78,11 +81,58 @@ describe("task-liveness scenario route guard", () => {
   });
 
   it("returns 401 for an invalid secret", async () => {
-    process.env.TASK_LIVENESS_TEST_SECRET = "correct-secret";
+    mutableEnv.TASK_LIVENESS_TEST_SECRET = "correct-secret";
 
     const response = await POST(makeRequest("wrong-secret"));
 
     expect(response.status).toBe(401);
     expect(mocks.createTestUser).not.toHaveBeenCalled();
+  });
+
+  it("seeds scenario without elevating user role to admin", async () => {
+    mutableEnv.TASK_LIVENESS_TEST_SECRET = "correct-secret";
+
+    const setMock = vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
+    });
+    const updateMock = vi.fn().mockReturnValue({
+      set: setMock,
+    });
+    const insertValuesMock = vi.fn().mockResolvedValue(undefined);
+    const insertMock = vi.fn().mockReturnValue({
+      values: insertValuesMock,
+    });
+
+    const dbMockModule = await import("@/lib/db");
+    vi.mocked(dbMockModule.db.update).mockImplementation(updateMock);
+    vi.mocked(dbMockModule.db.insert).mockImplementation(insertMock);
+
+    mocks.createTestUser.mockResolvedValue({
+      user: { id: "user-1" },
+      session: { token: "session-token-1" },
+    });
+    mocks.createTestThread.mockResolvedValue({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+    mocks.createWorkflow.mockResolvedValue({ id: "workflow-1" });
+    mocks.ensureWorkflowHead.mockResolvedValue(undefined);
+    mocks.upsertAgentRunContext.mockResolvedValue(undefined);
+
+    const response = await POST(makeRequest("correct-secret"));
+    const body = (await response.json()) as {
+      userId: string;
+      sessionToken: string;
+    };
+
+    expect(response.status).toBe(201);
+    expect(body.userId).toBe("user-1");
+    expect(body.sessionToken).toBe("session-token-1");
+    expect(updateMock).toHaveBeenCalledWith(schema.thread);
+    expect(updateMock).toHaveBeenCalledWith(schema.threadChat);
+    expect(updateMock).not.toHaveBeenCalledWith(schema.user);
+    expect(setMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ role: "admin" }),
+    );
   });
 });

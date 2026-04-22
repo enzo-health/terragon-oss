@@ -3,6 +3,7 @@
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { chromium } from "@playwright/test";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,13 +40,20 @@ type CliOptions = {
   headed: boolean;
   artifactsDir: string;
   secret: string | null;
+  captureFixturePath: string | null;
 };
 
-function parseArgs(argv: string[]): CliOptions {
+export function parseArgs(argv: string[]): CliOptions {
   let baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   let headed = false;
-  let artifactsDir = path.resolve(process.cwd(), "test-results/task-liveness");
+  let artifactsDir = path.resolve(
+    os.tmpdir(),
+    "terragon-task-liveness-artifacts",
+  );
   let secret = process.env.TASK_LIVENESS_TEST_SECRET ?? null;
+  let captureFixturePath = process.env.TASK_LIVENESS_CAPTURE_FIXTURE_PATH
+    ? path.resolve(process.env.TASK_LIVENESS_CAPTURE_FIXTURE_PATH)
+    : null;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -61,12 +69,22 @@ function parseArgs(argv: string[]): CliOptions {
       secret = argv[++i] ?? secret;
       continue;
     }
+    if (arg === "--capture-fixture-path" && argv[i + 1]) {
+      captureFixturePath = path.resolve(argv[++i] ?? "");
+      continue;
+    }
     if (arg === "--headed") {
       headed = true;
     }
   }
 
-  return { baseUrl, headed, artifactsDir, secret };
+  return {
+    baseUrl,
+    headed,
+    artifactsDir,
+    secret,
+    captureFixturePath,
+  };
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -82,14 +100,14 @@ function toJsonl(events: ReplayRecordingEvent[]): string {
   return events.map((event) => JSON.stringify(event)).join("\n") + "\n";
 }
 
-async function writeFailureArtifacts(params: {
+export async function writeFailureArtifacts(params: {
   artifactsDir: string;
   screenshotPng: Buffer | null;
   scenario: SeededScenarioResponse | null;
   debugPayload: TaskLivenessDebugResponse | null;
   replayRecordingJsonl: string | null;
   failureMessage: string;
-  captureFixturePath: string;
+  captureFixturePath: string | null;
   failureStep: string;
   baseUrl: string;
 }) {
@@ -136,17 +154,19 @@ async function writeFailureArtifacts(params: {
       "utf8",
     );
 
-    await fs.mkdir(path.dirname(params.captureFixturePath), {
-      recursive: true,
-    });
-    await fs.writeFile(
-      params.captureFixturePath,
-      params.replayRecordingJsonl,
-      "utf8",
-    );
-    console.error(
-      `[task-liveness-e2e] replay fixture updated: ${params.captureFixturePath}`,
-    );
+    if (params.captureFixturePath) {
+      await fs.mkdir(path.dirname(params.captureFixturePath), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        params.captureFixturePath,
+        params.replayRecordingJsonl,
+        "utf8",
+      );
+      console.error(
+        `[task-liveness-e2e] replay fixture updated: ${params.captureFixturePath}`,
+      );
+    }
   }
 
   if (params.screenshotPng) {
@@ -158,11 +178,6 @@ async function writeFailureArtifacts(params: {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const captureFixturePath = path.resolve(
-    __dirname,
-    "./recordings/captures/task-liveness-latest.jsonl",
-  );
 
   let failureStep = "bootstrap";
   let scenario: SeededScenarioResponse | null = null;
@@ -262,7 +277,7 @@ async function main() {
       replayRecordingJsonl,
       failureMessage:
         error instanceof Error ? (error.stack ?? error.message) : String(error),
-      captureFixturePath,
+      captureFixturePath: options.captureFixturePath,
       failureStep,
       baseUrl: options.baseUrl,
     });
@@ -277,7 +292,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const entrypointPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+
+if (entrypointPath === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

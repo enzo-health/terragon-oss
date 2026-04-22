@@ -55,11 +55,6 @@ export async function POST(request: NextRequest) {
     name: "Task Liveness E2E",
   });
 
-  await db
-    .update(schema.user)
-    .set({ role: "admin" })
-    .where(eq(schema.user.id, user.id));
-
   const { threadId, threadChatId } = await createTestThread({
     db,
     userId: user.id,

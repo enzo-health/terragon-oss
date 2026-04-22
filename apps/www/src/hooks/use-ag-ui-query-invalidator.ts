@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAgUiAgent } from "@/components/chat/ag-ui-agent-context";
 import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
+import { isDeliveryLoopStateActivelyWorking } from "@/lib/delivery-loop-status";
 import { useAgUiRunEvents } from "@/hooks/use-ag-ui-run-events";
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
 import { threadQueryKeys } from "@/queries/thread-queries";
@@ -28,16 +29,6 @@ const LIVE_THREAD_STATUSES = new Set<ThreadStatus>([
   "working-error",
   "working-done",
   "checkpointing",
-]);
-
-const LIVE_DELIVERY_LOOP_STATES = new Set<DeliveryLoopState>([
-  "planning",
-  "implementing",
-  "review_gate",
-  "ci_gate",
-  "awaiting_pr_link",
-  "babysitting",
-  "blocked",
 ]);
 
 function isFreshEvidenceTimestamp(value: unknown, nowMs: number): boolean {
@@ -78,32 +69,42 @@ export function useAgUiQueryInvalidator(args: {
   const queryClient = useQueryClient();
   const agent = useAgUiAgent();
 
-  const invalidate = useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: threadQueryKeys.shell(threadId),
-    });
-    void queryClient.invalidateQueries({
-      queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
-    });
-    // Keep sidebar list queries converged with the open task after missed
-    // stream events (broadcast patches are best-effort, not authoritative).
-    void queryClient.invalidateQueries({
-      queryKey: threadQueryKeys.list(null),
-    });
-    if (threadChatId) {
+  const invalidate = useCallback(
+    ({ includeThreadList }: { includeThreadList: boolean }) => {
       void queryClient.invalidateQueries({
-        queryKey: threadQueryKeys.chat(threadId, threadChatId),
+        queryKey: threadQueryKeys.shell(threadId),
       });
-    }
-  }, [queryClient, threadId, threadChatId]);
+      void queryClient.invalidateQueries({
+        queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
+      });
+      if (includeThreadList) {
+        // Keep sidebar list queries converged with the open task after missed
+        // stream events (broadcast patches are best-effort, not authoritative).
+        void queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.list(null),
+        });
+      }
+      if (threadChatId) {
+        void queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.chat(threadId, threadChatId),
+        });
+      }
+    },
+    [queryClient, threadId, threadChatId],
+  );
 
   const statusFilter = useCallback(
     (name: string) => name === "thread.status_changed",
     [],
   );
 
-  useAgUiCustomEvents(agent, statusFilter, invalidate);
-  useAgUiRunEvents(agent, invalidate, invalidate);
+  const invalidateForEvents = useCallback(
+    () => invalidate({ includeThreadList: true }),
+    [invalidate],
+  );
+
+  useAgUiCustomEvents(agent, statusFilter, invalidateForEvents);
+  useAgUiRunEvents(agent, invalidateForEvents, invalidateForEvents);
 
   useEffect(() => {
     if (!agent) return;
@@ -138,19 +139,27 @@ export function useAgUiQueryInvalidator(args: {
           nowMs,
         );
 
+      const hasActivelyWorkingThreadStatus =
+        chatEvidenceIsFresh &&
+        chatStatus != null &&
+        LIVE_THREAD_STATUSES.has(chatStatus);
+      const hasActivelyWorkingDeliveryLoopState =
+        deliveryEvidenceIsFresh &&
+        deliveryState != null &&
+        isDeliveryLoopStateActivelyWorking(deliveryState);
+
       // Heartbeat only while the task is plausibly live from fresh evidence OR while we're still
       // waiting for any status surface to hydrate (initial load).
       const shouldHeartbeat =
         !hasAnyEvidence ||
-        (chatEvidenceIsFresh &&
-          chatStatus != null &&
-          LIVE_THREAD_STATUSES.has(chatStatus)) ||
-        (deliveryEvidenceIsFresh &&
-          deliveryState != null &&
-          LIVE_DELIVERY_LOOP_STATES.has(deliveryState));
+        hasActivelyWorkingThreadStatus ||
+        hasActivelyWorkingDeliveryLoopState;
 
       if (!shouldHeartbeat) return;
-      invalidate();
+      invalidate({
+        includeThreadList:
+          hasActivelyWorkingThreadStatus || hasActivelyWorkingDeliveryLoopState,
+      });
     }, HEARTBEAT_MS);
 
     return () => {

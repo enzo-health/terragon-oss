@@ -322,4 +322,60 @@ describe("useAgUiQueryInvalidator", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not heartbeat for passive delivery-loop wait states", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-22T20:00:00.000Z"));
+    const fake = createFakeAgent();
+    const { queryClient, unmount } = renderWith(fake, "thread-1", "chat-1");
+
+    try {
+      invalidateSpy!.mockClear();
+      queryClient.setQueryData(deliveryLoopStatusQueryKeys.detail("thread-1"), {
+        state: "awaiting_pr_link",
+        updatedAtIso: "2026-04-22T19:59:45.000Z",
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("heartbeat during initial hydration does not invalidate thread list", async () => {
+    vi.useFakeTimers();
+    const fake = createFakeAgent();
+    const { unmount } = renderWith(fake, "thread-1", "chat-1");
+
+    try {
+      invalidateSpy!.mockClear();
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalled();
+      const calls = invalidateSpy!.mock.calls.map((c) => c[0]);
+      expect(calls).toContainEqual({
+        queryKey: threadQueryKeys.shell("thread-1"),
+      });
+      expect(calls).toContainEqual({
+        queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+      });
+      expect(calls).toContainEqual({
+        queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
+      });
+      expect(calls).not.toContainEqual({
+        queryKey: threadQueryKeys.list(null),
+      });
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
 });

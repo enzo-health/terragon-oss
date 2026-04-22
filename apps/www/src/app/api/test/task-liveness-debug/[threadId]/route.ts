@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTaskLivenessDebugPayload } from "@/server-actions/admin/task-liveness-debug";
+import { getTaskLivenessDebugPayloadForSecretScopedRoute } from "@/server-actions/admin/task-liveness-debug";
 import { rejectTaskLivenessTestRequest } from "../../task-liveness-guard";
 
 export async function GET(
@@ -21,6 +21,8 @@ export async function GET(
     );
   }
 
-  const payload = await getTaskLivenessDebugPayload({ threadId });
+  const payload = await getTaskLivenessDebugPayloadForSecretScopedRoute({
+    threadId,
+  });
   return NextResponse.json(payload, { status: 200 });
 }

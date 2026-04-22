@@ -342,281 +342,317 @@ function formatEvidence(
   }
 }
 
+type TaskLivenessDebugParams = {
+  threadId: string;
+  threadChatId?: string | null;
+};
+
+async function buildTaskLivenessDebugPayload(params: {
+  viewerUserId: string;
+  allowAdmin: boolean;
+  threadId: string;
+  threadChatId?: string | null;
+}): Promise<TaskLivenessDebugPayload> {
+  const now = new Date();
+
+  const threadChatIdInput =
+    params.threadChatId && params.threadChatId.length > 0
+      ? params.threadChatId
+      : null;
+
+  const effectiveThreadChatId =
+    threadChatIdInput ??
+    (
+      await getThreadPageShellWithPermissions({
+        db,
+        threadId: params.threadId,
+        userId: params.viewerUserId,
+        allowAdmin: params.allowAdmin,
+      })
+    )?.primaryThreadChatId ??
+    null;
+
+  if (!effectiveThreadChatId) {
+    throw new Error("Thread not found");
+  }
+
+  // We intentionally use the shared permission helper so the payload matches
+  // the same "thread chat the UI sees" semantics (primary chat, admin bypass).
+  const threadChat = await getThreadPageChatWithPermissions({
+    db,
+    threadId: params.threadId,
+    threadChatId: effectiveThreadChatId,
+    userId: params.viewerUserId,
+    allowAdmin: params.allowAdmin,
+  });
+
+  if (!threadChat) {
+    throw new Error("Thread chat not found");
+  }
+
+  const threadId = threadChat.threadId;
+  const threadChatId = threadChat.id;
+  const ownerUserId = threadChat.userId;
+
+  const headRow = await db.query.deliveryWorkflowHeadV3.findFirst({
+    where: eq(schema.deliveryWorkflowHeadV3.threadId, threadId),
+    orderBy: [
+      desc(schema.deliveryWorkflowHeadV3.generation),
+      desc(schema.deliveryWorkflowHeadV3.version),
+    ],
+  });
+
+  const head = headRow ? toWorkflowHead(headRow) : null;
+  const snapshot = head ? buildSnapshotFromHead(head) : null;
+  const deliveryLoopState = snapshot ? snapshot.kind : null;
+  const deliveryLoopUpdatedAtIso = headRow?.updatedAt.toISOString() ?? null;
+
+  const canApplyDeliveryLoopHeadOverride = shouldUseDeliveryLoopHeadOverride({
+    now,
+    deliveryLoopUpdatedAtIso,
+    threadChatUpdatedAt: threadChat.updatedAt,
+  });
+
+  const effectiveThreadStatus = getDeliveryLoopAwareThreadStatus({
+    threadStatus: (threadChat.status ?? null) as ThreadStatus | null,
+    deliveryLoopState,
+    deliveryLoopUpdatedAtIso,
+    threadChatUpdatedAt: threadChat.updatedAt,
+    now,
+  });
+
+  const evidence = classifyLivenessEvidence({
+    now,
+    threadChatUpdatedAt: threadChat.updatedAt,
+    deliveryLoopUpdatedAtIso,
+  });
+
+  const latestRunContext = await getLatestAgentRunContextForThreadChat({
+    db,
+    userId: ownerUserId,
+    threadId,
+    threadChatId,
+  });
+
+  const activeRunId = headRow?.activeRunId ?? null;
+  const activeRunContext =
+    activeRunId === null
+      ? null
+      : await getAgentRunContextByRunId({
+          db,
+          runId: activeRunId,
+          userId: ownerUserId,
+        });
+
+  const replayRunId = await getLatestRunIdForThreadChat({
+    db,
+    threadChatId,
+  });
+
+  const hasReplayProjection = await hasCanonicalReplayProjection({
+    db,
+    threadId,
+    threadChatId,
+  });
+
+  const latestLogRow = await db.query.agentEventLog.findFirst({
+    where: and(
+      eq(schema.agentEventLog.threadId, threadId),
+      eq(schema.agentEventLog.threadChatId, threadChatId),
+    ),
+    orderBy: [desc(schema.agentEventLog.logSeq)],
+    columns: {
+      runId: true,
+      seq: true,
+      eventType: true,
+      timestamp: true,
+      threadChatMessageSeq: true,
+    },
+  });
+
+  const streamKey = agUiStreamKey(threadChatId);
+  let redisUnavailableReason: "xrevrange_failed" | null = null;
+  let tail: Array<{ id: string; event: BaseEvent }> = [];
+  try {
+    const rawTail = await redis.xrevrange(streamKey, "+", "-", 32);
+    tail = parseRedisStreamTail(rawTail);
+  } catch (error) {
+    redisUnavailableReason = "xrevrange_failed";
+    console.warn("[task-liveness-debug] redis stream tail unavailable", {
+      threadId,
+      threadChatId,
+      error,
+    });
+  }
+
+  const sortedTail = tail
+    .map((entry) => ({
+      ...entry,
+      entryMs: parseRedisStreamEntryMs(entry.id),
+    }))
+    .sort((a, b) => (b.entryMs ?? 0) - (a.entryMs ?? 0));
+
+  const latestStreamEntry = sortedTail[0] ?? null;
+  const latestEntryAtIso =
+    latestStreamEntry?.entryMs != null
+      ? new Date(latestStreamEntry.entryMs).toISOString()
+      : null;
+
+  const terminalCandidates = sortedTail.filter((entry) =>
+    isTerminalRunEventType(entry.event.type),
+  );
+
+  const inferredTargetRunId =
+    activeRunId ?? latestRunContext?.runId ?? replayRunId ?? null;
+
+  const latestTerminalMarker = terminalCandidates
+    .map((entry) => ({
+      entry,
+      runId: (entry.event as ParsedStreamEvent).runId ?? null,
+    }))
+    .find((candidate) => candidate.runId !== null);
+
+  const terminalForTarget =
+    inferredTargetRunId === null
+      ? null
+      : terminalCandidates.some(
+          (entry) =>
+            (entry.event as ParsedStreamEvent).runId === inferredTargetRunId,
+        );
+
+  const summaryParts: string[] = [];
+  summaryParts.push(
+    `threadChat.status=${threadChat.status ?? "null"}`,
+    `deliveryLoopState=${deliveryLoopState ?? "null"}`,
+    `effectiveThreadStatus=${effectiveThreadStatus ?? "null"}`,
+  );
+  if (
+    effectiveThreadStatus !== null &&
+    effectiveThreadStatus !== threadChat.status
+  ) {
+    summaryParts.push(
+      canApplyDeliveryLoopHeadOverride
+        ? "override=deliveryLoopHead"
+        : "override=blocked_by_freshness",
+    );
+  }
+  if (inferredTargetRunId) {
+    summaryParts.push(`targetRunId=${inferredTargetRunId}`);
+  }
+  if (terminalForTarget !== null) {
+    summaryParts.push(
+      terminalForTarget
+        ? "redisTerminalMarker=present"
+        : "redisTerminalMarker=missing",
+    );
+  }
+  if (redisUnavailableReason !== null) {
+    summaryParts.push("redisSurface=unavailable");
+  }
+
+  const payload: TaskLivenessDebugPayload = {
+    threadId,
+    threadChatId,
+    nowIso: now.toISOString(),
+    summary: summaryParts.join(" "),
+    ui: {
+      threadChatStatus: threadChat.status ?? null,
+      deliveryLoopState,
+      effectiveThreadStatus,
+      isWorking:
+        effectiveThreadStatus !== null &&
+        isThreadStatusWorking(effectiveThreadStatus),
+      canApplyDeliveryLoopHeadOverride,
+      livenessEvidence: formatEvidence(evidence),
+    },
+    surfaces: {
+      threadChat: {
+        updatedAtIso: threadChat.updatedAt.toISOString(),
+        messageSeq: threadChat.messageSeq ?? null,
+        scheduleAtIso: threadChat.scheduleAt?.toISOString() ?? null,
+        reattemptQueueAtIso: threadChat.reattemptQueueAt?.toISOString() ?? null,
+        errorCategory: toSafeThreadErrorCategory(threadChat.errorMessage),
+      },
+      workflowHeadV3: toWorkflowHeadSurface(headRow ?? null),
+      agentRunContext: {
+        latestForThreadChat: toRunContextSurface(latestRunContext),
+        forActiveRunId: toRunContextSurface(activeRunContext),
+      },
+      agentEventLog: {
+        hasCanonicalReplayProjection: hasReplayProjection,
+        latestWellFormedRunId: replayRunId,
+        latestRow: latestLogRow
+          ? {
+              runId: latestLogRow.runId,
+              seq: latestLogRow.seq,
+              eventType: latestLogRow.eventType,
+              timestampIso: latestLogRow.timestamp.toISOString(),
+              threadChatMessageSeq: latestLogRow.threadChatMessageSeq ?? null,
+            }
+          : null,
+      },
+      redisAgUiStream: {
+        streamKey,
+        availability:
+          redisUnavailableReason === null ? "available" : "unavailable",
+        unavailableReason: redisUnavailableReason,
+        sampledTailSize: sortedTail.length,
+        latestEntryId: latestStreamEntry?.id ?? null,
+        latestEntryAtIso,
+        targetRunId: inferredTargetRunId,
+        hasTerminalMarkerForTargetRun: terminalForTarget,
+        latestTerminalMarker: latestTerminalMarker
+          ? {
+              type: latestTerminalMarker.entry.event.type,
+              runId: latestTerminalMarker.runId!,
+              redisId: latestTerminalMarker.entry.id,
+              redisAtIso:
+                latestTerminalMarker.entry.entryMs != null
+                  ? new Date(latestTerminalMarker.entry.entryMs).toISOString()
+                  : null,
+            }
+          : null,
+      },
+    },
+  };
+
+  const parsed = taskLivenessDebugPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    console.error("[task-liveness-debug] invalid payload", parsed.error);
+    throw new Error("Invalid task liveness debug payload");
+  }
+
+  return parsed.data;
+}
+
+export async function getTaskLivenessDebugPayloadForSecretScopedRoute(
+  params: TaskLivenessDebugParams,
+): Promise<TaskLivenessDebugPayload> {
+  const thread = await db.query.thread.findFirst({
+    where: eq(schema.thread.id, params.threadId),
+    columns: { userId: true },
+  });
+  if (!thread) {
+    throw new Error("Thread not found");
+  }
+  return buildTaskLivenessDebugPayload({
+    viewerUserId: thread.userId,
+    allowAdmin: false,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+  });
+}
+
 export const getTaskLivenessDebugPayload = adminOnly(
   async function getTaskLivenessDebugPayload(
     adminUser,
-    params: { threadId: string; threadChatId?: string | null },
-  ): Promise<TaskLivenessDebugPayload> {
-    const now = new Date();
-
-    const threadChatIdInput =
-      params.threadChatId && params.threadChatId.length > 0
-        ? params.threadChatId
-        : null;
-
-    const effectiveThreadChatId =
-      threadChatIdInput ??
-      (
-        await getThreadPageShellWithPermissions({
-          db,
-          threadId: params.threadId,
-          userId: adminUser.id,
-          allowAdmin: true,
-        })
-      )?.primaryThreadChatId ??
-      null;
-
-    if (!effectiveThreadChatId) {
-      throw new Error("Thread not found");
-    }
-
-    // We intentionally use the shared permission helper so the payload matches
-    // the same "thread chat the UI sees" semantics (primary chat, admin bypass).
-    const threadChat = await getThreadPageChatWithPermissions({
-      db,
-      threadId: params.threadId,
-      threadChatId: effectiveThreadChatId,
-      userId: adminUser.id,
+    params: TaskLivenessDebugParams,
+  ) {
+    return buildTaskLivenessDebugPayload({
+      viewerUserId: adminUser.id,
       allowAdmin: true,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
     });
-
-    if (!threadChat) {
-      throw new Error("Thread chat not found");
-    }
-
-    const threadId = threadChat.threadId;
-    const threadChatId = threadChat.id;
-    const ownerUserId = threadChat.userId;
-
-    const headRow = await db.query.deliveryWorkflowHeadV3.findFirst({
-      where: eq(schema.deliveryWorkflowHeadV3.threadId, threadId),
-      orderBy: [
-        desc(schema.deliveryWorkflowHeadV3.generation),
-        desc(schema.deliveryWorkflowHeadV3.version),
-      ],
-    });
-
-    const head = headRow ? toWorkflowHead(headRow) : null;
-    const snapshot = head ? buildSnapshotFromHead(head) : null;
-    const deliveryLoopState = snapshot ? snapshot.kind : null;
-    const deliveryLoopUpdatedAtIso = headRow?.updatedAt.toISOString() ?? null;
-
-    const canApplyDeliveryLoopHeadOverride = shouldUseDeliveryLoopHeadOverride({
-      now,
-      deliveryLoopUpdatedAtIso,
-      threadChatUpdatedAt: threadChat.updatedAt,
-    });
-
-    const effectiveThreadStatus = getDeliveryLoopAwareThreadStatus({
-      threadStatus: (threadChat.status ?? null) as ThreadStatus | null,
-      deliveryLoopState,
-      deliveryLoopUpdatedAtIso,
-      threadChatUpdatedAt: threadChat.updatedAt,
-      now,
-    });
-
-    const evidence = classifyLivenessEvidence({
-      now,
-      threadChatUpdatedAt: threadChat.updatedAt,
-      deliveryLoopUpdatedAtIso,
-    });
-
-    const latestRunContext = await getLatestAgentRunContextForThreadChat({
-      db,
-      userId: ownerUserId,
-      threadId,
-      threadChatId,
-    });
-
-    const activeRunId = headRow?.activeRunId ?? null;
-    const activeRunContext =
-      activeRunId === null
-        ? null
-        : await getAgentRunContextByRunId({
-            db,
-            runId: activeRunId,
-            userId: ownerUserId,
-          });
-
-    const replayRunId = await getLatestRunIdForThreadChat({
-      db,
-      threadChatId,
-    });
-
-    const hasReplayProjection = await hasCanonicalReplayProjection({
-      db,
-      threadId,
-      threadChatId,
-    });
-
-    const latestLogRow = await db.query.agentEventLog.findFirst({
-      where: and(
-        eq(schema.agentEventLog.threadId, threadId),
-        eq(schema.agentEventLog.threadChatId, threadChatId),
-      ),
-      orderBy: [desc(schema.agentEventLog.logSeq)],
-      columns: {
-        runId: true,
-        seq: true,
-        eventType: true,
-        timestamp: true,
-        threadChatMessageSeq: true,
-      },
-    });
-
-    const streamKey = agUiStreamKey(threadChatId);
-    let redisUnavailableReason: "xrevrange_failed" | null = null;
-    let tail: Array<{ id: string; event: BaseEvent }> = [];
-    try {
-      const rawTail = await redis.xrevrange(streamKey, "+", "-", 32);
-      tail = parseRedisStreamTail(rawTail);
-    } catch (error) {
-      redisUnavailableReason = "xrevrange_failed";
-      console.warn("[task-liveness-debug] redis stream tail unavailable", {
-        threadId,
-        threadChatId,
-        error,
-      });
-    }
-
-    const sortedTail = tail
-      .map((entry) => ({
-        ...entry,
-        entryMs: parseRedisStreamEntryMs(entry.id),
-      }))
-      .sort((a, b) => (b.entryMs ?? 0) - (a.entryMs ?? 0));
-
-    const latestStreamEntry = sortedTail[0] ?? null;
-    const latestEntryAtIso =
-      latestStreamEntry?.entryMs != null
-        ? new Date(latestStreamEntry.entryMs).toISOString()
-        : null;
-
-    const terminalCandidates = sortedTail.filter((entry) =>
-      isTerminalRunEventType(entry.event.type),
-    );
-
-    const inferredTargetRunId =
-      activeRunId ?? latestRunContext?.runId ?? replayRunId ?? null;
-
-    const latestTerminalMarker = terminalCandidates
-      .map((entry) => ({
-        entry,
-        runId: (entry.event as ParsedStreamEvent).runId ?? null,
-      }))
-      .find((candidate) => candidate.runId !== null);
-
-    const terminalForTarget =
-      inferredTargetRunId === null
-        ? null
-        : terminalCandidates.some(
-            (entry) =>
-              (entry.event as ParsedStreamEvent).runId === inferredTargetRunId,
-          );
-
-    const summaryParts: string[] = [];
-    summaryParts.push(
-      `threadChat.status=${threadChat.status ?? "null"}`,
-      `deliveryLoopState=${deliveryLoopState ?? "null"}`,
-      `effectiveThreadStatus=${effectiveThreadStatus ?? "null"}`,
-    );
-    if (
-      effectiveThreadStatus !== null &&
-      effectiveThreadStatus !== threadChat.status
-    ) {
-      summaryParts.push(
-        canApplyDeliveryLoopHeadOverride
-          ? "override=deliveryLoopHead"
-          : "override=blocked_by_freshness",
-      );
-    }
-    if (inferredTargetRunId) {
-      summaryParts.push(`targetRunId=${inferredTargetRunId}`);
-    }
-    if (terminalForTarget !== null) {
-      summaryParts.push(
-        terminalForTarget
-          ? "redisTerminalMarker=present"
-          : "redisTerminalMarker=missing",
-      );
-    }
-    if (redisUnavailableReason !== null) {
-      summaryParts.push("redisSurface=unavailable");
-    }
-
-    const payload: TaskLivenessDebugPayload = {
-      threadId,
-      threadChatId,
-      nowIso: now.toISOString(),
-      summary: summaryParts.join(" "),
-      ui: {
-        threadChatStatus: threadChat.status ?? null,
-        deliveryLoopState,
-        effectiveThreadStatus,
-        isWorking:
-          effectiveThreadStatus !== null &&
-          isThreadStatusWorking(effectiveThreadStatus),
-        canApplyDeliveryLoopHeadOverride,
-        livenessEvidence: formatEvidence(evidence),
-      },
-      surfaces: {
-        threadChat: {
-          updatedAtIso: threadChat.updatedAt.toISOString(),
-          messageSeq: threadChat.messageSeq ?? null,
-          scheduleAtIso: threadChat.scheduleAt?.toISOString() ?? null,
-          reattemptQueueAtIso:
-            threadChat.reattemptQueueAt?.toISOString() ?? null,
-          errorCategory: toSafeThreadErrorCategory(threadChat.errorMessage),
-        },
-        workflowHeadV3: toWorkflowHeadSurface(headRow ?? null),
-        agentRunContext: {
-          latestForThreadChat: toRunContextSurface(latestRunContext),
-          forActiveRunId: toRunContextSurface(activeRunContext),
-        },
-        agentEventLog: {
-          hasCanonicalReplayProjection: hasReplayProjection,
-          latestWellFormedRunId: replayRunId,
-          latestRow: latestLogRow
-            ? {
-                runId: latestLogRow.runId,
-                seq: latestLogRow.seq,
-                eventType: latestLogRow.eventType,
-                timestampIso: latestLogRow.timestamp.toISOString(),
-                threadChatMessageSeq: latestLogRow.threadChatMessageSeq ?? null,
-              }
-            : null,
-        },
-        redisAgUiStream: {
-          streamKey,
-          availability:
-            redisUnavailableReason === null ? "available" : "unavailable",
-          unavailableReason: redisUnavailableReason,
-          sampledTailSize: sortedTail.length,
-          latestEntryId: latestStreamEntry?.id ?? null,
-          latestEntryAtIso,
-          targetRunId: inferredTargetRunId,
-          hasTerminalMarkerForTargetRun: terminalForTarget,
-          latestTerminalMarker: latestTerminalMarker
-            ? {
-                type: latestTerminalMarker.entry.event.type,
-                runId: latestTerminalMarker.runId!,
-                redisId: latestTerminalMarker.entry.id,
-                redisAtIso:
-                  latestTerminalMarker.entry.entryMs != null
-                    ? new Date(latestTerminalMarker.entry.entryMs).toISOString()
-                    : null,
-              }
-            : null,
-        },
-      },
-    };
-
-    const parsed = taskLivenessDebugPayloadSchema.safeParse(payload);
-    if (!parsed.success) {
-      console.error("[task-liveness-debug] invalid payload", parsed.error);
-      throw new Error("Invalid task liveness debug payload");
-    }
-
-    return parsed.data;
   },
 );
