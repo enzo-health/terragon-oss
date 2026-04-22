@@ -73,11 +73,9 @@ const nextConfig: NextConfig = {
       "@assistant-ui/react",
     ],
     staleTimes: {
-      // Cache dynamic pages for 3 minutes on client-side navigation
-      // This makes back/forward navigation instant
-      dynamic: 180,
-      // Static pages cached for 5 minutes
-      static: 300,
+      // Dev uses minimal caching (30s minimum), prod uses longer caching
+      dynamic: process.env.NODE_ENV === "development" ? 30 : 180,
+      static: process.env.NODE_ENV === "development" ? 30 : 300,
     },
     serverActions: {
       bodySizeLimit: "4mb",

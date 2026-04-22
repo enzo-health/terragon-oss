@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/bundled.js --sourcemap && cp dist/bundled.js dist/raw.txt",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/bundled.js --sourcemap && cp dist/bundled.js dist/raw.txt",
     "build:all": "pnpm build",
     "dev": "nodemon --watch src --ext ts,js --exec 'pnpm build'",
     "tsc-watch": "tsc --watch --noEmit --preserveWatchOutput",
