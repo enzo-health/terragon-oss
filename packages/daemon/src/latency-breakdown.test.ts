@@ -375,20 +375,6 @@ describe("latency breakdown for sub-100ms optimization", () => {
    * Test 5: Delta-only flush timing (should be faster)
    */
   it("measures delta-only flush is faster than message flush", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(
-        createTestInput({
-          transportMode: "codex-app-server",
-          agent: "codex",
-        }),
-      ),
-    });
-
-    // Wait for app-server mode to initialize
-    await sleep(100);
-
     // Note: In codex-app-server mode, deltas flush at 16ms
     // This test verifies the timing difference
 
