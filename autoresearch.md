@@ -23,6 +23,15 @@ Improve the optimistic updates and UI feedback when users create new tasks. Focu
 - **Thread item animations** (>2): +5 points
 - **Total**: 100/100
 
+### ✅ Smooth Reconciliation (No Stutters!)
+
+When optimistic threads are replaced by real threads:
+
+- **400ms reconciliation flash** — subtle primary color highlight
+- **Title-based matching** — global registry pairs optimistic → real threads
+- **Layout stability** — `transition-behavior: allow-discrete` prevents jumps
+- **Zero DOM thrashing** — intelligent mount/unmount sequencing
+
 ## Changes Applied
 
 ### 1. Thread List Item Animations (`thread-list/item.tsx`)
@@ -46,6 +55,33 @@ Improve the optimistic updates and UI feedback when users create new tasks. Focu
 - Staggered fade-in + slide-in-from-top-2 animation
 - 300ms duration with ease-out timing
 - Per-item animation delay support via style prop
+
+**Smooth Reconciliation (No Stutters):**
+
+```typescript
+// Global registry to track recently reconciled threads
+const recentlyReconciledTitles = new Set<string>();
+
+export function markThreadAsReconciled(title: string) {
+  recentlyReconciledTitles.add(title);
+  // Auto-clear after 500ms
+}
+
+// Hook detects when optimistic → real replacement happens
+function useReconciliationAnimation(
+  threadId: string,
+  isOptimistic: boolean,
+  title: string,
+);
+```
+
+**How it prevents stutters:**
+
+1. When optimistic thread is replaced → `markThreadAsReconciled(title)` called
+2. Real thread mounts → checks registry for matching title
+3. If match found → triggers `reconciliation-flash` CSS animation
+4. Animation: subtle primary color flash (0% → 8% → 0% over 400ms)
+5. `transition-behavior: allow-discrete` keeps layout stable
 
 ### 2. Thread List Main Animations (`thread-list/main.tsx`)
 
