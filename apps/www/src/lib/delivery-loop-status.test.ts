@@ -5,6 +5,7 @@ import {
   getDeliveryLoopAwareThreadStatus,
   getWorkingFooterFreshness,
   isDeliveryLoopStateActivelyWorking,
+  shouldUseDeliveryLoopHeadOverride,
   shouldRefreshDeliveryLoopStatusFromThreadPatch,
 } from "./delivery-loop-status";
 
@@ -179,6 +180,28 @@ describe("delivery-loop-status runtime helpers", () => {
           threadChatUpdatedAt: "2026-04-22T00:00:00.000Z",
         }),
       ).toEqual({ kind: "fresh" });
+    });
+
+    it("does not allow a fresh-but-older workflow head to override newer chat evidence", () => {
+      const now = new Date("2026-04-22T00:02:00.000Z");
+      expect(
+        shouldUseDeliveryLoopHeadOverride({
+          now,
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:01:30.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:31.000Z",
+        }),
+      ).toBe(false);
+    });
+
+    it("allows the workflow head to override when it is fresh and strictly newer than chat evidence", () => {
+      const now = new Date("2026-04-22T00:02:00.000Z");
+      expect(
+        shouldUseDeliveryLoopHeadOverride({
+          now,
+          deliveryLoopUpdatedAtIso: "2026-04-22T00:01:31.000Z",
+          threadChatUpdatedAt: "2026-04-22T00:01:30.000Z",
+        }),
+      ).toBe(true);
     });
   });
 

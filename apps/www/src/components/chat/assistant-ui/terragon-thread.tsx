@@ -32,8 +32,8 @@ import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isEqualPlanMap, isEqualArtifactList } from "./ctx-stability";
 import {
-  classifyLivenessEvidence,
   getWorkingFooterFreshness,
+  shouldUseDeliveryLoopHeadOverride,
 } from "@/lib/delivery-loop-status";
 
 type TerragonThreadProps = {
@@ -188,29 +188,28 @@ export function TerragonThread({
     return () => clearInterval(interval);
   }, [shouldTickFreshnessClock]);
 
-  const loopEvidence = useMemo(
+  const canApplyDeliveryLoopFooterOverride = useMemo(
     () =>
-      deliveryLoopUpdatedAtIso
-        ? classifyLivenessEvidence({
-            now: new Date(nowMs),
-            deliveryLoopUpdatedAtIso,
-          })
-        : { kind: "unknown" as const },
-    [deliveryLoopUpdatedAtIso, nowMs],
+      shouldUseDeliveryLoopHeadOverride({
+        now: new Date(nowMs),
+        deliveryLoopUpdatedAtIso: deliveryLoopUpdatedAtIso ?? null,
+        threadChatUpdatedAt: threadChatUpdatedAt ?? null,
+      }),
+    [deliveryLoopUpdatedAtIso, nowMs, threadChatUpdatedAt],
   );
-  const hasFreshDeliveryLoopEvidence = loopEvidence.kind === "fresh";
 
   // Classify the delivery-loop state so we can override the footer when the
   // workflow is in a passive-wait or terminal state. Active states fall
   // through to the default isAgentWorking-based logic below.
-  // If workflow-head freshness is uncertain/stale, ignore it entirely so a
-  // stale head cannot hide/override fresher terminal chat/run state.
+  // If the workflow head isn't strictly newer than chat evidence (or isn't
+  // fresh enough), ignore it entirely so it cannot hide/override fresher
+  // terminal chat/run state.
   const deliveryLoopFooter = useMemo(
     () =>
       classifyDeliveryLoopFooter(
-        hasFreshDeliveryLoopEvidence ? deliveryLoopState : null,
+        canApplyDeliveryLoopFooterOverride ? deliveryLoopState : null,
       ),
-    [deliveryLoopState, hasFreshDeliveryLoopEvidence],
+    [deliveryLoopState, canApplyDeliveryLoopFooterOverride],
   );
 
   // Hide the "Waiting to start" indicator when the agent has already produced

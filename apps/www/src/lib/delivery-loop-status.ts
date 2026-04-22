@@ -313,6 +313,32 @@ export function classifyLivenessEvidence(params: {
   return { kind: "stale", latestEvidenceAt, ageMs };
 }
 
+export function shouldUseDeliveryLoopHeadOverride(params: {
+  now: Date;
+  deliveryLoopUpdatedAtIso?: string | null;
+  threadChatUpdatedAt?: Date | string | null;
+  windowMs?: number;
+}): boolean {
+  const windowMs = params.windowMs ?? DELIVERY_LOOP_LIVENESS_WINDOW_MS;
+  const loopUpdatedAt = parseDateLike(params.deliveryLoopUpdatedAtIso ?? null);
+  if (!loopUpdatedAt) {
+    return false;
+  }
+  const ageMs = params.now.getTime() - loopUpdatedAt.getTime();
+  if (ageMs > windowMs) {
+    return false;
+  }
+
+  const chatUpdatedAt = parseDateLike(params.threadChatUpdatedAt ?? null);
+  if (!chatUpdatedAt) {
+    return true;
+  }
+
+  // Relative freshness: the delivery-loop head can only override chat evidence
+  // when it is strictly newer than chat.
+  return loopUpdatedAt.getTime() > chatUpdatedAt.getTime();
+}
+
 export type WorkingFooterFreshness =
   | { kind: "fresh" }
   | { kind: "uncertain"; message: string };
@@ -359,21 +385,14 @@ export function getDeliveryLoopAwareThreadStatus(params: {
   }
 
   const now = params.now ?? new Date();
-  const windowMs = params.windowMs ?? DELIVERY_LOOP_LIVENESS_WINDOW_MS;
-  const loopUpdatedAt = parseDateLike(params.deliveryLoopUpdatedAtIso ?? null);
-
-  // Liveness contract: never coerce a thread into "working" from a delivery-loop
-  // hint unless we have fresh durable evidence that the workflow head itself is
-  // recent. This prevents stale workflow heads from overriding fresher terminal
-  // chat/run state.
-  if (!loopUpdatedAt || now.getTime() - loopUpdatedAt.getTime() > windowMs) {
-    return params.threadStatus;
-  }
-
-  const chatUpdatedAt = parseDateLike(params.threadChatUpdatedAt ?? null);
-  if (chatUpdatedAt && chatUpdatedAt.getTime() >= loopUpdatedAt.getTime()) {
-    // Chat evidence is as-new-or-newer than the workflow head; trust the chat's
-    // own status over the delivery-loop hint.
+  if (
+    !shouldUseDeliveryLoopHeadOverride({
+      now,
+      deliveryLoopUpdatedAtIso: params.deliveryLoopUpdatedAtIso ?? null,
+      threadChatUpdatedAt: params.threadChatUpdatedAt ?? null,
+      windowMs: params.windowMs,
+    })
+  ) {
     return params.threadStatus;
   }
 
