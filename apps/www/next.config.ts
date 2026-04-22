@@ -40,6 +40,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: process.env.NODE_ENV === "development",
   },
+  // @ts-ignore - eslint option is valid but not in type definitions
   eslint: {
     ignoreDuringBuilds: process.env.NODE_ENV === "development",
   },

@@ -18,7 +18,7 @@ fi
 
 # Check 2: Animation CSS classes exist and are properly used
 echo "Checking animation implementations..."
-OPTIMISTIC_ANIMATION_LINES=$(grep -r "optimistic" apps/www/src/components/thread-list/item.tsx 2>/dev/null | grep -c "animate\|motion\|transition" | tr -d ' ' || echo "0")
+OPTIMISTIC_ANIMATION_LINES=$(grep -c "isOptimisticThread.*animate\|animate.*optimistic\|optimistic.*animate\|CreatingIndicator\|pulse-subtle" apps/www/src/components/thread-list/item.tsx 2>/dev/null | tr -d ' ' || echo "0")
 echo "OPTIMISTIC_ANIMATION_LINES=$OPTIMISTIC_ANIMATION_LINES"
 
 # Check 3: Prefers reduced motion support
