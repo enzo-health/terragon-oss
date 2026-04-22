@@ -1,81 +1,126 @@
-# Autoresearch: Daemon-to-Client Streaming Performance
+# Autoresearch: End-to-End Streaming Reliability
 
 ## Objective
 
-Optimize the latency and throughput of streaming events from the daemon (running in sandboxes) to the frontend client. The daemon buffers and flushes messages via HTTP POST to `/api/daemon-event`, which then publishes to clients via WebSocket broadcast.
+Validate that the full streaming pipeline works reliably end-to-end:
+**Frontend Message → Sandbox Spin-up → Agent Start → Message Streaming → Frontend Visibility**
 
-**Key Flow:**
+Focus on **functional correctness and smoothness**, not micro-latency optimizations.
 
-1. Agent generates message (stdout parse)
-2. Daemon buffers in `messageBuffer`/`deltaBuffer`/`metaEventBuffer`
-3. Timer-based flush (default 33ms) or immediate flush on certain events
-4. HTTP POST to `/api/daemon-event` with envelope v2 + canonical events
-5. API persists to DB + publishes to broadcast channel
-6. Client receives via PartySocket WebSocket
+## What "Works" Means
+
+| Stage                   | Success Criteria                              |
+| ----------------------- | --------------------------------------------- |
+| 1. Task Creation        | Frontend optimistic UI appears immediately    |
+| 2. Sandbox Provisioning | Docker sandbox starts within 30s              |
+| 3. Agent Spawn          | Daemon receives message, agent process starts |
+| 4. Message Streaming    | All agent stdout messages flush to API        |
+| 5. DB Persistence       | Messages saved with correct sequencing        |
+| 6. Broadcast Delivery   | WebSocket delivers patches to client          |
+| 7. Frontend Render      | Messages visible in chat UI                   |
+| 8. Completion Signal    | Terminal status (done/error/stop) received    |
+
+## Failure Modes We're Hunting
+
+1. **Silent message drops** - Agent generates output but it never reaches frontend
+2. **Ordering bugs** - Messages appear out of sequence
+3. **Stuck states** - Stream hangs mid-way, no terminal signal
+4. **Frontend desync** - Backend has messages, frontend doesn't show them
+5. **Buffer overflow** - High-velocity streams lose messages
+6. **Sandbox/agent startup failures** - Silent crashes during initialization
+
+## Test Architecture
+
+### Test Setup (Integration Test)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Test Harness                                                │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
+│  │  Frontend    │───→│   Next.js    │───→│   Docker     │ │
+│  │  (simulated) │    │   API Route  │    │   Sandbox    │ │
+│  └──────────────┘    └──────────────┘    └──────────────┘ │
+│         ↑                      │                │          │
+│         │                      ↓                ↓          │
+│         │              ┌──────────────┐    ┌──────────────┐  │
+│         └──────────────│   Broadcast  │    │   Daemon     │  │
+│            (validate) │   (PartyKit) │    │   (in-sandbox)│ │
+│                       └──────────────┘    └──────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Test Flow
+
+1. Create test thread via API
+2. Start Docker sandbox with daemon
+3. Send daemon message (simulating user prompt)
+4. Collect all daemon→API POSTs
+5. Validate DB state after each POST
+6. Simulate broadcast→frontend delivery
+7. Assert all messages rendered in correct order
 
 ## Metrics
 
-- **Primary**: `median_e2e_latency_ms` (lower is better) - End-to-end latency from daemon message generation to client receipt
+- **Primary**: `reliability_score` (0-100) - % of successful end-to-end deliveries
 - **Secondary**:
-  - `p99_e2e_latency_ms` - Tail latency
-  - `messages_per_second` - Throughput capacity
-  - `flush_count` - Number of HTTP POSTs (lower = more batching = better)
-  - `daemon_buffer_ms` - Time messages spend in daemon buffer
-  - `api_processing_ms` - API route processing time
+  - `messages_expected` - Total messages agent should generate
+  - `messages_delivered` - Messages that reached frontend
+  - `messages_persisted` - Messages saved to DB
+  - `ordering_correct` - Boolean, all messages in sequence
+  - `terminal_received` - Boolean, completion signal arrived
+  - `sandbox_startup_ms` - Time from creation to agent start
+  - `end_to_end_ms` - Total time from prompt to completion
 
 ## How to Run
 
-`./autoresearch.sh` - Runs the streaming benchmark test
+`./autoresearch.sh` - Runs the E2E streaming reliability test
 
-The benchmark:
+The test:
 
-1. Starts Docker services (PostgreSQL, Redis) if not running
-2. Runs a simulated daemon streaming test via vitest
-3. Measures latency at each stage of the pipeline
-4. Outputs `METRIC median_e2e_latency_ms=X`
+1. Starts Docker services (PostgreSQL, Redis)
+2. Runs the integration test suite via vitest
+3. Measures delivery reliability across N test runs
+4. Outputs `METRIC reliability_score=X`
 
 ## Files in Scope
 
-| File                                                | Purpose                                    |
-| --------------------------------------------------- | ------------------------------------------ |
-| `packages/daemon/src/daemon.ts`                     | Core daemon with buffering and flush logic |
-| `packages/daemon/src/runtime.ts`                    | Runtime interface for HTTP POST operations |
-| `apps/www/src/app/api/daemon-event/route.ts`        | API route receiving daemon events          |
-| `apps/www/src/server-lib/handle-daemon-event.ts`    | Event processing and DB persistence        |
-| `packages/shared/src/broadcast/broadcast-server.ts` | WebSocket broadcast publishing             |
+| File                                                | Purpose                             |
+| --------------------------------------------------- | ----------------------------------- |
+| `packages/daemon/src/daemon.ts`                     | Message buffering and flush logic   |
+| `apps/www/src/app/api/daemon-event/route.ts`        | API route receiving daemon events   |
+| `apps/www/src/server-lib/handle-daemon-event.ts`    | Event processing and DB persistence |
+| `packages/shared/src/broadcast/broadcast-server.ts` | WebSocket broadcast publishing      |
+| `apps/www/test/integration/`                        | Integration test infrastructure     |
 
 ## Off Limits
 
-- **DO NOT** change the envelope v2 protocol or canonical event schema (breaking changes)
-- **DO NOT** modify the database schema
-- **DO NOT** change authentication/authorization logic
-- **DO NOT** break backward compatibility with existing daemon versions
+- **DO NOT** change authentication logic
+- **DO NOT** modify database schema
+- **DO NOT** break backward compatibility
+- **DO NOT** require real LLM API calls (use mock agents)
 
 ## Constraints
 
-- All tests must pass (`pnpm test`)
-- TypeScript must compile without errors
-- No new runtime dependencies
-- Changes must work with both Docker and E2B sandboxes
-- Must maintain backward compatibility with existing daemon deployments
+- All tests must pass in CI (including existing ones)
+- Docker must be available for sandbox tests
+- Tests must be deterministic (no flaky assertions)
+- Max test duration: 60 seconds per run
 
 ## What's Been Tried
 
 ### Baseline (Established)
 
-- Default `messageFlushDelay = 33ms` (~30fps)
-- Delta/meta flush uses 16ms (60fps)
-- Codex item.completed coalesces at 250ms
-- Individual message buffer per threadChatId
+- Basic daemon message buffering with 33ms flush delay
+- Integration test framework with replayer
+- Stress tests for reducer performance
 
 ### Hypotheses to Test
 
-1. **Adaptive Flush Delay**: Reduce `messageFlushDelay` to 16ms during high-velocity streaming, increase to 50ms during idle
-2. **Velocity-Based Batching**: Flush immediately if buffer grows >N messages, otherwise use timer
-3. **Delta Coalescing**: Batch deltas within a 8ms window before flushing to reduce HTTP overhead
-4. **HTTP Keep-Alive**: Ensure connection reuse for daemon-event POSTs
-5. **Compression**: Enable gzip compression for large payloads
-6. **Buffer Size Limits**: Cap max buffer size to prevent memory bloat on high-volume streams
+1. **Message Buffer Size Limit**: Flush immediately when buffer ≥ 10 messages
+2. **Periodic Flush**: Add 100ms max-wait timer to prevent stuck buffers
+3. **Connection Health Check**: Detect and retry failed daemon-event POSTs faster
+4. **Frontend Optimistic Updates**: Show messages immediately before broadcast confirms
+5. **Startup Timeout**: Kill stuck sandbox startup after 45s
 
 ## Experiment Log
 

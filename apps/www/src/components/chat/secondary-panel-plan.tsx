@@ -64,7 +64,7 @@ export function PlanArtifactRenderer({
 
   return (
     <div className="h-full overflow-auto p-4">
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
+      <div className="rounded-lg border bg-card p-3">
         {deliveryLoopPlan ? (
           <DeliveryLoopPlanReviewCard plan={deliveryLoopPlan} />
         ) : (

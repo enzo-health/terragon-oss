@@ -109,7 +109,7 @@ export function FileDiffWrapper({
   const showLineCounts = !isImage && !parsedFile.isBinary;
 
   return (
-    <div className="rounded-lg border bg-card shadow-sm">
+    <div className="rounded-md border bg-card">
       <div ref={sentinelRef} className="h-0" />
       <div
         className={cn(

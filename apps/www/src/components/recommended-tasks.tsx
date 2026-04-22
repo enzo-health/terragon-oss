@@ -45,7 +45,7 @@ export function RecommendedTasks({
 
   return (
     <div className="w-full">
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2">
         {tasks.map((task) => (
           <ListRecommendedTaskItem
             key={task.id}

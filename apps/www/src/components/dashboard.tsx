@@ -86,15 +86,10 @@ export function Dashboard({
     <div
       className={cn(
         "flex flex-col h-full max-w-chat w-full mx-auto gap-6 justify-start pt-8 pb-20 px-6",
-        "animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out",
+        "animate-in fade-in duration-300",
       )}
     >
-      <div
-        className={cn(
-          "flex flex-col gap-2",
-          "animate-in fade-in slide-in-from-bottom-2 duration-500 delay-100",
-        )}
-      >
+      <div className={cn("flex flex-col gap-2")}>
         <h1 className="text-[32px] font-display font-semibold tracking-[-0.02em] leading-[1.1] text-foreground">
           What would you like to build?
         </h1>
@@ -103,7 +98,7 @@ export function Dashboard({
         </p>
       </div>
 
-      <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-200">
+      <div>
         <DashboardPromptBox
           placeholder={placeholder}
           status={null}

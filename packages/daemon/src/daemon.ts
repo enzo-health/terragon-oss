@@ -421,7 +421,7 @@ export class TerragonDaemon {
   private agentFrontmatterReader: AgentFrontmatterReader;
 
   constructor({
-    messageFlushDelay = 33,
+    messageFlushDelay = 16,
     messageHandleDelay = 100,
     uptimeReportingInterval = 5000,
     runtime,
