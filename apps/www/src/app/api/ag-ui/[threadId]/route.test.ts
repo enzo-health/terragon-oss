@@ -567,6 +567,74 @@ describe("ag-ui SSE route", () => {
     ]);
   });
 
+  it("emits RUN_FINISHED and closes when XREAD throws and durable status flips terminal", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-xread-error-terminal",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId)
+      .mockResolvedValueOnce(
+        makeRunContext({
+          runId: "run-xread-error-terminal",
+          status: "processing",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeRunContext({
+          runId: "run-xread-error-terminal",
+          status: "completed",
+        }),
+      );
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    redisMocks.xread.mockRejectedValue(new Error("redis down"));
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-xread-error-terminal",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const events: BaseEvent[] = [];
+    const timeout = setTimeout(() => reader.cancel("test-timeout"), 2_000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split("\n\n");
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          events.push(JSON.parse(line.slice("data: ".length)) as BaseEvent);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      reader.releaseLock();
+    }
+
+    expect(events).toMatchObject([
+      { type: EventType.RUN_STARTED, runId: "run-xread-error-terminal" },
+      { type: EventType.RUN_FINISHED, runId: "run-xread-error-terminal" },
+    ]);
+    expect(redisMocks.xread).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("emits RUN_ERROR and closes when the run has no events", async () => {
     vi.mocked(getAgUiEventsForRun).mockResolvedValue([]);
 

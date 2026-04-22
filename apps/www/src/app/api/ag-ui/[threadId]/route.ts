@@ -261,6 +261,44 @@ export async function GET(
           enqueue(encodeSseComment("keepalive"));
         }, KEEPALIVE_INTERVAL_MS);
 
+        const maybeEmitTerminalFromDurable = async (
+          phase: "idle" | "xread_error",
+          cause?: unknown,
+        ): Promise<boolean> => {
+          if (!params?.runId || !params.userId) {
+            return false;
+          }
+          try {
+            const runContext = await getAgentRunContextByRunId({
+              db,
+              runId: params.runId,
+              userId: params.userId,
+            });
+            if (
+              runContext !== null &&
+              isTerminalAgentRunStatus(runContext.status)
+            ) {
+              const terminalEvent = buildRunTerminalAgUi({
+                threadId,
+                runId: params.runId,
+                daemonRunStatus: runContext.status,
+                errorMessage: runContext.failureTerminalReason ?? null,
+                errorCode: runContext.failureCategory ?? null,
+              });
+              enqueue(encodeSseEvent(terminalEvent));
+              close();
+              return true;
+            }
+          } catch (error) {
+            console.warn(
+              "[ag-ui] durable run status check failed during live-tail; continuing",
+              { phase, threadId, threadChatId, runId: params.runId },
+              cause ?? error,
+            );
+          }
+          return false;
+        };
+
         let lastId = initialLastId;
         let consecutiveEmpty = 0;
         let emptyPollsSinceTerminalCheck = 0;
@@ -285,33 +323,8 @@ export async function GET(
                   TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
                 ) {
                   emptyPollsSinceTerminalCheck = 0;
-                  try {
-                    const runContext = await getAgentRunContextByRunId({
-                      db,
-                      runId: params.runId,
-                      userId: params.userId,
-                    });
-                    if (
-                      runContext !== null &&
-                      isTerminalAgentRunStatus(runContext.status)
-                    ) {
-                      const terminalEvent = buildRunTerminalAgUi({
-                        threadId,
-                        runId: params.runId,
-                        daemonRunStatus: runContext.status,
-                        errorMessage: runContext.failureTerminalReason ?? null,
-                        errorCode: runContext.failureCategory ?? null,
-                      });
-                      enqueue(encodeSseEvent(terminalEvent));
-                      close();
-                      break;
-                    }
-                  } catch (error) {
-                    console.warn(
-                      "[ag-ui] durable run status check failed during live-tail; continuing",
-                      { threadId, threadChatId, runId: params.runId },
-                      error,
-                    );
+                  if (await maybeEmitTerminalFromDurable("idle")) {
+                    break;
                   }
                 }
               }
@@ -343,33 +356,8 @@ export async function GET(
                 TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
               ) {
                 emptyPollsSinceTerminalCheck = 0;
-                try {
-                  const runContext = await getAgentRunContextByRunId({
-                    db,
-                    runId: params.runId,
-                    userId: params.userId,
-                  });
-                  if (
-                    runContext !== null &&
-                    isTerminalAgentRunStatus(runContext.status)
-                  ) {
-                    const terminalEvent = buildRunTerminalAgUi({
-                      threadId,
-                      runId: params.runId,
-                      daemonRunStatus: runContext.status,
-                      errorMessage: runContext.failureTerminalReason ?? null,
-                      errorCode: runContext.failureCategory ?? null,
-                    });
-                    enqueue(encodeSseEvent(terminalEvent));
-                    close();
-                    break;
-                  }
-                } catch (statusError) {
-                  console.warn(
-                    "[ag-ui] durable run status check failed after XREAD error; continuing",
-                    { threadId, threadChatId, runId: params.runId },
-                    statusError,
-                  );
+                if (await maybeEmitTerminalFromDurable("xread_error", error)) {
+                  break;
                 }
               }
             }
