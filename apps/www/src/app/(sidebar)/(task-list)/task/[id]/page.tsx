@@ -1,4 +1,4 @@
-import ChatUI from "@/components/chat/chat-ui";
+import dynamic from "next/dynamic";
 import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
 import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
@@ -15,6 +15,12 @@ import {
 import { ThreadPageShell } from "@terragon/shared";
 import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 import { unwrapResult } from "@/lib/server-actions";
+import { ChatUISkeleton } from "@/components/chat/chat-ui-skeleton";
+
+// Dynamically import the heavy ChatUI component for code splitting
+const ChatUI = dynamic(() => import("@/components/chat/chat-ui"), {
+  loading: () => <ChatUISkeleton />,
+});
 
 export async function generateMetadata({
   params,

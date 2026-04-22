@@ -1,14 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
-import { EventType, type BaseEvent } from "@ag-ui/core";
+import { type BaseEvent, EventType } from "@ag-ui/core";
 import type { AgentRunContext } from "@terragon/shared/db/types";
-import { GET } from "./route";
-import { getSessionOrNull } from "@/lib/auth-server";
 import {
   getAgUiEventsForRun,
   getLatestRunIdForThreadChat,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { NextRequest } from "next/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getSessionOrNull } from "@/lib/auth-server";
+import { GET } from "./route";
 
 // ---------------------------------------------------------------------------
 // Mocks

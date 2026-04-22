@@ -1,6 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventType } from "@ag-ui/core";
-import { env } from "@terragon/env/pkg-shared";
 import type {
   AssistantMessageEvent,
   OperationalRunStartedEvent,
@@ -8,10 +6,11 @@ import type {
   ToolCallStartEvent,
 } from "@terragon/agent/canonical-events";
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
+import { env } from "@terragon/env/pkg-shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
-import { createTestThread, createTestUser } from "./test-helpers";
 import {
   appendCanonicalEvent,
   appendCanonicalEventsBatch,
@@ -28,6 +27,7 @@ import {
   validateCanonicalEnvelope,
   validateCanonicalEvent,
 } from "./agent-event-log";
+import { createTestThread, createTestUser } from "./test-helpers";
 
 const db = createDb(env.DATABASE_URL!);
 
