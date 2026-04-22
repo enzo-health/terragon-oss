@@ -40,9 +40,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: process.env.NODE_ENV === "development",
   },
-  eslint: {
-    ignoreDuringBuilds: process.env.NODE_ENV === "development",
-  },
   images: {
     remotePatterns: [
       {
@@ -56,8 +53,6 @@ const nextConfig: NextConfig = {
     root: repoRoot,
   },
   experimental: {
-    // Enable faster HMR with React Refresh
-    reactRefresh: true,
     // Reduce unnecessary re-renders during HMR
     optimizeCss: false, // CSS optimization can slow down HMR
     optimizePackageImports: [
