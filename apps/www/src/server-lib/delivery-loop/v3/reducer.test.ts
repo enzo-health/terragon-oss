@@ -1207,6 +1207,31 @@ describe("reduce", () => {
       expect(result.head.activeGate).toBeNull();
       expect(result.head.activeRunId).toBeNull();
     });
+
+    it("gate_ci_stale from gating_ci transitions to awaiting_operator_action with blockedReason", () => {
+      const result = reduce({
+        head: {
+          ...head("gating_ci"),
+          activeGate: "ci",
+          activeRunId: "r-1",
+          headSha: "sha-1",
+        },
+        event: {
+          type: "gate_ci_stale",
+          reason: "CI gate did not complete within polling budget",
+        },
+        now: NOW,
+      });
+      expect(result.head.state).toBe("awaiting_operator_action");
+      expect(result.head.activeGate).toBeNull();
+      expect(result.head.activeRunId).toBeNull();
+      expect(result.head.blockedReason).toBe(
+        "CI gate did not complete within polling budget",
+      );
+      // One publish_status effect, no retries scheduled
+      expect(result.effects).toHaveLength(1);
+      expect(result.effects[0]).toMatchObject({ kind: "publish_status" });
+    });
   });
 
   describe("awaiting_pr_creation noop verification", () => {

@@ -264,7 +264,7 @@ export async function handleDaemonEvent({
       );
     }
     await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
-    return { success: true };
+    return { success: true, threadChatMessageSeq: null };
   }
 
   const [threadChat, thread] = await Promise.all([
@@ -963,6 +963,10 @@ export async function handleDaemonEvent({
   }
 
   let didUpdateStatus: boolean;
+  let threadChatMessageSeq: number | null = null;
+  let broadcastData:
+    | Parameters<typeof publishBroadcastUserMessage>[0]
+    | undefined;
   try {
     const result = await updateThreadChatWithTransition({
       userId,
@@ -984,8 +988,11 @@ export async function handleDaemonEvent({
                 : "assistant.message",
       rateLimitResetTime,
       skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+      skipBroadcast: true, // Async broadcast for faster response
     });
     didUpdateStatus = result.didUpdateStatus;
+    threadChatMessageSeq = result.chatSequence ?? null;
+    broadcastData = result.broadcastData;
   } catch (dbError) {
     // DB write failed after pre-broadcast — tell client to refetch
     // so it doesn't keep stale optimistic messages.
@@ -1012,6 +1019,18 @@ export async function handleDaemonEvent({
     }
     throw dbError;
   }
+
+  // Async broadcast for faster response (~30ms improvement)
+  if (broadcastData) {
+    waitUntil(
+      publishBroadcastUserMessage(broadcastData).catch((error) => {
+        console.warn("[handle-daemon-event] async broadcast failed", {
+          threadId,
+          error,
+        });
+      }),
+    );
+  }
   if (isThreadFinished && didUpdateStatus) {
     // TODO this should block queueing up new threads.
     waitUntil(
@@ -1030,7 +1049,7 @@ export async function handleDaemonEvent({
       }),
     );
   }
-  return { success: true };
+  return { success: true, threadChatMessageSeq };
 }
 
 async function handleThreadFinish({

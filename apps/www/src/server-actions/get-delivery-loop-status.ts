@@ -50,6 +50,14 @@ type DeliveryLoopStatus = {
   planApprovalPolicy: "auto" | "human_required";
   stateLabel: string;
   explanation: string;
+  /**
+   * Human-readable reason the loop is in a blocked/terminated state,
+   * mirrored from `delivery_workflow_head_v3.blocked_reason`. Non-null
+   * when the reducer transitions to awaiting_manual_fix /
+   * awaiting_operator_action / terminated (PR merged or closed). Null
+   * for all non-blocked states.
+   */
+  blockedReason: string | null;
   progressPercent: number;
   actions: {
     canResume: boolean;
@@ -97,6 +105,7 @@ const deliveryLoopStatusSchema = z.object({
   planApprovalPolicy: z.enum(["auto", "human_required"]),
   stateLabel: z.string().min(1),
   explanation: z.string().min(1),
+  blockedReason: z.string().nullable(),
   progressPercent: z.number().int().min(0).max(100),
   actions: z.object({
     canResume: z.boolean(),
@@ -582,6 +591,7 @@ async function buildStatusFromActiveWorkflow(params: {
     planApprovalPolicy,
     stateLabel: stateSummary.stateLabel,
     explanation,
+    blockedReason,
     progressPercent: stateSummary.progressPercent,
     actions: buildDeliveryLoopActions({
       loopState,

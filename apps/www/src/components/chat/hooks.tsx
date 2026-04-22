@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useReadThreadMutation } from "@/queries/thread-mutations";
 import { getThreadDocumentTitle } from "@/agent/thread-utils";
 import { useDocumentVisibility } from "@/hooks/useDocumentVisibility";
@@ -25,24 +25,52 @@ export function useMarkChatAsRead({
   isReadOnly: boolean;
 }) {
   const readThreadMutation = useReadThreadMutation();
-  const markAsRead = useCallback(async () => {
-    if (threadChatId) {
-      await readThreadMutation.mutateAsync({
-        threadId,
-        threadChatIdOrNull: threadChatId,
-      });
-    }
-  }, [threadId, threadChatId, readThreadMutation]);
-  // Mark thread as read when it becomes visible
+  // React-Query's mutation object gets a new reference on every render
+  // (isPending/status changes re-render this hook). Depending on it in a
+  // useCallback/useEffect created an unbounded loop because each mutation
+  // invocation re-rendered the hook, produced a fresh `markAsRead`, and re-
+  // fired the effect before `onMutate` had flipped `threadIsUnread` to
+  // false. Latch the in-flight chat-id in a ref and depend only on primitive
+  // inputs so the effect fires at most once per (threadId, threadChatId).
+  const mutateAsync = readThreadMutation.mutateAsync;
+  const inflightForChatIdRef = useRef<string | null>(null);
   const isDocumentVisible = useDocumentVisibility();
   useEffect(() => {
     if (isReadOnly) {
       return;
     }
-    if (threadIsUnread && isDocumentVisible) {
-      markAsRead();
+    if (!threadChatId) {
+      return;
     }
-  }, [threadIsUnread, isDocumentVisible, markAsRead, isReadOnly]);
+    if (!threadIsUnread || !isDocumentVisible) {
+      return;
+    }
+    if (inflightForChatIdRef.current === threadChatId) {
+      return;
+    }
+    inflightForChatIdRef.current = threadChatId;
+    mutateAsync({
+      threadId,
+      threadChatIdOrNull: threadChatId,
+    }).catch(() => {
+      // Allow retry on next visibility / unread transition after a failure.
+      if (inflightForChatIdRef.current === threadChatId) {
+        inflightForChatIdRef.current = null;
+      }
+    });
+    // NB: on success we intentionally keep the latch set. `threadIsUnread`
+    // will have flipped to false via onMutate, so the effect short-circuits
+    // until something else marks the chat unread again — at which point the
+    // chatId will typically be the same, and the optimistic cache write
+    // dedupes the server call for us.
+  }, [
+    threadId,
+    threadChatId,
+    threadIsUnread,
+    isDocumentVisible,
+    isReadOnly,
+    mutateAsync,
+  ]);
 }
 
 export function useThreadDocumentTitleAndFavicon({
@@ -134,12 +162,17 @@ export function useOptimisticUpdateThreadChat({
             typeof updatesOrUpdater === "function"
               ? updatesOrUpdater(oldData)
               : updatesOrUpdater;
-          const nextMessages = updates.messages ?? oldData.messages ?? [];
+          const nextProjectedMessages =
+            updates.projectedMessages ??
+            updates.messages ??
+            oldData.projectedMessages ??
+            oldData.messages ??
+            [];
           return {
             ...oldData,
             ...updates,
-            messages: nextMessages,
-            messageCount: nextMessages.length,
+            projectedMessages: nextProjectedMessages,
+            messageCount: nextProjectedMessages.length,
           };
         },
       );

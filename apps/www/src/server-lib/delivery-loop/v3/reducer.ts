@@ -1186,6 +1186,23 @@ export function reduce(params: {
           });
           break;
         }
+        if (event.type === "gate_ci_stale") {
+          const next = withVersion(head, now);
+          result = {
+            head: {
+              ...next,
+              state: "awaiting_operator_action",
+              activeGate: null,
+              ...clearActiveLease(head),
+              blockedReason:
+                event.reason ??
+                "CI gate did not complete within polling budget",
+            },
+            effects: [publishStatusEffect(next, now)],
+            invariantActions: [],
+          };
+          break;
+        }
         if (event.type === "run_failed") {
           if (
             isOutOfOrderFailureSignal({

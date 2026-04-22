@@ -1,18 +1,25 @@
 "use client";
 
+import { memo } from "react";
 import { useTerragonThread } from "./thread-context";
 import { ChatMessage } from "../chat-message";
 import type { UIMessage } from "@terragon/shared";
 
 /**
  * Renders a system message (git-diff, stop, etc.) within the assistant-ui thread.
+ *
+ * `isLatestMessage` is passed by the parent `TerragonThread.messages.map()`
+ * loop so this component doesn't re-read `ctx.messages` on every token
+ * delta.
  */
-export function TerragonSystemMessage({
+export const TerragonSystemMessage = memo(function TerragonSystemMessage({
   message,
   messageIndex,
+  isLatestMessage,
 }: {
   message: UIMessage;
   messageIndex: number;
+  isLatestMessage: boolean;
 }) {
   const ctx = useTerragonThread();
 
@@ -23,7 +30,7 @@ export function TerragonSystemMessage({
     >
       <ChatMessage
         message={message}
-        isLatestMessage={messageIndex === ctx.messages.length - 1}
+        isLatestMessage={isLatestMessage}
         isAgentWorking={false}
         thread={ctx.thread}
         latestGitDiffTimestamp={ctx.latestGitDiffTimestamp}
@@ -33,4 +40,4 @@ export function TerragonSystemMessage({
       />
     </div>
   );
-}
+});

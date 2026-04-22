@@ -474,44 +474,58 @@ export const agentRunContext = pgTable(
   ],
 );
 
-export const tokenStreamEvent = pgTable(
-  "token_stream_event",
+export const agentEventLog = pgTable(
+  "agent_event_log",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    streamSeq: bigserial("stream_seq", { mode: "number" }).notNull(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
+    logSeq: bigserial("log_seq", { mode: "number" }).notNull(),
+    eventId: text("event_id").notNull(),
+    runId: text("run_id").notNull(),
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
     threadChatId: text("thread_chat_id").notNull(),
-    messageId: text("message_id").notNull(),
-    partIndex: integer("part_index").notNull(),
-    partType: text("part_type").notNull().default("text"),
-    text: text("text").notNull(),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    eventType: text("event_type").notNull(),
+    category: text("category").notNull(),
+    payloadJson: jsonb("payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    timestamp: timestamp("timestamp", { mode: "date" }).notNull(),
+    threadChatMessageSeq: integer("thread_chat_message_seq"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("token_stream_event_stream_seq_unique").on(table.streamSeq),
-    uniqueIndex("token_stream_event_idempotency_key_unique").on(
-      table.idempotencyKey,
+    uniqueIndex("agent_event_log_log_seq_unique").on(table.logSeq),
+    uniqueIndex("agent_event_log_run_event_unique").on(
+      table.runId,
+      table.eventId,
     ),
-    index("token_stream_event_thread_part_seq_idx").on(
+    uniqueIndex("agent_event_log_thread_chat_seq_unique").on(
       table.threadChatId,
-      table.messageId,
-      table.partIndex,
-      table.streamSeq,
+      table.seq,
     ),
-    index("token_stream_event_replay_idx").on(
-      table.userId,
+    index("agent_event_log_run_seq_idx").on(table.runId, table.seq),
+    index("agent_event_log_thread_log_seq_idx").on(
       table.threadId,
-      table.threadChatId,
-      table.streamSeq,
+      table.logSeq,
     ),
+    index("agent_event_log_thread_chat_log_seq_idx").on(
+      table.threadChatId,
+      table.logSeq,
+    ),
+    index("agent_event_log_thread_replay_seq_idx").on(
+      table.threadId,
+      table.threadChatMessageSeq,
+    ),
+    index("agent_event_log_thread_chat_replay_seq_idx").on(
+      table.threadChatId,
+      table.threadChatMessageSeq,
+    ),
+    index("agent_event_log_timestamp_idx").on(table.timestamp),
   ],
 );
 

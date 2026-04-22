@@ -22,6 +22,7 @@ import {
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DAEMON_VERSION,
+  type DaemonEventAPIBody,
   DaemonMessageClaude,
   DaemonMessageStop,
   SdlcSelfDispatchPayload,
@@ -60,6 +61,13 @@ const TEST_STOP_MESSAGE: DaemonMessageStop = {
   threadChatId: "TEST_THREAD_CHAT_ID_STRING",
   token: "TEST_TOKEN_STRING",
 };
+
+function payloadHasAssistantStringMessage(
+  payload: DaemonEventAPIBody,
+  content: string,
+): boolean {
+  return JSON.stringify(payload.messages).includes(content);
+}
 
 describe("daemon", () => {
   let runtime: DaemonRuntime;
@@ -455,6 +463,233 @@ describe("daemon", () => {
     expect(secondPayload.seq).toBeGreaterThan(firstPayload.seq);
     expect(secondPayload.eventId).not.toBe(firstPayload.eventId);
     expect(secondPayload.eventId).toMatch(/^[0-9a-f]{64}$/);
+    expect(secondPayload).not.toHaveProperty("canonicalEvents");
+  });
+
+  it("pins canonical events to the same daemon-event envelope across retries", async () => {
+    type DaemonInternals = {
+      initializeDaemonEventRunStateForNewRun: (params: {
+        input: DaemonMessageClaude;
+      }) => void;
+      sendMessagesToAPI: (input: {
+        messages: ClaudeMessage[];
+        entryCount: number;
+        timezone: string;
+        token: string;
+        threadId: string;
+        threadChatId: string;
+      }) => Promise<unknown>;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+    const canonicalInput: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5.4",
+      transportMode: "acp",
+      protocolVersion: 2,
+      runId: "run-canonical-retry",
+    };
+    internals.initializeDaemonEventRunStateForNewRun({
+      input: canonicalInput,
+    });
+
+    serverPostMock
+      .mockRejectedValueOnce(new Error("transient failure"))
+      .mockResolvedValue(null);
+
+    const messages: ClaudeMessage[] = [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Thinking out loud" },
+            {
+              type: "tool_use",
+              id: "tool-call-1",
+              name: "bash",
+              input: { command: "pwd" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "session-1",
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-call-1",
+              content: "pwd output",
+              is_error: false,
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: "session-1",
+      },
+    ];
+
+    await expect(
+      internals.sendMessagesToAPI({
+        messages,
+        entryCount: messages.length,
+        timezone: "UTC",
+        token: canonicalInput.token,
+        threadId: canonicalInput.threadId,
+        threadChatId: canonicalInput.threadChatId,
+      }),
+    ).rejects.toThrow("transient failure");
+
+    await internals.sendMessagesToAPI({
+      messages,
+      entryCount: messages.length,
+      timezone: "UTC",
+      token: canonicalInput.token,
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+    });
+
+    const firstPayload = serverPostMock.mock.calls[0]?.[0] as {
+      eventId: string;
+      seq: number;
+      runId: string;
+      canonicalEvents?: Array<{
+        eventId: string;
+        seq: number;
+        type: string;
+        toolCallId?: string;
+        name?: string;
+        content?: string;
+        messageId?: string;
+      }>;
+    };
+    const retryPayload = serverPostMock.mock.calls[1]?.[0] as {
+      eventId: string;
+      seq: number;
+      runId: string;
+      canonicalEvents?: Array<{
+        eventId: string;
+        seq: number;
+        type: string;
+      }>;
+    };
+
+    expect(firstPayload.runId).toBe("run-canonical-retry");
+    expect(firstPayload.canonicalEvents).toEqual([
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-canonical-retry:canonical:0")
+          .digest("hex"),
+        seq: 0,
+        type: "run-started",
+      }),
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-canonical-retry:canonical:1")
+          .digest("hex"),
+        seq: 1,
+        type: "assistant-message",
+        messageId: createHash("sha256")
+          .update("run-canonical-retry:canonical:1")
+          .digest("hex"),
+        content: "Thinking out loud",
+      }),
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-canonical-retry:canonical:2")
+          .digest("hex"),
+        seq: 2,
+        type: "tool-call-start",
+        toolCallId: "tool-call-1",
+        name: "bash",
+      }),
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-canonical-retry:canonical:3")
+          .digest("hex"),
+        seq: 3,
+        type: "tool-call-result",
+        toolCallId: "tool-call-1",
+      }),
+    ]);
+    expect(retryPayload.canonicalEvents).toEqual(firstPayload.canonicalEvents);
+    expect(retryPayload.eventId).toBe(firstPayload.eventId);
+    expect(retryPayload.seq).toBe(firstPayload.seq);
+  });
+
+  it("advances canonical sequencing after a successful batch without re-emitting run-started", async () => {
+    type DaemonInternals = {
+      initializeDaemonEventRunStateForNewRun: (params: {
+        input: DaemonMessageClaude;
+      }) => void;
+      sendMessagesToAPI: (input: {
+        messages: ClaudeMessage[];
+        entryCount: number;
+        timezone: string;
+        token: string;
+        threadId: string;
+        threadChatId: string;
+      }) => Promise<unknown>;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+    const canonicalInput: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5.4",
+      transportMode: "acp",
+      protocolVersion: 2,
+      runId: "run-canonical-followup",
+    };
+    internals.initializeDaemonEventRunStateForNewRun({
+      input: canonicalInput,
+    });
+
+    await internals.sendMessagesToAPI({
+      messages: [
+        {
+          type: "assistant",
+          message: { role: "assistant", content: "First batch" },
+          parent_tool_use_id: null,
+          session_id: "session-1",
+        },
+      ],
+      entryCount: 1,
+      timezone: "UTC",
+      token: canonicalInput.token,
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+    });
+
+    await internals.sendMessagesToAPI({
+      messages: [
+        {
+          type: "assistant",
+          message: { role: "assistant", content: "Second batch" },
+          parent_tool_use_id: null,
+          session_id: "session-1",
+        },
+      ],
+      entryCount: 1,
+      timezone: "UTC",
+      token: canonicalInput.token,
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+    });
+
+    const secondPayload = serverPostMock.mock.calls[1]?.[0] as {
+      canonicalEvents?: Array<{ type: string; seq: number; content?: string }>;
+    };
+    expect(secondPayload.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "assistant-message",
+        seq: 2,
+        content: "Second batch",
+      }),
+    ]);
   });
 
   it("drains meta events into the outbound daemon-event POST alongside messages", async () => {
@@ -543,6 +778,7 @@ describe("daemon", () => {
     };
     expect(payload.messages).toEqual([]);
     expect(payload.metaEvents?.[0]?.kind).toBe("account.rate_limits_updated");
+    expect(payload).not.toHaveProperty("canonicalEvents");
   });
 
   it("interrupts app-server turn on stop message instead of killing process", async () => {
@@ -2060,15 +2296,21 @@ describe("daemon", () => {
       return null;
     });
 
-    const v2InputMessage: DaemonMessageClaude = {
+    const firstRunInput: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
       featureFlags: {},
+      runId: "run-restart-before-retry-1",
+    };
+    const secondRunInput: DaemonMessageClaude = {
+      ...firstRunInput,
+      prompt: "second run while retry is pending",
+      runId: "run-restart-before-retry-2",
     };
 
     await daemon.start();
     await writeToUnixSocket({
       unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(v2InputMessage),
+      dataStr: JSON.stringify(firstRunInput),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
 
@@ -2083,23 +2325,154 @@ describe("daemon", () => {
 
     await writeToUnixSocket({
       unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...v2InputMessage,
-        prompt: "second run while retry is pending",
-      }),
+      dataStr: JSON.stringify(secondRunInput),
     });
     await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
 
     await sleepUntil(() => serverPostMock.mock.calls.length === 2);
 
-    const firstPayload = serverPostMock.mock.calls[0]![0];
-    const retryPayload = serverPostMock.mock.calls[1]![0];
+    const retryPayloads = serverPostMock.mock.calls
+      .map(([payload]) => payload as DaemonEventAPIBody)
+      .filter((payload) =>
+        payloadHasAssistantStringMessage(payload, "RUN_1_MSG"),
+      );
+    expect(retryPayloads).toHaveLength(2);
+
+    const firstPayload = retryPayloads[0]!;
+    const retryPayload = retryPayloads[1]!;
+
+    expect(JSON.stringify(firstPayload.messages)).toContain("RUN_1_MSG");
+    expect(retryPayload.messages).toEqual(firstPayload.messages);
+    expect(firstPayload.canonicalEvents).toHaveLength(1);
+    expect(retryPayload.canonicalEvents).toHaveLength(1);
+    expect(firstPayload.canonicalEvents?.[0]).toEqual(
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-restart-before-retry-1:canonical:0")
+          .digest("hex"),
+        seq: 0,
+        type: "run-started",
+      }),
+    );
+    expect(retryPayload.canonicalEvents).toStrictEqual(
+      firstPayload.canonicalEvents,
+    );
 
     expect(firstPayload.payloadVersion).toBe(2);
     expect(retryPayload.payloadVersion).toBe(2);
+    expect(firstPayload.runId).toBe("run-restart-before-retry-1");
     expect(retryPayload.runId).toBe(firstPayload.runId);
     expect(retryPayload.seq).toBe(firstPayload.seq);
     expect(retryPayload.eventId).toBe(firstPayload.eventId);
+  });
+
+  it("clears abandoned canonical batches after a non-retryable auth drop", async () => {
+    type DaemonInternals = {
+      daemonEventRunStates: Map<
+        string,
+        {
+          pendingEnvelope: { eventId: string } | null;
+        }
+      >;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+    const authError = Object.assign(new Error("invalid token"), {
+      status: 401,
+    });
+    serverPostMock.mockRejectedValueOnce(authError).mockResolvedValue(null);
+
+    const firstRunInput: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      featureFlags: {},
+      runId: "run-auth-drop-1",
+    };
+    const secondRunInput: DaemonMessageClaude = {
+      ...firstRunInput,
+      prompt: "fresh run after auth drop",
+      runId: "run-auth-drop-2",
+    };
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(firstRunInput),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
+
+    const firstRunStdout =
+      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
+    expect(firstRunStdout).toBeTypeOf("function");
+    firstRunStdout?.(
+      JSON.stringify({ role: "assistant", content: "AUTH_DROP_MSG" }),
+    );
+
+    await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
+    await sleepUntil(
+      () =>
+        internals.daemonEventRunStates.get(firstRunInput.threadChatId)
+          ?.pendingEnvelope === null,
+    );
+
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(secondRunInput),
+    });
+    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
+
+    const secondRunStdout =
+      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
+    expect(secondRunStdout).toBeTypeOf("function");
+    secondRunStdout?.(
+      JSON.stringify({ role: "assistant", content: "FRESH_RUN_MSG" }),
+    );
+
+    await sleepUntil(() => serverPostMock.mock.calls.length === 2);
+
+    const firstPayload = serverPostMock.mock.calls
+      .map(([payload]) => payload as DaemonEventAPIBody)
+      .find((payload) =>
+        payloadHasAssistantStringMessage(payload, "AUTH_DROP_MSG"),
+      );
+    const secondPayload = serverPostMock.mock.calls
+      .map(([payload]) => payload as DaemonEventAPIBody)
+      .find((payload) =>
+        payloadHasAssistantStringMessage(payload, "FRESH_RUN_MSG"),
+      );
+
+    if (!firstPayload || !secondPayload) {
+      throw new Error("Expected auth-drop and fresh-run payloads");
+    }
+    expect(JSON.stringify(firstPayload.messages)).toContain("AUTH_DROP_MSG");
+    expect(firstPayload.canonicalEvents).toHaveLength(1);
+    expect(firstPayload.canonicalEvents?.[0]).toEqual(
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-auth-drop-1:canonical:0")
+          .digest("hex"),
+        seq: 0,
+        type: "run-started",
+      }),
+    );
+    expect(firstPayload.runId).toBe("run-auth-drop-1");
+    expect(secondPayload.runId).toBe("run-auth-drop-2");
+    expect(JSON.stringify(secondPayload.messages)).toContain("FRESH_RUN_MSG");
+    expect(secondPayload.seq).toBe(0);
+    expect(secondPayload.eventId).toBe(
+      createHash("sha256").update("run-auth-drop-2:0").digest("hex"),
+    );
+    expect(secondPayload.canonicalEvents).toHaveLength(1);
+    expect(secondPayload.canonicalEvents?.[0]).toEqual(
+      expect.objectContaining({
+        eventId: createHash("sha256")
+          .update("run-auth-drop-2:canonical:0")
+          .digest("hex"),
+        seq: 0,
+        type: "run-started",
+      }),
+    );
+    expect(secondPayload.canonicalEvents).not.toEqual(
+      firstPayload.canonicalEvents,
+    );
   });
 
   it("cleans daemon event run state when a run exits", async () => {

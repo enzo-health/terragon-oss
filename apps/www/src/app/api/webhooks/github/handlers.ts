@@ -35,6 +35,7 @@ import {
 import { Automation } from "@terragon/shared/db/types";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import type { LoopEvent } from "@/server-lib/delivery-loop/v3/types";
+import { isDeliveryLoopSelfCheck } from "@/server-lib/delivery-loop/publication";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -243,20 +244,38 @@ export type CiSignalSnapshot = {
   complete: boolean;
 };
 
-function buildCiSignalSnapshotFromCheckRuns(
+export function buildCiSignalSnapshotFromCheckRuns(
   checkRuns: Array<{
     name?: string | null;
     status?: string | null;
     conclusion?: string | null;
+    external_id?: string | null;
   }>,
 ): CiSignalSnapshot | null {
   if (checkRuns.length === 0) {
     return null;
   }
 
+  // Exclude the Terragon Delivery Loop's own self-check from CI gate
+  // aggregation. The self-check is published as `in_progress` for the
+  // duration of `gating_ci` — counting it here would deadlock the gate
+  // waiting on itself. See `isDeliveryLoopSelfCheck` for the match rule
+  // (external_id prefix OR exact name match).
+  const relevantCheckRuns = checkRuns.filter(
+    (run) =>
+      !isDeliveryLoopSelfCheck({
+        name: run.name ?? null,
+        externalId: run.external_id ?? null,
+      }),
+  );
+
+  if (relevantCheckRuns.length === 0) {
+    return null;
+  }
+
   const checkNames = Array.from(
     new Set(
-      checkRuns
+      relevantCheckRuns
         .map((run) => run.name?.trim() ?? "")
         .filter((name) => name.length > 0),
     ),
@@ -267,14 +286,14 @@ function buildCiSignalSnapshotFromCheckRuns(
 
   const failingChecks = Array.from(
     new Set(
-      checkRuns
+      relevantCheckRuns
         .filter((run) => isActionableCheckFailure(run.conclusion ?? null))
         .map((run) => run.name?.trim() ?? "")
         .filter((name) => name.length > 0),
     ),
   ).sort((a, b) => a.localeCompare(b));
 
-  const complete = checkRuns.every((run) => run.status === "completed");
+  const complete = relevantCheckRuns.every((run) => run.status === "completed");
 
   return {
     checkNames,
@@ -313,6 +332,7 @@ export async function fetchCiSignalSnapshotForHeadSha({
       name: run.name,
       status: run.status,
       conclusion: run.conclusion,
+      external_id: run.external_id ?? null,
     }));
     const totalCheckRunCount = response.data.total_count;
     if (
@@ -333,6 +353,7 @@ export async function fetchCiSignalSnapshotForHeadSha({
           name: run.name,
           status: run.status,
           conclusion: run.conclusion,
+          external_id: run.external_id ?? null,
         }));
         allCheckRuns.push(...pageRuns);
         if (

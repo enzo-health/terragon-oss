@@ -253,6 +253,20 @@
       "when": 1777161600000,
       "tag": "0035_drop_legacy_user_settings_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1777248000000,
+      "tag": "0036_agent_event_replay_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1777334400000,
+      "tag": "0037_agent_event_log_ag_ui",
+      "breakpoints": true
     }
   ]
 }

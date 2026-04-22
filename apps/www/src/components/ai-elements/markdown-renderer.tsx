@@ -11,12 +11,17 @@ import {
   type ReactNode,
 } from "react";
 import { Streamdown } from "streamdown";
-import { createCodePlugin } from "@streamdown/code";
-import { createMathPlugin } from "@streamdown/math";
+import { createCodePlugin } from "./code-plugin";
 import type { StreamdownProps } from "streamdown";
 import "streamdown/styles.css";
-import "katex/dist/katex.min.css";
 import { CheckIcon, CopyIcon } from "lucide-react";
+
+// KaTeX math plugin (~280 KB JS + 280 KB CSS) is loaded on demand via
+// `math-plugin-loader`. The type is pulled in for typing only; the
+// dynamic import below is what actually ships the code.
+type MathPlugin = ReturnType<
+  typeof import("@streamdown/math").createMathPlugin
+>;
 import { ImagePart } from "@/components/chat/image-part";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,9 +30,35 @@ const codePlugin = createCodePlugin({
   themes: ["github-light", "one-dark-pro"],
 });
 
-const mathPlugin = createMathPlugin();
+const codeOnlyPlugins = { code: codePlugin };
 
-const plugins = { code: codePlugin, math: mathPlugin };
+// Module-singleton promise for the math plugin. Resolved on first demand
+// and reused for all subsequent renders — the heavy katex bundle only
+// ships once per session, when the first math block is actually seen.
+let mathPluginPromise: Promise<MathPlugin> | null = null;
+let mathPluginInstance: MathPlugin | null = null;
+
+function ensureMathPlugin(): Promise<MathPlugin> {
+  if (mathPluginInstance) return Promise.resolve(mathPluginInstance);
+  if (!mathPluginPromise) {
+    mathPluginPromise = import("./math-plugin-loader").then((mod) => {
+      mathPluginInstance = mod.createMathPlugin();
+      return mathPluginInstance;
+    });
+  }
+  return mathPluginPromise;
+}
+
+// Cheap detection: we only need to know whether math delimiters appear
+// in the current content. The full parsing happens inside remark-math
+// when the plugin is active. `$$...$$` is the display-math delimiter
+// and is what `@streamdown/math` enables by default
+// (singleDollarTextMath defaults to false).
+const MATH_RE = /\$\$[\s\S]+?\$\$/;
+
+function contentNeedsMath(content: string): boolean {
+  return MATH_RE.test(content);
+}
 
 export type MarkdownVariant = "response" | "reasoning";
 
@@ -411,6 +442,31 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         ? getReasoningComponents()
         : getResponseComponents(renderImage),
     [variant, renderImage],
+  );
+
+  // Lazy-load the math plugin on demand. The first time `content` contains
+  // `$$...$$`, kick off the dynamic import; once resolved, swap plugins so
+  // subsequent renders include the math plugin. Non-math content never
+  // pays the katex bundle cost.
+  const [mathPlugin, setMathPlugin] = useState<MathPlugin | null>(
+    () => mathPluginInstance,
+  );
+  const needsMath = contentNeedsMath(content);
+  useEffect(() => {
+    if (!needsMath || mathPlugin) return;
+    let cancelled = false;
+    ensureMathPlugin().then((plugin) => {
+      if (!cancelled) setMathPlugin(plugin);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsMath, mathPlugin]);
+
+  const plugins = useMemo(
+    () =>
+      mathPlugin ? { code: codePlugin, math: mathPlugin } : codeOnlyPlugins,
+    [mathPlugin],
   );
 
   return (

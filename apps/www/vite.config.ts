@@ -9,6 +9,15 @@ export default defineConfig({
     stubNextNavigation(),
     process.env.NODE_ENV !== "test" ? stubServerActions() : undefined,
   ].filter(Boolean),
+  // Next.js builds use SWC's automatic JSX runtime. The www tsconfig has
+  // `jsx: "preserve"` (left to Next's toolchain), which makes esbuild fall
+  // back to the classic runtime that needs an explicit `React` import in
+  // every file. Align vitest with Next by forcing automatic here so source
+  // files that omit `import React` (idiomatic under automatic runtime) load
+  // cleanly in tests.
+  esbuild: {
+    jsx: "automatic",
+  },
   optimizeDeps: {
     exclude: ["next/navigation"],
   },

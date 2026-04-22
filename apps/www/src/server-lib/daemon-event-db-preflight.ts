@@ -9,27 +9,38 @@ const REQUIRED_AGENT_RUN_CONTEXT_COLUMNS = [
   "failure_terminal_reason",
 ] as const;
 
-const REQUIRED_TOKEN_STREAM_EVENT_COLUMNS = [
+const REQUIRED_AGENT_EVENT_LOG_COLUMNS = [
   "id",
-  "stream_seq",
-  "user_id",
+  "log_seq",
+  "event_id",
+  "run_id",
   "thread_id",
   "thread_chat_id",
-  "message_id",
-  "part_index",
-  "part_type",
-  "text",
+  "thread_chat_message_seq",
+  "seq",
+  "event_type",
+  "category",
+  "payload_json",
   "idempotency_key",
+  "timestamp",
   "created_at",
 ] as const;
 
 type DaemonEventDbPreflight = {
-  tokenStreamEventReady: boolean;
+  agentEventLogReady: boolean;
   agentRunContextFailureColumnsReady: boolean;
   missing: string[];
 };
 
+const PREFLIGHT_SUCCESS_TTL_MS = 60_000;
+const PREFLIGHT_RETRY_TTL_MS = 5_000;
+
 let preflightPromise: Promise<DaemonEventDbPreflight> | null = null;
+let preflightExpiresAt = 0;
+
+function isPreflightFullyReady(result: DaemonEventDbPreflight): boolean {
+  return result.agentEventLogReady && result.agentRunContextFailureColumnsReady;
+}
 
 function missingFromRequired({
   required,
@@ -52,8 +63,15 @@ function missingFromRequired({
 export async function getDaemonEventDbPreflight(
   db: DB,
 ): Promise<DaemonEventDbPreflight> {
-  if (!preflightPromise) {
-    preflightPromise = runDaemonEventDbPreflight(db);
+  if (!preflightPromise || Date.now() >= preflightExpiresAt) {
+    preflightPromise = runDaemonEventDbPreflight(db).then((result) => {
+      preflightExpiresAt =
+        Date.now() +
+        (isPreflightFullyReady(result)
+          ? PREFLIGHT_SUCCESS_TTL_MS
+          : PREFLIGHT_RETRY_TTL_MS);
+      return result;
+    });
   }
   return preflightPromise;
 }
@@ -62,18 +80,11 @@ async function runDaemonEventDbPreflight(
   db: DB,
 ): Promise<DaemonEventDbPreflight> {
   try {
-    const tokenTableResult = await db.execute<{ exists: string | null }>(
-      sql`SELECT to_regclass('public.token_stream_event') as exists`,
-    );
-    if (!tokenTableResult.rows.length) {
-      return {
-        tokenStreamEventReady: true,
-        agentRunContextFailureColumnsReady: true,
-        missing: [],
-      };
-    }
-    const tokenTableExists =
-      tokenTableResult.rows[0]?.exists === "token_stream_event";
+    const agentEventLogTableResult = await db.execute<{
+      exists: string | null;
+    }>(sql`SELECT to_regclass('public.agent_event_log') as exists`);
+    const agentEventLogTableExists =
+      agentEventLogTableResult.rows[0]?.exists === "agent_event_log";
 
     const arcColumnsResult = await db.execute<{ column_name: string }>(
       sql`
@@ -87,23 +98,23 @@ async function runDaemonEventDbPreflight(
     );
     if (!arcColumnsResult.rows.length) {
       return {
-        tokenStreamEventReady: true,
-        agentRunContextFailureColumnsReady: true,
+        agentEventLogReady: false,
+        agentRunContextFailureColumnsReady: false,
         missing: [],
       };
     }
 
-    const tokenColumnsResult = tokenTableExists
+    const agentEventLogColumnsResult = agentEventLogTableExists
       ? await db.execute<{ column_name: string }>(
           sql`
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'token_stream_event'
+            WHERE table_schema = 'public' AND table_name = 'agent_event_log'
           `,
         )
       : { rows: [] as Array<{ column_name: string }> };
-    const tokenColumns = new Set(
-      tokenColumnsResult.rows.map((row) => row.column_name),
+    const agentEventLogColumns = new Set(
+      agentEventLogColumnsResult.rows.map((row) => row.column_name),
     );
 
     const missing: string[] = [];
@@ -115,14 +126,14 @@ async function runDaemonEventDbPreflight(
       }),
     );
 
-    if (!tokenTableExists) {
-      missing.push("token_stream_event");
+    if (!agentEventLogTableExists) {
+      missing.push("agent_event_log");
     } else {
       missing.push(
         ...missingFromRequired({
-          required: REQUIRED_TOKEN_STREAM_EVENT_COLUMNS,
-          found: tokenColumns,
-          table: "token_stream_event",
+          required: REQUIRED_AGENT_EVENT_LOG_COLUMNS,
+          found: agentEventLogColumns,
+          table: "agent_event_log",
         }),
       );
     }
@@ -134,12 +145,12 @@ async function runDaemonEventDbPreflight(
     }
 
     return {
-      tokenStreamEventReady:
-        tokenTableExists &&
+      agentEventLogReady:
+        agentEventLogTableExists &&
         missingFromRequired({
-          required: REQUIRED_TOKEN_STREAM_EVENT_COLUMNS,
-          found: tokenColumns,
-          table: "token_stream_event",
+          required: REQUIRED_AGENT_EVENT_LOG_COLUMNS,
+          found: agentEventLogColumns,
+          table: "agent_event_log",
         }).length === 0,
       agentRunContextFailureColumnsReady:
         missingFromRequired({
@@ -152,8 +163,8 @@ async function runDaemonEventDbPreflight(
   } catch (error) {
     console.error("[daemon-event] db preflight failed", { error });
     return {
-      tokenStreamEventReady: true,
-      agentRunContextFailureColumnsReady: true,
+      agentEventLogReady: false,
+      agentRunContextFailureColumnsReady: false,
       missing: ["preflight_query_failed"],
     };
   }

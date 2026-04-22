@@ -47,9 +47,9 @@ import {
 import {
   type EffectPayload,
   type EffectResult,
-  isTerminalState,
   type LoopEvent,
   normalizeEffectApprovalPolicy,
+  shouldReportCheckCompleted,
   type WorkflowState,
 } from "./types";
 
@@ -176,6 +176,8 @@ export function effectResultToEvent(
           headSha: result.headSha,
           reason: result.reason,
         };
+      if (result.outcome === "budget_exhausted")
+        return { type: "gate_ci_stale", reason: result.reason };
       return null; // pending or stale — no state transition yet
 
     default: {
@@ -837,6 +839,47 @@ function formatStatusBody(state: string): string {
   return `Terragon Delivery Loop status update.\n\n- Current state: \`${state}\`\n- ${label}`;
 }
 
+/**
+ * Compute the `status` / `conclusion` pair for the Terragon Delivery Loop
+ * GitHub check given the current workflow state and head `blockedReason`.
+ *
+ * Product intent:
+ * - `awaiting_pr_lifecycle` → `completed / success` so branch-protection rules
+ *   gating on the Terragon check can pass while the PR waits to be merged.
+ * - `terminated` with `blockedReason: "PR merged"` (set by the reducer when
+ *   handling `pr_closed { merged: true }`) → `completed / success`.
+ * - `terminated` with any other `blockedReason` (e.g. `"PR closed"`) → `cancelled`.
+ * - `stopped` → `cancelled`.
+ * - `done` → `success`.
+ * - All other states (including blocked/awaiting/retry states) → `in_progress`
+ *   with no conclusion — real work is pending.
+ */
+export function computeDeliveryCheckStatus(args: {
+  state: WorkflowState;
+  blockedReason: string | null;
+}): {
+  status: "in_progress" | "completed";
+  conclusion: "success" | "cancelled" | undefined;
+} {
+  const { state, blockedReason } = args;
+  const completed = shouldReportCheckCompleted(state);
+  if (!completed) {
+    return { status: "in_progress", conclusion: undefined };
+  }
+  if (state === "done" || state === "awaiting_pr_lifecycle") {
+    return { status: "completed", conclusion: "success" };
+  }
+  if (state === "terminated") {
+    const prMerged = blockedReason === "PR merged";
+    return {
+      status: "completed",
+      conclusion: prMerged ? "success" : "cancelled",
+    };
+  }
+  // stopped — only remaining terminal state.
+  return { status: "completed", conclusion: "cancelled" };
+}
+
 async function processPublishStatusEffect(params: {
   db: DB;
   effect: DeliveryEffectLedgerV3Row;
@@ -861,9 +904,12 @@ async function processPublishStatusEffect(params: {
     db: params.db,
     workflowId: params.effect.workflowId,
   });
-  const currentState = head?.state ?? workflow.kind;
+  const currentState = (head?.state ?? workflow.kind) as WorkflowState;
   const body = formatStatusBody(currentState);
-  const isTerminal = isTerminalState(currentState as WorkflowState);
+  const { status, conclusion } = computeDeliveryCheckStatus({
+    state: currentState,
+    blockedReason: head?.blockedReason ?? null,
+  });
 
   try {
     await upsertDeliveryCanonicalStatusComment({
@@ -881,13 +927,8 @@ async function processPublishStatusEffect(params: {
         prNumber: workflow.prNumber,
         title: "Terragon Delivery Loop",
         summary: body,
-        status: isTerminal ? "completed" : "in_progress",
-        conclusion:
-          currentState === "done"
-            ? "success"
-            : currentState === "stopped" || currentState === "terminated"
-              ? "cancelled"
-              : undefined,
+        status,
+        conclusion,
       },
     });
   } catch (pubErr) {
@@ -1177,7 +1218,11 @@ async function handleGateStalenessCheck(params: {
   const pollCount = params.payload.pollCount ?? 0;
 
   if (pollCount >= MAX_GATE_STALENESS_POLLS) {
-    return { kind: "gate_staleness_check", outcome: "stale" } as const;
+    return {
+      kind: "gate_staleness_check",
+      outcome: "budget_exhausted",
+      reason: `CI gate did not complete within polling budget (${MAX_GATE_STALENESS_POLLS} polls)`,
+    } as const;
   }
 
   const [head, workflow] = await Promise.all([

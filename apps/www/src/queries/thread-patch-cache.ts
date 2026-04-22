@@ -238,6 +238,10 @@ function isMonotonicSequence(seq: number | null | undefined): boolean {
   return seq != null && seq < 1_000_000_000;
 }
 
+function getTranscriptMessages(chat: ThreadPageChat): DBMessage[] {
+  return chat.projectedMessages ?? chat.messages ?? [];
+}
+
 function hasExactRefetchTarget(
   patch: BroadcastThreadPatch,
   target: "chat" | "delivery-loop",
@@ -287,7 +291,10 @@ function applyChatFields(
       isDbMessageArray(patch.appendMessages) &&
       patch.appendMessages.length > 0
     ) {
-      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+      const nextMessages = [
+        ...getTranscriptMessages(chat),
+        ...patch.appendMessages,
+      ];
       return {
         chat: applyPatchToChatObject(
           chat,
@@ -319,7 +326,7 @@ function applyChatFields(
           chat: applyPatchToChatObject(
             chat,
             patch,
-            chat.messages ?? [],
+            getTranscriptMessages(chat),
             incomingSequence!,
             currentMessageSeq ?? null,
             currentPatchVersion ?? null,
@@ -337,7 +344,10 @@ function applyChatFields(
       if (!isDbMessageArray(patch.appendMessages!)) {
         return { chat, shouldInvalidate: true, shouldIgnore: false };
       }
-      const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages!];
+      const nextMessages = [
+        ...getTranscriptMessages(chat),
+        ...patch.appendMessages!,
+      ];
       return {
         chat: applyPatchToChatObject(
           chat,
@@ -376,7 +386,7 @@ function applyChatFields(
           chat: applyPatchToChatObject(
             chat,
             patch,
-            chat.messages ?? [],
+            getTranscriptMessages(chat),
             patch.chatSequence ?? chat.chatSequence,
             currentMessageSeq,
             incomingPatchVersion,
@@ -397,7 +407,10 @@ function applyChatFields(
     if (!isDbMessageArray(patch.appendMessages)) {
       return { chat, shouldInvalidate: true, shouldIgnore: false };
     }
-    const nextMessages = [...(chat.messages ?? []), ...patch.appendMessages];
+    const nextMessages = [
+      ...getTranscriptMessages(chat),
+      ...patch.appendMessages,
+    ];
     return {
       chat: applyPatchToChatObject(
         chat,
@@ -424,7 +437,7 @@ function applyChatFields(
       chat: applyPatchToChatObject(
         chat,
         patch,
-        chat.messages ?? [],
+        getTranscriptMessages(chat),
         patch.chatSequence ?? chat.chatSequence,
         incomingMessageSeq ?? currentMessageSeq ?? null,
         incomingPatchVersion,
@@ -440,7 +453,7 @@ function applyChatFields(
       chat: applyPatchToChatObject(
         chat,
         patch,
-        chat.messages ?? [],
+        getTranscriptMessages(chat),
         patch.chatSequence ?? chat.chatSequence,
         incomingMessageSeq,
         currentPatchVersion ?? null,
@@ -495,7 +508,7 @@ function applyPatchToChatObject(
       ? { updatedAt: new Date(patch.chat.updatedAt) }
       : {}),
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
-    messages: nextMessages,
+    projectedMessages: nextMessages,
     messageCount: nextMessages.length,
     chatSequence,
     messageSeq: messageSeq ?? 0,

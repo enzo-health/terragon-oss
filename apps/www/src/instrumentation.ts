@@ -1,9 +1,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { registerMessageStreamAppend, registerPatchVersionProvider } =
-      await import("@terragon/shared/broadcast-server");
-    const { appendToMessageStream } = await import("./lib/message-stream");
-    registerMessageStreamAppend(appendToMessageStream);
+    const { registerPatchVersionProvider } = await import(
+      "@terragon/shared/broadcast-server"
+    );
 
     const { redis } = await import("./lib/redis");
     registerPatchVersionProvider(async (threadChatId: string) => {

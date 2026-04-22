@@ -141,7 +141,7 @@ async function getThreadsInner({
           'agent', ${schema.threadChat.agent},
           'status', ${schema.threadChat.status},
           'errorMessage', ${schema.threadChat.errorMessage}
-        ))
+        ) ORDER BY ${schema.threadChat.createdAt} DESC, ${schema.threadChat.id} DESC)
       `.as("threadChats"),
     })
     .from(schema.threadChat)
@@ -814,6 +814,7 @@ export async function updateThreadChat({
   threadChatId,
   updates,
   skipAppendMessagesInBroadcast = false,
+  skipBroadcast = false,
 }: {
   db: DB;
   userId: string;
@@ -821,7 +822,11 @@ export async function updateThreadChat({
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
   skipAppendMessagesInBroadcast?: boolean;
-}) {
+  skipBroadcast?: boolean;
+}): Promise<{
+  chatSequence?: number;
+  broadcastData?: Parameters<typeof publishBroadcastUserMessage>[0];
+}> {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
   let patchVersion: number | undefined;
@@ -939,7 +944,8 @@ export async function updateThreadChat({
     }
   });
   patchVersion = await getNextPatchVersion(threadChatId);
-  await publishBroadcastUserMessage({
+
+  const broadcastData: Parameters<typeof publishBroadcastUserMessage>[0] = {
     type: "user",
     id: userId,
     data: {
@@ -962,8 +968,19 @@ export async function updateThreadChat({
         },
       ],
     },
-  });
-  return null;
+  };
+
+  if (!skipBroadcast) {
+    await publishBroadcastUserMessage(broadcastData);
+    return {
+      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+    };
+  } else {
+    return {
+      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+      broadcastData,
+    };
+  }
 }
 
 export async function updateThread({

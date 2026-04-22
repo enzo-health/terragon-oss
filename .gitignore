@@ -62,6 +62,8 @@ task_plan.md
 
 # flow-next planning artifacts
 .flow/
+.factory/
+/Users/
 
 # vscode-extension local workspace settings
 apps/vscode-extension/.vscode/

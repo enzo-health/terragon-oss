@@ -109,7 +109,6 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
                 // Use <span> with display:block so the markup stays inside
                 // the phrasing-content contract of <pre><code>. <div> inside
                 // <pre> is invalid HTML and renders inconsistently.
-                // biome-ignore lint/suspicious/noArrayIndexKey: split-by-line index is stable within a single render.
                 <span
                   key={i}
                   className={`block ${
