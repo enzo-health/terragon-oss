@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { BannerContainer } from "@/components/system/banner-container";
+import { BannerSkeleton } from "@/components/system/banner-skeleton";
 import { PageHeaderProvider } from "@/contexts/page-header";
 import { ThreadListSidebar } from "@/components/thread-list/sidebar";
 import {
@@ -32,7 +34,9 @@ export default async function TaskListLayout({
         <div className="flex min-h-0 flex-1 overflow-hidden bg-card transition-[border-radius,box-shadow] duration-200 md:rounded-[10px] md:border md:border-border md:shadow-sm">
           {userId ? <ThreadListSidebar /> : null}
           <div className="flex flex-col h-full min-w-0 flex-1">
-            <BannerContainer />
+            <Suspense fallback={<BannerSkeleton />}>
+              <BannerContainer />
+            </Suspense>
             <PageHeaderProvider>{children}</PageHeaderProvider>
           </div>
         </div>
