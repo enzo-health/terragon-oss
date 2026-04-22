@@ -523,6 +523,8 @@ function canonicalEventToReplayMessage(
       };
     case "run-started":
       return null;
+    default:
+      return null;
   }
 }
 

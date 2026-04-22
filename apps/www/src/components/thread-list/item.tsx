@@ -171,11 +171,13 @@ export const ThreadListItem = memo(function ThreadListItem({
   pathname,
   className,
   hideRepository,
+  style,
 }: {
   pathname: string;
   thread: ThreadInfo;
   className?: string;
   hideRepository: boolean;
+  style?: React.CSSProperties;
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
   const isOptimisticThread = thread.id.startsWith("optimistic-");

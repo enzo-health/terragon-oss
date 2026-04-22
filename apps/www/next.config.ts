@@ -56,8 +56,6 @@ const nextConfig: NextConfig = {
     root: repoRoot,
   },
   experimental: {
-    // Enable faster HMR with React Refresh
-    reactRefresh: true,
     // Reduce unnecessary re-renders during HMR
     optimizeCss: false, // CSS optimization can slow down HMR
     optimizePackageImports: [

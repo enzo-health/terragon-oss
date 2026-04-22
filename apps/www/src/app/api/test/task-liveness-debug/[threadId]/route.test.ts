@@ -35,18 +35,21 @@ describe("task-liveness debug route guard", () => {
         canApplyDeliveryLoopHeadOverride: false,
       },
     });
+    // @ts-ignore - NODE_ENV is readonly in TypeScript but we need to set it for testing
     process.env.NODE_ENV = "test";
     delete process.env.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS;
     delete process.env.TASK_LIVENESS_TEST_SECRET;
   });
 
   afterEach(() => {
+    // @ts-ignore - NODE_ENV is readonly in TypeScript but we need to set it for testing
     process.env.NODE_ENV = originalNodeEnv;
     process.env.ENABLE_TASK_LIVENESS_TEST_ENDPOINTS = originalEnableFlag;
     process.env.TASK_LIVENESS_TEST_SECRET = originalSecret;
   });
 
   it("returns 403 in development when explicit opt-in is missing", async () => {
+    // @ts-ignore - NODE_ENV is readonly in TypeScript but we need to set it for testing
     process.env.NODE_ENV = "development";
     process.env.TASK_LIVENESS_TEST_SECRET = "abc123";
 
