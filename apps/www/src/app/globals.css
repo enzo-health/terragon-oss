@@ -696,12 +696,32 @@
   animation: reconciliation-flash 400ms ease-out;
 }
 
+/* Progress indeterminate animation for optimistic threads */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+    width: 30%;
+  }
+  50% {
+    width: 40%;
+  }
+  100% {
+    transform: translateX(400%);
+    width: 30%;
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
 /* Reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-shimmer,
   .animate-pulse-subtle,
   .animate-in,
-  .reconciliation-flash {
+  .reconciliation-flash,
+  .animate-progress-indeterminate {
     animation: none !important;
     transition: none !important;
   }

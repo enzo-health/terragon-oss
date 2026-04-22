@@ -8,7 +8,7 @@ import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ThreadStatusIndicator } from "../thread-status";
 import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { Button } from "../ui/button";
-import { WorkflowIcon, EllipsisVerticalIcon, Loader2 } from "lucide-react";
+import { WorkflowIcon, EllipsisVerticalIcon } from "lucide-react";
 import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
 import { DraftTaskDialog } from "../chat/draft-task-dialog";
@@ -153,14 +153,17 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
 
 /**
  * Animated loading indicator for optimistic threads
+ * Designed with Linear/Vercel-inspired minimalism
  */
 const CreatingIndicator = memo(function CreatingIndicator() {
   return (
-    <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
-      <Loader2 className="size-3 animate-spin" />
-      <span className="relative">
+    <span className="inline-flex items-center gap-1.5 text-primary/60">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/60" />
+      </span>
+      <span className="text-[11px] font-medium tracking-wide uppercase">
         Creating
-        <span className="absolute -right-3 animate-pulse">...</span>
       </span>
     </span>
   );
@@ -261,7 +264,6 @@ export const ThreadListItem = memo(function ThreadListItem({
         className={cn(
           "relative group",
           "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
-          isOptimisticThread && "animate-pulse-subtle",
           isReconciling && "reconciliation-flash",
         )}
         style={{
@@ -276,17 +278,15 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-[8px] transition-all duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
+            "block rounded-lg transition-all duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
             pathname === `/task/${thread.id}`
-              ? "bg-primary/8 border-primary/15"
-              : "hover:bg-accent/50 border-transparent",
+              ? "bg-primary/[0.06] border-primary/20"
+              : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
             isOptimisticThread && [
-              "opacity-85 bg-gradient-to-r from-muted/30 via-muted/50 to-muted/30",
-              "border-primary/10 relative overflow-hidden",
-              "before:absolute before:inset-0 before:-translate-x-full",
-              "before:animate-shimmer before:bg-gradient-to-r",
-              "before:from-transparent before:via-white/10 before:to-transparent",
+              "bg-primary/[0.03] border-primary/15",
+              "relative overflow-hidden",
+              "cursor-default",
             ],
             className,
           )}
@@ -306,10 +306,19 @@ export const ThreadListItem = memo(function ThreadListItem({
             }
           }}
         >
+          {/* Subtle progress bar for optimistic threads */}
+          {isOptimisticThread && (
+            <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-primary/10">
+              <div className="h-full bg-primary/40 animate-progress-indeterminate" />
+            </div>
+          )}
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
-                <ThreadStatusIndicator thread={thread} />
+                <ThreadStatusIndicator
+                  thread={thread}
+                  isOptimistic={isOptimisticThread}
+                />
               </div>
               {isEditingName ? (
                 <InlineNameEditor
@@ -318,7 +327,12 @@ export const ThreadListItem = memo(function ThreadListItem({
                 />
               ) : (
                 <p
-                  className="text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug text-foreground"
+                  className={cn(
+                    "text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug",
+                    isOptimisticThread
+                      ? "text-foreground/80"
+                      : "text-foreground",
+                  )}
                   title={title}
                 >
                   {title}
