@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import type { CanonicalEvent } from "@terragon/agent/canonical-events";
+import {
+  EVENT_ENVELOPE_VERSION,
+  type CanonicalEvent,
+} from "@terragon/agent/canonical-events";
 import { AIAgent, type AIModel, AIModelSchema } from "@terragon/agent/types";
 import {
   coalesceAssistantTextMessages,
@@ -370,7 +373,7 @@ type DaemonEventRunState = {
 };
 
 type DaemonEventEnvelopePayload = {
-  payloadVersion: 2;
+  payloadVersion: typeof EVENT_ENVELOPE_VERSION;
   eventId: string;
   runId: string;
   seq: number;
@@ -3126,7 +3129,7 @@ export class TerragonDaemon {
     | "timestamp"
   > {
     return {
-      payloadVersion: 2,
+      payloadVersion: EVENT_ENVELOPE_VERSION,
       eventId: this.createCanonicalEventId(params.runId, params.seq),
       runId: params.runId,
       threadId: params.threadId,
@@ -3392,7 +3395,7 @@ export class TerragonDaemon {
         );
       }
       return {
-        payloadVersion: 2,
+        payloadVersion: EVENT_ENVELOPE_VERSION,
         eventId: pendingEnvelope.eventId,
         runId: runState.runId,
         seq: pendingEnvelope.seq,
@@ -3423,7 +3426,7 @@ export class TerragonDaemon {
     this.daemonEventRunStates.set(threadChatId, runState);
 
     return {
-      payloadVersion: 2,
+      payloadVersion: EVENT_ENVELOPE_VERSION,
       eventId,
       runId: runState.runId,
       seq,
@@ -3449,7 +3452,7 @@ export class TerragonDaemon {
       .digest("hex");
     this.daemonEventRunStates.set(threadChatId, runState);
     return {
-      payloadVersion: 2,
+      payloadVersion: EVENT_ENVELOPE_VERSION,
       eventId,
       runId: runState.runId,
       seq,

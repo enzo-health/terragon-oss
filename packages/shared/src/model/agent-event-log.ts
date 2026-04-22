@@ -244,15 +244,11 @@ function toDatabaseError(error: unknown): AppendEventResult {
 
 type AppendDb = Pick<DB, "query" | "insert" | "select" | "transaction">;
 
-export async function appendCanonicalEvent({
-  db,
-  event: payload,
-  options = {},
-}: {
-  db: AppendDb;
-  event: unknown;
-  options?: AppendEventOptions;
-}): Promise<AppendEventResult> {
+async function appendCanonicalEventCore(
+  tx: AppendDb,
+  payload: unknown,
+  options: AppendEventOptions = {},
+): Promise<AppendEventResult> {
   const envelopeValidation = validateCanonicalEnvelope(payload);
   if (!envelopeValidation.valid) {
     return {
@@ -275,115 +271,124 @@ export async function appendCanonicalEvent({
   const event = eventValidation.event;
   const { validateSequence = true, expectedPrevSeq } = options;
 
+  const existing = await tx.query.agentEventLog.findFirst({
+    where: and(
+      eq(schema.agentEventLog.runId, envelope.runId),
+      eq(schema.agentEventLog.eventId, envelope.eventId),
+    ),
+    columns: {
+      eventId: true,
+      runId: true,
+      seq: true,
+    },
+  });
+
+  if (existing) {
+    return {
+      success: true,
+      inserted: false,
+      deduplicated: true,
+      reason: "duplicate_event",
+      eventId: existing.eventId,
+      seq: existing.seq,
+      runId: existing.runId,
+    };
+  }
+
+  const collidingEvent = await tx.query.agentEventLog.findFirst({
+    where: and(
+      eq(schema.agentEventLog.threadChatId, envelope.threadChatId),
+      eq(schema.agentEventLog.seq, envelope.seq),
+    ),
+    columns: {
+      eventId: true,
+    },
+  });
+
+  if (collidingEvent) {
+    return {
+      success: false,
+      error: `Sequence collision: seq ${envelope.seq} already exists in threadChat ${envelope.threadChatId} with event ${collidingEvent.eventId}`,
+      code: "seq_violation",
+    };
+  }
+
+  if (validateSequence) {
+    const currentMaxSeq = await getRunMaxSeq({
+      db: tx,
+      runId: envelope.runId,
+    });
+
+    if (expectedPrevSeq !== undefined && currentMaxSeq !== expectedPrevSeq) {
+      return {
+        success: false,
+        error: `Sequence gap detected: expected prevSeq ${expectedPrevSeq}, found ${currentMaxSeq}`,
+        code: "seq_violation",
+      };
+    }
+
+    if (
+      expectedPrevSeq === undefined &&
+      currentMaxSeq !== null &&
+      envelope.seq <= currentMaxSeq
+    ) {
+      return {
+        success: false,
+        error: `Sequence out of order: seq ${envelope.seq} <= current max ${currentMaxSeq}`,
+        code: "seq_violation",
+      };
+    }
+  }
+
+  const [inserted] = await tx
+    .insert(schema.agentEventLog)
+    .values({
+      eventId: envelope.eventId,
+      runId: envelope.runId,
+      threadId: envelope.threadId,
+      threadChatId: envelope.threadChatId,
+      seq: envelope.seq,
+      eventType: event.type,
+      category: event.category,
+      payloadJson: event,
+      idempotencyKey: toIdempotencyKey(envelope),
+      timestamp: new Date(envelope.timestamp),
+    })
+    .returning({
+      eventId: schema.agentEventLog.eventId,
+      runId: schema.agentEventLog.runId,
+      seq: schema.agentEventLog.seq,
+    });
+
+  if (!inserted) {
+    return {
+      success: false,
+      error: "Failed to insert event",
+      code: "database_error",
+    };
+  }
+
+  return {
+    success: true,
+    inserted: true,
+    eventId: inserted.eventId,
+    seq: inserted.seq,
+    runId: inserted.runId,
+  };
+}
+
+export async function appendCanonicalEvent({
+  db,
+  event,
+  options = {},
+}: {
+  db: AppendDb;
+  event: unknown;
+  options?: AppendEventOptions;
+}): Promise<AppendEventResult> {
   try {
     return await db.transaction(async (tx) => {
-      const existing = await tx.query.agentEventLog.findFirst({
-        where: and(
-          eq(schema.agentEventLog.runId, envelope.runId),
-          eq(schema.agentEventLog.eventId, envelope.eventId),
-        ),
-        columns: {
-          eventId: true,
-          runId: true,
-          seq: true,
-        },
-      });
-
-      if (existing) {
-        return {
-          success: true,
-          inserted: false,
-          deduplicated: true,
-          reason: "duplicate_event",
-          eventId: existing.eventId,
-          seq: existing.seq,
-          runId: existing.runId,
-        };
-      }
-
-      const collidingEvent = await tx.query.agentEventLog.findFirst({
-        where: and(
-          eq(schema.agentEventLog.threadChatId, envelope.threadChatId),
-          eq(schema.agentEventLog.seq, envelope.seq),
-        ),
-        columns: {
-          eventId: true,
-        },
-      });
-
-      if (collidingEvent) {
-        return {
-          success: false,
-          error: `Sequence collision: seq ${envelope.seq} already exists in threadChat ${envelope.threadChatId} with event ${collidingEvent.eventId}`,
-          code: "seq_violation",
-        };
-      }
-
-      if (validateSequence) {
-        const currentMaxSeq = await getRunMaxSeq({
-          db: tx,
-          runId: envelope.runId,
-        });
-
-        if (
-          expectedPrevSeq !== undefined &&
-          currentMaxSeq !== expectedPrevSeq
-        ) {
-          return {
-            success: false,
-            error: `Sequence gap detected: expected prevSeq ${expectedPrevSeq}, found ${currentMaxSeq}`,
-            code: "seq_violation",
-          };
-        }
-
-        if (
-          expectedPrevSeq === undefined &&
-          currentMaxSeq !== null &&
-          envelope.seq <= currentMaxSeq
-        ) {
-          return {
-            success: false,
-            error: `Sequence out of order: seq ${envelope.seq} <= current max ${currentMaxSeq}`,
-            code: "seq_violation",
-          };
-        }
-      }
-
-      const [inserted] = await tx
-        .insert(schema.agentEventLog)
-        .values({
-          eventId: envelope.eventId,
-          runId: envelope.runId,
-          threadId: envelope.threadId,
-          threadChatId: envelope.threadChatId,
-          seq: envelope.seq,
-          eventType: event.type,
-          category: event.category,
-          payloadJson: event,
-          idempotencyKey: toIdempotencyKey(envelope),
-          timestamp: new Date(envelope.timestamp),
-        })
-        .returning({
-          eventId: schema.agentEventLog.eventId,
-          runId: schema.agentEventLog.runId,
-          seq: schema.agentEventLog.seq,
-        });
-
-      if (!inserted) {
-        return {
-          success: false,
-          error: "Failed to insert event",
-          code: "database_error",
-        };
-      }
-
-      return {
-        success: true,
-        inserted: true,
-        eventId: inserted.eventId,
-        seq: inserted.seq,
-        runId: inserted.runId,
-      };
+      return appendCanonicalEventCore(tx, event, options);
     });
   } catch (error) {
     return toDatabaseError(error);
@@ -414,7 +419,7 @@ export async function appendCanonicalEventsBatch({
   try {
     await db.transaction(async (tx) => {
       for (const event of events) {
-        const result = await appendCanonicalEvent({ db: tx, event, options });
+        const result = await appendCanonicalEventCore(tx, event, options);
         if (!result.success) {
           throw new BatchAppendError(result);
         }
