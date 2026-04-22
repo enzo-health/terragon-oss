@@ -144,10 +144,16 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThreadChat: vi.fn().mockResolvedValue(null),
   getThreadMinimal: vi.fn().mockResolvedValue(null),
   updateThreadChat: vi.fn().mockResolvedValue(null),
+  updateThreadChatTerminalMetadataIfTerminal: vi
+    .fn()
+    .mockResolvedValue(undefined),
 }));
 
 vi.mock("@/agent/update-status", () => ({
-  updateThreadChatWithTransition: vi.fn().mockResolvedValue(undefined),
+  updateThreadChatWithTransition: vi.fn().mockResolvedValue({
+    didUpdateStatus: false,
+    updatedStatus: undefined,
+  }),
 }));
 
 vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
