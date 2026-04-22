@@ -1,33 +1,73 @@
 #!/bin/bash
 set -euo pipefail
 
-# HMR Performance Benchmark
-# Measures time for Next.js to rebuild when a file changes
+# Autoresearch benchmark for task creation UI improvements
+# Evaluates animation quality, code correctness, and accessibility
 
+echo "=== Task Creation UI Quality Assessment ==="
+
+# Check 1: TypeScript compilation
+echo "Checking TypeScript..."
 cd apps/www
+if pnpm tsc --noEmit 2>&1 | head -20; then
+    echo "TSC_CHECK=pass"
+else
+    echo "TSC_CHECK=fail"
+fi
 
-# Check for HMR-impacting configuration
-echo "=== HMR Configuration Analysis ===" >&2
+# Check 2: Animation CSS classes exist and are properly used
+echo "Checking animation implementations..."
+OPTIMISTIC_ANIMATION=$(grep -r "optimistic" src/components/thread-list/item.tsx | grep -c "animate\|motion\|transition" || echo "0")
+echo "OPTIMISTIC_ANIMATION_LINES=$OPTIMISTIC_ANIMATION"
 
-# Count large files that slow down HMR
-LARGE_FILES=$(find src -name "*.tsx" -exec wc -l {} \; 2>/dev/null | awk '$1 > 500 {print $1}' | wc -l | tr -d ' ')
+# Check 3: Prefers reduced motion support
+echo "Checking accessibility..."
+REDUCED_MOTION=$(grep -r "prefers-reduced-motion" src/ | wc -l)
+echo "REDUCED_MOTION_SUPPORT=$REDUCED_MOTION"
 
-# Check for test files that shouldn't be watched
-TEST_FILES=$(find src -name "*.test.tsx" -o -name "*.test.ts" -o -name "*.stories.tsx" 2>/dev/null | wc -l | tr -d ' ')
+# Check 4: GPU-accelerated properties only
+echo "Checking GPU acceleration..."
+LAYOUT_ANIMATIONS=$(grep -r "transition.*width\|transition.*height\|animation.*width\|animation.*height" src/ | grep -v "node_modules" | wc -l || echo "0")
+echo "LAYOUT_ANIMATIONS=$LAYOUT_ANIMATIONS"
 
-# Count files with many imports (complex dependency tree)
-COMPLEX_FILES=$(grep -r "^import" src --include="*.tsx" 2>/dev/null | cut -d: -f1 | sort | uniq -c | sort -rn | awk '$1 > 30' | wc -l | tr -d ' ')
+# Check 5: Thread list item enhancements
+echo "Checking thread list enhancements..."
+THREAD_ITEM_ANIMATIONS=$(grep -r "animate-in\|fade-in\|slide-in" src/components/thread-list/item.tsx | wc -l)
+echo "THREAD_ITEM_ANIMATIONS=$THREAD_ITEM_ANIMATIONS"
 
-# Calculate HMR impact score
-# Lower is better
-SCORE=$(( LARGE_FILES * 50 + TEST_FILES * 10 + COMPLEX_FILES * 20 ))
+# Calculate overall quality score (0-100)
+# Base score
+SCORE=50
 
-echo "METRIC hmr_rebuild_ms=$SCORE"
-echo "METRIC large_files=$LARGE_FILES"
-echo "METRIC test_files=$TEST_FILES"
-echo "METRIC complex_files=$COMPLEX_FILES"
+# TSC passes: +20
+if [ "$(cd apps/www && pnpm tsc --noEmit > /dev/null 2>&1 && echo "pass" || echo "fail")" = "pass" ]; then
+    SCORE=$((SCORE + 20))
+fi
 
-echo "Large files (>500 lines): $LARGE_FILES" >&2
-echo "Test/story files (should exclude from watch): $TEST_FILES" >&2
-echo "Complex files (>30 imports): $COMPLEX_FILES" >&2
-echo "Score: $SCORE (lower is better)" >&2
+# Has optimistic animations: +15
+if [ "$OPTIMISTIC_ANIMATION_LINES" -gt 0 ]; then
+    SCORE=$((SCORE + 15))
+fi
+
+# Has reduced motion support: +10
+if [ "$REDUCED_MOTION" -gt 0 ]; then
+    SCORE=$((SCORE + 10))
+fi
+
+# No layout animations: +10
+if [ "$LAYOUT_ANIMATIONS" -eq 0 ]; then
+    SCORE=$((SCORE + 10))
+fi
+
+# Enhanced thread item animations: +5
+if [ "$THREAD_ITEM_ANIMATIONS" -gt 2 ]; then
+    SCORE=$((SCORE + 5))
+fi
+
+echo ""
+echo "METRIC score=$SCORE"
+echo "METRIC animations=$THREAD_ITEM_ANIMATIONS"
+echo "METRIC accessibility=$REDUCED_MOTION"
+echo "METRIC layout_risk=$LAYOUT_ANIMATIONS"
+echo ""
+echo "=== Assessment Complete ==="

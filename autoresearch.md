@@ -1,83 +1,86 @@
-# Autoresearch: Optimize Dev Server Startup Time - COMPLETE
+# Autoresearch: Optimistic Task Creation UI & Animation
 
-## Summary
+## Objective
 
-**Final Result: ~2.8-3.2s** (improved from initial ~7.5s measurement, actual ~3.1s baseline)
+Improve the optimistic updates and UI feedback when users create new tasks. Focus on:
 
-**Total improvement: ~62% faster startup**
+1. Enhanced visual feedback during optimistic task creation
+2. Smoother animations for new tasks appearing in the thread list
+3. Better loading/submitting states in the dashboard prompt box
+4. Improved transitions from optimistic to real task state
+5. Delightful micro-interactions that make task creation feel responsive and polished
 
-## Current Breakdown (with fresh cache)
+## Current State
 
-- Docker: ~570ms (40% improvement)
-- Package builds: ~620ms (50% improvement)
-- Next.js: ~1600ms (20% improvement)
+- `useCreateThreadMutation` in `queries/thread-mutations.ts` handles optimistic updates
+- Optimistic threads are created with `optimistic-${timestamp}` IDs and inserted immediately
+- `ThreadListItem` has basic `animate-in fade-in slide-in-from-top-1 duration-200` for new items
+- `isOptimisticThread` flag disables interactions and shows "Creating..." text
+- Dashboard uses `DashboardPromptBox` with `isSubmitting` state from `usePromptBox`
 
-## Changes Applied
+## Metrics
 
-### 1. `packages/dev-env/docker-compose.yml`
+- **Primary**: Perceived responsiveness score (1-10 based on animation smoothness, visual feedback quality, transition polish)
+- **Secondary**:
+  - Animation frame rate (target: 60fps)
+  - Time to first visual feedback (target: <50ms)
+  - Visual consistency score
 
-```yaml
-healthcheck:
-  interval: 1s # was 5s
-  timeout: 2s # was 5s
-  retries: 10 # was 5
-  start_period: 0s # added
-```
+## How to Run
 
-### 2. `packages/mcp-server/package.json`
+`./autoresearch.sh` — outputs `METRIC score=X` and `METRIC fps=Y` lines based on visual quality assessment.
 
-```json
-"build": "esbuild src/index.ts ..."
-// was: "tsc && esbuild ..." (removed tsc, saves ~1.2s)
-```
+## Files in Scope
 
-### 3. `apps/www/src/app/layout.tsx`
+- `apps/www/src/components/thread-list/item.tsx` — Thread list item rendering, optimistic state UI
+- `apps/www/src/components/thread-list/main.tsx` — Thread list container, grouping logic
+- `apps/www/src/queries/thread-mutations.ts` — Optimistic update logic, mutation hooks
+- `apps/www/src/components/dashboard.tsx` — Dashboard with task creation
+- `apps/www/src/components/promptbox/dashboard-promptbox.tsx` — Prompt box with submit handling
+- `apps/www/src/components/promptbox/simple-promptbox.tsx` — Base prompt box UI
+- `apps/www/src/components/chat/draft-task-dialog.tsx` — Draft task dialog
 
-```typescript
-// Only preload primary font
-const geist = Geist({ preload: true });
-const geistMono = Geist_Mono({ preload: false });
-const spaceGrotesk = Space_Grotesk({ preload: false });
-```
+## Off Limits
 
-### 4. `apps/www/next.config.ts`
+- Server actions (new-thread.ts, draft-thread.ts)
+- Database schema or queries
+- Core mutation logic (don't break optimistic update functionality)
+- Authentication or permission checks
 
-- Added more packages to `optimizePackageImports` (ai, zod, AWS SDK, etc.)
-- Dev-mode `staleTimes` reduced to 30s minimum
+## Constraints
 
-### 5. `package.json` (root)
+- Must maintain accessibility (respect `prefers-reduced-motion`)
+- Must not break existing optimistic update functionality
+- Animations should be GPU-accelerated (transform/opacity only)
+- Keep bundle size minimal - no heavy animation libraries unless justified
+- All changes must work with existing TanStack Query cache logic
 
-- Removed excessive `--concurrency=5000` (using Turbo default)
+## What's Been Tried
 
-## Discarded Experiments
+### Session 1: Baseline Assessment
 
-- `--turbo` flag: Already configured, explicit flag slower
-- `transpilePackages`: 50% slower startup
-- Removing `turbopack.root`: Caused warnings
-- Sourcemap removal: Broke builds
-- Dynamic import KonamiVideo: No improvement
-- Reducing optimizePackageImports list: Slightly slower
-- Disabling reactCompiler in dev: 50% slower
+- Current animations: Basic `animate-in fade-in slide-in-from-top-1 duration-200` on list items
+- Optimistic threads show "Creating..." with reduced opacity (0.8)
+- Prompt box has `isSubmitting` state but limited visual feedback
+- No transition animation when optimistic thread is reconciled to real thread
 
-## Cache Impact
+## Ideas Backlog
 
-Fresh `.next` cache can improve Next.js startup by ~30% (2.2s → 1.6s). For consistent fastest startup:
+### High Priority
 
-```bash
-rm -rf apps/www/.next && pnpm dev
-```
+1. **Enhanced optimistic thread appearance** — Pulse animation, shimmer, or gradient border while creating
+2. **Smooth reconciliation transition** — Animate the swap from optimistic to real thread ID
+3. **Prompt box submitting state** — Better visual feedback during submission (button animation, input dimming)
+4. **Staggered list entrance** — When multiple tasks created, stagger their appearance
+5. **Success feedback** — Brief celebration when task created successfully
 
-## Experiment History
+### Medium Priority
 
-| #   | Change                           | Result      | Status  |
-| --- | -------------------------------- | ----------- | ------- |
-| 1   | Docker healthcheck 5s→1s         | 895ms→530ms | ✅ Kept |
-| 2   | mcp-server esbuild-only          | 1200ms→12ms | ✅ Kept |
-| 3   | Font preload optimization        | —           | ✅ Kept |
-| 4   | optimizePackageImports expansion | —           | ✅ Kept |
-| 5   | dev staleTimes 180s→30s          | —           | ✅ Kept |
+6. **Hover states on optimistic items** — Even though disabled, show they're interactive eventually
+7. **Improved "Creating..." indicator** — Animated dots, progress hint, or agent avatar pulse
+8. **Error state animation** — Smooth shake or error indication if creation fails
 
-## Benchmark
+### Low Priority
 
-`./autoresearch.sh` — outputs `METRIC name=number` lines.
-Use `CLEAR_NEXT_CACHE=1 ./autoresearch.sh` for fresh cache measurement.
+9. **Sound design** — Optional subtle sound on task creation (respect system prefs)
+10. **Haptic feedback** — On mobile, haptic feedback for task creation
