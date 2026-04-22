@@ -300,6 +300,7 @@ function SmallAutomationIndicator({ automationId }: { automationId: string }) {
   return (
     <Link
       href={`/automations/${automationId}`}
+      prefetch={true}
       onClick={(e) => e.stopPropagation()}
       className="cursor-pointer"
       title="Automation"
