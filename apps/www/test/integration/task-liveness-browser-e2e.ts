@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { chromium } from "@playwright/test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -17,6 +18,7 @@ type SeededScenarioResponse = {
   sessionToken: string;
   threadId: string;
   threadChatId: string;
+  threadName: string;
   runId: string;
   replayRecording: ReplayRecordingEvent[];
 };
@@ -36,12 +38,14 @@ type CliOptions = {
   baseUrl: string;
   headed: boolean;
   artifactsDir: string;
+  secret: string | null;
 };
 
 function parseArgs(argv: string[]): CliOptions {
   let baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   let headed = false;
   let artifactsDir = path.resolve(process.cwd(), "test-results/task-liveness");
+  let secret = process.env.TASK_LIVENESS_TEST_SECRET ?? null;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -53,12 +57,16 @@ function parseArgs(argv: string[]): CliOptions {
       artifactsDir = path.resolve(argv[++i] ?? artifactsDir);
       continue;
     }
+    if (arg === "--secret" && argv[i + 1]) {
+      secret = argv[++i] ?? secret;
+      continue;
+    }
     if (arg === "--headed") {
       headed = true;
     }
   }
 
-  return { baseUrl, headed, artifactsDir };
+  return { baseUrl, headed, artifactsDir, secret };
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -77,11 +85,13 @@ function toJsonl(events: ReplayRecordingEvent[]): string {
 async function writeFailureArtifacts(params: {
   artifactsDir: string;
   screenshotPng: Buffer | null;
-  scenario: SeededScenarioResponse;
+  scenario: SeededScenarioResponse | null;
   debugPayload: TaskLivenessDebugResponse | null;
-  replayRecordingJsonl: string;
+  replayRecordingJsonl: string | null;
   failureMessage: string;
   captureFixturePath: string;
+  failureStep: string;
+  baseUrl: string;
 }) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const runDir = path.join(params.artifactsDir, timestamp);
@@ -93,10 +103,24 @@ async function writeFailureArtifacts(params: {
     "utf8",
   );
   await fs.writeFile(
-    path.join(runDir, "scenario.json"),
-    `${JSON.stringify(params.scenario, null, 2)}\n`,
+    path.join(runDir, "failure-context.json"),
+    `${JSON.stringify(
+      {
+        failureStep: params.failureStep,
+        baseUrl: params.baseUrl,
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
+  if (params.scenario) {
+    await fs.writeFile(
+      path.join(runDir, "scenario.json"),
+      `${JSON.stringify(params.scenario, null, 2)}\n`,
+      "utf8",
+    );
+  }
   if (params.debugPayload) {
     await fs.writeFile(
       path.join(runDir, "liveness-debug.json"),
@@ -105,78 +129,106 @@ async function writeFailureArtifacts(params: {
     );
   }
 
-  await fs.writeFile(
-    path.join(runDir, "daemon-event-recording.jsonl"),
-    params.replayRecordingJsonl,
-    "utf8",
-  );
+  if (params.replayRecordingJsonl) {
+    await fs.writeFile(
+      path.join(runDir, "daemon-event-recording.jsonl"),
+      params.replayRecordingJsonl,
+      "utf8",
+    );
 
-  await fs.mkdir(path.dirname(params.captureFixturePath), { recursive: true });
-  await fs.writeFile(
-    params.captureFixturePath,
-    params.replayRecordingJsonl,
-    "utf8",
-  );
+    await fs.mkdir(path.dirname(params.captureFixturePath), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      params.captureFixturePath,
+      params.replayRecordingJsonl,
+      "utf8",
+    );
+    console.error(
+      `[task-liveness-e2e] replay fixture updated: ${params.captureFixturePath}`,
+    );
+  }
 
   if (params.screenshotPng) {
     await fs.writeFile(path.join(runDir, "browser.png"), params.screenshotPng);
   }
 
   console.error(`[task-liveness-e2e] failure artifacts: ${runDir}`);
-  console.error(
-    `[task-liveness-e2e] replay fixture updated: ${params.captureFixturePath}`,
-  );
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const secret = process.env.INTERNAL_SHARED_SECRET ?? "123456";
-
-  const scenarioUrl = `${options.baseUrl}/api/test/task-liveness-scenario`;
-  const scenario = await fetchJson<SeededScenarioResponse>(scenarioUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "X-Terragon-Secret": secret,
-    },
-    body: "{}",
-  });
-  const replayRecordingJsonl = toJsonl(scenario.replayRecording);
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const captureFixturePath = path.resolve(
     __dirname,
     "./recordings/captures/task-liveness-latest.jsonl",
   );
 
-  const browser = await chromium.launch({
-    headless: !options.headed,
-  });
-  const context = await browser.newContext({
-    extraHTTPHeaders: {
-      Authorization: `Bearer ${scenario.sessionToken}`,
-      "X-Terragon-Secret": secret,
-    },
-  });
-  const page = await context.newPage();
+  let failureStep = "bootstrap";
+  let scenario: SeededScenarioResponse | null = null;
+  let replayRecordingJsonl: string | null = null;
   let debugPayload: TaskLivenessDebugResponse | null = null;
+  let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  let page: Page | null = null;
 
   try {
+    if (!options.secret) {
+      throw new Error(
+        "TASK_LIVENESS_TEST_SECRET is required. Set env var or pass --secret.",
+      );
+    }
+
+    failureStep = "seed_scenario";
+    const scenarioUrl = `${options.baseUrl}/api/test/task-liveness-scenario`;
+    scenario = await fetchJson<SeededScenarioResponse>(scenarioUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Terragon-Secret": options.secret,
+      },
+      body: "{}",
+    });
+    replayRecordingJsonl = toJsonl(scenario.replayRecording);
+
+    failureStep = "launch_browser";
+    browser = await chromium.launch({
+      headless: !options.headed,
+    });
+    context = await browser.newContext({
+      extraHTTPHeaders: {
+        Authorization: `Bearer ${scenario.sessionToken}`,
+        "X-Terragon-Secret": options.secret,
+      },
+    });
+    page = await context.newPage();
+
+    failureStep = "open_task_page";
     const taskUrl = `${options.baseUrl}/task/${scenario.threadId}`;
     await page.goto(taskUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(new RegExp(`/task/${scenario.threadId}$`), {
+      timeout: 15_000,
+    });
     await page.waitForSelector("body", { timeout: 15_000 });
 
     const bodyText = await page.locator("body").innerText();
+    if (!bodyText.includes(scenario.threadName)) {
+      throw new Error(
+        `expected seeded task name "${scenario.threadName}" to render on page ${taskUrl}`,
+      );
+    }
     if (bodyText.includes("Assistant is working")) {
       throw new Error(
         `stale UI regression: found "Assistant is working" on terminal scenario task ${scenario.threadId}`,
       );
     }
 
+    failureStep = "read_debug_payload";
     const debugUrl = `${options.baseUrl}/api/test/task-liveness-debug/${scenario.threadId}`;
     debugPayload = await fetchJson<TaskLivenessDebugResponse>(debugUrl, {
       headers: {
         Authorization: `Bearer ${scenario.sessionToken}`,
-        "X-Terragon-Secret": secret,
+        "X-Terragon-Secret": options.secret,
       },
     });
 
@@ -200,7 +252,8 @@ async function main() {
       `[task-liveness-e2e] PASS ${scenario.threadId} (${debugPayload.summary})`,
     );
   } catch (error) {
-    const screenshotPng = await page.screenshot({ fullPage: true });
+    const screenshotPng =
+      page !== null ? await page.screenshot({ fullPage: true }) : null;
     await writeFailureArtifacts({
       artifactsDir: options.artifactsDir,
       screenshotPng,
@@ -210,11 +263,17 @@ async function main() {
       failureMessage:
         error instanceof Error ? (error.stack ?? error.message) : String(error),
       captureFixturePath,
+      failureStep,
+      baseUrl: options.baseUrl,
     });
     throw error;
   } finally {
-    await context.close();
-    await browser.close();
+    if (context) {
+      await context.close();
+    }
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 

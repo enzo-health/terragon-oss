@@ -1,5 +1,4 @@
 import { EventType } from "@ag-ui/core";
-import { env } from "@terragon/env/apps-www";
 import * as schema from "@terragon/shared/db/schema";
 import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
@@ -12,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureWorkflowHead } from "@/server-lib/delivery-loop/v3/store";
+import { rejectTaskLivenessTestRequest } from "../task-liveness-guard";
 
 type ReplayRecordingEvent = {
   wallClockMs: number;
@@ -34,35 +34,13 @@ type TaskLivenessScenarioResponse = {
   sessionToken: string;
   threadId: string;
   threadChatId: string;
+  threadName: string;
   runId: string;
   replayRecording: ReplayRecordingEvent[];
 };
 
-function rejectWhenUnavailable(request: NextRequest): NextResponse | null {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json(
-      { error: "Not found" },
-      {
-        status: 404,
-      },
-    );
-  }
-
-  const secret = request.headers.get("X-Terragon-Secret");
-  if (secret !== env.INTERNAL_SHARED_SECRET) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      {
-        status: 401,
-      },
-    );
-  }
-
-  return null;
-}
-
 export async function POST(request: NextRequest) {
-  const rejected = rejectWhenUnavailable(request);
+  const rejected = rejectTaskLivenessTestRequest(request);
   if (rejected) {
     return rejected;
   }
@@ -70,6 +48,7 @@ export async function POST(request: NextRequest) {
   const now = new Date();
   const staleWorkflowUpdatedAt = new Date(now.getTime() - 10 * 60 * 1000);
   const runId = `run-task-liveness-${nanoid(10)}`;
+  const threadName = `Task 6 Terminal vs Stale Workflow (${runId.slice(-6)})`;
 
   const { user, session } = await createTestUser({
     db,
@@ -86,7 +65,7 @@ export async function POST(request: NextRequest) {
     userId: user.id,
     overrides: {
       githubRepoFullName: "terragon/task-liveness-e2e",
-      name: `Task 6 Terminal vs Stale Workflow (${runId.slice(-6)})`,
+      name: threadName,
       repoBaseBranchName: "main",
       sourceMetadata: {
         type: "www",
@@ -253,6 +232,7 @@ export async function POST(request: NextRequest) {
     sessionToken: session.token,
     threadId,
     threadChatId,
+    threadName,
     runId,
     replayRecording,
   };

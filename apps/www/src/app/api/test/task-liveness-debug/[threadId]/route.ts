@@ -1,35 +1,12 @@
-import { env } from "@terragon/env/apps-www";
 import { NextRequest, NextResponse } from "next/server";
 import { getTaskLivenessDebugPayload } from "@/server-actions/admin/task-liveness-debug";
-
-function rejectWhenUnavailable(request: NextRequest): NextResponse | null {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json(
-      { error: "Not found" },
-      {
-        status: 404,
-      },
-    );
-  }
-
-  const secret = request.headers.get("X-Terragon-Secret");
-  if (secret !== env.INTERNAL_SHARED_SECRET) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      {
-        status: 401,
-      },
-    );
-  }
-
-  return null;
-}
+import { rejectTaskLivenessTestRequest } from "../../task-liveness-guard";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ threadId: string }> },
 ) {
-  const rejected = rejectWhenUnavailable(request);
+  const rejected = rejectTaskLivenessTestRequest(request);
   if (rejected) {
     return rejected;
   }
