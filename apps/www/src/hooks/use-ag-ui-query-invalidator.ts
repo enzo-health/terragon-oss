@@ -82,9 +82,7 @@ export function useAgUiQueryInvalidator(args: {
   }, [queryClient, threadId, threadChatId]);
 
   const statusFilter = useCallback(
-    (name: string) =>
-      name === "thread.status_changed" ||
-      name === "delivery.workflow_head_changed",
+    (name: string) => name === "thread.status_changed",
     [],
   );
 

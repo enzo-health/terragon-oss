@@ -25,6 +25,9 @@ type PendingCollectionWrite = (collection: ShellCollection) => void;
 let _collection: ShellCollection | null = null;
 let _pendingWrites: PendingCollectionWrite[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
+// Shell patches can arrive before the initial query seed (e.g. fast WebSocket
+// ticks during navigation). Preserve them until the shell exists, then apply.
+let _pendingPatchesByThreadId: Map<string, BroadcastThreadPatch[]> = new Map();
 
 function flushPendingWrites(collection: ShellCollection) {
   if (collection.status !== "ready" || _pendingWrites.length === 0) {
@@ -64,10 +67,17 @@ export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
   const write: PendingCollectionWrite = (c) => {
     if (patch.op === "delete") {
       if (c.state.has(patch.threadId)) c.delete(patch.threadId);
+      _pendingPatchesByThreadId.delete(patch.threadId);
       return;
     }
     const existing = c.state.get(patch.threadId) as ThreadPageShell | undefined;
-    if (!existing || !patch.shell) return;
+    if (!patch.shell) return;
+    if (!existing) {
+      const pending = _pendingPatchesByThreadId.get(patch.threadId) ?? [];
+      pending.push(patch);
+      _pendingPatchesByThreadId.set(patch.threadId, pending);
+      return;
+    }
     const updated = applyShellPatchFields(existing, patch.shell, patch);
     if (updated !== existing) c.update(patch.threadId, () => updated);
   };
@@ -83,10 +93,32 @@ export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
 
 export function seedShell(shell: ThreadPageShell): void {
   const write: PendingCollectionWrite = (c) => {
+    const pending = _pendingPatchesByThreadId.get(shell.id);
+    const hasPending = Boolean(pending && pending.length > 0);
+    let nextShell = shell;
+
+    if (pending && pending.length > 0) {
+      for (const patch of pending) {
+        if (patch.op === "delete") {
+          if (c.state.has(shell.id)) {
+            c.delete(shell.id);
+          }
+          _pendingPatchesByThreadId.delete(shell.id);
+          return;
+        }
+        if (!patch.shell) continue;
+        nextShell = applyShellPatchFields(nextShell, patch.shell, patch);
+      }
+    }
+
     if (c.state.has(shell.id)) {
-      c.update(shell.id, () => shell);
+      c.update(shell.id, () => nextShell);
     } else {
-      c.insert(shell);
+      c.insert(nextShell);
+    }
+
+    if (hasPending) {
+      _pendingPatchesByThreadId.delete(shell.id);
     }
   };
 
