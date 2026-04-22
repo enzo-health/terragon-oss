@@ -242,7 +242,12 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
         className={isSidebar ? "top-0 pr-3" : undefined}
       />
       {!isCollapsed && (
-        <div className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}>
+        <div
+          className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}
+          style={{
+            transitionBehavior: "allow-discrete",
+          }}
+        >
           {threads.map((thread, index) => (
             <ThreadListItem
               key={thread.id}
@@ -256,8 +261,11 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
               hideRepository={groupBy === "repository"}
               style={
                 thread.id.startsWith("optimistic-")
-                  ? { animationDelay: `${index * 50}ms` }
-                  : undefined
+                  ? {
+                      animationDelay: `${index * 50}ms`,
+                      transitionBehavior: "allow-discrete",
+                    }
+                  : { transitionBehavior: "allow-discrete" }
               }
             />
           ))}

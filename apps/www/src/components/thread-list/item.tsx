@@ -166,6 +166,67 @@ const CreatingIndicator = memo(function CreatingIndicator() {
   );
 });
 
+/**
+ * Global registry to track recently reconciled thread titles
+ * Used to detect when a real thread replaces an optimistic one
+ */
+const recentlyReconciledTitles = new Set<string>();
+let reconciliationTimeout: NodeJS.Timeout | null = null;
+
+export function markThreadAsReconciled(title: string) {
+  recentlyReconciledTitles.add(title);
+
+  // Clear the registry after a short delay
+  if (reconciliationTimeout) {
+    clearTimeout(reconciliationTimeout);
+  }
+  reconciliationTimeout = setTimeout(() => {
+    recentlyReconciledTitles.clear();
+  }, 500);
+}
+
+/**
+ * Hook to track if thread was recently reconciled (optimistic -> real)
+ * Used to trigger smooth transition animation
+ */
+function useReconciliationAnimation(
+  threadId: string,
+  isOptimistic: boolean,
+  title: string,
+) {
+  const [isReconciling, setIsReconciling] = useState(false);
+  const prevOptimisticRef = useRef(isOptimistic);
+  const hasCheckedMountRef = useRef(false);
+
+  // Check on mount if this real thread was just reconciled
+  useEffect(() => {
+    if (!hasCheckedMountRef.current && !isOptimistic) {
+      hasCheckedMountRef.current = true;
+
+      // Check if a thread with this title was recently marked as reconciled
+      if (recentlyReconciledTitles.has(title)) {
+        setIsReconciling(true);
+        const timer = setTimeout(() => setIsReconciling(false), 400);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isOptimistic, title]);
+
+  // Track when optimistic thread disappears
+  useEffect(() => {
+    const wasOptimistic = prevOptimisticRef.current;
+
+    if (wasOptimistic && !isOptimistic) {
+      // This optimistic thread is being replaced - mark it
+      markThreadAsReconciled(title);
+    }
+
+    prevOptimisticRef.current = isOptimistic;
+  }, [isOptimistic, title]);
+
+  return isReconciling;
+}
+
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
   pathname,
@@ -181,6 +242,11 @@ export const ThreadListItem = memo(function ThreadListItem({
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
   const isOptimisticThread = thread.id.startsWith("optimistic-");
+  const isReconciling = useReconciliationAnimation(
+    thread.id,
+    isOptimisticThread,
+    title,
+  );
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const relativeTime = useMemo(
     () => formatRelativeTime(thread.updatedAt),
@@ -196,6 +262,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           "relative group",
           "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isOptimisticThread && "animate-pulse-subtle",
+          isReconciling && "reconciliation-flash",
         )}
         style={{
           contentVisibility: "auto",

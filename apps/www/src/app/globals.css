@@ -679,11 +679,29 @@
   animation: pulse-subtle 2s ease-in-out infinite;
 }
 
+/* Reconciliation flash - smooth transition when optimistic thread becomes real */
+@keyframes reconciliation-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--primary) 8%, transparent);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+}
+
+.reconciliation-flash {
+  animation: reconciliation-flash 400ms ease-out;
+}
+
 /* Reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   .animate-shimmer,
   .animate-pulse-subtle,
-  .animate-in {
+  .animate-in,
+  .reconciliation-flash {
     animation: none !important;
     transition: none !important;
   }
