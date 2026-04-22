@@ -2507,6 +2507,7 @@ describe("daemon-event route", () => {
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
+          markAsUnread: true,
         }),
       );
       expect(updateAgentRunContext).toHaveBeenCalledWith(
@@ -2551,6 +2552,7 @@ describe("daemon-event route", () => {
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_stop",
+          markAsUnread: true,
         }),
       );
       expect(updateAgentRunContext).toHaveBeenCalledWith(
@@ -2755,6 +2757,7 @@ describe("daemon-event route", () => {
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
+          markAsUnread: true,
         }),
       );
       expect(v3BridgeMocks.appendEventAndAdvance).toHaveBeenCalledWith(
@@ -2770,6 +2773,93 @@ describe("daemon-event route", () => {
       expect(updateAgentRunContext).toHaveBeenCalledWith(
         expect.objectContaining({
           updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("fences canonical-only terminals on non-enrolled runs (thread_chat still becomes terminal)", async () => {
+      // No active workflow and no workflowId on the run context (non-enrolled).
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(null);
+      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
+        runId: "run-1",
+        workflowId: null,
+        runSeq: null,
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        sandboxId: "sandbox-1",
+        transportMode: "acp",
+        protocolVersion: 2,
+        agent: "claudeCode",
+        permissionMode: "allowAll",
+        requestedSessionId: null,
+        resolvedSessionId: null,
+        status: "processing",
+        tokenNonce: "nonce-1",
+        daemonTokenKeyId: "api-key-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({ status: "completed" }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only-terminal-non-enrolled",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done",
+          markAsUnread: true,
+        }),
+      );
+      expect(v3BridgeMocks.appendEventAndAdvance).not.toHaveBeenCalled();
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("preserves prompt-too-long classification in fenced terminal failures", async () => {
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "context length exceeded",
+            } as any,
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-fenced-prompt-too-long",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({
+            errorMessage: "prompt-too-long",
+            errorMessageInfo: null,
+          }),
         }),
       );
     });

@@ -1326,10 +1326,11 @@ export async function POST(request: Request) {
   const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId =
     runContext?.workflowId ?? activeWorkflow?.workflow.id ?? null;
+  // Terminal transitions must be fenced across status surfaces even when a run
+  // isn't enrolled in a delivery-loop workflow (workflowId can be null).
+  // We still require an envelope v2 so the daemon can safely retry on fail-closed.
   const fenceTerminalTransition =
-    daemonRunStatusFromMessages !== "processing" &&
-    envelopeV2 != null &&
-    effectiveLoopId != null;
+    daemonRunStatusFromMessages !== "processing" && envelopeV2 != null;
 
   // Acknowledge dispatch intent once the run context is still in a
   // dispatch-pending state. Envelope v2 starts at seq=0, so this stays
@@ -1825,6 +1826,9 @@ export async function POST(request: Request) {
         threadId,
         threadChatId,
         eventType,
+        // `handleDaemonEvent` skips unread + terminal metadata when it defers the
+        // terminal transition to this fenced route path.
+        markAsUnread: true,
         // No chatUpdates here: this path is terminal-only and must not append
         // messages. Terminal metadata is written in a separate, status-gated
         // update below.
@@ -1853,14 +1857,22 @@ export async function POST(request: Request) {
       }
 
       if (resolvedStatus === "failed") {
+        const errorMessageStr = daemonTerminalErrorInfo.errorMessage;
+        const isPromptTooLong =
+          !!errorMessageStr &&
+          /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
+            errorMessageStr,
+          );
         await updateThreadChatTerminalMetadataIfTerminal({
           db,
           userId,
           threadId,
           threadChatId,
           updates: {
-            errorMessage: "agent-generic-error",
-            errorMessageInfo: daemonTerminalErrorInfo.errorMessage ?? "",
+            errorMessage: isPromptTooLong
+              ? "prompt-too-long"
+              : "agent-generic-error",
+            errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
           },
         });
       } else {

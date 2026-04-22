@@ -111,16 +111,14 @@ export async function updateThreadChatWithTransition({
     chatSequence = chatUpdateResult.chatSequence;
     broadcastData = chatUpdateResult.broadcastData;
   }
-  if (didUpdateStatus && (updates || chatUpdates)) {
-    if (markAsUnread) {
-      await markThreadChatAsUnread({
-        db,
-        userId,
-        threadId,
-        threadChatIdOrNull: threadChatId,
-        shouldPublishRealtimeEvent: true,
-      });
-    }
+  if (didUpdateStatus && markAsUnread) {
+    await markThreadChatAsUnread({
+      db,
+      userId,
+      threadId,
+      threadChatIdOrNull: threadChatId,
+      shouldPublishRealtimeEvent: true,
+    });
   }
   return {
     didUpdateStatus,
