@@ -33,7 +33,7 @@ function LongToolArg({ text }: { text: string }) {
     const ro = new ResizeObserver(() => {});
     ro.observe(el);
     return () => ro.disconnect();
-  }, [text, expanded]);
+  }, []);
 
   return (
     <span className="inline">

@@ -151,7 +151,9 @@ describe("latency breakdown for sub-100ms optimization", () => {
     }
   });
 
-  const createTestInput = (): DaemonMessageClaude => ({
+  const createTestInput = (
+    overrides?: Partial<DaemonMessageClaude>,
+  ): DaemonMessageClaude => ({
     type: "claude",
     model: "opus",
     agent: "claudeCode",
@@ -161,6 +163,7 @@ describe("latency breakdown for sub-100ms optimization", () => {
     sessionId: null,
     threadId: "TEST_THREAD",
     threadChatId: "TEST_CHAT",
+    ...overrides,
   });
 
   const mockSpawnStdoutLine = (message: any) => {

@@ -216,15 +216,12 @@ export function useThreadMetaEvents(): {
   const [snapshot, dispatch] = useReducer(reducer, INITIAL);
   const agent = useAgUiAgent();
 
-  const onCustomEvent = useCallback(
-    (event: AgUiCustomEvent) => {
-      const value = event.value;
-      if (value && typeof value === "object" && "kind" in value) {
-        dispatch({ event: value as ThreadMetaEvent });
-      }
-    },
-    [dispatch],
-  );
+  const onCustomEvent = useCallback((event: AgUiCustomEvent) => {
+    const value = event.value;
+    if (value && typeof value === "object" && "kind" in value) {
+      dispatch({ event: value as ThreadMetaEvent });
+    }
+  }, []);
 
   useAgUiCustomEvents(agent, isThreadMetaKind, onCustomEvent);
 

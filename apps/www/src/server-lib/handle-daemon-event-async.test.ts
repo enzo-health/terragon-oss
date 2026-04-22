@@ -10,8 +10,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { waitUntil } from "@vercel/functions";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 
 // Verify the implementation uses async patterns
 describe("handleDaemonEvent async optimizations", () => {
@@ -64,17 +62,18 @@ describe("handleDaemonEvent async optimizations", () => {
     let broadcastLine = -1;
 
     for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (
-        lines[i].includes("await updateThreadChatWithTransition") &&
+        line?.includes("await updateThreadChatWithTransition") &&
         dbWriteLine === -1
       ) {
         dbWriteLine = i;
       }
       // Look for waitUntil followed by broadcastData in nearby lines
-      if (lines[i].includes("waitUntil(") && broadcastLine === -1) {
+      if (line?.includes("waitUntil(") && broadcastLine === -1) {
         // Check if broadcastData is referenced in the next few lines
         for (let j = i; j < Math.min(i + 5, lines.length); j++) {
-          if (lines[j].includes("broadcastData")) {
+          if (lines[j]?.includes("broadcastData")) {
             broadcastLine = i;
             break;
           }

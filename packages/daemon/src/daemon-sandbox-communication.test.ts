@@ -28,10 +28,8 @@ import { DaemonRuntime, writeToUnixSocket } from "./runtime";
 import {
   ClaudeMessage,
   DaemonMessageClaude,
-  DaemonMessageStop,
   type DaemonEventAPIBody,
 } from "./shared";
-import type { ThreadMetaEvent } from "./codex-app-server";
 
 async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,87 +61,13 @@ const createTestInput = (
   ...overrides,
 });
 
-const createTestStop = (): DaemonMessageStop => ({
-  type: "stop",
-  threadId: "TEST_THREAD",
-  threadChatId: "TEST_CHAT",
-  token: "TEST_TOKEN",
-});
-
-// Mock message generators for non-LLM communication
-const createSystemMessage = (content: string): ClaudeMessage => ({
-  type: "system",
-  message: { role: "system", content },
-  session_id: "test-session",
-  parent_tool_use_id: null,
-});
-
 const createStartupLog = (phase: string, details: string): ClaudeMessage => ({
   type: "system",
-  message: {
-    role: "system",
-    content: `[startup:${phase}] ${details}`,
-  },
+  subtype: "init",
   session_id: "test-session",
-  parent_tool_use_id: null,
+  tools: [`[startup:${phase}] ${details}`],
+  mcp_servers: [],
 });
-
-const createErrorMessage = (error: string, info?: string): ClaudeMessage => ({
-  type: "custom-error",
-  session_id: "test-session",
-  duration_ms: 1000,
-  error_info: info ? `${error}: ${info}` : error,
-});
-
-const createToolOutput = (toolName: string, output: string): ClaudeMessage => ({
-  type: "user",
-  message: {
-    role: "user",
-    content: [
-      {
-        type: "tool_result",
-        tool_use_id: `tool-${toolName}`,
-        content: output,
-        is_error: false,
-      },
-    ],
-  },
-  session_id: "test-session",
-  parent_tool_use_id: `tool-${toolName}`,
-});
-
-const createMetaEvent = (
-  type: ThreadMetaEvent["type"],
-  data: Record<string, unknown>,
-): ThreadMetaEvent => {
-  switch (type) {
-    case "token_usage":
-      return {
-        type: "token_usage",
-        inputTokens: (data.inputTokens as number) ?? 100,
-        outputTokens: (data.outputTokens as number) ?? 50,
-        totalTokens: (data.totalTokens as number) ?? 150,
-        costUsd: (data.costUsd as number) ?? 0.01,
-      };
-    case "rate_limit":
-      return {
-        type: "rate_limit",
-        retryAfterMs: (data.retryAfterMs as number) ?? 60000,
-        limit: (data.limit as number) ?? 100,
-      };
-    case "mcp_server_health":
-      return {
-        type: "mcp_server_health",
-        serverName: (data.serverName as string) ?? "test-server",
-        status:
-          (data.status as "healthy" | "unhealthy" | "disconnected") ??
-          "healthy",
-        latencyMs: (data.latencyMs as number) ?? 50,
-      };
-    default:
-      throw new Error(`Unknown meta event type: ${type}`);
-  }
-};
 
 describe("daemon sandbox communication", () => {
   let runtime: DaemonRuntime;
@@ -220,12 +144,6 @@ describe("daemon sandbox communication", () => {
     const call = spawnCommandLineMock.mock.calls[0];
     if (!call) throw new Error("spawnCommandLine not called");
     call[1].onStderr(data);
-  }
-
-  function mockSpawnError(error: Error) {
-    const call = spawnCommandLineMock.mock.calls[0];
-    if (!call) throw new Error("spawnCommandLine not called");
-    call[1].onError(error);
   }
 
   function mockSpawnClose(code: number | null) {
@@ -350,7 +268,9 @@ describe("daemon sandbox communication", () => {
 
       // Verify stderr handler was called (daemon logs stderr via logger)
       // The onStderr callback should have been invoked
-      expect(spawnCommandLineMock.mock.calls[0][1].onStderr).toBeDefined();
+      const firstCall = spawnCommandLineMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      expect(firstCall?.[1].onStderr).toBeDefined();
     });
 
     it("should send custom-error when process crashes", async () => {
@@ -575,13 +495,11 @@ describe("daemon sandbox communication", () => {
       // Simulate rate limit error result
       mockSpawnStdoutLine({
         type: "result",
-        subtype: "error",
-        total_cost_usd: 0,
+        subtype: "error_during_execution",
         duration_ms: 1000,
-        duration_api_ms: 1000,
         is_error: true,
         num_turns: 0,
-        result: "Rate limit exceeded. Try again in 60s.",
+        error: "Rate limit exceeded. Try again in 60s.",
         session_id: "test",
       });
 
@@ -912,6 +830,9 @@ describe("daemon sandbox communication", () => {
 
       // Send invalid JSON
       const call = spawnCommandLineMock.mock.calls[0];
+      if (!call) {
+        throw new Error("spawnCommandLine not called");
+      }
       call[1].onStdoutLine("not valid json {");
 
       await sleep(50);

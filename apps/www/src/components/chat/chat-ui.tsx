@@ -478,22 +478,15 @@ function ChatUIContent({
   // component once `threadChat.id === shell.primaryThreadChatId`, the
   // seeds are guaranteed-valid on first render: `useAgUiMessages`'s lazy
   // reducer initializer will snapshot them correctly.
-  const agUiInitialMessages = useMemo(
-    () => dbMessagesToAgUiMessages(dbMessages),
-    // Seed once per mount; subsequent updates come through the AG-UI stream.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+  const [agUiInitialMessages] = useState(() =>
+    dbMessagesToAgUiMessages(dbMessages),
   );
-  const initialUiMessages = useMemo(
-    () =>
-      toUIMessages({
-        dbMessages,
-        agent: chatAgent,
-        threadStatus: threadChat.status,
-      }),
-    // Seed once per mount; subsequent updates come through the AG-UI stream.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+  const [initialUiMessages] = useState(() =>
+    toUIMessages({
+      dbMessages,
+      agent: chatAgent,
+      threadStatus: threadChat.status,
+    }),
   );
   // runId state is maintained across renders by subscribing to the agent's
   // RUN_STARTED events (see `useCurrentRunId`). The transport hook reads
@@ -513,7 +506,7 @@ function ChatUIContent({
     // switch) so a stale runId from the previous thread chat never leaks
     // into a new thread's reconnect URL.
     setCapturedRunId(observedRunId);
-  }, [observedRunId, agent]);
+  }, [observedRunId]);
   const messages = useAgUiMessages({
     agent,
     agentKind: chatAgent,

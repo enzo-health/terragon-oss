@@ -66,8 +66,7 @@ export function useAgUiTransport(args: {
       initialMessages,
       initialState,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, threadChatId]);
+  }, [initialMessages, initialState, threadChatId, threadId]);
 
   useEffect(() => {
     if (!agent || !threadChatId) return;

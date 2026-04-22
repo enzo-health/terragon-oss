@@ -65,6 +65,7 @@ function Harness({
   onAgent: (agent: CapturedValue) => void;
 }): null {
   const agent = useAgUiTransport(args);
+  const runIdForObservation = args.runId;
   useEffect(() => {
     onAgent(agent as unknown as CapturedValue);
   }, [agent, onAgent]);
@@ -73,9 +74,9 @@ function Harness({
   // mutated in place, so react's effect-deps on the agent alone won't
   // re-fire; we dispatch whenever the args change instead.
   useEffect(() => {
+    void runIdForObservation;
     onAgent(agent as unknown as CapturedValue);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [args.runId]);
+  }, [agent, onAgent, runIdForObservation]);
   return null;
 }
 

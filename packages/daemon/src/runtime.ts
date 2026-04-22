@@ -242,6 +242,10 @@ class ConnectionPool {
   }
 }
 
+interface NodeFetchRequestInit extends RequestInit {
+  agent?: http.Agent | https.Agent;
+}
+
 export class DaemonRuntime implements IDaemonRuntime {
   readonly url: string;
   readonly logger: Logger;
@@ -378,12 +382,14 @@ export class DaemonRuntime implements IDaemonRuntime {
     // This reduces TCP handshake overhead for subsequent requests
     const agent = this.connectionPool.getAgent(url);
 
-    const response = await fetch(url, {
+    const requestInit: NodeFetchRequestInit = {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       agent, // Enable connection reuse via keep-alive
-    });
+    };
+
+    const response = await fetch(url, requestInit);
     if (!response.ok) {
       let responseBody: unknown = null;
       try {

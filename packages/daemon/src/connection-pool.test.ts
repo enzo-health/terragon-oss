@@ -13,7 +13,6 @@ import { nanoid } from "nanoid/non-secure";
 
 describe("HTTP Connection Pool (keep-alive optimization)", () => {
   let runtime: DaemonRuntime;
-  let exitProcessSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     const unixSocketPath = `/tmp/terragon-daemon-${nanoid()}.sock`;
@@ -23,9 +22,7 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       outputFormat: "text",
     });
     // Prevent process exit during tests - critical for test isolation
-    exitProcessSpy = vi
-      .spyOn(runtime, "exitProcess")
-      .mockImplementation(() => {});
+    vi.spyOn(runtime, "exitProcess").mockImplementation(() => {});
   });
 
   afterEach(async () => {
@@ -53,7 +50,7 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       // First POST - should create new agent
       await runtime.serverPost(
         {
-          messages: [{ type: "test", content: "first" }],
+          messages: [],
           threadId: "t1",
           threadChatId: "c1",
           timezone: "UTC",
@@ -62,14 +59,16 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       );
 
       // Get the agent from first call
-      const firstCallAgent = fetchMock.mock.calls[0][1].agent;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const firstCallAgent = firstCall?.[1]?.agent;
       expect(firstCallAgent).toBeDefined();
-      expect(firstCallAgent.keepAlive).toBe(true);
+      expect(firstCallAgent?.keepAlive).toBe(true);
 
       // Second POST - should reuse same agent
       await runtime.serverPost(
         {
-          messages: [{ type: "test", content: "second" }],
+          messages: [],
           threadId: "t2",
           threadChatId: "c2",
           timezone: "UTC",
@@ -78,7 +77,9 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       );
 
       // Get the agent from second call
-      const secondCallAgent = fetchMock.mock.calls[1][1].agent;
+      const secondCall = fetchMock.mock.calls[1];
+      expect(secondCall).toBeDefined();
+      const secondCallAgent = secondCall?.[1]?.agent;
 
       // Should be the same agent instance (connection reuse)
       expect(secondCallAgent).toBe(firstCallAgent);
@@ -108,11 +109,13 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
         "token",
       );
 
-      const agent = fetchMock.mock.calls[0][1].agent;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const agent = firstCall?.[1]?.agent;
 
       // Verify it's an Agent with keep-alive enabled
       expect(agent).toBeDefined();
-      expect(agent.keepAlive).toBe(true);
+      expect(agent?.keepAlive).toBe(true);
       // Agent options are validated by ConnectionPool class
       // The exact internal property names vary by Node version
 
@@ -176,11 +179,13 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
         "token",
       );
 
-      const agent = fetchMock.mock.calls[0][1].agent;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const agent = firstCall?.[1]?.agent;
 
       // Should use HTTPS agent for https URLs
-      expect(agent.constructor.name).toBe("Agent"); // https.Agent
-      expect(agent.keepAlive).toBe(true);
+      expect(agent?.constructor.name).toBe("Agent"); // https.Agent
+      expect(agent?.keepAlive).toBe(true);
 
       console.log("✓ HTTPS URLs use correct agent type");
 
@@ -221,7 +226,7 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       const start1 = Date.now();
       await runtime.serverPost(
         {
-          messages: [{ type: "test", content: "first" }],
+          messages: [],
           threadId: "t1",
           threadChatId: "c1",
           timezone: "UTC",
@@ -233,7 +238,7 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       const start2 = Date.now();
       await runtime.serverPost(
         {
-          messages: [{ type: "test", content: "second" }],
+          messages: [],
           threadId: "t1",
           threadChatId: "c1",
           timezone: "UTC",
@@ -245,7 +250,7 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
       const start3 = Date.now();
       await runtime.serverPost(
         {
-          messages: [{ type: "test", content: "third" }],
+          messages: [],
           threadId: "t1",
           threadChatId: "c1",
           timezone: "UTC",
@@ -289,7 +294,9 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
         },
         "token",
       );
-      const agent1 = fetchMock.mock.calls[0][1].agent;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const agent1 = firstCall?.[1]?.agent;
 
       // Create different runtime for different host
       const otherRuntime = new DaemonRuntime({
@@ -308,7 +315,9 @@ describe("HTTP Connection Pool (keep-alive optimization)", () => {
         },
         "token",
       );
-      const agent2 = fetchMock.mock.calls[1][1].agent;
+      const secondCall = fetchMock.mock.calls[1];
+      expect(secondCall).toBeDefined();
+      const agent2 = secondCall?.[1]?.agent;
 
       // Different hosts should have different agents
       expect(agent1).not.toBe(agent2);
