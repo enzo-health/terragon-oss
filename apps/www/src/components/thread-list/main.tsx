@@ -541,7 +541,7 @@ export const ThreadListMain = memo(function ThreadListMain({
     [searchParams, router, pathname],
   );
   return (
-    <div className="flex-1 pb-4 flex flex-col">
+    <div className="flex-1 pb-4 flex flex-col animate-in fade-in duration-500">
       <ThreadListHeader
         className="sticky top-0 bg-background z-20 px-0 "
         viewFilter={viewFilter}

@@ -8,7 +8,7 @@ echo "=== Task Creation UI Quality Assessment ==="
 
 # Check 1: TypeScript compilation
 echo "Checking TypeScript..."
-TSC_ERROR_COUNT=$(cd apps/www && pnpm tsc --noEmit 2>&1 | grep -c "error TS" || echo "0")
+TSC_ERROR_COUNT=$(cd apps/www && pnpm tsc --noEmit 2>&1 | grep -c "error TS" | tr -d '\n' || echo "0")
 echo "TSC_ERRORS=$TSC_ERROR_COUNT"
 if [ "$TSC_ERROR_COUNT" -eq 0 ]; then
     echo "TSC_CHECK=pass"
