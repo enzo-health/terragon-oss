@@ -41,18 +41,21 @@ const geist = Geist({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-geist",
+  preload: true,
 });
 
 const geistMono = Geist_Mono({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-geist-mono",
+  preload: false, // Only used for code, less critical
 });
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-space-grotesk",
+  preload: false, // Secondary font
 });
 
 export default function RootLayout({
