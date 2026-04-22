@@ -1,14 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# Dev Server Startup Benchmark - Simplified
-# Measures time from clean state to Next.js "Ready"
+# Dev Server Startup Benchmark - Accurate Version
+# Simulates real 'pnpm dev' workflow: docker + turbo dev startup
 
 cd "$(dirname "$0")"
 
 # Cleanup
 cleanup() {
     pkill -9 -f "next dev" 2>/dev/null || true
+    pkill -9 -f "nodemon" 2>/dev/null || true
+    pkill -9 -f "esbuild" 2>/dev/null || true
     docker compose -p terragon-db down 2>/dev/null || true
 }
 cleanup
@@ -18,7 +20,7 @@ trap cleanup EXIT
 # Start timing
 START=$(date +%s%N)
 
-# 1. Start docker
+# 1. Start docker (simulates dev-setup)
 docker compose -f packages/dev-env/docker-compose.yml -p terragon-db up -d 2>/dev/null
 
 # 2. Wait for postgres ready
@@ -28,11 +30,19 @@ for i in {1..60}; do
 done
 DOCKER_MS=$(( ($(date +%s%N) - START) / 1000000 ))
 
-# 3. Quick TypeScript sanity check on critical packages
-pnpm -C packages/shared tsc-check --pretty false 2>/dev/null || true
-TSC_MS=$(( ($(date +%s%N) - START) / 1000000 ))
+# 3. Build required packages (simulates turbo ^build dependency)
+# These are the packages that must be built before dev can start
+BUILD_START=$(date +%s%N)
+(
+    pnpm -C packages/bundled build 2>/dev/null &
+    pnpm -C packages/daemon build 2>/dev/null &
+    pnpm -C packages/mcp-server build 2>/dev/null &
+    wait
+)
+BUILD_MS=$(( ($(date +%s%N) - BUILD_START) / 1000000 ))
 
-# 4. Time Next.js dev server to "Ready"
+# 4. Start Next.js dev server and wait for ready
+NEXT_START=$(date +%s%N)
 cd apps/www
 LOGFILE=$(mktemp)
 timeout 60s pnpm next dev 2>&1 > "$LOGFILE" &
@@ -42,18 +52,18 @@ for i in {1..120}; do
     if grep -q "Ready" "$LOGFILE" 2>/dev/null; then
         break
     fi
-    sleep 0.5
+    sleep 0.3
 done
 
 kill $PID 2>/dev/null || true
-NEXT_MS=$(( ($(date +%s%N) - START) / 1000000 ))
+NEXT_MS=$(( ($(date +%s%N) - NEXT_START) / 1000000 ))
+TOTAL_MS=$(( ($(date +%s%N) - START) / 1000000 ))
 
 rm -f "$LOGFILE"
 
-# Output metrics
-echo "METRIC dev_startup_ms=$NEXT_MS"
+echo "METRIC dev_startup_ms=$TOTAL_MS"
 echo "METRIC docker_ready_ms=$DOCKER_MS"
-echo "METRIC tsc_check_ms=$((TSC_MS - DOCKER_MS))"
-echo "METRIC nextjs_ready_ms=$((NEXT_MS - TSC_MS))"
+echo "METRIC package_build_ms=$BUILD_MS"
+echo "METRIC nextjs_ready_ms=$NEXT_MS"
 
-echo "Docker: ${DOCKER_MS}ms | TSC: ${TSC_MS}ms | Next.js: ${NEXT_MS}ms" >&2
+echo "Results: Docker=${DOCKER_MS}ms | Build=${BUILD_MS}ms | Next.js=${NEXT_MS}ms | Total=${TOTAL_MS}ms" >&2
