@@ -71,6 +71,12 @@ const nextConfig: NextConfig = {
       "@tiptap/react",
       "@tiptap/starter-kit",
       "@assistant-ui/react",
+      "@ag-ui/client",
+      "@ag-ui/core",
+      "@anthropic-ai/sdk",
+      "@aws-sdk/client-s3",
+      "ai",
+      "zod",
     ],
     staleTimes: {
       // Dev uses minimal caching (30s minimum), prod uses longer caching

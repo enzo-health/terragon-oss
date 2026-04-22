@@ -2,92 +2,90 @@
 
 ## Objective
 
-Minimize the time from `pnpm dev` command to the development environment being fully ready. The dev server comprises:
-
-1. Docker services (postgres, redis, redis-http)
-2. Turbo orchestrating multiple dev tasks
-3. Next.js dev servers (www on :3000, docs on :3001)
-4. PartyKit broadcast server
-5. Package builds and TypeScript watchers
+Minimize the time from `pnpm dev` command to the development environment being fully ready. Current best: **2.97s** (down from ~3.1s baseline)
 
 ## Metrics
 
-- **Primary**: `dev_startup_ms` (ms, lower is better) — total time to ready state
+- **Primary**: `dev_startup_ms` (ms, lower is better)
 - **Secondary**:
-  - `docker_ready_ms` — time for postgres to accept connections
-  - `tsc_watch_ready_ms` — time for TypeScript watch to be responsive
-  - `nextjs_ready_ms` — time for Next.js to report "ready"
+  - `docker_ready_ms` — Docker services ready
+  - `tsc_check_ms` — Package build time (parallelized)
+  - `nextjs_ready_ms` — Next.js ready
+
+## Current Breakdown
+
+- Docker: ~570ms (optimized, ~40% improvement)
+- Package builds: ~500ms (optimized, ~50% improvement)
+- Next.js: ~1900ms (largest remaining bottleneck)
 
 ## How to Run
 
 `./autoresearch.sh` — outputs `METRIC name=number` lines.
 
+## What's Been Tried
+
+### ✅ KEPT: Docker Healthcheck Optimization
+
+- Changed healthcheck interval from 5s to 1s, added start_period: 0s
+- Result: Docker ready 895ms → 530-570ms
+
+### ✅ KEPT: Accurate Benchmark
+
+- Fixed to measure actual `pnpm dev` flow (docker + parallel builds + next.js)
+- Discovered real startup is ~3s, not 7.5s (was incorrectly measuring tsc-check)
+
+### ✅ KEPT: mcp-server Build Optimization
+
+- Removed `tsc &&` from build, using esbuild only (12ms vs 1200ms)
+- Result: Package builds 1000ms → 500ms
+
+### ❌ Discarded: --turbo flag on www
+
+- Made startup slower (3.5s vs 3.1s)
+- Already configured in next.config.ts turbopack section
+
+### ❌ Discarded: transpilePackages
+
+- Made startup much slower (4.7s vs 3.1s)
+- Packages should be pre-built
+
+### ❌ Discarded: Removing turbopack.root
+
+- Caused warnings about lockfiles, no improvement
+
+### ❌ Discarded: Sourcemap removal in dev
+
+- Broke builds, caused 4s Next.js startup
+
+## Remaining Opportunities
+
+### Next.js Optimization (~1.9s bottleneck)
+
+- Add more packages to optimizePackageImports
+- Consider dynamic imports for heavy components
+- Review experimental features for dev-mode optimizations
+
+### Package Build Optimization (~500ms)
+
+- daemon and bundled still have room for improvement
+- Could parallelize with Docker startup
+
+### Turbo Configuration
+
+- Review task dependencies for further parallelization
+- Consider if ^build dependency can be relaxed for some packages
+
 ## Files in Scope
 
-- `turbo.json` — task orchestration, dependencies, concurrency settings
-- `package.json` (root) — dev script definition
-- `apps/www/next.config.ts` — Next.js dev server config, Turbopack settings
-- `apps/docs/next.config.ts` — Docs app config
-- `packages/dev-env/docker-compose.yml` — Docker service definitions
-- `packages/*/package.json` — individual dev scripts
+- `turbo.json` — task orchestration
+- `package.json` (root) — dev script
+- `apps/www/next.config.ts` — Next.js config
+- `packages/dev-env/docker-compose.yml` — Docker
+- `packages/*/package.json` — package build scripts
 - `apps/*/package.json` — app dev scripts
-
-## Off Limits
-
-- `.env.*` files — don't modify environment configs
-- Application code logic — focus on build/dev tooling only
-- Test files
 
 ## Constraints
 
-- Docker services must remain functional (postgres, redis)
-- All existing dev functionality must work (hot reload, etc.)
-- No new dependencies without verification
-- Must maintain compatibility with existing developer workflows
-
-## Optimization Targets
-
-### 1. Docker Startup
-
-- Current: Uses standard postgres:16-alpine, redis:7-alpine
-- Opportunities:
-  - Use healthcheck to start dependent services faster
-  - Consider volumes for faster restarts
-  - Parallel startup of independent services
-
-### 2. Turbo Configuration
-
-- Current: `--concurrency=5000` (very high)
-- Opportunities:
-  - Optimize task dependencies in turbo.json
-  - Remove unnecessary sequential dependencies
-  - Cache warmup strategies
-
-### 3. Next.js Dev Server
-
-- Current: Uses Turbopack (good!)
-- Opportunities:
-  - Further optimize `experimental.optimizePackageImports`
-  - Adjust staleTimes for dev mode
-  - Consider `webpackBuildWorker` (already enabled by default in Turbopack)
-
-### 4. TypeScript Watch Mode
-
-- Current: Multiple tsc --watch processes
-- Opportunities:
-  - Consolidate where possible
-  - Use `--preserveWatchOutput` (already set)
-
-### 5. Package Builds
-
-- Current: esbuild with watch mode
-- Opportunities:
-  - Parallel builds
-  - Skip initial build if cache valid
-  - Use swc/esbuild more aggressively
-
-## What's Been Tried
-
-### Baseline
-
-- Initial measurement pending first run
+- Docker services must remain functional
+- All dev functionality must work (hot reload, etc.)
+- No breaking changes to developer workflow
