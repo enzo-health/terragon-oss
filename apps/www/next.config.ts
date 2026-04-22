@@ -111,6 +111,26 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Webpack configuration for faster HMR
+  webpack: (config, { dev }) => {
+    if (dev) {
+      // Exclude test and story files from webpack watch in dev
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/*.test.ts",
+          "**/*.test.tsx",
+          "**/*.stories.ts",
+          "**/*.stories.tsx",
+          "**/*.spec.ts",
+          "**/*.spec.tsx",
+        ],
+      };
+    }
+    return config;
+  },
 };
 
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.
