@@ -2779,7 +2779,7 @@ describe("daemon-event route", () => {
 
     it("fences canonical-only terminals on non-enrolled runs (thread_chat still becomes terminal)", async () => {
       // No active workflow and no workflowId on the run context (non-enrolled).
-      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(null);
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(undefined);
       vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
         runId: "run-1",
         workflowId: null,

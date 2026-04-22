@@ -34,7 +34,12 @@ function loadLocalEnvFiles() {
 
 loadLocalEnvFiles();
 
-const nextConfig: NextConfig = {
+type NextConfigDevOverrides = NextConfig & {
+  typescript?: { ignoreBuildErrors?: boolean };
+  eslint?: { ignoreDuringBuilds?: boolean };
+};
+
+const nextConfig: NextConfigDevOverrides = {
   reactCompiler: true,
   // Disable type checking in dev for faster HMR
   typescript: {
@@ -56,8 +61,6 @@ const nextConfig: NextConfig = {
     root: repoRoot,
   },
   experimental: {
-    // Enable faster HMR with React Refresh
-    reactRefresh: true,
     // Reduce unnecessary re-renders during HMR
     optimizeCss: false, // CSS optimization can slow down HMR
     optimizePackageImports: [

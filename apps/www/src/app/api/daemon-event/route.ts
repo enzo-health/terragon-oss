@@ -580,22 +580,6 @@ function findCanonicalRunTerminalEvent(
   return null;
 }
 
-function isTerminalOnlyDaemonMessages(
-  messages: DaemonEventAPIBody["messages"],
-): boolean {
-  if (messages.length === 0) return false;
-  for (const message of messages) {
-    if (
-      message.type !== "result" &&
-      message.type !== "custom-error" &&
-      message.type !== "custom-stop"
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function deriveTerminalFailureSource(
   messages: DaemonEventAPIBody["messages"],
 ): "custom-error" | "result" | "custom-stop" | "unknown" | null {

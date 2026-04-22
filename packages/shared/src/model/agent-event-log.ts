@@ -524,6 +524,8 @@ function canonicalEventToReplayMessage(
     case "run-started":
       return null;
   }
+
+  return null;
 }
 
 export async function getThreadReplayEntriesFromCanonicalEvents({
