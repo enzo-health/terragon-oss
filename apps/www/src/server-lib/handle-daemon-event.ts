@@ -51,7 +51,6 @@ import {
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { redis } from "@/lib/redis";
 import {
@@ -59,10 +58,6 @@ import {
   resetRetryCounter,
 } from "@/server-lib/delivery-loop/retry-policy";
 import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
-import { hashFailureMessage } from "@terragon/shared/delivery-loop/domain/failure-signature";
-import { DELIVERY_LOOP_FAILURE_ACTION_TABLE } from "@terragon/shared/delivery-loop/domain/failure";
-import * as schema from "@terragon/shared/db/schema";
-import { and, eq } from "drizzle-orm";
 
 /** Workflow states eligible for auto-retry on generic agent error (v2 + v3). */
 const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
@@ -158,57 +153,6 @@ async function maybeTrackFirstAssistantLatency({
   }
 }
 
-function isFailureRetryable(
-  failureCategory: DeliveryLoopFailureCategory,
-): boolean {
-  const retryAction =
-    DELIVERY_LOOP_FAILURE_ACTION_TABLE[
-      failureCategory as keyof typeof DELIVERY_LOOP_FAILURE_ACTION_TABLE
-    ];
-  return retryAction !== "blocked";
-}
-
-function buildFailureMetadata({
-  isError,
-  terminalReason,
-  failureCategory,
-  failureSource,
-  failureSignatureSource,
-}: {
-  isError: boolean;
-  terminalReason: string | null;
-  failureCategory: DeliveryLoopFailureCategory | null;
-  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
-  failureSignatureSource: string | null;
-}): {
-  failureCategory: DeliveryLoopFailureCategory | null;
-  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
-  failureRetryable: boolean | null;
-  failureSignatureHash: number | null;
-  failureTerminalReason: string | null;
-} {
-  if (!isError) {
-    return {
-      failureCategory: null,
-      failureSource: null,
-      failureRetryable: null,
-      failureSignatureHash: null,
-      failureTerminalReason: null,
-    };
-  }
-  return {
-    failureCategory,
-    failureSource,
-    failureRetryable:
-      failureCategory != null ? isFailureRetryable(failureCategory) : null,
-    failureSignatureHash:
-      failureSignatureSource != null
-        ? hashFailureMessage(failureSignatureSource)
-        : null,
-    failureTerminalReason: terminalReason,
-  };
-}
-
 export async function handleDaemonEvent({
   messages,
   threadId,
@@ -219,6 +163,7 @@ export async function handleDaemonEvent({
   runId,
   runContext = null,
   workflowId = null,
+  skipThreadChatPersistence = false,
 }: {
   messages: ClaudeMessage[];
   threadId: string;
@@ -229,6 +174,13 @@ export async function handleDaemonEvent({
   runId?: string;
   runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
   workflowId?: string | null;
+  /**
+   * When true, do not mutate thread_chat or thread status (messages, updatedAt,
+   * status transitions). Used by the daemon-event route for terminal-only
+   * payloads where we need a fenced, retry-safe terminal transition contract
+   * across thread_chat + agent_run_context + delivery-loop head.
+   */
+  skipThreadChatPersistence?: boolean;
 }) {
   console.log(
     "Daemon event",
@@ -313,12 +265,6 @@ export async function handleDaemonEvent({
   let isPromptTooLong = false;
   let customErrorMessage: string | null = null;
   let isOAuthTokenRevoked = false;
-  let terminalFailureSource:
-    | "custom-error"
-    | "result"
-    | "custom-stop"
-    | "unknown"
-    | null = null;
   for (const message of messages) {
     if (message.type === "custom-stop") {
       isStop = true;
@@ -328,7 +274,6 @@ export async function handleDaemonEvent({
       isError = true;
       customErrorMessage = message.error_info ?? null;
       durationMs = message.duration_ms ?? 0;
-      terminalFailureSource = "custom-error";
     }
     if (message.type === "result") {
       isDone = true;
@@ -337,7 +282,6 @@ export async function handleDaemonEvent({
       if (message.is_error) {
         isError = true;
         customErrorMessage = "error" in message ? message.error : null;
-        terminalFailureSource = "result";
       }
       if (threadChat.agent === "claudeCode") {
         const rateLimitResult = parseClaudeRateLimitMessage({
@@ -357,7 +301,6 @@ export async function handleDaemonEvent({
         if (promptTooLongResult) {
           isPromptTooLong = true;
           isError = true;
-          terminalFailureSource = "result";
         }
 
         const oauthTokenRevokedResult =
@@ -365,7 +308,6 @@ export async function handleDaemonEvent({
         if (oauthTokenRevokedResult) {
           isOAuthTokenRevoked = true;
           isError = true;
-          terminalFailureSource = "result";
         }
       }
       if (threadChat.agent === "codex") {
@@ -380,7 +322,6 @@ export async function handleDaemonEvent({
         if (maybeCodexErrorMessage) {
           isError = true;
           customErrorMessage = maybeCodexErrorMessage;
-          terminalFailureSource = "result";
         }
       }
       // Agent-agnostic context window exhaustion check (catches Codex
@@ -388,7 +329,6 @@ export async function handleDaemonEvent({
       if (!isPromptTooLong && parseContextWindowExhausted(message)) {
         isPromptTooLong = true;
         isError = true;
-        terminalFailureSource = "result";
       }
     }
     // Also check custom-error messages for context window exhaustion
@@ -397,7 +337,6 @@ export async function handleDaemonEvent({
       parseContextWindowExhausted(message)
     ) {
       isPromptTooLong = true;
-      terminalFailureSource = "custom-error";
     }
     if (message.type === "assistant") {
       if (threadChat.agent === "claudeCode") {
@@ -843,46 +782,8 @@ export async function handleDaemonEvent({
     }
   }
 
-  const failureMetadata = buildFailureMetadata({
-    isError,
-    terminalReason: threadChatUpdates.errorMessage ?? null,
-    failureCategory: isError
-      ? classifyDaemonEventError(customErrorMessage)
-      : null,
-    failureSource: isError ? terminalFailureSource : null,
-    failureSignatureSource:
-      isError && customErrorMessage ? customErrorMessage : null,
-  });
-  if (runId) {
-    waitUntil(
-      db
-        .update(schema.agentRunContext)
-        .set({
-          failureCategory: failureMetadata.failureCategory,
-          failureSource: failureMetadata.failureSource,
-          failureRetryable: failureMetadata.failureRetryable,
-          failureSignatureHash: failureMetadata.failureSignatureHash,
-          failureTerminalReason: failureMetadata.failureTerminalReason,
-        })
-        .where(
-          and(
-            eq(schema.agentRunContext.runId, runId),
-            eq(schema.agentRunContext.userId, userId),
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[handle-daemon-event] failed to persist run failure metadata",
-            {
-              threadId,
-              threadChatId: threadChat.id,
-              runId,
-              error,
-            },
-          );
-        }),
-    );
-  }
+  // NOTE: agent_run_context terminal/failure metadata is persisted by the
+  // /api/daemon-event route as part of the fenced terminal transition.
 
   // Emit Linear agent activities for linear-sourced threads (fn-2+).
   // NOTE: Placed after all auto-recovery blocks (auto-compact, OAuth retry) so that
@@ -917,6 +818,10 @@ export async function handleDaemonEvent({
         }),
       );
     }
+  }
+
+  if (skipThreadChatPersistence) {
+    return { success: true, threadChatMessageSeq: null };
   }
 
   // Check if we should skip checkpoint when done

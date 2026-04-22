@@ -14,8 +14,11 @@ import {
 } from "@terragon/shared/model/agent-run-context";
 import {
   getThreadMinimal,
+  getThreadChat,
   touchThreadChatUpdatedAt,
+  updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import {
@@ -208,6 +211,7 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThreadMinimal: vi.fn(),
   touchThreadChatUpdatedAt: vi.fn(),
   updateThreadChat: vi.fn(),
+  updateThreadChatTerminalMetadataIfTerminal: vi.fn(),
 }));
 
 vi.mock("@terragon/sandbox", () => ({
@@ -412,6 +416,16 @@ describe("daemon-event route", () => {
       updatedAt: new Date(),
     } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
     vi.mocked(updateAgentRunContext).mockResolvedValue(null);
+    vi.mocked(getThreadChat).mockResolvedValue({
+      id: "chat-1",
+      threadId: "thread-1",
+      userId: "user-1",
+      status: "working",
+      messages: [],
+      queuedMessages: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
     vi.mocked(createDurableDispatchIntent).mockResolvedValue(
       "durable-dispatch-intent-1",
     );
@@ -421,6 +435,14 @@ describe("daemon-event route", () => {
     vi.mocked(handleDaemonEvent).mockResolvedValue({
       success: true,
       threadChatMessageSeq: null,
+    });
+    vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
+      didUpdateStatus: true,
+      updatedStatus: "working-done",
+      chatSequence: undefined,
+    });
+    vi.mocked(updateThreadChatTerminalMetadataIfTerminal).mockResolvedValue({
+      didUpdate: true,
     });
     vi.mocked(maybeProcessFollowUpQueue).mockResolvedValue({
       processed: false,
@@ -2390,6 +2412,124 @@ describe("daemon-event route", () => {
 
       expect(response.status).toBe(200);
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          userId: "user-1",
+          eventType: "assistant.message_done",
+          requireStatusTransitionForChatUpdates: true,
+          skipBroadcast: true,
+        }),
+      );
+      expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          userId: "user-1",
+          updates: {
+            errorMessage: null,
+            errorMessageInfo: null,
+          },
+        }),
+      );
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          userId: "user-1",
+          updates: expect.objectContaining({
+            status: "completed",
+          }),
+        }),
+      );
+    });
+
+    it("fails closed when terminal status CAS loses and thread_chat is still non-terminal", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
+        didUpdateStatus: false,
+        updatedStatus: "working-done",
+        chatSequence: undefined,
+      });
+      vi.mocked(getThreadChat).mockResolvedValue({
+        id: "chat-1",
+        threadId: "thread-1",
+        userId: "user-1",
+        status: "working",
+        messages: [],
+        queuedMessages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-cas-lose",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(data.error).toBe("daemon_event_terminal_thread_chat_cas_failed");
+      expect(updateAgentRunContext).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("treats terminal status CAS races as success when thread_chat is already terminal", async () => {
+      vi.mocked(getActiveWorkflowForThread).mockResolvedValue(
+        PURE_V2_WORKFLOW as Awaited<
+          ReturnType<typeof getActiveWorkflowForThread>
+        >,
+      );
+      vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
+        didUpdateStatus: false,
+        updatedStatus: "working-done",
+        chatSequence: undefined,
+      });
+      vi.mocked(getThreadChat).mockResolvedValue({
+        id: "chat-1",
+        threadId: "thread-1",
+        userId: "user-1",
+        status: "working-done",
+        messages: [],
+        queuedMessages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-cas-win",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(updateAgentRunContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
     });
 
     it("persists canonical events before legacy handling", async () => {

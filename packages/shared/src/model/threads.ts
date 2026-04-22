@@ -1162,6 +1162,46 @@ export async function updateThreadChatStatusAtomic({
   return { didUpdateStatus };
 }
 
+/**
+ * Update terminal metadata fields only when the thread chat is already in a
+ * terminal status. This prevents freshness signals (updatedAt, patches) from
+ * being applied while the status surface is still non-terminal.
+ */
+export async function updateThreadChatTerminalMetadataIfTerminal({
+  db,
+  userId,
+  threadId,
+  threadChatId,
+  updates,
+}: {
+  db: DB;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  updates: Pick<
+    Omit<ThreadChatInsert, "threadChatId" | "status">,
+    "errorMessage" | "errorMessageInfo"
+  >;
+}): Promise<{ didUpdate: boolean }> {
+  const updateResult = await db
+    .update(schema.threadChat)
+    .set(updates)
+    .where(
+      and(
+        eq(schema.threadChat.id, threadChatId),
+        eq(schema.threadChat.threadId, threadId),
+        eq(schema.threadChat.userId, userId),
+        inArray(schema.threadChat.status, [
+          "working-done",
+          "working-error",
+          "complete",
+        ]),
+      ),
+    )
+    .returning({ id: schema.threadChat.id });
+  return { didUpdate: updateResult.length > 0 };
+}
+
 export async function deleteThreadById({
   db,
   threadId,

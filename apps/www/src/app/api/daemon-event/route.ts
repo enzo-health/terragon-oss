@@ -38,7 +38,9 @@ import {
 } from "@terragon/shared/model/agent-event-log";
 import {
   getThreadMinimal,
+  getThreadChat,
   touchThreadChatUpdatedAt,
+  updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { waitUntil } from "@vercel/functions";
@@ -67,6 +69,12 @@ import {
 } from "@/server-lib/ag-ui-publisher";
 import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { env } from "@terragon/env/apps-www";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { hashFailureMessage } from "@terragon/shared/delivery-loop/domain/failure-signature";
+import {
+  DELIVERY_LOOP_FAILURE_ACTION_TABLE,
+  type DeliveryLoopFailureCategory,
+} from "@terragon/shared/delivery-loop/domain/failure";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -548,6 +556,86 @@ function deriveDaemonTerminalErrorInfo(
   return {
     errorMessage: null,
     errorCategory: "unknown",
+  };
+}
+
+function isTerminalOnlyDaemonMessages(
+  messages: DaemonEventAPIBody["messages"],
+): boolean {
+  if (messages.length === 0) return false;
+  for (const message of messages) {
+    if (
+      message.type !== "result" &&
+      message.type !== "custom-error" &&
+      message.type !== "custom-stop"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function deriveTerminalFailureSource(
+  messages: DaemonEventAPIBody["messages"],
+): "custom-error" | "result" | "custom-stop" | "unknown" | null {
+  for (const message of messages) {
+    if (message.type === "custom-error") return "custom-error";
+    if (message.type === "custom-stop") return "custom-stop";
+    if (message.type === "result" && message.is_error) return "result";
+  }
+  return null;
+}
+
+function isFailureRetryable(
+  failureCategory: DeliveryLoopFailureCategory,
+): boolean {
+  const action =
+    DELIVERY_LOOP_FAILURE_ACTION_TABLE[
+      failureCategory as keyof typeof DELIVERY_LOOP_FAILURE_ACTION_TABLE
+    ];
+  return action !== "blocked";
+}
+
+function buildRunContextFailureUpdates(params: {
+  status: "processing" | "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
+}):
+  | {
+      failureCategory: DeliveryLoopFailureCategory | null;
+      failureSource:
+        | "custom-error"
+        | "result"
+        | "custom-stop"
+        | "unknown"
+        | null;
+      failureRetryable: boolean | null;
+      failureSignatureHash: number | null;
+      failureTerminalReason: string | null;
+    }
+  | {} {
+  if (params.status !== "failed") {
+    return {
+      failureCategory: null,
+      failureSource: null,
+      failureRetryable: null,
+      failureSignatureHash: null,
+      failureTerminalReason: null,
+    };
+  }
+  const failureCategory = mapDaemonTerminalCategoryToFailureCategory(
+    params.errorCategory,
+    params.errorMessage,
+  );
+  const signatureSource = params.errorMessage;
+  return {
+    failureCategory,
+    failureSource: params.failureSource,
+    failureRetryable: isFailureRetryable(failureCategory),
+    failureSignatureHash:
+      signatureSource != null ? hashFailureMessage(signatureSource) : null,
+    failureTerminalReason: params.errorMessage,
   };
 }
 
@@ -1180,6 +1268,12 @@ export async function POST(request: Request) {
 
   const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
   const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
+  const terminalFailureSource = deriveTerminalFailureSource(messages);
+  const fenceTerminalOnlyTransition =
+    daemonRunStatusFromMessages !== "processing" &&
+    isTerminalOnlyDaemonMessages(messages) &&
+    (!deltas || deltas.length === 0) &&
+    (!canonicalEvents || canonicalEvents.length === 0);
 
   const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
   const effectiveLoopId =
@@ -1313,6 +1407,7 @@ export async function POST(request: Request) {
       runId: authoritativeRunId,
       runContext,
       workflowId: effectiveLoopId,
+      skipThreadChatPersistence: fenceTerminalOnlyTransition,
     });
   } catch (error) {
     console.error(
@@ -1612,11 +1707,29 @@ export async function POST(request: Request) {
         });
       }
     } catch (v3Err) {
-      console.error("[daemon-event] v3 kernel bridge failed, continuing", {
-        loopId: effectiveLoopId,
-        runId: envelopeV2?.runId,
-        error: v3Err,
-      });
+      if (fenceTerminalOnlyTransition) {
+        console.error("[daemon-event] v3 kernel bridge failed (fenced)", {
+          loopId: effectiveLoopId,
+          runId: envelopeV2?.runId,
+          error: v3Err,
+        });
+        return Response.json(
+          {
+            success: false,
+            error: "daemon_event_terminal_v3_bridge_failed",
+            loopId: effectiveLoopId,
+            runId: envelopeV2?.runId ?? null,
+            detail: v3Err instanceof Error ? v3Err.message : String(v3Err),
+          },
+          { status: 503 },
+        );
+      } else {
+        console.error("[daemon-event] v3 kernel bridge failed, continuing", {
+          loopId: effectiveLoopId,
+          runId: envelopeV2?.runId,
+          error: v3Err,
+        });
+      }
     }
 
     // NOTE: kernel advance is configured for eager effect drain in this path.
@@ -1630,42 +1743,172 @@ export async function POST(request: Request) {
   let didUpdateTerminalDispatchStatus = false;
   {
     const terminalOps: Array<Promise<unknown>> = [];
-    if (runContext && resolvedStatus !== "processing") {
-      terminalOps.push(updateRunContextIfPresent({ status: resolvedStatus }));
-    }
-    if (
-      effectiveLoopId &&
-      envelopeV2 &&
-      daemonRunStatusFromMessages !== "processing"
-    ) {
-      terminalOps.push(
-        persistDaemonTerminalDispatchStatus({
-          loopId: effectiveLoopId!,
+
+    if (fenceTerminalOnlyTransition) {
+      const eventType =
+        resolvedStatus === "stopped"
+          ? ("assistant.message_stop" as const)
+          : resolvedStatus === "failed"
+            ? ("assistant.message_error" as const)
+            : ("assistant.message_done" as const);
+
+      const transitionResult = await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType,
+        // No chatUpdates here: this path is terminal-only and must not append
+        // messages. Terminal metadata is written in a separate, status-gated
+        // update below.
+        requireStatusTransitionForChatUpdates: true,
+        skipBroadcast: true,
+      });
+
+      if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
+        const latest = await getThreadChat({
+          db,
+          userId,
+          threadId,
           threadChatId,
-          runId: envelopeV2.runId,
-          daemonRunStatus: daemonRunStatusFromMessages,
-          daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-          daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-        }).then((result) => {
-          didUpdateTerminalDispatchStatus = true;
-          return result;
-        }),
-      );
-    }
-    if (terminalOps.length > 0) {
-      const results = await Promise.allSettled(terminalOps);
-      for (const r of results) {
-        if (r.status === "rejected") {
-          // Non-blocking: handleDaemonEvent already committed thread
-          // side effects (messages, tool results). Returning 500 here
-          // would cause the daemon to retry and duplicate those effects.
-          // Terminal run-status staleness is acceptable — the cron sweep
-          // and ack timeout will eventually reconcile.
-          console.warn("[daemon-event] terminal state persistence failed", {
-            runId: runContext?.runId ?? envelopeV2?.runId,
-            enrolled: !!effectiveLoopId,
-            error: r.reason,
-          });
+        });
+        if (!latest || latest.status !== transitionResult.updatedStatus) {
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_terminal_thread_chat_cas_failed",
+              expectedStatus: transitionResult.updatedStatus,
+              actualStatus: latest?.status ?? null,
+            },
+            { status: 409 },
+          );
+        }
+      }
+
+      if (resolvedStatus === "failed") {
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: "agent-generic-error",
+            errorMessageInfo: daemonTerminalErrorInfo.errorMessage ?? "",
+          },
+        });
+      } else {
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: null,
+            errorMessageInfo: null,
+          },
+        });
+      }
+
+      if (runContext && resolvedStatus !== "processing") {
+        terminalOps.push(
+          updateRunContextIfPresent({
+            status: resolvedStatus,
+            ...buildRunContextFailureUpdates({
+              status: resolvedStatus,
+              errorMessage: daemonTerminalErrorInfo.errorMessage,
+              errorCategory: daemonTerminalErrorInfo.errorCategory,
+              failureSource: terminalFailureSource,
+            }),
+          }),
+        );
+      }
+      if (effectiveLoopId && envelopeV2) {
+        terminalOps.push(
+          persistDaemonTerminalDispatchStatus({
+            loopId: effectiveLoopId!,
+            threadChatId,
+            runId: envelopeV2.runId,
+            daemonRunStatus: daemonRunStatusFromMessages,
+            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+          }).then((result) => {
+            didUpdateTerminalDispatchStatus = true;
+            return result;
+          }),
+        );
+      }
+
+      if (terminalOps.length > 0) {
+        try {
+          await Promise.all(terminalOps);
+        } catch (error) {
+          console.warn(
+            "[daemon-event] fenced terminal state persistence failed",
+            {
+              threadId,
+              threadChatId,
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error,
+            },
+          );
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_terminal_persistence_failed",
+              runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+              detail: error instanceof Error ? error.message : String(error),
+            },
+            { status: 503 },
+          );
+        }
+      }
+    } else {
+      if (runContext && resolvedStatus !== "processing") {
+        terminalOps.push(
+          updateRunContextIfPresent({
+            status: resolvedStatus,
+            ...buildRunContextFailureUpdates({
+              status: resolvedStatus,
+              errorMessage: daemonTerminalErrorInfo.errorMessage,
+              errorCategory: daemonTerminalErrorInfo.errorCategory,
+              failureSource: terminalFailureSource,
+            }),
+          }),
+        );
+      }
+      if (
+        effectiveLoopId &&
+        envelopeV2 &&
+        daemonRunStatusFromMessages !== "processing"
+      ) {
+        terminalOps.push(
+          persistDaemonTerminalDispatchStatus({
+            loopId: effectiveLoopId!,
+            threadChatId,
+            runId: envelopeV2.runId,
+            daemonRunStatus: daemonRunStatusFromMessages,
+            daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
+            daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
+          }).then((result) => {
+            didUpdateTerminalDispatchStatus = true;
+            return result;
+          }),
+        );
+      }
+      if (terminalOps.length > 0) {
+        const results = await Promise.allSettled(terminalOps);
+        for (const r of results) {
+          if (r.status === "rejected") {
+            // Non-blocking: handleDaemonEvent already committed thread
+            // side effects (messages, tool results). Returning 500 here
+            // would cause the daemon to retry and duplicate those effects.
+            // Terminal run-status staleness is acceptable — the cron sweep
+            // and ack timeout will eventually reconcile.
+            console.warn("[daemon-event] terminal state persistence failed", {
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              enrolled: !!effectiveLoopId,
+              error: r.reason,
+            });
+          }
         }
       }
     }
