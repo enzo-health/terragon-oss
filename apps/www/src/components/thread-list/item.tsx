@@ -8,7 +8,7 @@ import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ThreadStatusIndicator } from "../thread-status";
 import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { Button } from "../ui/button";
-import { WorkflowIcon, EllipsisVerticalIcon } from "lucide-react";
+import { WorkflowIcon, EllipsisVerticalIcon, Loader2 } from "lucide-react";
 import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
 import { DraftTaskDialog } from "../chat/draft-task-dialog";
@@ -151,6 +151,21 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
   );
 });
 
+/**
+ * Animated loading indicator for optimistic threads
+ */
+const CreatingIndicator = memo(function CreatingIndicator() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-muted-foreground/70">
+      <Loader2 className="size-3 animate-spin" />
+      <span className="relative">
+        Creating
+        <span className="absolute -right-3 animate-pulse">...</span>
+      </span>
+    </span>
+  );
+});
+
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
   pathname,
@@ -175,7 +190,11 @@ export const ThreadListItem = memo(function ThreadListItem({
   return (
     <>
       <div
-        className="relative group animate-in fade-in slide-in-from-top-1 duration-200"
+        className={cn(
+          "relative group",
+          "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
+          isOptimisticThread && "animate-pulse-subtle",
+        )}
         style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
       >
         <Link
@@ -184,12 +203,18 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-[8px] transition-[background-color,border-color] duration-150 px-2.5 py-[7px] relative pr-9 border border-transparent",
+            "block rounded-[8px] transition-all duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
             pathname === `/task/${thread.id}`
               ? "bg-primary/8 border-primary/15"
-              : "hover:bg-accent/50",
+              : "hover:bg-accent/50 border-transparent",
             isMenuOpen && "bg-accent",
-            isOptimisticThread && "opacity-80",
+            isOptimisticThread && [
+              "opacity-85 bg-gradient-to-r from-muted/30 via-muted/50 to-muted/30",
+              "border-primary/10 relative overflow-hidden",
+              "before:absolute before:inset-0 before:-translate-x-full",
+              "before:animate-shimmer before:bg-gradient-to-r",
+              "before:from-transparent before:via-white/10 before:to-transparent",
+            ],
             className,
           )}
           onMouseEnter={() => {
@@ -233,7 +258,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
                 >
-                  {isOptimisticThread ? "Creating..." : relativeTime}
+                  {isOptimisticThread ? <CreatingIndicator /> : relativeTime}
                 </span>
                 {thread.githubRepoFullName && !hideRepository && (
                   <>

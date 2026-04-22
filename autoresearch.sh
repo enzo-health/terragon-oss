@@ -8,8 +8,7 @@ echo "=== Task Creation UI Quality Assessment ==="
 
 # Check 1: TypeScript compilation
 echo "Checking TypeScript..."
-cd apps/www
-if pnpm tsc --noEmit 2>&1 | head -20; then
+if (cd apps/www && pnpm tsc --noEmit 2>&1 | head -20); then
     echo "TSC_CHECK=pass"
 else
     echo "TSC_CHECK=fail"
@@ -17,22 +16,22 @@ fi
 
 # Check 2: Animation CSS classes exist and are properly used
 echo "Checking animation implementations..."
-OPTIMISTIC_ANIMATION=$(grep -r "optimistic" src/components/thread-list/item.tsx | grep -c "animate\|motion\|transition" || echo "0")
-echo "OPTIMISTIC_ANIMATION_LINES=$OPTIMISTIC_ANIMATION"
+OPTIMISTIC_ANIMATION_LINES=$(grep -r "optimistic" apps/www/src/components/thread-list/item.tsx 2>/dev/null | grep -c "animate\|motion\|transition" | tr -d ' ' || echo "0")
+echo "OPTIMISTIC_ANIMATION_LINES=$OPTIMISTIC_ANIMATION_LINES"
 
 # Check 3: Prefers reduced motion support
 echo "Checking accessibility..."
-REDUCED_MOTION=$(grep -r "prefers-reduced-motion" src/ | wc -l)
+REDUCED_MOTION=$(grep -r "prefers-reduced-motion" apps/www/src/ 2>/dev/null | wc -l | tr -d ' ')
 echo "REDUCED_MOTION_SUPPORT=$REDUCED_MOTION"
 
 # Check 4: GPU-accelerated properties only
 echo "Checking GPU acceleration..."
-LAYOUT_ANIMATIONS=$(grep -r "transition.*width\|transition.*height\|animation.*width\|animation.*height" src/ | grep -v "node_modules" | wc -l || echo "0")
+LAYOUT_ANIMATIONS=$(grep -r "transition.*width\|transition.*height\|animation.*width\|animation.*height" apps/www/src/ 2>/dev/null | grep -v "node_modules" | wc -l | tr -d ' ' || echo "0")
 echo "LAYOUT_ANIMATIONS=$LAYOUT_ANIMATIONS"
 
 # Check 5: Thread list item enhancements
 echo "Checking thread list enhancements..."
-THREAD_ITEM_ANIMATIONS=$(grep -r "animate-in\|fade-in\|slide-in" src/components/thread-list/item.tsx | wc -l)
+THREAD_ITEM_ANIMATIONS=$(grep -r "animate-in\|fade-in\|slide-in" apps/www/src/components/thread-list/item.tsx 2>/dev/null | wc -l | tr -d ' ')
 echo "THREAD_ITEM_ANIMATIONS=$THREAD_ITEM_ANIMATIONS"
 
 # Calculate overall quality score (0-100)

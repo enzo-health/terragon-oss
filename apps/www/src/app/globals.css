@@ -649,3 +649,46 @@
     background-position: -200% 0%;
   }
 }
+
+/* Optimistic thread shimmer animation */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Subtle pulse for optimistic items */
+@keyframes pulse-subtle {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer,
+  .animate-pulse-subtle,
+  .animate-in {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .animate-spin {
+    animation: none !important;
+  }
+}
