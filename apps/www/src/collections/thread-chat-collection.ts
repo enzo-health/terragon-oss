@@ -23,10 +23,42 @@ function buildCollection() {
   );
 }
 
-let _collection: ReturnType<typeof buildCollection> | null = null;
+type ChatCollection = ReturnType<typeof buildCollection>;
+type PendingCollectionWrite = (collection: ChatCollection) => void;
+
+let _collection: ChatCollection | null = null;
+let _pendingWrites: PendingCollectionWrite[] = [];
+let _flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingWrites(collection: ChatCollection) {
+  if (collection.status !== "ready" || _pendingWrites.length === 0) {
+    return;
+  }
+  const pendingWrites = _pendingWrites;
+  _pendingWrites = [];
+  pendingWrites.forEach((write) => write(collection));
+}
+
+function schedulePendingWriteFlush() {
+  if (_flushTimer) {
+    return;
+  }
+  _flushTimer = setTimeout(() => {
+    _flushTimer = null;
+    const collection = getCollection();
+    if (collection.status === "ready") {
+      flushPendingWrites(collection);
+      return;
+    }
+    if (_pendingWrites.length > 0) {
+      schedulePendingWriteFlush();
+    }
+  }, 16);
+}
 
 function getCollection() {
   if (!_collection) _collection = buildCollection();
+  flushPendingWrites(_collection);
   return _collection;
 }
 
@@ -37,7 +69,7 @@ export function applyChatPatchToCollection(patch: BroadcastThreadPatch): {
 } {
   if (!patch.threadChatId) return { shouldInvalidate: false };
   const c = getCollection();
-  if (c.status !== "ready") return { shouldInvalidate: false };
+  if (c.status !== "ready") return { shouldInvalidate: true };
   const key = chatKey(patch.threadId, patch.threadChatId);
   const existing = c.state.get(key) as ThreadPageChat | undefined;
   if (!existing) return { shouldInvalidate: false };
@@ -50,14 +82,22 @@ export function applyChatPatchToCollection(patch: BroadcastThreadPatch): {
 }
 
 export function seedChat(chat: ThreadPageChat): void {
-  const c = getCollection();
-  if (c.status !== "ready") return;
   const key = chatKey(chat.threadId, chat.id);
-  if (c.state.has(key)) {
-    c.update(key, () => chat);
-  } else {
-    c.insert(chat);
+  const write: PendingCollectionWrite = (c) => {
+    if (c.state.has(key)) {
+      c.update(key, () => chat);
+    } else {
+      c.insert(chat);
+    }
+  };
+
+  const c = getCollection();
+  if (c.status !== "ready") {
+    _pendingWrites.push(write);
+    schedulePendingWriteFlush();
+    return;
   }
+  write(c);
 }
 
 /**

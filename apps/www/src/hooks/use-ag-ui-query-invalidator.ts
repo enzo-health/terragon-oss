@@ -1,12 +1,43 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAgUiAgent } from "@/components/chat/ag-ui-agent-context";
 import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
 import { useAgUiRunEvents } from "@/hooks/use-ag-ui-run-events";
 import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";
 import { threadQueryKeys } from "@/queries/thread-queries";
+import type { DeliveryLoopState, ThreadStatus } from "@terragon/shared";
+
+const HEARTBEAT_MS = 15_000;
+
+const LIVE_THREAD_STATUSES = new Set<ThreadStatus>([
+  // Legacy/deprecated: keep polling for safety while these are still in play.
+  "queued-blocked",
+  "working-stopped",
+  // Queued / booting / active.
+  "queued",
+  "queued-tasks-concurrency",
+  "queued-sandbox-creation-rate-limit",
+  "queued-agent-rate-limit",
+  "booting",
+  "working",
+  "stopping",
+  // Transitional: agent messages are done but the thread is still wrapping up.
+  "working-error",
+  "working-done",
+  "checkpointing",
+]);
+
+const LIVE_DELIVERY_LOOP_STATES = new Set<DeliveryLoopState>([
+  "planning",
+  "implementing",
+  "review_gate",
+  "ci_gate",
+  "awaiting_pr_link",
+  "babysitting",
+  "blocked",
+]);
 
 /**
  * Invalidates the thread-shell, thread-chat, and delivery-loop-status
@@ -38,6 +69,11 @@ export function useAgUiQueryInvalidator(args: {
     void queryClient.invalidateQueries({
       queryKey: deliveryLoopStatusQueryKeys.detail(threadId),
     });
+    // Keep sidebar list queries converged with the open task after missed
+    // stream events (broadcast patches are best-effort, not authoritative).
+    void queryClient.invalidateQueries({
+      queryKey: threadQueryKeys.list(null),
+    });
     if (threadChatId) {
       void queryClient.invalidateQueries({
         queryKey: threadQueryKeys.chat(threadId, threadChatId),
@@ -46,10 +82,45 @@ export function useAgUiQueryInvalidator(args: {
   }, [queryClient, threadId, threadChatId]);
 
   const statusFilter = useCallback(
-    (name: string) => name === "thread.status_changed",
+    (name: string) =>
+      name === "thread.status_changed" ||
+      name === "delivery.workflow_head_changed",
     [],
   );
 
   useAgUiCustomEvents(agent, statusFilter, invalidate);
   useAgUiRunEvents(agent, invalidate, invalidate);
+
+  useEffect(() => {
+    if (!agent) return;
+
+    const interval = setInterval(() => {
+      const chatStatus = threadChatId
+        ? queryClient.getQueryData<{ status?: ThreadStatus | null }>(
+            threadQueryKeys.chat(threadId, threadChatId),
+          )?.status
+        : undefined;
+
+      const deliveryState = queryClient.getQueryData<{
+        state?: DeliveryLoopState | null;
+      }>(deliveryLoopStatusQueryKeys.detail(threadId))?.state;
+
+      const hasFreshEvidence =
+        chatStatus !== undefined || deliveryState !== undefined;
+
+      // Heartbeat only while the task is plausibly live OR while we're still
+      // waiting for any status surface to hydrate (initial load).
+      const shouldHeartbeat =
+        !hasFreshEvidence ||
+        (chatStatus != null && LIVE_THREAD_STATUSES.has(chatStatus)) ||
+        (deliveryState != null && LIVE_DELIVERY_LOOP_STATES.has(deliveryState));
+
+      if (!shouldHeartbeat) return;
+      invalidate();
+    }, HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [agent, invalidate, queryClient, threadChatId, threadId]);
 }

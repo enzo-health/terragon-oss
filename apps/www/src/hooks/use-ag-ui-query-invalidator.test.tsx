@@ -158,13 +158,16 @@ describe("useAgUiQueryInvalidator", () => {
       fake.emit(makeCustomEvent("thread.status_changed"));
     });
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
     const calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.shell("thread-1"),
     });
     expect(calls).toContainEqual({
       queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+    });
+    expect(calls).toContainEqual({
+      queryKey: threadQueryKeys.list(null),
     });
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
@@ -187,13 +190,16 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeRunFinished());
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
     let calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.shell("thread-1"),
     });
     expect(calls).toContainEqual({
       queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+    });
+    expect(calls).toContainEqual({
+      queryKey: threadQueryKeys.list(null),
     });
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
@@ -203,13 +209,16 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeRunError());
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
     calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.shell("thread-1"),
     });
     expect(calls).toContainEqual({
       queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+    });
+    expect(calls).toContainEqual({
+      queryKey: threadQueryKeys.list(null),
     });
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
@@ -226,13 +235,16 @@ describe("useAgUiQueryInvalidator", () => {
       fake.emit(makeRunFinished());
     });
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
     const calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
       queryKey: threadQueryKeys.shell("thread-1"),
     });
     expect(calls).toContainEqual({
       queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
+    });
+    expect(calls).toContainEqual({
+      queryKey: threadQueryKeys.list(null),
     });
     expect(calls).not.toContainEqual(
       expect.objectContaining({
@@ -241,5 +253,49 @@ describe("useAgUiQueryInvalidator", () => {
     );
 
     unmount();
+  });
+
+  it("heartbeats invalidations while the thread is believed live", async () => {
+    vi.useFakeTimers();
+    const fake = createFakeAgent();
+    const { queryClient, unmount } = renderWith(fake, "thread-1", "chat-1");
+
+    try {
+      invalidateSpy!.mockClear();
+      queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
+        status: "working",
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalled();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not heartbeat invalidations once the thread is terminal", async () => {
+    vi.useFakeTimers();
+    const fake = createFakeAgent();
+    const { queryClient, unmount } = renderWith(fake, "thread-1", "chat-1");
+
+    try {
+      invalidateSpy!.mockClear();
+      queryClient.setQueryData(threadQueryKeys.chat("thread-1", "chat-1"), {
+        status: "complete",
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 });
