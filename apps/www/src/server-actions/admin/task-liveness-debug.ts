@@ -36,6 +36,31 @@ import { isAgentWorking as isThreadStatusWorking } from "@/agent/thread-status";
 
 type ParsedStreamEvent = BaseEvent & { runId?: string };
 
+const SAFE_THREAD_ERROR_CATEGORIES = [
+  "request-timeout",
+  "no-user-message",
+  "unknown-error",
+  "sandbox-not-found",
+  "sandbox-creation-failed",
+  "sandbox-resume-failed",
+  "missing-gemini-credentials",
+  "missing-amp-credentials",
+  "chatgpt-sub-required",
+  "invalid-codex-credentials",
+  "invalid-claude-credentials",
+  "agent-not-responding",
+  "agent-generic-error",
+  "git-checkpoint-diff-failed",
+  "git-checkpoint-push-failed",
+  "setup-script-failed",
+  "prompt-too-long",
+  "queue-limit-exceeded",
+] as const;
+
+const safeThreadErrorCategorySet = new Set<string>(
+  SAFE_THREAD_ERROR_CATEGORIES,
+);
+
 function parseRedisStreamTail(
   raw: unknown,
 ): Array<{ id: string; event: BaseEvent }> {
@@ -100,6 +125,17 @@ function parseRedisStreamEntryMs(id: string): number | null {
 
 function isTerminalRunEventType(type: BaseEvent["type"]): boolean {
   return type === EventType.RUN_FINISHED || type === EventType.RUN_ERROR;
+}
+
+function toSafeThreadErrorCategory(
+  rawErrorMessage: string | null | undefined,
+): (typeof SAFE_THREAD_ERROR_CATEGORIES)[number] | "other" | null {
+  if (typeof rawErrorMessage !== "string" || rawErrorMessage.length === 0) {
+    return null;
+  }
+  return safeThreadErrorCategorySet.has(rawErrorMessage)
+    ? (rawErrorMessage as (typeof SAFE_THREAD_ERROR_CATEGORIES)[number])
+    : "other";
 }
 
 function normalizeWorkflowHeadState(
@@ -183,8 +219,9 @@ const taskLivenessDebugPayloadSchema = z.object({
       messageSeq: z.number().int().nullable(),
       scheduleAtIso: z.string().datetime().nullable(),
       reattemptQueueAtIso: z.string().datetime().nullable(),
-      errorMessage: z.string().nullable(),
-      errorMessageInfo: z.string().nullable(),
+      errorCategory: z
+        .enum([...SAFE_THREAD_ERROR_CATEGORIES, "other"])
+        .nullable(),
     }),
     workflowHeadV3: z
       .object({
@@ -233,6 +270,8 @@ const taskLivenessDebugPayloadSchema = z.object({
     }),
     redisAgUiStream: z.object({
       streamKey: z.string().min(1),
+      availability: z.enum(["available", "unavailable"]),
+      unavailableReason: z.literal("xrevrange_failed").nullable(),
       sampledTailSize: z.number().int(),
       latestEntryId: z.string().nullable(),
       latestEntryAtIso: z.string().datetime().nullable(),
@@ -426,8 +465,19 @@ export const getTaskLivenessDebugPayload = adminOnly(
     });
 
     const streamKey = agUiStreamKey(threadChatId);
-    const rawTail = await redis.xrevrange(streamKey, "+", "-", 32);
-    const tail = parseRedisStreamTail(rawTail);
+    let redisUnavailableReason: "xrevrange_failed" | null = null;
+    let tail: Array<{ id: string; event: BaseEvent }> = [];
+    try {
+      const rawTail = await redis.xrevrange(streamKey, "+", "-", 32);
+      tail = parseRedisStreamTail(rawTail);
+    } catch (error) {
+      redisUnavailableReason = "xrevrange_failed";
+      console.warn("[task-liveness-debug] redis stream tail unavailable", {
+        threadId,
+        threadChatId,
+        error,
+      });
+    }
 
     const sortedTail = tail
       .map((entry) => ({
@@ -490,6 +540,9 @@ export const getTaskLivenessDebugPayload = adminOnly(
           : "redisTerminalMarker=missing",
       );
     }
+    if (redisUnavailableReason !== null) {
+      summaryParts.push("redisSurface=unavailable");
+    }
 
     const payload: TaskLivenessDebugPayload = {
       threadId,
@@ -513,8 +566,7 @@ export const getTaskLivenessDebugPayload = adminOnly(
           scheduleAtIso: threadChat.scheduleAt?.toISOString() ?? null,
           reattemptQueueAtIso:
             threadChat.reattemptQueueAt?.toISOString() ?? null,
-          errorMessage: threadChat.errorMessage ?? null,
-          errorMessageInfo: threadChat.errorMessageInfo ?? null,
+          errorCategory: toSafeThreadErrorCategory(threadChat.errorMessage),
         },
         workflowHeadV3: toWorkflowHeadSurface(headRow ?? null),
         agentRunContext: {
@@ -536,6 +588,9 @@ export const getTaskLivenessDebugPayload = adminOnly(
         },
         redisAgUiStream: {
           streamKey,
+          availability:
+            redisUnavailableReason === null ? "available" : "unavailable",
+          unavailableReason: redisUnavailableReason,
           sampledTailSize: sortedTail.length,
           latestEntryId: latestStreamEntry?.id ?? null,
           latestEntryAtIso,

@@ -159,7 +159,10 @@ describe("getTaskLivenessDebugPayload", () => {
     expect(payload.surfaces.agentEventLog.latestWellFormedRunId).toBe(
       "run-123",
     );
+    expect(payload.surfaces.threadChat).not.toHaveProperty("errorMessageInfo");
     expect(payload.surfaces.redisAgUiStream.targetRunId).toBe("run-123");
+    expect(payload.surfaces.redisAgUiStream.availability).toBe("available");
+    expect(payload.surfaces.redisAgUiStream.unavailableReason).toBeNull();
     expect(payload.surfaces.redisAgUiStream.hasTerminalMarkerForTargetRun).toBe(
       true,
     );
@@ -225,10 +228,123 @@ describe("getTaskLivenessDebugPayload", () => {
       "run-replay",
     );
     expect(payload.surfaces.redisAgUiStream.targetRunId).toBe("run-replay");
+    expect(payload.surfaces.redisAgUiStream.availability).toBe("available");
+    expect(payload.surfaces.redisAgUiStream.unavailableReason).toBeNull();
     expect(payload.surfaces.redisAgUiStream.hasTerminalMarkerForTargetRun).toBe(
       false,
     );
     expect(payload.summary).toContain("targetRunId=run-replay");
     expect(payload.summary).toContain("redisTerminalMarker=missing");
+  });
+
+  it("fails soft when redis stream tail lookup throws", async () => {
+    const { session: adminSession } = await createAdminUser();
+    const { user: owner } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: owner.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    await db.insert(schema.agentEventLog).values({
+      eventId: "evt-run-started-redis-fail",
+      runId: "run-redis-fail",
+      threadId,
+      threadChatId,
+      seq: 1,
+      eventType: EventType.RUN_STARTED,
+      category: EventType.RUN_STARTED,
+      payloadJson: {
+        type: EventType.RUN_STARTED,
+        runId: "run-redis-fail",
+      },
+      idempotencyKey: "run-redis-fail:evt-run-started-redis-fail",
+      timestamp: new Date("2026-04-22T00:03:00.000Z"),
+      threadChatMessageSeq: 1,
+    });
+
+    redisMocks.xrevrange.mockRejectedValue(new Error("transient redis outage"));
+    await mockLoggedInUser(adminSession);
+
+    await expect(getTaskLivenessDebugPayload({ threadId })).resolves.toEqual(
+      expect.objectContaining({
+        threadId,
+        threadChatId,
+        surfaces: expect.objectContaining({
+          redisAgUiStream: expect.objectContaining({
+            availability: "unavailable",
+            unavailableReason: "xrevrange_failed",
+            sampledTailSize: 0,
+            latestEntryId: null,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("ignores malformed redis stream entries and keeps well-formed markers", async () => {
+    const { session: adminSession } = await createAdminUser();
+    const { user: owner } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: owner.id,
+      overrides: {
+        githubRepoFullName: "owner/repo",
+      },
+    });
+
+    await db.insert(schema.agentEventLog).values({
+      eventId: "evt-run-started-malformed",
+      runId: "run-malformed",
+      threadId,
+      threadChatId,
+      seq: 1,
+      eventType: EventType.RUN_STARTED,
+      category: EventType.RUN_STARTED,
+      payloadJson: {
+        type: EventType.RUN_STARTED,
+        runId: "run-malformed",
+      },
+      idempotencyKey: "run-malformed:evt-run-started-malformed",
+      timestamp: new Date("2026-04-22T00:03:00.000Z"),
+      threadChatMessageSeq: 1,
+    });
+
+    redisMocks.xrevrange.mockResolvedValue({
+      "1776816180000-0": {
+        event: "{not-json",
+      },
+      "1776816181000-0": {
+        event: JSON.stringify({ runId: "run-malformed" }),
+      },
+      "1776816182000-0": {
+        notEvent: "missing-event-field",
+      },
+      "1776816183000-0": [
+        "event",
+        JSON.stringify({
+          type: EventType.RUN_FINISHED,
+          runId: "run-malformed",
+        }),
+      ],
+    });
+
+    await mockLoggedInUser(adminSession);
+
+    const payload = await getTaskLivenessDebugPayload({ threadId });
+
+    expect(payload.surfaces.redisAgUiStream.availability).toBe("available");
+    expect(payload.surfaces.redisAgUiStream.sampledTailSize).toBe(1);
+    expect(payload.surfaces.redisAgUiStream.hasTerminalMarkerForTargetRun).toBe(
+      true,
+    );
+    expect(payload.surfaces.redisAgUiStream.latestTerminalMarker).toEqual(
+      expect.objectContaining({
+        runId: "run-malformed",
+        type: EventType.RUN_FINISHED,
+      }),
+    );
   });
 });
