@@ -64,6 +64,20 @@ export type OperationalRunStartedEvent = z.infer<
   typeof OperationalRunStartedEventSchema
 >;
 
+export const OperationalRunTerminalEventSchema = BaseEventEnvelopeSchema.extend(
+  {
+    category: z.literal("operational"),
+    type: z.literal("run-terminal"),
+    status: z.enum(["completed", "failed", "stopped"]),
+    errorMessage: z.string().nullable().optional(),
+    errorCode: z.string().min(1).nullable().optional(),
+    headShaAtCompletion: z.string().min(1).nullable().optional(),
+  },
+);
+export type OperationalRunTerminalEvent = z.infer<
+  typeof OperationalRunTerminalEventSchema
+>;
+
 export const AssistantMessageEventSchema = BaseEventEnvelopeSchema.extend({
   category: z.literal("transcript"),
   type: z.literal("assistant-message"),
@@ -96,6 +110,7 @@ export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
 
 export const CanonicalEventSchema = z.union([
   OperationalRunStartedEventSchema,
+  OperationalRunTerminalEventSchema,
   AssistantMessageEventSchema,
   ToolCallStartEventSchema,
   ToolCallResultEventSchema,

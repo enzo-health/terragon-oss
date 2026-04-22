@@ -1,42 +1,60 @@
-# Turbopack Enabled! 🚀
+# Turbopack Status ✅
 
-## What We Were Using Before
+## Next.js 16 Uses Turbopack by Default
+
+**Next.js version:** 16.1.6
+
+Since Next.js 16, Turbopack is the **default dev server bundler**. No `--turbo` flag needed!
+
+```bash
+# Next.js 15 and earlier
+next dev          # Uses Webpack
+next dev --turbo  # Uses Turbopack
+
+# Next.js 16+ (what we have)
+next dev          # Uses Turbopack by default!
+```
+
+## What We're Using
 
 ### Turborepo (Task Runner)
 
 - **What it is:** Monorepo task orchestrator
 - **Command:** `turbo dev dev:cron --ui tui`
 - **Purpose:** Runs dev scripts across packages in parallel/with dependencies
-- **Status:** ✅ Was already enabled
-
-### Webpack (Bundler)
-
-- **What it is:** JavaScript-based bundler for Next.js
-- **Command:** `next dev` (without --turbo)
-- **Status:** ❌ Was using this (slower)
-
-## What We're Using Now
+- **Status:** ✅ Enabled
 
 ### Turbopack (Bundler)
 
-- **What it is:** Rust-based bundler for Next.js (replacement for Webpack)
-- **Command:** `next dev --turbo`
-- **Status:** ✅ **NOW ENABLED!**
+- **What it is:** Rust-based bundler for Next.js (replaced Webpack in v16)
+- **Command:** `next dev` ← **Already Turbopack by default in Next.js 16!**
+- **Status:** ✅ Enabled by default
 
-## The Difference
+## The Stack
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  pnpm dev                                                   │
-│  └─ turbo dev dev:cron                                      │
+│  └─ turbo dev dev:cron          ← Turborepo (task runner)    │
 │     ├─ packages/bundled dev (esbuild watch)                │
 │     ├─ packages/daemon dev (esbuild watch)                 │
 │     ├─ packages/mcp-server dev (esbuild watch)             │
 │     └─ apps/www dev                                         │
-│        └─ next dev --turbo ←── NOW USING TURBOPACK!        │
+│        └─ next dev              ← Turbopack by default!      │
 │           └─ Turbopack (Rust) - Fast HMR & builds           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Why Turbopack is Better Than Webpack
+
+| Feature    | Webpack               | Turbopack                |
+| ---------- | --------------------- | ------------------------ |
+| Language   | JavaScript            | Rust                     |
+| HMR Speed  | Rebuilds module graph | Incremental updates      |
+| Cold Start | Full dependency graph | Lazy compilation         |
+| Caching    | Complex invalidation  | Fine-grained, persistent |
+| Threading  | Single-threaded       | Multi-threaded           |
+| GC Pauses  | Yes                   | No                       |
 
 ## Turbopack Benefits
 
@@ -64,52 +82,23 @@
 - Turbopack: Rust - multi-threaded, no GC
 - **Expected:** Better CPU utilization
 
-## How to Test
-
-### Test Cold Start
-
-```bash
-rm -rf apps/www/.next
-pnpm dev
-# Compare startup time to before
-```
-
-### Test HMR
-
-```bash
-pnpm dev
-# Edit a component file
-# Time how long until change appears in browser
-```
-
-## Files Changed
-
-```
-apps/www/package.json
-  "dev": "next dev", → "dev": "next dev --turbo"
-```
-
-## Next.js Config Already Had Turbopack Settings
+## Next.js Config Turbopack Settings
 
 ```typescript
 // next.config.ts
 turbopack: {
-  root: repoRoot,  // This is for Turbopack!
+  root: repoRoot,  // Project root for module resolution
 },
 ```
 
-But we weren't using `--turbo` flag, so those settings weren't active.
+These settings are now active by default in Next.js 16+.
 
 ## Summary
 
-| Tool      | Type        | Status         | Change    |
-| --------- | ----------- | -------------- | --------- |
-| Turborepo | Task runner | ✅ Enabled     | No change |
-| Webpack   | Bundler     | ❌ Disabled    | Removed   |
-| Turbopack | Bundler     | ✅ **ENABLED** | **NEW!**  |
+| Tool      | Type        | Status      | Notes                       |
+| --------- | ----------- | ----------- | --------------------------- |
+| Turborepo | Task runner | ✅ Enabled  | Orchestrates monorepo tasks |
+| Turbopack | Bundler     | ✅ Default  | Next.js 16+ default bundler |
+| Webpack   | Bundler     | ❌ Replaced | Not used in Next.js 16+     |
 
-You should now see significantly faster:
-
-- Dev server startup (cold start)
-- HMR (file change → browser update)
-- Page navigation in dev
+You're already getting all the Turbopack benefits with `next dev` since you're on Next.js 16!
