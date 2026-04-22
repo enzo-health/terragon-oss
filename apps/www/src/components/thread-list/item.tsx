@@ -308,8 +308,8 @@ export const ThreadListItem = memo(function ThreadListItem({
         >
           {/* Subtle progress bar for optimistic threads */}
           {isOptimisticThread && (
-            <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-primary/10">
-              <div className="h-full bg-primary/40 animate-progress-indeterminate" />
+            <div className="absolute bottom-0 left-2 right-2 h-[1.5px] bg-primary/10 rounded-full overflow-hidden">
+              <div className="h-full bg-primary/50 animate-progress-indeterminate rounded-full" />
             </div>
           )}
           <div className="flex flex-col gap-1">
