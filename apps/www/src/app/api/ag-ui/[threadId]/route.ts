@@ -35,6 +35,10 @@ const MAX_XREAD_BLOCK_MS = 10_000;
 const XREAD_COUNT = 32;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 const XREAD_BACKOFF_MS = 1_000;
+// When Redis live-tail misses the daemon's terminal marker, we still need to
+// converge on terminal truth once durable run status flips. Tie checks to idle
+// polls (not wall-clock time) so tests stay deterministic.
+const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
 
 const ENCODER = new TextEncoder();
 
@@ -42,6 +46,10 @@ type AgUiStreamEntry = {
   id: string;
   event: BaseEvent | null;
 };
+
+function isTerminalRunEventType(type: BaseEvent["type"]): boolean {
+  return type === EventType.RUN_FINISHED || type === EventType.RUN_ERROR;
+}
 
 function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
   // XREAD shape: [ [streamKey, [ [id, [field, value, ...]], ... ]] ] or null.
@@ -248,13 +256,14 @@ export async function GET(
       // captured before the DB replay. Used after both the run-replay path
       // (for active runs still in progress) and the no-history path (for
       // empty thread chats awaiting their first RUN_STARTED).
-      const liveTail = async () => {
+      const liveTail = async (params?: { runId?: string; userId?: string }) => {
         keepaliveTimer = setInterval(() => {
           enqueue(encodeSseComment("keepalive"));
         }, KEEPALIVE_INTERVAL_MS);
 
         let lastId = initialLastId;
         let consecutiveEmpty = 0;
+        let emptyPollsSinceTerminalCheck = 0;
         while (!closed) {
           const blockMS = Math.min(
             MAX_XREAD_BLOCK_MS,
@@ -269,12 +278,54 @@ export async function GET(
             const entries = parseStreamEntries(raw);
             if (entries.length === 0) {
               consecutiveEmpty++;
+              if (params?.runId && params.userId) {
+                emptyPollsSinceTerminalCheck++;
+                if (
+                  emptyPollsSinceTerminalCheck >=
+                  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+                ) {
+                  emptyPollsSinceTerminalCheck = 0;
+                  try {
+                    const runContext = await getAgentRunContextByRunId({
+                      db,
+                      runId: params.runId,
+                      userId: params.userId,
+                    });
+                    if (
+                      runContext !== null &&
+                      isTerminalAgentRunStatus(runContext.status)
+                    ) {
+                      const terminalEvent = buildRunTerminalAgUi({
+                        threadId,
+                        runId: params.runId,
+                        daemonRunStatus: runContext.status,
+                        errorMessage: runContext.failureTerminalReason ?? null,
+                        errorCode: runContext.failureCategory ?? null,
+                      });
+                      enqueue(encodeSseEvent(terminalEvent));
+                      close();
+                      break;
+                    }
+                  } catch (error) {
+                    console.warn(
+                      "[ag-ui] durable run status check failed during live-tail; continuing",
+                      { threadId, threadChatId, runId: params.runId },
+                      error,
+                    );
+                  }
+                }
+              }
             } else {
               consecutiveEmpty = 0;
+              emptyPollsSinceTerminalCheck = 0;
               for (const entry of entries) {
                 lastId = entry.id;
                 if (entry.event != null) {
                   enqueue(encodeSseEvent(entry.event));
+                  if (isTerminalRunEventType(entry.event.type)) {
+                    close();
+                    return;
+                  }
                 }
               }
             }
@@ -285,6 +336,43 @@ export async function GET(
               { streamKey },
               error,
             );
+            if (params?.runId && params.userId) {
+              emptyPollsSinceTerminalCheck++;
+              if (
+                emptyPollsSinceTerminalCheck >=
+                TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+              ) {
+                emptyPollsSinceTerminalCheck = 0;
+                try {
+                  const runContext = await getAgentRunContextByRunId({
+                    db,
+                    runId: params.runId,
+                    userId: params.userId,
+                  });
+                  if (
+                    runContext !== null &&
+                    isTerminalAgentRunStatus(runContext.status)
+                  ) {
+                    const terminalEvent = buildRunTerminalAgUi({
+                      threadId,
+                      runId: params.runId,
+                      daemonRunStatus: runContext.status,
+                      errorMessage: runContext.failureTerminalReason ?? null,
+                      errorCode: runContext.failureCategory ?? null,
+                    });
+                    enqueue(encodeSseEvent(terminalEvent));
+                    close();
+                    break;
+                  }
+                } catch (statusError) {
+                  console.warn(
+                    "[ag-ui] durable run status check failed after XREAD error; continuing",
+                    { threadId, threadChatId, runId: params.runId },
+                    statusError,
+                  );
+                }
+              }
+            }
             await new Promise((resolve) =>
               setTimeout(resolve, XREAD_BACKOFF_MS),
             );
@@ -425,7 +513,7 @@ export async function GET(
         return;
       }
 
-      await liveTail();
+      await liveTail({ runId: resolvedRunId, userId: session.user.id });
     },
   });
 

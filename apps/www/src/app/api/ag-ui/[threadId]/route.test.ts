@@ -102,6 +102,7 @@ async function readReplayBurst(
   } finally {
     clearTimeout(timeout);
     await reader.cancel();
+    reader.releaseLock();
   }
   return events;
 }
@@ -430,6 +431,142 @@ describe("ag-ui SSE route", () => {
     await response.body!.cancel();
   });
 
+  it("emits RUN_FINISHED and closes during live-tail when durable status turns terminal but the stream stays idle", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-idle-terminal",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId)
+      .mockResolvedValueOnce(
+        makeRunContext({ runId: "run-idle-terminal", status: "processing" }),
+      )
+      .mockResolvedValueOnce(
+        makeRunContext({ runId: "run-idle-terminal", status: "completed" }),
+      );
+
+    redisMocks.xread.mockImplementation(() => {
+      const callIndex = redisMocks.xread.mock.calls.length;
+      if (callIndex <= 2) {
+        return Promise.resolve(null);
+      }
+      return new Promise(() => {});
+    });
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-idle-terminal",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const events: BaseEvent[] = [];
+    const timeout = setTimeout(() => reader.cancel("test-timeout"), 2_000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split("\n\n");
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          events.push(JSON.parse(line.slice("data: ".length)) as BaseEvent);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      reader.releaseLock();
+    }
+
+    expect(events[0]).toMatchObject({ type: EventType.RUN_STARTED });
+    expect(events[1]).toMatchObject({
+      type: EventType.RUN_FINISHED,
+      runId: "run-idle-terminal",
+    });
+    expect(redisMocks.xread).toHaveBeenCalled();
+  });
+
+  it("closes the stream after receiving a terminal marker via XREAD", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-from-stream",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-from-stream", status: "processing" }),
+    );
+
+    redisMocks.xread.mockResolvedValueOnce([
+      [
+        "agui:thread:chat-1",
+        [
+          [
+            "1700000000000-0",
+            [
+              "event",
+              JSON.stringify({
+                type: EventType.RUN_FINISHED,
+                timestamp: 2,
+                threadId: "thread-1",
+                runId: "run-from-stream",
+              }),
+            ],
+          ],
+        ],
+      ],
+    ]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-from-stream",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const events: BaseEvent[] = [];
+    const timeout = setTimeout(() => reader.cancel("test-timeout"), 2_000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split("\n\n");
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          events.push(JSON.parse(line.slice("data: ".length)) as BaseEvent);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      reader.releaseLock();
+    }
+
+    expect(events).toMatchObject([
+      { type: EventType.RUN_STARTED },
+      { type: EventType.RUN_FINISHED, runId: "run-from-stream" },
+    ]);
+  });
+
   it("emits RUN_ERROR and closes when the run has no events", async () => {
     vi.mocked(getAgUiEventsForRun).mockResolvedValue([]);
 
@@ -580,6 +717,36 @@ describe("ag-ui SSE route", () => {
       if (done) break;
     }
     reader.releaseLock();
+  });
+
+  it("defaults to latest run for RUN_STARTED-only runs and live-tails (no awaiting-first-run)", async () => {
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue("run-start-only");
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-start-only",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-start-only", status: "processing" }),
+    );
+
+    const response = await GET(
+      makeRequest("http://localhost/api/ag-ui/thread-1?threadChatId=chat-1"),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 1);
+    expect(received).toEqual(runEvents);
+
+    await vi.waitFor(() => {
+      expect(redisMocks.xread).toHaveBeenCalled();
+    });
+    await response.body!.cancel();
   });
 
   it("keeps the stream open and live-tails when the thread chat has no runs yet", async () => {
