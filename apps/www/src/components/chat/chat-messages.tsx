@@ -51,7 +51,7 @@ export const ChatMessages = memo(function ChatMessages({
   toolProps?: {
     threadId: string;
     threadChatId: string;
-    messages: UIMessage[];
+    messagesRef: { current: UIMessage[] };
     isReadOnly: boolean;
     promptBoxRef?: React.RefObject<PromptBoxRef | null>;
     childThreads: { id: string; parentToolId: string | null }[];
@@ -92,7 +92,7 @@ export const ChatMessages = memo(function ChatMessages({
       toolProps: toolProps ?? {
         threadId: "",
         threadChatId: "",
-        messages: [],
+        messagesRef: { current: [] },
         isReadOnly: false,
         childThreads: [],
         githubRepoFullName: "",

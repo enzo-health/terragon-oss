@@ -68,7 +68,7 @@ const baseMessagePartProps: MessagePartRenderProps = {
   toolProps: {
     threadId: "thread-1",
     threadChatId: "chat-1",
-    messages: [],
+    messagesRef: { current: [] },
     isReadOnly: false,
     childThreads: [],
     githubRepoFullName: "acme/app",

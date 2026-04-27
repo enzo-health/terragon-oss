@@ -164,10 +164,6 @@ describe("AG-UI replayer integration", () => {
     expect(quarantine).toEqual([
       {
         reason: "unsupported-ag-ui-event",
-        eventType: EventType.MESSAGES_SNAPSHOT,
-      },
-      {
-        reason: "unsupported-ag-ui-event",
         eventType: EventType.RAW,
       },
     ]);

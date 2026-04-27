@@ -477,13 +477,15 @@ function ChatUIContent({
     snapshot: threadViewSnapshot,
   });
   const messages = threadViewModel.messages;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
   const toolProps = useMemo(
     () => ({
       threadId,
       threadChatId: threadViewModel.threadChatId,
-      messages,
+      messagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads: shell.childThreads ?? [],
@@ -505,7 +507,6 @@ function ChatUIContent({
       threadViewModel.dispatchThreadViewEvent,
       threadViewModel.threadChatId,
       threadId,
-      messages,
     ],
   );
   const reconcileActiveChatFromServer = useCallback(async () => {

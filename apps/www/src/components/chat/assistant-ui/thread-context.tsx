@@ -32,7 +32,7 @@ export type TerragonThreadContext = {
   toolProps: {
     threadId: string;
     threadChatId: string;
-    messages: UIMessage[];
+    messagesRef: { current: UIMessage[] };
     isReadOnly: boolean;
     promptBoxRef?: React.RefObject<PromptBoxRef | null>;
     childThreads: { id: string; parentToolId: string | null }[];

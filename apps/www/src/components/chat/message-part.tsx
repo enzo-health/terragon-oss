@@ -263,6 +263,7 @@ function areMessagePartPropsEqual(
   if (
     prevProps.toolProps.threadId !== nextProps.toolProps.threadId ||
     prevProps.toolProps.threadChatId !== nextProps.toolProps.threadChatId ||
+    prevProps.toolProps.messagesRef !== nextProps.toolProps.messagesRef ||
     prevProps.toolProps.isReadOnly !== nextProps.toolProps.isReadOnly ||
     prevProps.toolProps.promptBoxRef !== nextProps.toolProps.promptBoxRef ||
     prevProps.toolProps.childThreads !== nextProps.toolProps.childThreads ||
@@ -278,7 +279,5 @@ function areMessagePartPropsEqual(
   }
 
   const toolName = prevToolPart.name;
-  return toolName === "ExitPlanMode"
-    ? prevProps.toolProps.messages === nextProps.toolProps.messages
-    : true;
+  return toolName === "ExitPlanMode" ? true : true;
 }

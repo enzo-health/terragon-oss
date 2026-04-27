@@ -12,11 +12,7 @@ import {
   MessagePartRenderProps,
   RedoDialogData,
 } from "./chat-message.types";
-import {
-  buildPlanOccurrenceMap,
-  groupParts,
-  messageContainsToolName,
-} from "./chat-message.utils";
+import { buildPlanOccurrenceMap, groupParts } from "./chat-message.utils";
 import { ImageGroup } from "./chat-message-image-group";
 import { AgentMetaFooter } from "./chat-message-agent-meta-footer";
 import { SystemMessage } from "./chat-message-system";
@@ -236,13 +232,6 @@ function areChatMessagePropsEqual(
   }
 
   if (
-    messageContainsToolName(prevProps.message, "ExitPlanMode") &&
-    prevToolProps.messages !== nextToolProps.messages
-  ) {
-    return false;
-  }
-
-  if (
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
     prevProps.planOccurrences !== nextProps.planOccurrences
@@ -352,13 +341,6 @@ function areChatMessageWithToolbarPropsEqual(
     prevToolProps.githubRepoFullName !== nextToolProps.githubRepoFullName ||
     prevToolProps.repoBaseBranchName !== nextToolProps.repoBaseBranchName ||
     prevToolProps.branchName !== nextToolProps.branchName
-  ) {
-    return false;
-  }
-
-  if (
-    messageContainsToolName(prevProps.message, "ExitPlanMode") &&
-    prevToolProps.messages !== nextToolProps.messages
   ) {
     return false;
   }

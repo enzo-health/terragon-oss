@@ -40,7 +40,7 @@ export type ToolPartProps = {
   toolPart: AllToolParts;
   threadId: string;
   threadChatId: string;
-  messages: UIMessage[];
+  messagesRef: { current: UIMessage[] };
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   childThreads: ChildThreadInfo[];
@@ -56,7 +56,7 @@ const ToolPart = memo(function ToolPart({
   toolPart: rawToolPart,
   threadId,
   threadChatId,
-  messages,
+  messagesRef,
   isReadOnly,
   promptBoxRef,
   childThreads,
@@ -160,7 +160,7 @@ const ToolPart = memo(function ToolPart({
                 toolPart={childToolPart}
                 threadId={threadId}
                 threadChatId={threadChatId}
-                messages={messages}
+                messagesRef={messagesRef}
                 isReadOnly={isReadOnly}
                 promptBoxRef={promptBoxRef}
                 childThreads={childThreads}
@@ -212,7 +212,7 @@ const ToolPart = memo(function ToolPart({
             }
             threadId={threadId}
             threadChatId={threadChatId}
-            messages={messages}
+            messages={messagesRef.current}
             isReadOnly={isReadOnly}
             onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
             artifactDescriptors={artifactDescriptors}
@@ -414,8 +414,6 @@ function areToolPartPropsEqual(
     case "SuggestFollowupTask":
     case "mcp__terry__SuggestFollowupTask":
       return prevProps.childThreads === nextProps.childThreads;
-    case "ExitPlanMode":
-      return prevProps.messages === nextProps.messages;
     default:
       return true;
   }
