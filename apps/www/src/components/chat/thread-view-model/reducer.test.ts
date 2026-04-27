@@ -13,7 +13,7 @@ import {
   projectThreadViewModel,
   threadViewModelReducer,
 } from "./reducer";
-import type { ThreadViewSnapshot } from "./types";
+import type { ThreadViewModelState, ThreadViewSnapshot } from "./types";
 
 describe("ThreadViewModel reducer", () => {
   it("keeps the legacy DB snapshot adapter at toUIMessages/dbMessagesToAgUi parity", () => {
@@ -131,20 +131,14 @@ describe("ThreadViewModel reducer", () => {
     ]);
     let state = createInitialThreadViewModelState(snapshot);
 
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_START,
-        messageId: "msg_abc123",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg_abc123",
     });
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: "msg_abc123",
-        delta: "hello",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "msg_abc123",
+      delta: "hello",
     });
 
     const viewModel = projectThreadViewModel(state);
@@ -238,14 +232,11 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("preserves live lifecycle across hydration until durable reconciliation", () => {
-    let state = threadViewModelReducer(
+    let state = applyRuntimeEvent(
       createInitialThreadViewModelState(
         snapshotWithMessages([userMessage("hi")]),
       ),
-      {
-        type: "runtime.event",
-        event: { type: EventType.RUN_STARTED, runId: "run-1" } as BaseEvent,
-      },
+      { type: EventType.RUN_STARTED, runId: "run-1" },
     );
 
     state = threadViewModelReducer(state, {
@@ -268,14 +259,11 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("allows snapshot transcript updates after lifecycle-only events", () => {
-    let state = threadViewModelReducer(
+    let state = applyRuntimeEvent(
       createInitialThreadViewModelState(
         snapshotWithMessages([userMessage("hi")]),
       ),
-      {
-        type: "runtime.event",
-        event: { type: EventType.RUN_STARTED, runId: "run-1" } as BaseEvent,
-      },
+      { type: EventType.RUN_STARTED, runId: "run-1" },
     );
 
     state = threadViewModelReducer(state, {
@@ -370,11 +358,7 @@ describe("ThreadViewModel reducer", () => {
         delta: "lo",
       },
     ].reduce(
-      (current, event) =>
-        threadViewModelReducer(current, {
-          type: "ag-ui.event",
-          event: event as BaseEvent,
-        }),
+      (current, event) => applyAgUiEvent(current, event as BaseEvent),
       createInitialThreadViewModelState(snapshotWithMessages([])),
     );
 
@@ -385,18 +369,15 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("quarantines malformed rich projection parts", () => {
-    const state = threadViewModelReducer(
+    const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
-        type: "ag-ui.event",
-        event: {
-          type: EventType.CUSTOM,
-          name: "terragon.part.image",
-          value: {
-            messageId: "m1",
-            part: { type: "image", image_url: 42 },
-          },
-        } as BaseEvent,
+        type: EventType.CUSTOM,
+        name: "terragon.part.image",
+        value: {
+          messageId: "m1",
+          part: { type: "image", image_url: 42 },
+        },
       },
     );
 
@@ -413,18 +394,15 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("quarantines malformed renderable rich projection parts", () => {
-    const state = threadViewModelReducer(
+    const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
-        type: "ag-ui.event",
-        event: {
-          type: EventType.CUSTOM,
-          name: "terragon.part.terminal",
-          value: {
-            messageId: "m1",
-            part: { type: "terminal", sandboxId: 42, chunks: [] },
-          },
-        } as BaseEvent,
+        type: EventType.CUSTOM,
+        name: "terragon.part.terminal",
+        value: {
+          messageId: "m1",
+          part: { type: "terminal", sandboxId: 42, chunks: [] },
+        },
       },
     );
 
@@ -441,27 +419,24 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("accepts live structured plan rich projection parts", () => {
-    const state = threadViewModelReducer(
+    const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
-        type: "ag-ui.event",
-        event: {
-          type: EventType.CUSTOM,
-          name: "terragon.part.plan",
-          value: {
-            messageId: "m1",
-            part: {
-              type: "plan",
-              entries: [
-                {
-                  content: "Wire the reducer",
-                  priority: "high",
-                  status: "pending",
-                },
-              ],
-            },
+        type: EventType.CUSTOM,
+        name: "terragon.part.plan",
+        value: {
+          messageId: "m1",
+          part: {
+            type: "plan",
+            entries: [
+              {
+                content: "Wire the reducer",
+                priority: "high",
+                status: "pending",
+              },
+            ],
           },
-        } as BaseEvent,
+        },
       },
     );
 
@@ -485,23 +460,17 @@ describe("ThreadViewModel reducer", () => {
   });
 
   it("clears live transcript precedence after durable reconciliation", () => {
-    let state = threadViewModelReducer(
+    let state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
-        type: "ag-ui.event",
-        event: {
-          type: EventType.TEXT_MESSAGE_START,
-          messageId: "live-1",
-        } as BaseEvent,
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "live-1",
       },
     );
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: "live-1",
-        delta: "live",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "live-1",
+      delta: "live",
     });
 
     state = threadViewModelReducer(state, {
@@ -560,20 +529,17 @@ describe("ThreadViewModel reducer", () => {
       }),
     );
 
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.CUSTOM,
-        name: "thread.token_usage_updated",
-        value: {
-          kind: "thread.token_usage_updated",
-          usage: {
-            inputTokens: 10,
-            cachedInputTokens: 2,
-            outputTokens: 4,
-          },
+    state = applyAgUiEvent(state, {
+      type: EventType.CUSTOM,
+      name: "thread.token_usage_updated",
+      value: {
+        kind: "thread.token_usage_updated",
+        usage: {
+          inputTokens: 10,
+          cachedInputTokens: 2,
+          outputTokens: 4,
         },
-      } as BaseEvent,
+      },
     });
 
     const viewModel = projectThreadViewModel(state);
@@ -600,9 +566,9 @@ describe("ThreadViewModel reducer", () => {
   it("updates lifecycle from runtime events", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
 
-    state = threadViewModelReducer(state, {
-      type: "runtime.event",
-      event: { type: EventType.RUN_STARTED, runId: "run-1" } as BaseEvent,
+    state = applyRuntimeEvent(state, {
+      type: EventType.RUN_STARTED,
+      runId: "run-1",
     });
     expect(projectThreadViewModel(state).lifecycle).toMatchObject({
       runId: "run-1",
@@ -610,19 +576,13 @@ describe("ThreadViewModel reducer", () => {
       threadStatus: "working",
     });
 
-    state = threadViewModelReducer(state, {
-      type: "runtime.event",
-      event: { type: EventType.RUN_FINISHED } as BaseEvent,
-    });
+    state = applyRuntimeEvent(state, { type: EventType.RUN_FINISHED });
     expect(projectThreadViewModel(state).lifecycle).toMatchObject({
       runStarted: false,
       threadStatus: "complete",
     });
 
-    state = threadViewModelReducer(state, {
-      type: "runtime.event",
-      event: { type: EventType.RUN_ERROR } as BaseEvent,
-    });
+    state = applyRuntimeEvent(state, { type: EventType.RUN_ERROR });
     expect(projectThreadViewModel(state).lifecycle).toMatchObject({
       runStarted: false,
       threadStatus: "error",
@@ -643,30 +603,21 @@ describe("ThreadViewModel reducer", () => {
 
   it("keeps artifact descriptor references stable during unrelated token streaming", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_START,
-        messageId: "plan-msg",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "plan-msg",
     });
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: "plan-msg",
-        delta: "<proposed_plan>\nDo the work.\n</proposed_plan>",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "plan-msg",
+      delta: "<proposed_plan>\nDo the work.\n</proposed_plan>",
     });
     const artifactsAfterPlan = state.artifacts;
 
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: "plan-msg",
-        delta: "\nNow implementing.",
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "plan-msg",
+      delta: "\nNow implementing.",
     });
 
     expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
@@ -675,19 +626,16 @@ describe("ThreadViewModel reducer", () => {
 
   it("preserves replayed artifact references across server refetch reconciliation", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      event: {
-        type: EventType.CUSTOM,
-        name: "artifact-reference",
-        value: {
-          artifactId: "artifact-plan-1",
-          artifactType: "plan",
-          title: "Runtime Plan",
-          uri: "r2://plans/runtime-plan.md",
-          status: "ready",
-        },
-      } as BaseEvent,
+    state = applyAgUiEvent(state, {
+      type: EventType.CUSTOM,
+      name: "artifact-reference",
+      value: {
+        artifactId: "artifact-plan-1",
+        artifactType: "plan",
+        title: "Runtime Plan",
+        uri: "r2://plans/runtime-plan.md",
+        status: "ready",
+      },
     });
 
     state = threadViewModelReducer(state, {
@@ -733,10 +681,7 @@ describe("ThreadViewModel reducer", () => {
     ];
 
     for (const replayedEvent of [...replayedEvents, ...replayedEvents]) {
-      state = threadViewModelReducer(state, {
-        type: "ag-ui.event",
-        event: replayedEvent,
-      });
+      state = applyAgUiEvent(state, replayedEvent);
     }
 
     expect(projectThreadViewModel(state).messages[0]).toMatchObject({
@@ -762,6 +707,26 @@ describe("ThreadViewModel reducer", () => {
     });
   });
 });
+
+function applyAgUiEvent(
+  state: ThreadViewModelState,
+  event: BaseEvent,
+): ThreadViewModelState {
+  return threadViewModelReducer(state, {
+    type: "ag-ui.event",
+    event,
+  });
+}
+
+function applyRuntimeEvent(
+  state: ThreadViewModelState,
+  event: BaseEvent,
+): ThreadViewModelState {
+  return threadViewModelReducer(state, {
+    type: "runtime.event",
+    event,
+  });
+}
 
 function snapshotWithMessages(
   dbMessages: DBMessage[],
