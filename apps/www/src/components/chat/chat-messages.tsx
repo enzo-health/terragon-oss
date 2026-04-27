@@ -7,7 +7,6 @@ import {
   ThreadStatus,
   UIMessage,
 } from "@terragon/shared";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 
 import { AIAgent, AIModel } from "@terragon/agent/types";
@@ -15,6 +14,7 @@ import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
 import { BootChecklist } from "./boot-checklist";
 import { LeafLoading } from "./leaf-loading";
+import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
 import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
 import {
@@ -287,50 +287,6 @@ function getStatusMessage({
   }
 }
 
-/**
- * Classifies a delivery-loop state into footer behavior buckets. Active
- * states keep the current "Assistant is working" footer; passive-wait
- * states show a quieter line with no interrupt hint and no animation;
- * terminal states hide the footer entirely.
- *
- * Note: `blocked` covers both `awaiting_manual_fix` and
- * `awaiting_operator_action` — the underlying v3 distinction is collapsed
- * at the API boundary (see `stateToDeliveryLoopState`), so we render a
- * single "Waiting for your input" message for both.
- */
-export type DeliveryLoopFooterKind =
-  | { kind: "active" }
-  | { kind: "passive"; message: string }
-  | { kind: "hidden" };
-
-export function classifyDeliveryLoopFooter(
-  state: DeliveryLoopState | null | undefined,
-): DeliveryLoopFooterKind {
-  if (state === null || state === undefined) {
-    return { kind: "active" };
-  }
-  switch (state) {
-    case "planning":
-    case "implementing":
-    case "review_gate":
-    case "ci_gate":
-    case "babysitting":
-      return { kind: "active" };
-    case "awaiting_pr_link":
-      return { kind: "passive", message: "Waiting for PR merge" };
-    case "blocked":
-      return { kind: "passive", message: "Waiting for your input" };
-    case "done":
-    case "stopped":
-    case "terminated_pr_closed":
-    case "terminated_pr_merged":
-      return { kind: "hidden" };
-    default:
-      // Unknown state -> preserve current "Assistant is working" behavior.
-      return { kind: "active" };
-  }
-}
-
 export function PassiveWaitFooter({
   message,
   reason,
@@ -353,15 +309,14 @@ export function WorkingMessage({
   status,
   bootingSubstatus,
   reattemptQueueAt,
-  threadId,
+  metaSnapshot,
   passiveWait,
 }: {
   agent: AIAgent;
   status: ThreadStatus;
   bootingSubstatus?: BootingSubstatus;
   reattemptQueueAt: Date | null;
-  /** Required when status === "booting" to power the BootChecklist. */
-  threadId?: string;
+  metaSnapshot: ThreadMetaSnapshot;
   /**
    * When provided, render a quieter passive-wait line instead of the
    * animated "Assistant is working" indicator. Used when the delivery
@@ -394,13 +349,13 @@ export function WorkingMessage({
   }
 
   // The booting status renders a persistent checklist instead of a single line.
-  if (status === "booting" && threadId) {
+  if (status === "booting") {
     return (
       <LeafLoading
         message={
           <BootChecklist
-            threadId={threadId}
             currentSubstatus={bootingSubstatus ?? null}
+            metaSnapshot={metaSnapshot}
           />
         }
       />

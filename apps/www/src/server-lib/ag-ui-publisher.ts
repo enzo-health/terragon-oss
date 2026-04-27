@@ -36,7 +36,7 @@ import { redis } from "@/lib/redis";
  * from the same source (e.g. progressive TOOL_CALL_ARGS chunks) never
  * collide on insert.
  */
-type AgUiPublishRow = {
+export type AgUiPublishRow = {
   event: BaseEvent;
   eventId: string;
   timestamp: Date;
@@ -54,35 +54,35 @@ export type PersistAndPublishResult = {
   insertedEventIds: string[];
 };
 
+export type PersistAgUiEventsResult = PersistAndPublishResult & {
+  persistedEvents: BaseEvent[];
+};
+
 /**
- * Persist each AG-UI row to `agent_event_log` and publish to
- * `agui:thread:{threadChatId}` in the order provided.
+ * Persist each AG-UI row to `agent_event_log` in the order provided.
  *
  * ## Contract
  * - Seq is assigned per-thread-chat under a transaction-scoped advisory lock
  *   (see `peekNextThreadChatSeqLocked`).
  * - Duplicates are skipped silently (idempotency key: runId + eventId).
- * - XADD publishing happens AFTER tx commit so readers never see a stream
- *   event before the corresponding DB row.
- *
- * ## XADD failure policy (see C2 in Task 2C code review)
- * The DB is the source of truth; Redis is a live-tail optimization. On the
- * first XADD failure we log at error severity and STOP publishing remaining
- * events in the batch — out-of-order stream arrival is worse than a gap,
- * because the SSE reader's `XREAD $` cursor would advance past missing
- * entries. Clients recover the gap via replay-from-seq on reconnect using
- * the DB as source of truth.
+ * - Callers publish live-tail events after the DB transaction commits, so
+ *   readers never see a stream event before the corresponding DB row.
  */
-export async function persistAndPublishAgUiEvents(params: {
+export async function persistAgUiEvents(params: {
   db: DB;
   runId: string;
   threadId: string;
   threadChatId: string;
   rows: AgUiPublishRow[];
-}): Promise<PersistAndPublishResult> {
+}): Promise<PersistAgUiEventsResult> {
   const { db, runId, threadId, threadChatId, rows } = params;
   if (rows.length === 0) {
-    return { inserted: 0, skipped: 0, insertedEventIds: [] };
+    return {
+      inserted: 0,
+      skipped: 0,
+      insertedEventIds: [],
+      persistedEvents: [],
+    };
   }
 
   let inserted = 0;
@@ -127,8 +127,30 @@ export async function persistAndPublishAgUiEvents(params: {
     }
   });
 
-  // Publish after commit. See "XADD failure policy" in the function header:
-  // first failure halts the remaining publishes.
+  return { inserted, skipped, insertedEventIds, persistedEvents };
+}
+
+/**
+ * Publish already-persisted AG-UI events to `agui:thread:{threadChatId}`.
+ *
+ * ## XADD failure policy (see C2 in Task 2C code review)
+ * The DB is the source of truth; Redis is a live-tail optimization. On the
+ * first XADD failure we log at error severity and STOP publishing remaining
+ * events in the batch — out-of-order stream arrival is worse than a gap,
+ * because the SSE reader's `XREAD $` cursor would advance past missing
+ * entries. Clients recover the gap via replay-from-seq on reconnect using
+ * the DB as source of truth.
+ */
+export async function publishPersistedAgUiEvents(params: {
+  threadChatId: string;
+  persistedEvents: BaseEvent[];
+  insertedEventIds: readonly string[];
+}): Promise<void> {
+  const { threadChatId, persistedEvents, insertedEventIds } = params;
+  if (persistedEvents.length === 0) {
+    return;
+  }
+
   const streamKey = agUiStreamKey(threadChatId);
   for (let i = 0; i < persistedEvents.length; i++) {
     const event = persistedEvents[i]!;
@@ -158,8 +180,30 @@ export async function persistAndPublishAgUiEvents(params: {
       break;
     }
   }
+}
 
-  return { inserted, skipped, insertedEventIds };
+/**
+ * Persist each AG-UI row to `agent_event_log` and publish to
+ * `agui:thread:{threadChatId}` in the order provided.
+ */
+export async function persistAndPublishAgUiEvents(params: {
+  db: DB;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  rows: AgUiPublishRow[];
+}): Promise<PersistAndPublishResult> {
+  const result = await persistAgUiEvents(params);
+  await publishPersistedAgUiEvents({
+    threadChatId: params.threadChatId,
+    persistedEvents: result.persistedEvents,
+    insertedEventIds: result.insertedEventIds,
+  });
+  return {
+    inserted: result.inserted,
+    skipped: result.skipped,
+    insertedEventIds: result.insertedEventIds,
+  };
 }
 
 /**

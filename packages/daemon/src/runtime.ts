@@ -9,18 +9,22 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import readline from "node:readline";
+import { nanoid } from "nanoid/non-secure";
 import stripAnsi from "strip-ansi";
 import { Logger, OutputFormat } from "./logger";
 import {
-  DaemonEventAPIBody,
+  ClaudeMessage,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DAEMON_VERSION,
-  SdlcSelfDispatchPayload,
+  DaemonEventAPIBody,
+  DaemonMessageClaude,
+  DaemonTransportMode,
+  RuntimeAdapterContract,
+  RuntimeAdapterOperation,
+  RuntimeAdapterOperationSupport,
 } from "./shared";
-import { nanoid } from "nanoid/non-secure";
 
 function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
   if (body.payloadVersion !== 2) {
@@ -36,39 +40,6 @@ function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
     return false;
   }
   return body.seq >= 0;
-}
-
-export function parseSdlcSelfDispatchPayload(
-  body: unknown,
-): SdlcSelfDispatchPayload | null {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-  const selfDispatch = (body as { selfDispatch?: unknown }).selfDispatch;
-  if (!selfDispatch || typeof selfDispatch !== "object") {
-    return null;
-  }
-  const sd = selfDispatch as Record<string, unknown>;
-  if (
-    typeof sd.token !== "string" ||
-    typeof sd.prompt !== "string" ||
-    typeof sd.runId !== "string" ||
-    typeof sd.threadId !== "string" ||
-    typeof sd.threadChatId !== "string" ||
-    typeof sd.tokenNonce !== "string" ||
-    typeof sd.model !== "string" ||
-    typeof sd.agent !== "string" ||
-    typeof sd.agentVersion !== "number" ||
-    typeof sd.protocolVersion !== "number" ||
-    typeof sd.transportMode !== "string" ||
-    typeof sd.permissionMode !== "string" ||
-    (sd.sessionId !== null && typeof sd.sessionId !== "string") ||
-    typeof sd.featureFlags !== "object" ||
-    sd.featureFlags === null
-  ) {
-    return null;
-  }
-  return selfDispatch as SdlcSelfDispatchPayload;
 }
 
 function extractDaemonServerErrorCode(body: unknown): string | null {
@@ -126,6 +97,291 @@ export class DaemonServerPostError extends Error {
   }
 }
 
+export type RuntimeAdapterOperationResult =
+  | { status: "ok" }
+  | {
+      status: "unsupported";
+      operation: RuntimeAdapterOperation;
+      reason: string;
+      recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+    };
+
+function supportedOperation(): RuntimeAdapterOperationSupport {
+  return { status: "supported" };
+}
+
+function unsupportedOperation(
+  reason: string,
+  recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback",
+): RuntimeAdapterOperationSupport {
+  return { status: "unsupported", reason, recovery };
+}
+
+function createOperationContract(
+  supported: RuntimeAdapterOperation[],
+  unsupported: Partial<
+    Record<
+      RuntimeAdapterOperation,
+      {
+        reason: string;
+        recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+      }
+    >
+  >,
+): Record<RuntimeAdapterOperation, RuntimeAdapterOperationSupport> {
+  const supportedSet = new Set(supported);
+  const operations: RuntimeAdapterOperation[] = [
+    "start",
+    "resume",
+    "stop",
+    "restart",
+    "retry",
+    "permission-response",
+    "event-normalization",
+    "compact-and-retry",
+    "human-intervention",
+  ];
+  const contract = {} as Record<
+    RuntimeAdapterOperation,
+    RuntimeAdapterOperationSupport
+  >;
+  for (const operation of operations) {
+    if (supportedSet.has(operation)) {
+      contract[operation] = supportedOperation();
+      continue;
+    }
+    const details = unsupported[operation] ?? {
+      reason: `${operation} is not implemented by this runtime adapter`,
+      recovery: "manual-intervention" as const,
+    };
+    contract[operation] = unsupportedOperation(
+      details.reason,
+      details.recovery,
+    );
+  }
+  return contract;
+}
+
+export function createDaemonRuntimeAdapterContract({
+  transportMode,
+}: {
+  transportMode: DaemonTransportMode;
+}): RuntimeAdapterContract {
+  switch (transportMode) {
+    case "codex-app-server":
+      return {
+        adapterId: "codex-app-server",
+        transportMode,
+        protocolVersion: 1,
+        session: {
+          requestedSessionField: "sessionId",
+          resolvedSessionField: "sessionId",
+          previousResponseField: "codexPreviousResponseId",
+        },
+        operations: createOperationContract(
+          ["start", "resume", "stop", "retry", "event-normalization"],
+          {
+            restart: {
+              reason:
+                "Codex app-server process restarts are operational recovery; user restart/retry is a new run.",
+              recovery: "retry-new-run",
+            },
+            "permission-response": {
+              reason:
+                "Codex app-server does not expose Terragon-addressable pending permission requests.",
+              recovery: "manual-intervention",
+            },
+            "compact-and-retry": {
+              reason:
+                "Compaction is emitted as a typed recovery result before starting another Codex turn.",
+              recovery: "retry-new-run",
+            },
+            "human-intervention": {
+              reason:
+                "Human intervention is surfaced as a terminal recovery result, not a Codex app-server operation.",
+              recovery: "manual-intervention",
+            },
+          },
+        ),
+      };
+    case "acp":
+      return {
+        adapterId: "claude-acp",
+        transportMode,
+        protocolVersion: 2,
+        session: {
+          requestedSessionField: "acpSessionId",
+          resolvedSessionField: "acpSessionId",
+          previousResponseField: null,
+        },
+        operations: createOperationContract(
+          [
+            "start",
+            "resume",
+            "stop",
+            "retry",
+            "permission-response",
+            "event-normalization",
+          ],
+          {
+            restart: {
+              reason:
+                "Claude ACP server restart is sandbox-agent bootstrap recovery; user retry starts a fresh run.",
+              recovery: "retry-new-run",
+            },
+            "compact-and-retry": {
+              reason:
+                "Compaction is emitted as a typed recovery result before another ACP run.",
+              recovery: "retry-new-run",
+            },
+            "human-intervention": {
+              reason:
+                "Human intervention is surfaced as a terminal recovery result, not an ACP operation.",
+              recovery: "manual-intervention",
+            },
+          },
+        ),
+      };
+    case "legacy":
+      return {
+        adapterId: "legacy",
+        transportMode,
+        protocolVersion: 1,
+        session: {
+          requestedSessionField: "sessionId",
+          resolvedSessionField: "sessionId",
+          previousResponseField: null,
+        },
+        operations: createOperationContract(
+          ["start", "resume", "stop", "retry", "event-normalization"],
+          {
+            restart: {
+              reason:
+                "Legacy stream-json processes are single-turn child processes; restart is represented as a new run.",
+              recovery: "retry-new-run",
+            },
+            "permission-response": {
+              reason:
+                "Legacy stream-json permission prompts are not addressable by daemon operation id.",
+              recovery: "manual-intervention",
+            },
+            "compact-and-retry": {
+              reason:
+                "Compaction is handled before dispatch and retried as a fresh legacy run.",
+              recovery: "retry-new-run",
+            },
+            "human-intervention": {
+              reason:
+                "Human intervention is surfaced as a terminal recovery result, not a legacy adapter operation.",
+              recovery: "manual-intervention",
+            },
+          },
+        ),
+      };
+    default: {
+      const _exhaustiveCheck: never = transportMode;
+      throw new Error(`Unknown transport mode: ${_exhaustiveCheck}`);
+    }
+  }
+}
+
+export function resolveDaemonRuntimeAdapterContract(
+  input: Partial<
+    Pick<DaemonMessageClaude, "transportMode" | "runtimeAdapterContract">
+  >,
+): RuntimeAdapterContract {
+  return createDaemonRuntimeAdapterContract({
+    transportMode: input.transportMode ?? "legacy",
+  });
+}
+
+export function hasRuntimeAdapterContractDrift({
+  inbound,
+  canonical,
+}: {
+  inbound: RuntimeAdapterContract | undefined;
+  canonical: RuntimeAdapterContract;
+}): boolean {
+  if (!inbound) {
+    return false;
+  }
+  return JSON.stringify(inbound) !== JSON.stringify(canonical);
+}
+
+export function getRuntimeAdapterRequestedSessionId({
+  input,
+  contract,
+}: {
+  input: Pick<DaemonMessageClaude, "sessionId" | "acpSessionId">;
+  contract: RuntimeAdapterContract;
+}): string | null {
+  switch (contract.session.requestedSessionField) {
+    case "sessionId":
+      return input.sessionId ?? null;
+    case "acpSessionId":
+      return input.acpSessionId ?? null;
+    case null:
+      return null;
+    default: {
+      const _exhaustiveCheck: never = contract.session.requestedSessionField;
+      return _exhaustiveCheck;
+    }
+  }
+}
+
+export function getRuntimeAdapterLifecycleOperation({
+  input,
+  contract,
+}: {
+  input: Pick<DaemonMessageClaude, "sessionId" | "acpSessionId">;
+  contract: RuntimeAdapterContract;
+}): "start" | "resume" {
+  return getRuntimeAdapterRequestedSessionId({ input, contract })
+    ? "resume"
+    : "start";
+}
+
+export function requireRuntimeAdapterOperation({
+  contract,
+  operation,
+}: {
+  contract: RuntimeAdapterContract;
+  operation: RuntimeAdapterOperation;
+}): RuntimeAdapterOperationResult {
+  const support = contract.operations[operation];
+  if (support?.status === "supported") {
+    return { status: "ok" };
+  }
+  const unsupported =
+    support ??
+    unsupportedOperation(
+      `${operation} is not implemented by ${contract.adapterId}`,
+      "manual-intervention",
+    );
+  return {
+    status: "unsupported",
+    operation,
+    reason: unsupported.reason,
+    recovery: unsupported.recovery,
+  };
+}
+
+export function runtimeAdapterUnsupportedOperationToMessage(
+  result: Extract<RuntimeAdapterOperationResult, { status: "unsupported" }>,
+): ClaudeMessage {
+  return {
+    type: "custom-error",
+    session_id: null,
+    duration_ms: 0,
+    error_info: `Runtime operation "${result.operation}" is unsupported. Reason: ${result.reason} Recovery: ${result.recovery}.`,
+    runtimeRecovery: {
+      operation: result.operation,
+      reason: result.reason,
+      recovery: result.recovery,
+    },
+  };
+}
+
 export interface IDaemonRuntime {
   url: string;
   unixSocketPath: string;
@@ -137,10 +393,7 @@ export interface IDaemonRuntime {
 
   additionalCapabilities?: Set<string>;
 
-  serverPost: (
-    body: DaemonEventAPIBody,
-    token: string,
-  ) => Promise<SdlcSelfDispatchPayload | null>;
+  serverPost: (body: DaemonEventAPIBody, token: string) => Promise<void>;
 
   listenToUnixSocket: (callback: (data: string) => void) => Promise<void>;
 
@@ -351,15 +604,12 @@ export class DaemonRuntime implements IDaemonRuntime {
     this.eventEmitter.on("teardown", callback);
   }
 
-  async serverPost(
-    body: DaemonEventAPIBody,
-    token: string,
-  ): Promise<SdlcSelfDispatchPayload | null> {
+  async serverPost(body: DaemonEventAPIBody, token: string): Promise<void> {
     const url = `${this.url}/api/daemon-event`;
     const logArgs = { url, body: JSON.stringify(body) };
     if (this.skipReportingDaemonEvents) {
       this.logger.info(`[SKIPPED] POST to ${url}`, logArgs);
-      return null;
+      return;
     }
     this.logger.info(`POST to ${url}`, logArgs);
     const headers: Record<string, string> = {
@@ -426,19 +676,8 @@ export class DaemonRuntime implements IDaemonRuntime {
           `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
         );
       }
-      return parseSdlcSelfDispatchPayload(responseBody);
+      return;
     }
-
-    if (this.additionalCapabilities.has(DAEMON_CAPABILITY_SDLC_SELF_DISPATCH)) {
-      let responseBody: unknown = null;
-      try {
-        responseBody = await response.json();
-      } catch {
-        responseBody = null;
-      }
-      return parseSdlcSelfDispatchPayload(responseBody);
-    }
-    return null;
   }
 
   async listenToUnixSocket(

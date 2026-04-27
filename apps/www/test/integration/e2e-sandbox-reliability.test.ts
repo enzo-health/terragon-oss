@@ -7,18 +7,18 @@
  * This is the real deal - no mocks, actual infrastructure.
  */
 
-import { describe, it, expect } from "vitest";
+import type { DaemonMessageClaude } from "@terragon/daemon/shared";
 import { getOrCreateSandbox } from "@terragon/sandbox";
 import {
+  getDaemonLogs,
   installDaemon,
   sendMessage,
-  getDaemonLogs,
 } from "@terragon/sandbox/daemon";
 import type {
-  ISandboxSession,
   CreateSandboxOptions,
+  ISandboxSession,
 } from "@terragon/sandbox/types";
-import type { DaemonMessageClaude } from "@terragon/daemon/shared";
+import { describe, expect, it } from "vitest";
 
 // Test timeout: 3 minutes for sandbox startup + test
 type ReliabilityMetrics = {
@@ -108,7 +108,6 @@ async function runSandboxReliabilityTest(params: {
       messages.push(msg);
     }
 
-    const sendStart = Date.now();
     let sentCount = 0;
     for (const msg of messages) {
       try {

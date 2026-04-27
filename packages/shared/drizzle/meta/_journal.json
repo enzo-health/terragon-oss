@@ -267,6 +267,20 @@
       "when": 1777334400000,
       "tag": "0037_agent_event_log_ag_ui",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1777420800000,
+      "tag": "0038_runtime_session_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1777507200000,
+      "tag": "0039_drop_delivery_loop_runtime",
+      "breakpoints": true
     }
   ]
 }

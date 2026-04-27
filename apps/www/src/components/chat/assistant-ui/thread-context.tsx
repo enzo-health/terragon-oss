@@ -39,6 +39,7 @@ export type TerragonThreadContext = {
     githubRepoFullName: string;
     repoBaseBranchName: string;
     branchName: string | null;
+    onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   };
   /**
    * Pre-assembled `messagePartProps` bag. Kept stable across renders via

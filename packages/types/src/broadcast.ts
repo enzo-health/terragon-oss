@@ -183,9 +183,7 @@ const BroadcastThreadPatchSchema = z.object({
       threadName: z.string().optional(),
     })
     .optional(),
-  refetch: z
-    .array(z.enum(["shell", "chat", "diff", "list", "delivery-loop"]))
-    .optional(),
+  refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
   // Delta fields — token-level streaming with durable sequencing/replay support
   messageId: z.string().optional(),
   partIndex: z.number().int().nonnegative().optional(),

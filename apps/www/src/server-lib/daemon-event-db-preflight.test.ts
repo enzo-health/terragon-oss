@@ -2,6 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DB } from "@terragon/shared/db";
 
 const AGENT_RUN_CONTEXT_COLUMNS = [
+  "run_id",
+  "thread_id",
+  "thread_chat_id",
+  "transport_mode",
+  "protocol_version",
+  "requested_session_id",
+  "resolved_session_id",
+  "runtime_provider",
+  "external_session_id",
+  "previous_response_id",
+  "checkpoint_pointer",
+  "hibernation_valid",
+  "compaction_generation",
+  "last_accepted_seq",
+  "terminal_event_id",
+  "status",
+  "daemon_token_key_id",
   "failure_category",
   "failure_source",
   "failure_retryable",

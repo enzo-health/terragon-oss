@@ -7,7 +7,11 @@ import type { UIMessage } from "@terragon/shared";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { useAgUiMessages } from "./use-ag-ui-messages";
+import {
+  collapseHydrationReplayTextDuplicates,
+  createThreadViewEventFromAgUiEvent,
+  useAgUiMessages,
+} from "./use-ag-ui-messages";
 
 interface FakeAgent {
   subscribe: (subscriber: {
@@ -79,6 +83,110 @@ afterEach(() => {
 });
 
 describe("useAgUiMessages", () => {
+  it("routes run lifecycle events through the runtime event input", () => {
+    expect(
+      createThreadViewEventFromAgUiEvent({
+        type: EventType.RUN_STARTED,
+        runId: "run-1",
+      } as BaseEvent),
+    ).toMatchObject({ type: "runtime.event" });
+    expect(
+      createThreadViewEventFromAgUiEvent({
+        type: EventType.RUN_FINISHED,
+      } as BaseEvent),
+    ).toMatchObject({ type: "runtime.event" });
+    expect(
+      createThreadViewEventFromAgUiEvent({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "m1",
+      } as BaseEvent),
+    ).toMatchObject({ type: "ag-ui.event" });
+  });
+
+  it("collapses adjacent synthetic+streamed duplicate agent text messages", () => {
+    const deduped = collapseHydrationReplayTextDuplicates([
+      {
+        id: "agent-0",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          { type: "text", text: "I’m receiving your message correctly." },
+        ],
+      },
+      {
+        id: "msg-real-1",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          { type: "text", text: "I’m receiving your message correctly." },
+        ],
+      },
+    ] as UIMessage[]);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.id).toBe("msg-real-1");
+  });
+
+  it("collapses synthetic+streamed duplicates when text is split across multiple seed parts", () => {
+    const deduped = collapseHydrationReplayTextDuplicates([
+      {
+        id: "agent-0",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          { type: "text", text: "If streaming is working, " },
+          { type: "text", text: "you should see this incrementally." },
+        ],
+      },
+      {
+        id: "msg-real-2",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "text",
+            text: "If streaming is working, you should see this incrementally.",
+          },
+        ],
+      },
+    ] as UIMessage[]);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.id).toBe("msg-real-2");
+  });
+
+  it("collapses adjacent canonical+delta duplicate assistant text messages", () => {
+    const deduped = collapseHydrationReplayTextDuplicates([
+      {
+        id: "07db6055dbd21c5fe76f5dc7f2a7d62dcf82389245a22aa6288765916d9d9b69",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "text",
+            text: "If streaming is working, you should see this incrementally.",
+          },
+        ],
+      },
+      {
+        id: "msg_0896824b830301890169e9568b4bc0819488739c90b21e043e",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [
+          {
+            type: "text",
+            text: "If streaming is working, you should see this incrementally.",
+          },
+        ],
+      },
+    ] as UIMessage[]);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.id).toBe(
+      "msg_0896824b830301890169e9568b4bc0819488739c90b21e043e",
+    );
+  });
+
   it("seeds with initialMessages and appends assistant message on TEXT_MESSAGE_START/CONTENT", () => {
     const agent = createFakeAgent();
     const seen: UIMessage[][] = [];
@@ -169,5 +277,207 @@ describe("useAgUiMessages", () => {
     });
 
     expect(seen[seen.length - 1]).toEqual([]);
+  });
+
+  it("replaces a synthetic seeded assistant duplicate with replayed AG-UI message content", () => {
+    const agent = createFakeAgent();
+    const seen: UIMessage[][] = [];
+    const text = "If streaming is working, you should see this incrementally.";
+    const initial: UIMessage[] = [
+      {
+        id: "agent-0",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [{ type: "text", text }],
+      },
+    ];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(Harness, {
+          agent: asHttpAgent(agent),
+          initialMessages: initial,
+          onMessages: (m) => seen.push(m),
+        }),
+      );
+    });
+
+    act(() => {
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-real-1",
+        role: "assistant",
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-real-1",
+        delta: text,
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-real-1",
+      } as BaseEvent);
+    });
+
+    const last = seen[seen.length - 1]!;
+    expect(last).toHaveLength(1);
+    expect(last[0]?.id).toBe("msg-real-1");
+    expect(last[0]).toMatchObject({
+      role: "agent",
+      parts: [{ type: "text", text }],
+    });
+  });
+
+  it("dedupes replay/live overlap by eventId when present", () => {
+    const agent = createFakeAgent();
+    const seen: UIMessage[][] = [];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(Harness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages: (m) => seen.push(m),
+        }),
+      );
+    });
+
+    act(() => {
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "agent-1",
+        role: "assistant",
+        runId: "run-1",
+        eventId: "event-start-1",
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "hello",
+        runId: "run-1",
+        eventId: "event-content-1",
+      } as BaseEvent);
+      // Replay/live overlap duplicate: same identity, should be dropped.
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "hello",
+        runId: "run-1",
+        eventId: "event-content-1",
+      } as BaseEvent);
+    });
+
+    const last = seen[seen.length - 1]!;
+    const agentMessage = last.find((message) => message.id === "agent-1");
+    expect(agentMessage).toBeDefined();
+    expect(agentMessage).toMatchObject({
+      role: "agent",
+      parts: [{ type: "text", text: "hello" }],
+    });
+  });
+
+  it("dedupes replay/live overlap by runId+seq when eventId is absent", () => {
+    const agent = createFakeAgent();
+    const seen: UIMessage[][] = [];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(Harness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages: (m) => seen.push(m),
+        }),
+      );
+    });
+
+    act(() => {
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "agent-2",
+        role: "assistant",
+        runId: "run-2",
+        seq: 10,
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-2",
+        delta: "world",
+        runId: "run-2",
+        seq: 11,
+      } as BaseEvent);
+      // Replay/live overlap duplicate: same run+seq, should be dropped.
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-2",
+        delta: "world",
+        runId: "run-2",
+        seq: 11,
+      } as BaseEvent);
+    });
+
+    const last = seen[seen.length - 1]!;
+    const agentMessage = last.find((message) => message.id === "agent-2");
+    expect(agentMessage).toBeDefined();
+    expect(agentMessage).toMatchObject({
+      role: "agent",
+      parts: [{ type: "text", text: "world" }],
+    });
+  });
+
+  it("does not suppress repeated content chunks when identity fields are missing", () => {
+    const agent = createFakeAgent();
+    const seen: UIMessage[][] = [];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(Harness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages: (m) => seen.push(m),
+        }),
+      );
+    });
+
+    act(() => {
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "agent-3",
+        role: "assistant",
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-3",
+        delta: "ha",
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-3",
+        delta: "ha",
+      } as BaseEvent);
+    });
+
+    const last = seen[seen.length - 1]!;
+    const agentMessage = last.find((message) => message.id === "agent-3");
+    expect(agentMessage).toBeDefined();
+    expect(agentMessage).toMatchObject({
+      role: "agent",
+      parts: [{ type: "text", text: "haha" }],
+    });
   });
 });

@@ -921,6 +921,48 @@ describe("parseCodexLine", () => {
     }
   });
 
+  test("should not complete collab task when child agents are still pending", () => {
+    const state = createCodexParserState();
+    const startedLine =
+      '{"type":"item.started","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{},"status":"in_progress"}}';
+    const nonTerminalCompletedLine =
+      '{"type":"item.completed","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"pendingInit"}},"status":"completed"}}';
+    const terminalUpdatedLine =
+      '{"type":"item.updated","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"completed","message":"done"}},"status":"completed"}}';
+
+    const started = parseCodexLine({
+      line: startedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const nonTerminalCompleted = parseCodexLine({
+      line: nonTerminalCompletedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const terminalUpdated = parseCodexLine({
+      line: terminalUpdatedLine,
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(started).toHaveLength(1);
+    expect(nonTerminalCompleted).toHaveLength(0);
+    expect(terminalUpdated).toHaveLength(1);
+    expect(terminalUpdated[0]?.type).toBe("user");
+    if (terminalUpdated[0]?.type === "user") {
+      const content = terminalUpdated[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_collab_pending",
+          is_error: false,
+        });
+      }
+    }
+  });
+
   test("should not emit duplicate Task start if item.updated arrives before item.started", () => {
     const state = createCodexParserState();
     const updated = parseCodexLine({

@@ -12,13 +12,29 @@ import {
 import {
   EVENT_ENVELOPE_VERSION,
   type AssistantMessageEvent,
+  type ArtifactReferenceEvent,
+  type MetaEvent as CanonicalMetaEvent,
   type OperationalRunStartedEvent,
+  type PermissionRequestEvent,
+  type PermissionResponseEvent,
+  type ReasoningMessageEvent,
+  type ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   type ToolCallResultEvent as CanonicalToolCallResultEvent,
   type ToolCallStartEvent as CanonicalToolCallStartEvent,
+  type UnknownProviderEvent,
 } from "./canonical-events";
 
 const baseEnvelope = {
   payloadVersion: EVENT_ENVELOPE_VERSION as 2,
+  eventId: "event-1",
+  runId: "run-1",
+  threadId: "thread-1",
+  threadChatId: "thread-chat-1",
+  seq: 0,
+  timestamp: "2026-04-17T12:00:00.000Z",
+} as const;
+
+const baseIdentity = {
   eventId: "event-1",
   runId: "run-1",
   threadId: "thread-1",
@@ -206,6 +222,170 @@ describe("mapCanonicalEventToAgui", () => {
         type: EventType.TOOL_CALL_RESULT,
         content: "permission denied",
       });
+    });
+  });
+
+  describe("tool-call-progress", () => {
+    it("maps to TOOL_CALL_CHUNK", () => {
+      const event: CanonicalToolCallProgressEvent = {
+        ...baseEnvelope,
+        category: "tool_lifecycle",
+        type: "tool-call-progress",
+        toolCallId: "tc-1",
+        delta: "stdout chunk",
+        progressKind: "stdout",
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.TOOL_CALL_CHUNK,
+        toolCallId: "tc-1",
+        delta: "stdout chunk",
+        progressKind: "stdout",
+      });
+    });
+  });
+
+  describe("reasoning-message", () => {
+    it("emits reasoning START + CONTENT + END", () => {
+      const event: ReasoningMessageEvent = {
+        ...baseEnvelope,
+        category: "reasoning",
+        type: "reasoning-message",
+        messageId: "reasoning-1",
+        content: "I should inspect the route first.",
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result.map((entry) => entry.type)).toEqual([
+        EventType.REASONING_MESSAGE_START,
+        EventType.REASONING_MESSAGE_CONTENT,
+        EventType.REASONING_MESSAGE_END,
+      ]);
+      expect(result[1]).toMatchObject({
+        messageId: "reasoning-1",
+        delta: "I should inspect the route first.",
+      });
+    });
+  });
+
+  describe("custom projection events", () => {
+    it("maps permission requests to CUSTOM events", () => {
+      const event: PermissionRequestEvent = {
+        ...baseEnvelope,
+        category: "permission",
+        type: "permission-request",
+        permissionRequestId: "permission-1",
+        toolCallId: "tc-1",
+        title: "Run command?",
+        options: ["approve", "deny"],
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "permission-request",
+        value: {
+          ...baseIdentity,
+          permissionRequestId: "permission-1",
+          toolCallId: "tc-1",
+          title: "Run command?",
+          options: ["approve", "deny"],
+        },
+      });
+    });
+
+    it("maps permission responses to CUSTOM events", () => {
+      const event: PermissionResponseEvent = {
+        ...baseEnvelope,
+        category: "permission",
+        type: "permission-response",
+        permissionRequestId: "permission-1",
+        response: "approved",
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "permission-response",
+        value: {
+          ...baseIdentity,
+          permissionRequestId: "permission-1",
+          response: "approved",
+        },
+      });
+    });
+
+    it("maps artifact references to CUSTOM events", () => {
+      const event: ArtifactReferenceEvent = {
+        ...baseEnvelope,
+        category: "artifact",
+        type: "artifact-reference",
+        artifactId: "artifact-1",
+        artifactType: "diff",
+        title: "Patch",
+        uri: "r2://bucket/key",
+        status: "ready",
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "artifact-reference",
+        value: {
+          ...baseIdentity,
+          artifactId: "artifact-1",
+          artifactType: "diff",
+          title: "Patch",
+          uri: "r2://bucket/key",
+          status: "ready",
+        },
+      });
+    });
+
+    it("maps meta events using their meta name", () => {
+      const event: CanonicalMetaEvent = {
+        ...baseEnvelope,
+        category: "meta",
+        type: "meta",
+        name: "model-reroute",
+        value: { from: "sonnet", to: "gpt-5.4" },
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "model-reroute",
+        value: {
+          ...baseIdentity,
+          from: "sonnet",
+          to: "gpt-5.4",
+        },
+      });
+    });
+  });
+
+  describe("unknown-provider-event", () => {
+    it("does not render quarantined provider payloads by default", () => {
+      const event: UnknownProviderEvent = {
+        ...baseEnvelope,
+        category: "quarantine",
+        type: "unknown-provider-event",
+        provider: "acp",
+        reason: "unsupported event kind",
+        redactedPayload: { token: "[REDACTED]" },
+      };
+
+      expect(mapCanonicalEventToAgui(event)).toEqual([]);
     });
   });
 });

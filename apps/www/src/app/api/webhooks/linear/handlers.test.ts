@@ -1,30 +1,30 @@
-import {
-  describe,
-  expect,
-  it,
-  vi,
-  beforeEach,
-  beforeAll,
-  afterAll,
-} from "vitest";
-import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
+import { env } from "@terragon/env/apps-www";
 import { User } from "@terragon/shared";
-import {
-  createTestUser,
-  setFeatureFlagOverrideForTest,
-} from "@terragon/shared/model/test-helpers";
 import {
   upsertLinearAccount,
   upsertLinearInstallation,
   upsertLinearSettings,
 } from "@terragon/shared/model/linear";
+import {
+  createTestUser,
+  setFeatureFlagOverrideForTest,
+} from "@terragon/shared/model/test-helpers";
+import { encryptValue } from "@terragon/utils/encryption";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { db } from "@/lib/db";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import type { LinearClientFactory } from "@/server-lib/linear-agent-activity";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
-import { encryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -282,37 +282,6 @@ describe("handlers", () => {
             organizationId: "org-123",
             issueId: "issue-xyz",
             linearDeliveryId: "delivery-2",
-            deliveryLoopOptIn: false,
-          }),
-        }),
-      );
-    });
-
-    it("passes delivery loop settings through to Linear-created threads", async () => {
-      await upsertLinearSettings({
-        db,
-        userId: user.id,
-        organizationId: "org-123",
-        settings: {
-          defaultRepoFullName: "owner/default-repo",
-          defaultModel: "sonnet",
-          deliveryLoopOptIn: true,
-          deliveryPlanApprovalPolicy: "human_required",
-        },
-      });
-
-      const payload = makeCreatedPayload();
-
-      await handleAgentSessionEvent(payload, "delivery-delivery-loop", {
-        createClient: mockClientFactory,
-      });
-      await waitUntilResolved();
-
-      expect(newThreadInternal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sourceMetadata: expect.objectContaining({
-            deliveryLoopOptIn: true,
-            deliveryPlanApprovalPolicy: "human_required",
           }),
         }),
       );

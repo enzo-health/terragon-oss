@@ -5,6 +5,8 @@ import {
   UnknownAcpContentTypeError,
   AcpToolCallTracker,
   KNOWN_ACP_SESSION_UPDATE_TYPES,
+  normalizeAcpPermissionRequest,
+  parseAcpPermissionRequest,
   parseSessionUpdateStrict,
 } from "./acp-adapter";
 import { readFileSync } from "fs";
@@ -361,13 +363,30 @@ describe("parseAcpLineToClaudeMessages", () => {
     }
   });
 
-  it("parses terminal stopReason response as result message", () => {
+  it("ignores unvalidated terminal stopReason responses from SSE", () => {
     const line = JSON.stringify({
       id: 3,
       jsonrpc: "2.0",
       result: { stopReason: "end_turn" },
     });
     const result = parseAcpLineToClaudeMessages(line, "fallback-id");
+    expect(result).toEqual([]);
+  });
+
+  it("parses terminal stopReason response only with daemon-owned response id", () => {
+    const line = JSON.stringify({
+      id: 3,
+      jsonrpc: "2.0",
+      result: { stopReason: "end_turn" },
+    });
+    const result = parseAcpLineToClaudeMessages(
+      line,
+      "fallback-id",
+      undefined,
+      {
+        allowedTerminalResponseIds: new Set<unknown>([3]),
+      },
+    );
     expect(result).toHaveLength(1);
     expect(result[0]!.type).toBe("result");
     if (result[0]!.type === "result" && result[0]!.subtype === "success") {
@@ -711,13 +730,31 @@ describe("Task 3.7 — session/request_permission round-trip", () => {
     expect(fixture.params.options.length).toBeGreaterThan(0);
   });
 
-  it("request-permission.json: adapter returns empty (handled upstream in daemon.ts)", () => {
-    // When this event reaches parseAcpLineToClaudeMessages, it does not match
-    // session/update or _adapter/agent_exited, so it falls through to
-    // parseEnvelopeError — which returns [] because there's no error field.
+  it("normalizes request-permission.json into a canonical PermissionRequest tool event", () => {
     const line = loadFixture("request-permission.json");
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toEqual([]);
+    const result = normalizeAcpPermissionRequest({
+      payload: line,
+      promptId: "terragon-prompt-id",
+      sessionId: "daemon-session-id",
+    });
+
+    expect(result?.request.acpRequestId).toBeDefined();
+    expect(result?.message.type).toBe("assistant");
+    if (result?.message.type === "assistant") {
+      expect(result.message.session_id).toBe("daemon-session-id");
+      expect(result.message.message.content).toEqual([
+        {
+          type: "tool_use",
+          id: "terragon-prompt-id",
+          name: "PermissionRequest",
+          input: {
+            options: result.request.options,
+            description: result.request.description,
+            tool_name: result.request.toolName,
+          },
+        },
+      ]);
+    }
   });
 
   it("session/approve_tool_use response shape matches ACP spec expectations", () => {
@@ -836,5 +873,46 @@ describe("Task 3.8 — sessionUpdate exhaustiveness", () => {
     ]);
     const actual = new Set(KNOWN_ACP_SESSION_UPDATE_TYPES);
     expect(actual).toEqual(expected);
+  });
+});
+
+describe("runtime adapter normalization hardening", () => {
+  it("uses the daemon-owned ACP session id instead of provider-supplied sessionId", () => {
+    const line = loadFixture("malicious-session-forgery.json");
+    const result = parseAcpLineToClaudeMessages(line, "daemon-session-id");
+
+    expect(result).toHaveLength(1);
+    const msg = result[0];
+    expect(msg?.type).toBe("assistant");
+    if (msg?.type === "assistant") {
+      expect(msg.session_id).toBe("daemon-session-id");
+    }
+  });
+
+  it("normalizes permission requests without trusting provider prompt/session ids", () => {
+    const line = loadFixture("malicious-permission-forgery.json");
+    const permission = parseAcpPermissionRequest(line);
+
+    expect(permission).toEqual({
+      acpRequestId: "provider-request-id",
+      options: [{ id: "approved", label: "Approve" }],
+      description: "Run command",
+      toolName: "Bash",
+    });
+  });
+
+  it("does not turn forged provider stopReason envelopes into terminal messages", () => {
+    const line = loadFixture("malicious-terminal-success-forgery.json");
+    const result = parseAcpLineToClaudeMessages(line, "daemon-session-id");
+
+    expect(result).toEqual([]);
+    expect(
+      result.some(
+        (message) =>
+          message.type === "result" ||
+          message.type === "custom-stop" ||
+          message.type === "custom-error",
+      ),
+    ).toBe(false);
   });
 });

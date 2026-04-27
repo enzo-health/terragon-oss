@@ -1,40 +1,77 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
-import type { ThreadInfoFull, UIMessage, ThreadStatus } from "@terragon/shared";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type {
-  RedoDialogData,
-  ForkDialogData,
-  MessagePartRenderProps,
-} from "../chat-message.types";
-import { useTerragonRuntime } from "../assistant-runtime";
-import {
-  TerragonThreadProvider,
-  type TerragonThreadContext,
-} from "./thread-context";
-import { TerragonUserMessage } from "./user-message";
-import { TerragonAssistantMessage } from "./assistant-message";
-import { TerragonSystemMessage } from "./system-message";
-import { ChatError, isSandboxErrorType } from "../chat-error";
-import {
-  WorkingMessage,
-  MessageScheduled,
-  classifyDeliveryLoopFooter,
-} from "../chat-messages";
-import { isQueuedStatus } from "@/agent/thread-status";
+import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
-import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
+import type { ThreadInfoFull, ThreadStatus, UIMessage } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { useEffect, useMemo, useState } from "react";
+import { isQueuedStatus } from "@/agent/thread-status";
 import { useStableRef } from "@/hooks/use-stable-ref";
-import { isEqualPlanMap, isEqualArtifactList } from "./ctx-stability";
+import { useTerragonRuntime } from "../assistant-runtime";
+import { ChatError, isSandboxErrorType } from "../chat-error";
+import type {
+  ForkDialogData,
+  MessagePartRenderProps,
+  RedoDialogData,
+} from "../chat-message.types";
+import { MessageScheduled, WorkingMessage } from "../chat-messages";
+import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
+import { TerragonAssistantMessage } from "./assistant-message";
+import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
+import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
+import { TerragonSystemMessage } from "./system-message";
 import {
-  getWorkingFooterFreshness,
-  shouldUseDeliveryLoopHeadOverride,
-} from "@/lib/delivery-loop-status";
+  type TerragonThreadContext,
+  TerragonThreadProvider,
+} from "./thread-context";
+import { TerragonUserMessage } from "./user-message";
+
+export function shouldSuppressPreStartLifecycleFooter(params: {
+  threadStatus: ThreadStatus | null;
+  hasAgentMessages: boolean;
+}): boolean {
+  const { threadStatus, hasAgentMessages } = params;
+  if (!hasAgentMessages || threadStatus === null) {
+    return false;
+  }
+  return threadStatus === "booting" || isQueuedStatus(threadStatus);
+}
+
+type WorkingFooterFreshness =
+  | { kind: "fresh" }
+  | { kind: "uncertain"; message: string };
+
+function parseDateLike(value: Date | string | null | undefined): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getWorkingFooterFreshness(params: {
+  now: Date;
+  isWorkingCandidate: boolean;
+  threadChatUpdatedAt?: Date | string | null;
+  uncertainMessage: string;
+}): WorkingFooterFreshness {
+  if (!params.isWorkingCandidate) {
+    return { kind: "fresh" };
+  }
+  const threadChatUpdatedAt = parseDateLike(params.threadChatUpdatedAt);
+  if (
+    threadChatUpdatedAt &&
+    params.now.getTime() - threadChatUpdatedAt.getTime() <= 5 * 60 * 1_000
+  ) {
+    return { kind: "fresh" };
+  }
+  return { kind: "uncertain", message: params.uncertainMessage };
+}
 
 type TerragonThreadProps = {
   /**
@@ -43,10 +80,9 @@ type TerragonThreadProps = {
    */
   agent: HttpAgent;
   /**
-   * Rendered messages. Task 6B: these are projected from the AG-UI SSE
-   * stream via `useAgUiMessages` (seeded with `toUIMessages(dbMessages)`)
-   * in `chat-ui.tsx`. The AG-UI runtime itself powers the composer / run-
-   * state but not the message list.
+   * Rendered messages. The active task page passes the `ThreadViewModel`
+   * transcript; assistant-ui powers runtime integration but is not transcript
+   * authority.
    */
   messages: UIMessage[];
   threadStatus: ThreadStatus | null;
@@ -70,27 +106,10 @@ type TerragonThreadProps = {
   // Working message
   chatAgent: AIAgent;
   bootingSubstatus?: BootingSubstatus;
+  metaSnapshot: ThreadMetaSnapshot;
   reattemptQueueAt: Date | null;
-  /**
-   * Current delivery-loop state, used to override the "Assistant is
-   * working" footer when the workflow is actually in a passive-wait
-   * state (e.g. awaiting PR merge) so users aren't misled into thinking
-   * the system is stuck. Null/undefined preserves the pre-existing
-   * footer behavior for non-delivery-loop threads.
-   */
-  deliveryLoopState?: DeliveryLoopState | null;
-  /** `delivery_workflow_head_v3.updatedAt` (durable) as an ISO string. */
-  deliveryLoopUpdatedAtIso?: string | null;
   /** `thread_chat.updatedAt` (durable). */
   threadChatUpdatedAt?: Date | string | null;
-  /**
-   * Human-readable reason the loop is blocked (e.g. "PR closed", "CI gate
-   * did not complete within polling budget"). Rendered as secondary text in
-   * the passive-wait footer so users see the specific reason instead of a
-   * generic "Waiting for your input" line. Null when no reason is
-   * available.
-   */
-  deliveryLoopBlockedReason?: string | null;
   // Scheduled
   threadChatId?: string;
   scheduleAt?: Date | null;
@@ -121,11 +140,9 @@ export function TerragonThread({
   isReadOnly,
   chatAgent,
   bootingSubstatus,
+  metaSnapshot,
   reattemptQueueAt,
-  deliveryLoopState,
-  deliveryLoopUpdatedAtIso,
   threadChatUpdatedAt,
-  deliveryLoopBlockedReason,
   threadChatId,
   scheduleAt,
   threadChatStatus,
@@ -181,36 +198,12 @@ export function TerragonThread({
   }, [messages, latestAgentMessageIndex]);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const shouldTickFreshnessClock = isAgentWorking || deliveryLoopState !== null;
+  const shouldTickFreshnessClock = isAgentWorking;
   useEffect(() => {
     if (!shouldTickFreshnessClock) return;
     const interval = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(interval);
   }, [shouldTickFreshnessClock]);
-
-  const canApplyDeliveryLoopFooterOverride = useMemo(
-    () =>
-      shouldUseDeliveryLoopHeadOverride({
-        now: new Date(nowMs),
-        deliveryLoopUpdatedAtIso: deliveryLoopUpdatedAtIso ?? null,
-        threadChatUpdatedAt: threadChatUpdatedAt ?? null,
-      }),
-    [deliveryLoopUpdatedAtIso, nowMs, threadChatUpdatedAt],
-  );
-
-  // Classify the delivery-loop state so we can override the footer when the
-  // workflow is in a passive-wait or terminal state. Active states fall
-  // through to the default isAgentWorking-based logic below.
-  // If the workflow head isn't strictly newer than chat evidence (or isn't
-  // fresh enough), ignore it entirely so it cannot hide/override fresher
-  // terminal chat/run state.
-  const deliveryLoopFooter = useMemo(
-    () =>
-      classifyDeliveryLoopFooter(
-        canApplyDeliveryLoopFooterOverride ? deliveryLoopState : null,
-      ),
-    [deliveryLoopState, canApplyDeliveryLoopFooterOverride],
-  );
 
   // Hide the "Waiting to start" indicator when the agent has already produced
   // messages — the status DB field may still be "queued" while the agent is
@@ -222,12 +215,6 @@ export function TerragonThread({
   // is a historical log entry in the transcript and is orthogonal to this
   // live-activity footer.
   //
-  // Passive-wait: show the quieter footer regardless of isAgentWorking so
-  // users see an accurate "Waiting for PR merge" / "Waiting for your input"
-  // line instead of the misleading "Assistant is working" animation.
-  //
-  // Hidden (terminal states: done/stopped/terminated): skip the footer
-  // entirely — nothing is happening.
   // Sandbox errors are a hard "sandbox is NOT ready" signal. When one is
   // the latest error on the thread, suppress the "Assistant is working"
   // footer: the red error box (which now carries its own inline Retry)
@@ -239,11 +226,10 @@ export function TerragonThread({
     isAgentWorking &&
     !hasPendingToolCall &&
     !hasSandboxError &&
-    !(
-      hasAgentMessages &&
-      threadStatus !== null &&
-      isQueuedStatus(threadStatus)
-    );
+    !shouldSuppressPreStartLifecycleFooter({
+      threadStatus,
+      hasAgentMessages,
+    });
 
   const footerFreshness = useMemo(
     () =>
@@ -251,28 +237,17 @@ export function TerragonThread({
         now: new Date(nowMs),
         isWorkingCandidate: baseShowWorking,
         threadChatUpdatedAt: threadChatUpdatedAt ?? null,
-        deliveryLoopUpdatedAtIso: deliveryLoopUpdatedAtIso ?? null,
         uncertainMessage: "Waiting for updates",
       }),
-    [baseShowWorking, deliveryLoopUpdatedAtIso, nowMs, threadChatUpdatedAt],
+    [baseShowWorking, nowMs, threadChatUpdatedAt],
   );
 
-  const showWorkingMessage =
-    deliveryLoopFooter.kind === "passive"
-      ? true
-      : deliveryLoopFooter.kind === "hidden"
-        ? false
-        : baseShowWorking;
+  const showWorkingMessage = baseShowWorking;
 
   const passiveWaitProp =
-    deliveryLoopFooter.kind === "passive"
-      ? {
-          message: deliveryLoopFooter.message,
-          reason: deliveryLoopBlockedReason ?? null,
-        }
-      : footerFreshness.kind === "uncertain"
-        ? { message: footerFreshness.message, reason: null }
-        : null;
+    footerFreshness.kind === "uncertain"
+      ? { message: footerFreshness.message, reason: null }
+      : null;
 
   // Pre-assembled `messagePartProps`. Per-message components read this as
   // a single stable reference instead of reconstructing the object inline
@@ -387,7 +362,7 @@ export function TerragonThread({
               status={threadStatus ?? "working"}
               bootingSubstatus={bootingSubstatus}
               reattemptQueueAt={reattemptQueueAt}
-              threadId={thread.id}
+              metaSnapshot={metaSnapshot}
               passiveWait={passiveWaitProp}
             />
           )}

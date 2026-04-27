@@ -6,12 +6,13 @@
  * and event processing integrity.
  */
 
-import { describe, it, expect } from "vitest";
+import type { BaseEvent } from "@ag-ui/core";
+import { describe, expect, it } from "vitest";
 import { runReducerHarness } from "./streaming-harness/reducer-harness";
 import {
-  singleMessageDeltas,
-  multiMessageDeltas,
   interleavedToolCalls,
+  multiMessageDeltas,
+  singleMessageDeltas,
 } from "./streaming-harness/stress-generator";
 
 type ReliabilityResult = {
@@ -29,15 +30,13 @@ type ReliabilityResult = {
 
 function runReliabilityTest(params: {
   testName: string;
-  events: { type: string; payload: unknown }[];
+  events: BaseEvent[];
   expectedMessageCount: number;
 }): ReliabilityResult {
   const { testName, events, expectedMessageCount } = params;
   const errors: string[] = [];
 
-  const startTime = performance.now();
   const result = runReducerHarness(events);
-  const endTime = performance.now();
 
   // Check message count
   const messageCountCorrect =

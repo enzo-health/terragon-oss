@@ -134,6 +134,28 @@ describe("dbMessagesToAgUiMessages", () => {
     expect(out?.content).toBe("[generic-retry]");
   });
 
+  it("converts a delegation message to assistant history", () => {
+    const input: DBMessage[] = [
+      {
+        type: "delegation",
+        model: null,
+        delegationId: "del-001",
+        tool: "spawn",
+        status: "running",
+        senderThreadId: "thread-1",
+        receiverThreadIds: ["agent-1"],
+        prompt: "Review the PR",
+        delegatedModel: "claude-sonnet",
+        agentsStates: { "agent-1": "running" },
+      },
+    ];
+    const [out] = dbMessagesToAgUiMessages(input);
+    expect(out).toMatchObject({
+      role: "assistant",
+      content: "Delegation running: Review the PR",
+    });
+  });
+
   it("skips unsupported variants (git-diff, stop, error, meta)", () => {
     const input: DBMessage[] = [
       {

@@ -1,10 +1,10 @@
 "use client";
 
-import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
 import { Check, Loader2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
+import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
 
 // ----- ordered step definitions -----
 
@@ -154,13 +154,12 @@ function InstallProgressBar({
 // ----- main component -----
 
 export interface BootChecklistProps {
-  /** Thread ID used to subscribe to meta events for real-time step updates. */
-  threadId: string;
   /**
    * Current substatus from the DB / parent component.
    * Used as a fallback when meta events haven't arrived yet.
    */
   currentSubstatus: BootingSubstatus | null;
+  metaSnapshot: ThreadMetaSnapshot;
 }
 
 /**
@@ -174,11 +173,10 @@ export interface BootChecklistProps {
  *   that step is in-progress.
  */
 export function BootChecklist({
-  threadId,
   currentSubstatus,
+  metaSnapshot,
 }: BootChecklistProps) {
-  const { snapshot } = useThreadMetaEvents(threadId);
-  const { bootSteps, installProgress } = snapshot;
+  const { bootSteps, installProgress } = metaSnapshot;
 
   // Determine which step is currently active using meta events when available,
   // falling back to the currentSubstatus prop.

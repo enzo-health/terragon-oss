@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { DB } from "@terragon/shared/db";
 import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
 import {
   getThreadMinimal,
   updateThread,

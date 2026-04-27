@@ -1,17 +1,17 @@
 import { ThreadErrorType } from "@terragon/shared";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import { RuntimeFailureCategory } from "@terragon/shared/runtime/failure";
 
 export class ThreadError extends Error {
   type: ThreadErrorType;
   info: string;
   originalError: Error | null;
-  failureCategory: DeliveryLoopFailureCategory | null;
+  failureCategory: RuntimeFailureCategory | null;
 
   constructor(
     type: ThreadErrorType,
     info: string,
     originalError: Error | null,
-    failureCategory?: DeliveryLoopFailureCategory | null,
+    failureCategory?: RuntimeFailureCategory | null,
   ) {
     super(`Thread error: ${type}${info ? `: ${info}` : ""}`, {
       cause: originalError,
@@ -27,7 +27,7 @@ export class ThreadError extends Error {
 export function wrapError(
   type: ThreadErrorType,
   error: unknown,
-  failureCategory?: DeliveryLoopFailureCategory,
+  failureCategory?: RuntimeFailureCategory,
 ): ThreadError {
   if (error instanceof ThreadError) {
     if (failureCategory && !error.failureCategory) {

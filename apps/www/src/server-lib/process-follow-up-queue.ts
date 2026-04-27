@@ -1,28 +1,27 @@
-import { db } from "@/lib/db";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
-import {
-  dispatchAgentMessage,
-  type StartAgentMessageParams,
-} from "@/agent/msg/startAgentMessage";
-import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
-import {
-  getThreadChat,
-  getThreadMinimal,
-} from "@terragon/shared/model/threads";
-import { isAgentWorking } from "@/agent/thread-status";
-import {
-  getAgentRunContextByRunId,
-  getLatestAgentRunContextForThreadChat,
-} from "@terragon/shared/model/agent-run-context";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
   DBMessage,
   DBSystemMessage,
   DBUserMessage,
 } from "@terragon/shared";
+import {
+  getAgentRunContextByRunId,
+  getLatestAgentRunContextForThreadChat,
+} from "@terragon/shared/model/agent-run-context";
+import {
+  getThreadChat,
+  getThreadMinimal,
+} from "@terragon/shared/model/threads";
+import {
+  dispatchAgentMessage,
+  type StartAgentMessageParams,
+} from "@/agent/msg/startAgentMessage";
+import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
+import { isAgentWorking } from "@/agent/thread-status";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { db } from "@/lib/db";
+import { getLastUserMessageModel } from "@/lib/db-message-helpers";
+import { scheduleFollowUpRetryJob } from "@/server-lib/follow-up-retry-jobs";
 
 const ACTIVE_AGENT_RUN_STATUSES = new Set([
   "pending",
@@ -131,21 +130,6 @@ export type FollowUpQueueProcessingResult = {
   maxRetries?: number;
 };
 
-function isIntentOnlyDeliveryLoopDispatchActive(
-  intent:
-    | {
-        targetPhase?: string | null;
-      }
-    | null
-    | undefined,
-): boolean {
-  return (
-    intent?.targetPhase === "implementing" ||
-    intent?.targetPhase === "review_gate" ||
-    intent?.targetPhase === "ci_gate"
-  );
-}
-
 type FetchedThreadChat = Awaited<ReturnType<typeof getThreadChat>>;
 type ThreadChatRecord = NonNullable<FetchedThreadChat>;
 
@@ -241,115 +225,6 @@ async function launchSlashFollowUpDispatch(
     dispatchLaunched: result.dispatchLaunched,
     reason: plan.successReason,
   };
-}
-
-async function launchIntentOnlyFollowUpDispatch({
-  userId,
-  threadId,
-  threadChatId,
-  threadChat,
-  activeDispatchIntent,
-  bypassBusyCheck,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  threadChat: ThreadChatRecord;
-  activeDispatchIntent:
-    | {
-        loopId?: string | null;
-        targetPhase?: string | null;
-      }
-    | null
-    | undefined;
-  bypassBusyCheck: boolean;
-}): Promise<FollowUpQueueProcessingResult> {
-  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  const latestRetrySnapshot = await getLatestRetrySnapshot({
-    userId,
-    threadId,
-    threadChatId,
-    fallbackMessages: threadChat.messages ?? null,
-    fallbackQueuedMessages: [],
-  });
-  const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-    },
-  );
-  const stillAllowIntentOnlyDispatch =
-    isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
-  if (
-    latestRetrySnapshot.queuedMessagesForRetry.length === 0 &&
-    !stillAllowIntentOnlyDispatch
-  ) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  console.log("Processing delivery-loop follow-up without queued messages", {
-    threadId,
-    threadChatId,
-    targetPhase: latestDispatchIntent?.targetPhase ?? null,
-  });
-  const workflowIdForDispatch =
-    latestDispatchIntent?.loopId ?? activeDispatchIntent?.loopId ?? undefined;
-  try {
-    return await launchDeliveryLoopDispatchFromIntent({
-      userId,
-      threadId,
-      threadChatId,
-      workflowId: workflowIdForDispatch,
-      bypassBusyCheck,
-    });
-  } catch (error) {
-    console.error("Delivery-loop follow-up processing failed", {
-      threadId,
-      threadChatId,
-      workflowId: workflowIdForDispatch,
-      error,
-      targetPhase: latestDispatchIntent?.targetPhase ?? null,
-    });
-    const failure = await handleFollowUpFailure({
-      userId,
-      threadId,
-      threadChatId,
-      messages: latestRetrySnapshot.messages,
-      queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
-      error,
-    });
-    let failureReason: FollowUpQueueProcessingResult["reason"] =
-      "dispatch_retry_persistence_failed";
-    if (failure.exhausted) {
-      failureReason = "dispatch_retry_exhausted";
-    } else if (failure.retryPersisted) {
-      failureReason = "dispatch_retry_scheduled";
-    }
-    return ensureDispatchRetryPersistenceOwnership({
-      owner: "process-follow-up-queue",
-      userId,
-      threadId,
-      threadChatId,
-      result: {
-        processed: false,
-        dispatchLaunched: false,
-        reason: failureReason,
-        retryCount: failure.retriesUsed,
-        maxRetries: MAX_FOLLOW_UP_RETRIES,
-      },
-    });
-  }
 }
 
 type RetryPersistenceOwner =
@@ -606,78 +481,6 @@ async function handleFollowUpFailure({
   }
 }
 
-export async function launchDeliveryLoopDispatchFromIntent({
-  userId,
-  threadId,
-  threadChatId,
-  workflowId,
-  bypassBusyCheck = true,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  workflowId?: string;
-  bypassBusyCheck?: boolean;
-}): Promise<FollowUpQueueProcessingResult> {
-  const threadChat = await getThreadChat({
-    db,
-    threadId,
-    threadChatId,
-    userId,
-  });
-  const runnableThreadChatCheck = getRunnableThreadChatResult(threadChat);
-  if ("result" in runnableThreadChatCheck) {
-    return runnableThreadChatCheck.result;
-  }
-
-  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-      loopId: workflowId,
-    },
-  );
-  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  const { didUpdateStatus } = await updateThreadChatWithTransition({
-    userId,
-    threadId,
-    threadChatId,
-    eventType: "user.message",
-    requireStatusTransitionForChatUpdates: !bypassBusyCheck,
-  });
-  if (!didUpdateStatus && !bypassBusyCheck) {
-    const noopResult = await checkNoopBusy({
-      threadId,
-      threadChatId,
-      userId,
-    });
-    if (noopResult) {
-      return noopResult;
-    }
-  }
-
-  const thread = await getThreadMinimal({
-    db,
-    threadId,
-    userId,
-  });
-  const threadBranchName = thread?.branchName ?? undefined;
-  return launchFollowUpDispatch({
-    userId,
-    branchName: threadBranchName,
-    threadId,
-    threadChatId,
-    successReason: "dispatch_started_batch",
-  });
-}
-
 export async function maybeProcessFollowUpQueue({
   userId,
   threadId,
@@ -829,24 +632,15 @@ export async function maybeProcessFollowUpQueue({
     return runnableThreadChatCheck.result;
   }
   const runnableThreadChat = runnableThreadChatCheck.threadChat;
-  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-    },
-  );
   if (
     !runnableThreadChat.queuedMessages ||
     runnableThreadChat.queuedMessages.length === 0
   ) {
-    return await launchIntentOnlyFollowUpDispatch({
-      userId,
-      threadId,
-      threadChatId,
-      threadChat: runnableThreadChat,
-      activeDispatchIntent,
-      bypassBusyCheck,
-    });
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,

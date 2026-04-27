@@ -1,6 +1,6 @@
 /**
  * AG-UI integration replayer — minimal harness that feeds a sequence of
- * AG-UI `BaseEvent`s through the same `useAgUiMessages` hook the chat
+ * AG-UI `BaseEvent`s through the same ThreadViewModel-backed hook the chat
  * renders with, and returns the final `UIMessage[]` projection.
  *
  * This is the Phase 7 counterpart to the legacy daemon-event replayer
@@ -19,9 +19,12 @@ import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
-import { act, createElement } from "react";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { act, createElement, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useAgUiMessages } from "../../src/components/chat/use-ag-ui-messages";
+import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/legacy-db-message-adapter";
+import type { ThreadViewLifecycle } from "../../src/components/chat/thread-view-model/types";
+import { useThreadViewModel } from "../../src/components/chat/use-ag-ui-messages";
 
 // ---------------------------------------------------------------------------
 // Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
@@ -75,8 +78,14 @@ export type ReplayAgUiOptions = {
 export type ReplayAgUiResult = {
   /** Final UIMessage[] after all events are drained. */
   messages: UIMessage[];
+  /** Final artifact descriptors projected by ThreadViewModel. */
+  artifactDescriptors: ArtifactDescriptor[];
+  /** Final lifecycle state projected by ThreadViewModel. */
+  lifecycle: ThreadViewLifecycle;
   /** Snapshots of UIMessage[] after each event, for step-by-step assertions. */
   snapshots: UIMessage[][];
+  /** Artifact descriptor references after each event, for stability assertions. */
+  artifactSnapshots: ArtifactDescriptor[][];
 };
 
 /**
@@ -98,10 +107,23 @@ export async function replayAgUi(
   const agent = asHttpAgent(fake);
 
   const snapshots: UIMessage[][] = [];
+  const artifactSnapshots: ArtifactDescriptor[][] = [];
   let current: UIMessage[] = [];
+  let currentArtifacts: ArtifactDescriptor[] = [];
+  let currentLifecycle: ThreadViewLifecycle = createEmptyThreadViewSnapshot({
+    agent: agentKind,
+    initialMessages,
+  }).lifecycle;
 
-  function onMessages(msgs: UIMessage[]): void {
+  function onProjection(params: {
+    messages: UIMessage[];
+    artifactDescriptors: ArtifactDescriptor[];
+    lifecycle: ThreadViewLifecycle;
+  }): void {
+    const { messages: msgs, artifactDescriptors, lifecycle } = params;
     current = msgs;
+    currentArtifacts = artifactDescriptors;
+    currentLifecycle = lifecycle;
   }
 
   // Headless mount
@@ -117,22 +139,30 @@ export async function replayAgUi(
           agent,
           agentKind,
           initialMessages,
-          onMessages,
+          onProjection,
         }),
       );
     });
 
     // Seed snapshot captured after initial render
     snapshots.push(current);
+    artifactSnapshots.push(currentArtifacts);
 
     for (const ev of events) {
       await act(async () => {
         fake.emit(ev);
       });
       snapshots.push(current);
+      artifactSnapshots.push(currentArtifacts);
     }
 
-    return { messages: current, snapshots };
+    return {
+      messages: current,
+      artifactDescriptors: currentArtifacts,
+      lifecycle: currentLifecycle,
+      snapshots,
+      artifactSnapshots,
+    };
   } finally {
     if (root) {
       await act(async () => {
@@ -149,15 +179,34 @@ function Harness({
   agent,
   agentKind,
   initialMessages,
-  onMessages,
+  onProjection,
 }: {
   agent: HttpAgent | null;
   agentKind: AIAgent;
   initialMessages: UIMessage[];
-  onMessages: (msgs: UIMessage[]) => void;
+  onProjection: (params: {
+    messages: UIMessage[];
+    artifactDescriptors: ArtifactDescriptor[];
+    lifecycle: ThreadViewLifecycle;
+  }) => void;
 }): null {
-  const messages = useAgUiMessages({ agent, agentKind, initialMessages });
-  onMessages(messages);
+  const snapshot = useMemo(
+    () =>
+      createEmptyThreadViewSnapshot({
+        agent: agentKind,
+        initialMessages,
+      }),
+    [agentKind, initialMessages],
+  );
+  const viewModel = useThreadViewModel({
+    agent,
+    snapshot,
+  });
+  onProjection({
+    messages: viewModel.messages,
+    artifactDescriptors: viewModel.artifacts.descriptors,
+    lifecycle: viewModel.lifecycle,
+  });
   return null;
 }
 

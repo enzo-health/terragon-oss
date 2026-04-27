@@ -79,7 +79,11 @@ export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
       return;
     }
     const updated = applyShellPatchFields(existing, patch.shell, patch);
-    if (updated !== existing) c.update(patch.threadId, () => updated);
+    if (updated !== existing) {
+      c.update(patch.threadId, (draft) => {
+        Object.assign(draft, updated);
+      });
+    }
   };
 
   const c = getCollection();
@@ -111,8 +115,14 @@ export function seedShell(shell: ThreadPageShell): void {
       }
     }
 
-    if (c.state.has(shell.id)) {
-      c.update(shell.id, () => nextShell);
+    const existing = c.state.get(shell.id) as ThreadPageShell | undefined;
+    if (existing) {
+      if (!hasPending && !isIncomingShellSeedFresh(existing, nextShell)) {
+        return;
+      }
+      c.update(shell.id, (draft) => {
+        Object.assign(draft, nextShell);
+      });
     } else {
       c.insert(nextShell);
     }
@@ -129,6 +139,34 @@ export function seedShell(shell: ThreadPageShell): void {
     return;
   }
   write(c);
+}
+
+function isIncomingShellSeedFresh(
+  existing: ThreadPageShell,
+  incoming: ThreadPageShell,
+): boolean {
+  const existingMessageSeq = existing.primaryThreadChat.messageSeq ?? null;
+  const incomingMessageSeq = incoming.primaryThreadChat.messageSeq ?? null;
+  if (
+    existingMessageSeq !== null &&
+    incomingMessageSeq !== null &&
+    incomingMessageSeq !== existingMessageSeq
+  ) {
+    return incomingMessageSeq > existingMessageSeq;
+  }
+  if (incoming.version !== null && existing.version !== null) {
+    return incoming.version >= existing.version;
+  }
+  return getTime(incoming.updatedAt) >= getTime(existing.updatedAt);
+}
+
+function getTime(value: Date | string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 /**

@@ -1,21 +1,20 @@
 "use server";
 
-import { userOnlyAction } from "@/lib/auth-server";
 import { SelectedAIModels } from "@terragon/agent/types";
 import { DBUserMessage, ThreadSource } from "@terragon/shared";
-import { createNewThread } from "../server-lib/new-thread-shared";
+import { userOnlyAction } from "@/lib/auth-server";
 import {
   type CreatedThreadSummary,
   type FailedThreadCreation,
   newThreadsMultiModel,
 } from "@/server-lib/new-threads-multi-model";
+import { createNewThread } from "../server-lib/new-thread-shared";
 
 export type NewThreadArgs = {
   message: DBUserMessage;
   githubRepoFullName: string;
   branchName: string;
   createNewBranch?: boolean;
-  runInDeliveryLoop?: boolean;
   parentThreadId?: string;
   parentToolId?: string;
   saveAsDraft?: boolean;
@@ -47,7 +46,6 @@ export const newThread = userOnlyAction(
       disableGitCheckpointing,
       skipSetup,
       createNewBranch = true,
-      runInDeliveryLoop = true,
       scheduleAt,
       sourceType = "www",
     }: NewThreadArgs,
@@ -76,12 +74,10 @@ export const newThread = userOnlyAction(
         sourceType === "www"
           ? {
               type: "www",
-              deliveryLoopOptIn: runInDeliveryLoop,
             }
           : undefined,
       disableGitCheckpointing,
       skipSetup,
-      runInDeliveryLoop,
     });
     const createdThreads: CreatedThreadSummary[] = [
       {
@@ -104,7 +100,6 @@ export const newThread = userOnlyAction(
         scheduleAt,
         disableGitCheckpointing,
         skipSetup,
-        runInDeliveryLoop,
         tolerateFailures: true,
       });
       createdThreads.push(...multiModelResult.createdThreads);

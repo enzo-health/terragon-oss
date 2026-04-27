@@ -2,7 +2,7 @@
 // Messages
 /////////////////
 import { AIAgent } from "@terragon/agent/types";
-import { DBSystemMessage } from "./db-message";
+import { type DBPlanPart, DBSystemMessage } from "./db-message";
 import { GitDiffStats } from "./types";
 import { AIModel } from "@terragon/agent/types";
 
@@ -121,6 +121,12 @@ export type UIPlanPart = {
   planText: string;
   title?: string;
   taskCount?: number;
+};
+
+export type UIStructuredPlanPart = {
+  type: "plan-structured";
+  entries: DBPlanPart["entries"];
+  title?: string;
 };
 
 export type AllToolParts =

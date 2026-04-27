@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useReadThreadMutation } from "@/queries/thread-mutations";
-import { getThreadDocumentTitle } from "@/agent/thread-utils";
-import { useDocumentVisibility } from "@/hooks/useDocumentVisibility";
-import { secondaryPaneClosedAtom } from "@/atoms/user-cookies";
-import { atom, useAtom } from "jotai";
-import { usePlatform } from "@/hooks/use-platform";
-import { threadQueryKeys } from "@/queries/thread-queries";
-import { ThreadPageChat } from "@terragon/shared/db/types";
 import { useQueryClient } from "@tanstack/react-query";
-import type { DBMessage } from "@terragon/shared";
-import type { PromptBoxRef } from "./thread-context";
-import { approvePlan } from "@/server-actions/approve-plan";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
+import type { ThreadPageChat } from "@terragon/shared/db/types";
+import { atom, useAtom } from "jotai";
+import { useCallback, useEffect, useRef } from "react";
+import { getThreadDocumentTitle } from "@/agent/thread-utils";
+import { secondaryPaneClosedAtom } from "@/atoms/user-cookies";
+import { updateChatInCollection } from "@/collections/thread-chat-collection";
+import { usePlatform } from "@/hooks/use-platform";
+import { useDocumentVisibility } from "@/hooks/useDocumentVisibility";
+import { useReadThreadMutation } from "@/queries/thread-mutations";
+import { threadQueryKeys } from "@/queries/thread-queries";
 
 export function useMarkChatAsRead({
   threadId,
@@ -154,103 +151,37 @@ export function useOptimisticUpdateThreadChat({
       if (!threadId || !threadChatId) {
         return;
       }
+      const applyUpdates = (currentChat: ThreadPageChat): ThreadPageChat => {
+        const updates =
+          typeof updatesOrUpdater === "function"
+            ? updatesOrUpdater(currentChat)
+            : updatesOrUpdater;
+        const nextProjectedMessages =
+          updates.projectedMessages ??
+          updates.messages ??
+          currentChat.projectedMessages ??
+          currentChat.messages ??
+          [];
+        return {
+          ...currentChat,
+          ...updates,
+          projectedMessages: nextProjectedMessages,
+          messageCount: nextProjectedMessages.length,
+        };
+      };
       queryClient.setQueryData<ThreadPageChat>(
         threadQueryKeys.chat(threadId, threadChatId),
         (oldData) => {
           if (!oldData) return oldData;
-          const updates =
-            typeof updatesOrUpdater === "function"
-              ? updatesOrUpdater(oldData)
-              : updatesOrUpdater;
-          const nextProjectedMessages =
-            updates.projectedMessages ??
-            updates.messages ??
-            oldData.projectedMessages ??
-            oldData.messages ??
-            [];
-          return {
-            ...oldData,
-            ...updates,
-            projectedMessages: nextProjectedMessages,
-            messageCount: nextProjectedMessages.length,
-          };
+          return applyUpdates(oldData);
         },
       );
+      updateChatInCollection({
+        threadId,
+        threadChatId,
+        updater: applyUpdates,
+      });
     },
     [queryClient, threadId, threadChatId],
   );
-}
-
-export function computeShouldShowApprove({
-  canApprove,
-  toolPartId,
-  messages,
-}: {
-  canApprove: boolean;
-  toolPartId?: string;
-  messages: DBMessage[];
-}): boolean {
-  if (!canApprove || !toolPartId) return false;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg?.type === "user") break;
-    if (msg?.type === "tool-call" && msg.name === "ExitPlanMode") {
-      return msg.id === toolPartId;
-    }
-  }
-  return false;
-}
-
-export function usePlanApproval({
-  threadId,
-  threadChatId,
-  isReadOnly,
-  promptBoxRef,
-  toolPartId,
-  messages,
-}: {
-  threadId: string | undefined;
-  threadChatId: string | undefined;
-  isReadOnly: boolean;
-  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
-  toolPartId?: string;
-  messages: DBMessage[];
-}) {
-  const { mutateAsync, isPending } = useServerActionMutation({
-    mutationFn: approvePlan,
-  });
-  const updateThreadChat = useOptimisticUpdateThreadChat({
-    threadId,
-    threadChatId,
-  });
-
-  const canApprove = !isReadOnly && !!threadId && !!threadChatId;
-
-  const shouldShowApprove = useMemo(
-    () => computeShouldShowApprove({ canApprove, toolPartId, messages }),
-    [canApprove, toolPartId, messages],
-  );
-
-  const handleApprove = useCallback(async () => {
-    if (!canApprove) return;
-    // Optimistic: update UI immediately for responsiveness
-    promptBoxRef?.current?.setPermissionMode("allowAll");
-    updateThreadChat({ permissionMode: "allowAll" });
-    try {
-      await mutateAsync({ threadId, threadChatId });
-    } catch {
-      // Rollback optimistic updates on failure
-      promptBoxRef?.current?.setPermissionMode("plan");
-      updateThreadChat({ permissionMode: "plan" });
-    }
-  }, [
-    canApprove,
-    threadId,
-    threadChatId,
-    promptBoxRef,
-    mutateAsync,
-    updateThreadChat,
-  ]);
-
-  return { handleApprove, isPending, shouldShowApprove };
 }

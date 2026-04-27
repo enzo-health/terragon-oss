@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { EventType, type BaseEvent } from "@ag-ui/core";
 import {
   customRichPart,
   replayAgUi,
@@ -195,5 +196,131 @@ describe("AG-UI replayer integration", () => {
         if (id) expect(cur.has(id)).toBe(true);
       }
     }
+  });
+
+  it("reconstructs lifecycle from canonical run events without refetch state", async () => {
+    const { lifecycle, snapshots } = await replayAgUi([
+      {
+        type: EventType.RUN_STARTED,
+        runId: "run-1",
+      } as BaseEvent,
+      textStart("msg-run"),
+      textContent("msg-run", "Working"),
+      {
+        type: EventType.RUN_FINISHED,
+        runId: "run-1",
+      } as BaseEvent,
+    ]);
+
+    expect(snapshots.at(-1)?.[0]).toMatchObject({
+      role: "agent",
+      parts: [{ type: "text", text: "Working" }],
+    });
+    expect(lifecycle).toMatchObject({
+      runId: "run-1",
+      runStarted: false,
+      threadStatus: "complete",
+    });
+  });
+
+  it("keeps artifact descriptor references stable while unrelated text tokens stream", async () => {
+    const plan = "<proposed_plan>\nShip the plan artifact.\n</proposed_plan>";
+    const { artifactDescriptors, artifactSnapshots } = await replayAgUi([
+      textStart("msg-plan"),
+      textContent("msg-plan", plan),
+      textContent("msg-plan", "\nContinuing with implementation."),
+      textContent("msg-plan", "\nStill streaming unrelated tokens."),
+    ]);
+
+    expect(artifactDescriptors.map((artifact) => artifact.kind)).toEqual([
+      "plan",
+    ]);
+    const afterPlan = artifactSnapshots[2];
+    const afterFirstTail = artifactSnapshots[3];
+    const afterSecondTail = artifactSnapshots[4];
+    expect(afterPlan).toBe(afterFirstTail);
+    expect(afterFirstTail).toBe(afterSecondTail);
+  });
+
+  it("replays plan rich parts deterministically after reconnect without a text start", async () => {
+    const { artifactDescriptors, messages } = await replayAgUi([
+      customRichPart("plan", "msg-reconnect-plan", {
+        type: "plan",
+        entries: [
+          {
+            content: "Restore plan state",
+            priority: "high",
+            status: "completed",
+          },
+        ],
+      }),
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: "msg-reconnect-plan",
+      role: "agent",
+      parts: [
+        {
+          type: "plan-structured",
+          entries: [
+            {
+              content: "Restore plan state",
+              priority: "high",
+              status: "completed",
+            },
+          ],
+        },
+      ],
+    });
+    expect(artifactDescriptors).toHaveLength(1);
+    expect(artifactDescriptors[0]).toMatchObject({
+      kind: "plan",
+      title: "Plan",
+      part: {
+        type: "plan-structured",
+        entries: [
+          {
+            content: "Restore plan state",
+            priority: "high",
+            status: "completed",
+          },
+        ],
+      },
+    });
+  });
+
+  it("replays canonical plan artifact references into artifact descriptors", async () => {
+    const { artifactDescriptors } = await replayAgUi([
+      {
+        type: EventType.CUSTOM,
+        name: "artifact-reference",
+        value: {
+          artifactId: "artifact-plan-1",
+          artifactType: "plan",
+          title: "Runtime Plan",
+          uri: "r2://plans/runtime-plan.md",
+          status: "ready",
+        },
+      } as BaseEvent,
+    ]);
+
+    expect(artifactDescriptors).toEqual([
+      expect.objectContaining({
+        id: "artifact:reference:artifact-plan-1",
+        kind: "plan",
+        title: "Runtime Plan",
+        part: expect.objectContaining({
+          type: "plan",
+          planText: "Runtime Plan\n\nr2://plans/runtime-plan.md",
+        }),
+        origin: expect.objectContaining({
+          type: "artifact-reference",
+          artifactId: "artifact-plan-1",
+          artifactType: "plan",
+          uri: "r2://plans/runtime-plan.md",
+        }),
+      }),
+    ]);
   });
 });

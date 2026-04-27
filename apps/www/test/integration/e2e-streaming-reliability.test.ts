@@ -8,10 +8,10 @@
  * the actual infrastructure (daemon, sandbox, API, broadcast).
  */
 
-import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
-import { replay } from "./replayer";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import type { DBMessage } from "@terragon/shared";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { replay } from "./replayer";
 
 // ---------------------------------------------------------------------------
 // Types for reliability metrics
@@ -27,14 +27,6 @@ type StreamingMetrics = {
   sandboxStartupMs: number;
   endToEndMs: number;
   errors: string[];
-};
-
-type E2ETestResult = {
-  threadId: string;
-  threadChatId: string;
-  metrics: StreamingMetrics;
-  events: DaemonEventAPIBody[];
-  dbMessages: DBMessage[];
 };
 
 // ---------------------------------------------------------------------------
@@ -225,9 +217,10 @@ function generateMockAgentEvents(params: {
     messages: [
       {
         type: "system",
+        subtype: "init",
         session_id: "test-session-001",
-        parent_tool_use_id: null,
-        message: { role: "system", content: "Session initialized" },
+        tools: [],
+        mcp_servers: [],
       },
     ],
     threadId,
@@ -330,7 +323,10 @@ function calculateReliabilityMetrics(params: {
 
   // Check ordering (messages should have increasing timestamps)
   let orderingCorrect = true;
-  const timestamps = actualMessages.map((m) => new Date(m.timestamp).getTime());
+  const timestamps = actualMessages
+    .map((m) => ("timestamp" in m ? m.timestamp : null))
+    .filter((timestamp): timestamp is string => typeof timestamp === "string")
+    .map((timestamp) => new Date(timestamp).getTime());
   for (let i = 1; i < timestamps.length; i++) {
     if (timestamps[i]! < timestamps[i - 1]!) {
       orderingCorrect = false;
@@ -341,11 +337,9 @@ function calculateReliabilityMetrics(params: {
   }
 
   // Check terminal signal
-  const terminalReceived =
-    actualMessages.some(
-      (m) => m.type === "system" && m.message_type === "agent-result",
-    ) ||
-    expectedEvents.some((e) => e.messages?.some((m) => m.type === "result"));
+  const terminalReceived = expectedEvents.some((e) =>
+    e.messages?.some((m) => m.type === "result"),
+  );
 
   // Calculate reliability score
   const deliveryRate =
@@ -431,7 +425,7 @@ describe("E2E Streaming Reliability", () => {
                         "Content-Type": "application/json",
                         "X-Daemon-Token": "test-token",
                       },
-                      body: event as Record<string, unknown>,
+                      body: event,
                     },
                   ],
                   { mode: "fast-forward" },
@@ -498,11 +492,11 @@ describe("E2E Streaming Reliability", () => {
     });
 
     // Replay all events rapidly (simulating high-velocity stream)
-    const results = await replay(
+    await replay(
       events.map((event, i) => ({
         wallClockMs: i * 20, // 50ms between events = 20 msg/sec
         headers: { "Content-Type": "application/json" },
-        body: event as Record<string, unknown>,
+        body: event,
       })),
       { mode: "fast-forward" },
     );
@@ -555,7 +549,7 @@ describe("E2E Streaming Reliability", () => {
       events.map((event, i) => ({
         wallClockMs: i * 100,
         headers: { "Content-Type": "application/json" },
-        body: event as Record<string, unknown>,
+        body: event,
       })),
       { mode: "fast-forward" },
     );

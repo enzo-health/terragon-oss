@@ -8,6 +8,7 @@ import type {
   UIPdfPart,
   UIPlanPart,
   UIRichTextPart,
+  UIStructuredPlanPart,
   UITextFilePart,
 } from "./ui-messages";
 
@@ -30,7 +31,10 @@ type MessageArtifactPart =
   | UIImagePart
   | UIPdfPart
   | UITextFilePart
-  | UIPlanPart;
+  | UIPlanPart
+  | UIStructuredPlanPart;
+
+type DescriptorInputPart = UIPart | UIStructuredPlanPart;
 
 export type ArtifactDescriptorPart =
   | UIGitDiffPart
@@ -72,6 +76,13 @@ export type ArtifactDescriptorOrigin =
   | {
       type: "plan-tool";
       toolCallId: string;
+      fingerprint: string;
+    }
+  | {
+      type: "artifact-reference";
+      artifactId: string;
+      artifactType: string;
+      uri?: string | null;
       fingerprint: string;
     };
 
@@ -116,7 +127,7 @@ export type MediaArtifactDescriptor = BaseArtifactDescriptor<
 
 export type PlanArtifactDescriptor = BaseArtifactDescriptor<
   "plan",
-  UIPlanPart | ExitPlanModeToolPart
+  UIPlanPart | UIStructuredPlanPart | ExitPlanModeToolPart
 >;
 
 export type ArtifactDescriptor =
@@ -237,7 +248,7 @@ function collectArtifactDescriptorsFromParts({
 }: {
   descriptors: ArtifactDescriptor[];
   duplicateCounts: Map<string, number>;
-  parts: UIPart[];
+  parts: DescriptorInputPart[];
   messageRole: "user" | "agent";
   messageTimestamp?: string;
   toolPath: ToolCallOrigin[];
@@ -285,6 +296,31 @@ function collectArtifactDescriptorsFromParts({
       }
       // Opening tag present but no closing tag yet (streaming) — fall through
       // to normal processing so the text part isn't silently dropped.
+    }
+
+    if (part.type === "plan-structured" && messageRole === "agent") {
+      const fingerprint = shortHash({ entries: part.entries });
+      descriptors.push({
+        id: buildStableId({
+          baseId: `artifact:plan:structured:${fingerprint}`,
+          duplicateCounts,
+        }),
+        kind: "plan",
+        title: part.title ?? "Plan",
+        status: "ready",
+        part,
+        origin: {
+          type: "tool-part",
+          toolCallId: `plan-structured-${fingerprint}`,
+          toolCallName: "structured_plan",
+          toolCallPath: [],
+          artifactOrdinal: 0,
+          partType: "plan-structured",
+          fingerprint,
+        },
+        summary: `${part.entries.length} task${part.entries.length === 1 ? "" : "s"}`,
+      });
+      continue;
     }
 
     if (part.type === "tool") {
@@ -475,16 +511,30 @@ function createDescriptor({
             ? `${part.taskCount} task${part.taskCount === 1 ? "" : "s"}`
             : undefined,
       };
+    case "plan-structured":
+      return {
+        id,
+        kind: "plan",
+        title: part.title ?? "Plan",
+        status: "ready",
+        part,
+        origin,
+        updatedAt,
+        summary: `${part.entries.length} task${part.entries.length === 1 ? "" : "s"}`,
+      };
   }
 }
 
-function isMessageArtifactPart(part: UIPart): part is MessageArtifactPart {
+function isMessageArtifactPart(
+  part: DescriptorInputPart,
+): part is MessageArtifactPart {
   return (
     part.type === "image" ||
     part.type === "rich-text" ||
     part.type === "pdf" ||
     part.type === "text-file" ||
-    part.type === "plan"
+    part.type === "plan" ||
+    part.type === "plan-structured"
   );
 }
 
@@ -554,6 +604,8 @@ function getMessageArtifactFingerprint(part: MessageArtifactPart): string {
       return shortHash({ pdf_url: part.pdf_url, filename: part.filename });
     case "plan":
       return shortHash({ planText: part.planText, title: part.title });
+    case "plan-structured":
+      return shortHash({ entries: part.entries, title: part.title });
   }
 }
 

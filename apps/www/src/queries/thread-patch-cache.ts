@@ -10,16 +10,15 @@ import {
   ThreadSourceMetadata,
 } from "@terragon/shared";
 import {
+  BroadcastActiveChatRealtimeFields,
   BroadcastThreadPatch,
   BroadcastThreadShellRealtimeFields,
-  BroadcastActiveChatRealtimeFields,
 } from "@terragon/types/broadcast";
 import {
   isMatchingThreadForFilter,
   isValidThreadListFilter,
   threadQueryKeys,
 } from "./thread-queries";
-import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -243,17 +242,6 @@ function getTranscriptMessages(chat: ThreadPageChat): DBMessage[] {
   return chat.projectedMessages ?? chat.messages ?? [];
 }
 
-function hasExactRefetchTarget(
-  patch: BroadcastThreadPatch,
-  target: "chat" | "delivery-loop",
-): boolean {
-  return (
-    patch.op === "refetch" &&
-    patch.refetch?.length === 1 &&
-    patch.refetch[0] === target
-  );
-}
-
 function applyChatFields(
   chat: ThreadPageChat,
   patch: BroadcastThreadPatch,
@@ -261,9 +249,7 @@ function applyChatFields(
   if (patch.op === "refetch") {
     return {
       chat,
-      shouldInvalidate: hasExactRefetchTarget(patch, "delivery-loop")
-        ? false
-        : !(patch.refetch ?? []).includes("chat"),
+      shouldInvalidate: !(patch.refetch ?? []).includes("chat"),
       shouldIgnore: false,
     };
   }
@@ -654,6 +640,13 @@ export function applyThreadPatchToListThread(
   patch: BroadcastThreadPatch,
 ): ThreadInfo {
   let threadChats = thread.threadChats;
+  const chatUpdatedAt =
+    patch.chat?.updatedAt !== undefined
+      ? new Date(patch.chat.updatedAt)
+      : undefined;
+  const shouldBumpFromChat =
+    chatUpdatedAt !== undefined &&
+    chatUpdatedAt.getTime() > thread.updatedAt.getTime();
   if (patch.threadChatId && patch.chat) {
     const hasVisibleChatFields =
       patch.chat.agent !== undefined ||
@@ -690,10 +683,26 @@ export function applyThreadPatchToListThread(
   }
 
   if (!patch.shell) {
-    return threadChats === thread.threadChats
-      ? thread
-      : { ...thread, threadChats };
+    if (!shouldBumpFromChat && threadChats === thread.threadChats) {
+      return thread;
+    }
+    return {
+      ...thread,
+      ...(threadChats !== thread.threadChats ? { threadChats } : {}),
+      ...(shouldBumpFromChat ? { updatedAt: chatUpdatedAt } : {}),
+    };
   }
+
+  const shellUpdatedAt =
+    patch.shell.updatedAt !== undefined
+      ? new Date(patch.shell.updatedAt)
+      : undefined;
+  const nextUpdatedAt =
+    shellUpdatedAt !== undefined && chatUpdatedAt !== undefined
+      ? shellUpdatedAt.getTime() > chatUpdatedAt.getTime()
+        ? shellUpdatedAt
+        : chatUpdatedAt
+      : (shellUpdatedAt ?? (shouldBumpFromChat ? chatUpdatedAt : undefined));
 
   return {
     ...thread,
@@ -716,9 +725,7 @@ export function applyThreadPatchToListThread(
     ...(patch.shell?.createdAt !== undefined
       ? { createdAt: new Date(patch.shell.createdAt) }
       : {}),
-    ...(patch.shell?.updatedAt !== undefined
-      ? { updatedAt: new Date(patch.shell.updatedAt) }
-      : {}),
+    ...(nextUpdatedAt !== undefined ? { updatedAt: nextUpdatedAt } : {}),
     ...(patch.shell?.branchName !== undefined
       ? { branchName: patch.shell.branchName }
       : {}),
@@ -947,11 +954,6 @@ export function invalidateThreadPatchRefetchTargets(
             queryKey: threadQueryKeys.chat(patch.threadId, patch.threadChatId),
           });
         }
-        break;
-      case "delivery-loop":
-        queryClient.invalidateQueries({
-          queryKey: deliveryLoopStatusQueryKeys.detail(patch.threadId),
-        });
         break;
       case "diff":
         queryClient.invalidateQueries({

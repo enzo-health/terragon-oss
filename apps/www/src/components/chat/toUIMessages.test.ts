@@ -339,6 +339,36 @@ describe("toUIMessages", () => {
     ]);
   });
 
+  test("projects durable delegation messages as renderable agent parts", () => {
+    const dbMessages: DBMessage[] = [
+      {
+        type: "delegation",
+        model: null,
+        delegationId: "del-001",
+        tool: "spawn",
+        status: "running",
+        senderThreadId: "thread-1",
+        receiverThreadIds: ["agent-1"],
+        prompt: "Review the PR",
+        delegatedModel: "claude-sonnet",
+        agentsStates: { "agent-1": "running" },
+      },
+    ];
+
+    const result = toUIMessages({ dbMessages, agent: "claudeCode" });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "agent",
+      parts: [
+        {
+          type: "delegation",
+          delegationId: "del-001",
+          status: "running",
+        },
+      ],
+    });
+  });
+
   test("handles orphaned tool results gracefully", () => {
     const dbMessages: DBMessage[] = [
       {

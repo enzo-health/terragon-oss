@@ -228,7 +228,9 @@ function areChatMessagePropsEqual(
     prevToolProps.childThreads !== nextToolProps.childThreads ||
     prevToolProps.githubRepoFullName !== nextToolProps.githubRepoFullName ||
     prevToolProps.repoBaseBranchName !== nextToolProps.repoBaseBranchName ||
-    prevToolProps.branchName !== nextToolProps.branchName
+    prevToolProps.branchName !== nextToolProps.branchName ||
+    prevToolProps.onOptimisticPermissionModeUpdate !==
+      nextToolProps.onOptimisticPermissionModeUpdate
   ) {
     return false;
   }

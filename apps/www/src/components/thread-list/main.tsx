@@ -2,7 +2,14 @@
 
 import dynamic from "next/dynamic";
 import { ThreadInfo } from "@terragon/shared";
-import { useCallback, useDeferredValue, useMemo, memo } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  memo,
+  useEffect,
+  useState,
+} from "react";
 import {
   LoaderCircle,
   ChevronDown,
@@ -209,6 +216,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname,
   isSidebar,
   groupBy,
+  relativeTimeTick,
 }: {
   title: string;
   threads: ThreadInfo[];
@@ -217,6 +225,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname: string;
   isSidebar: boolean;
   groupBy: ThreadListGroupBy;
+  relativeTimeTick: number;
 }) {
   const toggleCollapsedSection = useSetAtom(
     toggleThreadListCollapsedSectionAtom,
@@ -253,6 +262,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
               key={thread.id}
               thread={thread}
               pathname={pathname}
+              relativeTimeTick={relativeTimeTick}
               className={cn(
                 !isSidebar ? "pl-1" : undefined,
                 thread.id.startsWith("optimistic-") &&
@@ -427,7 +437,8 @@ function useThreadList({
     return !!(
       patch.chat?.status !== undefined ||
       patch.chat?.errorMessage !== undefined ||
-      patch.chat?.agent !== undefined
+      patch.chat?.agent !== undefined ||
+      patch.chat?.updatedAt !== undefined
     );
   }, []);
   const onThreadChange = useCallback(
@@ -463,6 +474,15 @@ export const ThreadListContents = memo(function ThreadListContents({
   const collapsedSections = useAtomValue(threadListCollapsedSectionsAtom);
   const groupBy = useAtomValue(threadListGroupByAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
+  const [relativeTimeTick, setRelativeTimeTick] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRelativeTimeTick((tick) => tick + 1);
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const { threadGroups, threads, isLoading, isError } = useThreadList({
     viewFilter,
     queryFilters,
@@ -499,6 +519,7 @@ export const ThreadListContents = memo(function ThreadListContents({
               pathname={pathname}
               isSidebar={isSidebar}
               groupBy={groupBy}
+              relativeTimeTick={relativeTimeTick}
             />
           ))}
         </div>

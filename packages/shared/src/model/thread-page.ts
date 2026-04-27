@@ -532,14 +532,14 @@ export async function getThreadPageChatWithPermissions({
     return undefined;
   }
 
+  const isCanonicalProjection = await hasCanonicalReplayProjection({
+    db,
+    threadId,
+    threadChatId,
+  });
+
   let projectedMessages = threadChat.messages;
-  if (
-    await hasCanonicalReplayProjection({
-      db,
-      threadId,
-      threadChatId,
-    })
-  ) {
+  if (isCanonicalProjection) {
     const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
       db,
       threadId,
@@ -558,6 +558,7 @@ export async function getThreadPageChatWithPermissions({
         : threadChat.updatedAt.getTime(),
     patchVersion: 0,
     projectedMessages,
+    isCanonicalProjection,
   };
 }
 

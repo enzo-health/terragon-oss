@@ -5,14 +5,9 @@
  * This test ACTUALLY creates Docker containers.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import { getOrCreateSandbox } from "./sandbox";
-import {
-  installDaemon,
-  sendMessage,
-  getDaemonLogs,
-  DAEMON_LOG_FILE_PATH,
-} from "./daemon";
+import { installDaemon, sendMessage, getDaemonLogs } from "./daemon";
 import { DockerProvider } from "./providers/docker-provider";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import type { DaemonMessageClaude } from "@terragon/daemon/shared";

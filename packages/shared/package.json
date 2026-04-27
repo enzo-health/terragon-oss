@@ -48,15 +48,6 @@
     "./db": {
       "import": "./src/db/index.ts"
     },
-    "./delivery-loop/domain/*": {
-      "import": "./src/delivery-loop/domain/*.ts"
-    },
-    "./delivery-loop/store/*": {
-      "import": "./src/delivery-loop/store/*.ts"
-    },
-    "./delivery-loop/*": {
-      "import": "./src/delivery-loop/*.ts"
-    },
     "./github-api/*": {
       "import": "./src/github-api/*.ts"
     },

@@ -121,8 +121,7 @@ describe("latency breakdown for sub-100ms optimization", () => {
           messageCount: body.messages?.length ?? 0,
           hasDeltas: body.deltas && body.deltas.length > 0 ? "yes" : "no",
         });
-
-        return null;
+        return;
       });
 
     daemon = new TerragonDaemon({
@@ -248,7 +247,7 @@ describe("latency breakdown for sub-100ms optimization", () => {
         recordTiming("server_post_roundtrip_optimized", postEnd - postStart, {
           simulatedServerLatency,
         });
-        return null;
+        return;
       });
 
     await daemon.start();
@@ -297,7 +296,7 @@ describe("latency breakdown for sub-100ms optimization", () => {
         recordTiming("server_post_roundtrip_ultra", postEnd - postStart, {
           simulatedServerLatency,
         });
-        return null;
+        return;
       });
 
     await daemon.start();

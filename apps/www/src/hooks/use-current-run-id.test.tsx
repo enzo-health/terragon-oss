@@ -5,7 +5,7 @@ import { EventType, type BaseEvent, type RunStartedEvent } from "@ag-ui/core";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { useCurrentRunId } from "./use-current-run-id";
+import { selectScopedRunId, useCurrentRunId } from "./use-current-run-id";
 
 interface FakeAgent {
   subscribe: (subscriber: {
@@ -120,6 +120,29 @@ describe("useCurrentRunId", () => {
     expect(captured.value).toBe("run-second");
   });
 
+  it("clears the captured runId when the agent changes", () => {
+    const firstAgent = createFakeAgent();
+    const secondAgent = createFakeAgent();
+    const captured = { value: null as string | null };
+    mount(createElement(Harness, { agent: firstAgent, captured }));
+
+    act(() => {
+      firstAgent.emit(makeRunStarted("run-first"));
+    });
+    expect(captured.value).toBe("run-first");
+
+    act(() => {
+      root!.render(createElement(Harness, { agent: secondAgent, captured }));
+    });
+    expect(captured.value).toBeNull();
+
+    act(() => {
+      firstAgent.emit(makeRunStarted("run-stale"));
+      secondAgent.emit(makeRunStarted("run-second"));
+    });
+    expect(captured.value).toBe("run-second");
+  });
+
   it("ignores non-RUN_STARTED events", () => {
     const agent = createFakeAgent();
     const captured = { value: null as string | null };
@@ -136,5 +159,39 @@ describe("useCurrentRunId", () => {
     const captured = { value: "initial" as string | null };
     mount(createElement(Harness, { agent: null, captured }));
     expect(captured.value).toBeNull();
+  });
+});
+
+describe("selectScopedRunId", () => {
+  it("returns null when the captured run belongs to another thread chat", () => {
+    const state = {
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      runId: "run-1",
+    };
+
+    expect(
+      selectScopedRunId({
+        state,
+        threadId: "thread-1",
+        threadChatId: "chat-2",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns the captured run only for the matching thread chat", () => {
+    const state = {
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      runId: "run-1",
+    };
+
+    expect(
+      selectScopedRunId({
+        state,
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      }),
+    ).toBe("run-1");
   });
 });

@@ -35,6 +35,7 @@ const MAX_XREAD_BLOCK_MS = 10_000;
 const XREAD_COUNT = 32;
 const KEEPALIVE_INTERVAL_MS = 15_000;
 const XREAD_BACKOFF_MS = 1_000;
+const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
 // When Redis live-tail misses the daemon's terminal marker, we still need to
 // converge on terminal truth once durable run status flips. Tie checks to idle
 // polls (not wall-clock time) so tests stay deterministic.
@@ -46,6 +47,78 @@ type AgUiStreamEntry = {
   id: string;
   event: BaseEvent | null;
 };
+
+function stableSerialize(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  if (typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  const serializedEntries = entries.map(
+    ([key, entryValue]) =>
+      `${JSON.stringify(key)}:${stableSerialize(entryValue)}`,
+  );
+  return `{${serializedEntries.join(",")}}`;
+}
+
+function getReplayDedupeKey(event: BaseEvent): string {
+  return stableSerialize(event);
+}
+
+const STREAM_LOG_PREFIX = "[ag-ui][stream]";
+const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
+const XREAD_ERROR_LOG_EVERY_N = 20;
+
+type StreamCloseReason =
+  | "client_abort_before_start"
+  | "client_abort"
+  | "controller_enqueue_failed"
+  | "durable_terminal_idle"
+  | "durable_terminal_after_xread_error"
+  | "terminal_event"
+  | "replay_failed"
+  | "run_not_found"
+  | "malformed_replay"
+  | "replay_already_terminal";
+
+type StreamDiagnostics = {
+  openedAtMs: number;
+  firstFrameLatencyMs: number | null;
+  replayCount: number;
+  dedupeCount: number;
+  xreadTimeoutCount: number;
+  xreadBackoffCount: number;
+  xreadErrorCount: number;
+};
+
+function isXreadTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("local redis-http command timeout") ||
+    message.includes("timeout") ||
+    message.includes("time out")
+  );
+}
+
+function emitStreamDiagnostic(
+  event: "stream_open" | "first_frame" | "stream_close",
+  payload: Record<string, unknown>,
+): void {
+  console.info(STREAM_LOG_PREFIX, {
+    event,
+    ...payload,
+  });
+}
 
 function isTerminalRunEventType(type: BaseEvent["type"]): boolean {
   return type === EventType.RUN_FINISHED || type === EventType.RUN_ERROR;
@@ -217,12 +290,23 @@ export async function GET(
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const diagnostics: StreamDiagnostics = {
+        openedAtMs: Date.now(),
+        firstFrameLatencyMs: null,
+        replayCount: 0,
+        dedupeCount: 0,
+        xreadTimeoutCount: 0,
+        xreadBackoffCount: 0,
+        xreadErrorCount: 0,
+      };
       let closed = false;
+      let closeReason: StreamCloseReason | null = null;
       let keepaliveTimer: NodeJS.Timeout | null = null;
 
-      const close = () => {
+      const close = (reason: StreamCloseReason) => {
         if (closed) return;
         closed = true;
+        closeReason = reason;
         if (keepaliveTimer) {
           clearInterval(keepaliveTimer);
           keepaliveTimer = null;
@@ -232,25 +316,63 @@ export async function GET(
         } catch {
           // already closed
         }
+        emitStreamDiagnostic("stream_close", {
+          threadId,
+          threadChatId,
+          runId: resolvedRunId,
+          closeReason,
+          firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
+          replayCount: diagnostics.replayCount,
+          dedupeCount: diagnostics.dedupeCount,
+          xreadTimeoutCount: diagnostics.xreadTimeoutCount,
+          xreadBackoffCount: diagnostics.xreadBackoffCount,
+          xreadErrorCount: diagnostics.xreadErrorCount,
+        });
+      };
+
+      const markFirstFrameIfNeeded = () => {
+        if (diagnostics.firstFrameLatencyMs !== null) {
+          return;
+        }
+        diagnostics.firstFrameLatencyMs = Date.now() - diagnostics.openedAtMs;
+        emitStreamDiagnostic("first_frame", {
+          threadId,
+          threadChatId,
+          runId: resolvedRunId,
+          firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
+        });
       };
 
       const enqueue = (chunk: Uint8Array) => {
         if (closed) return;
         try {
+          markFirstFrameIfNeeded();
           controller.enqueue(chunk);
         } catch {
-          // controller closed
-          closed = true;
+          close("controller_enqueue_failed");
         }
       };
+
+      emitStreamDiagnostic("stream_open", {
+        threadId,
+        threadChatId,
+        runId: resolvedRunId,
+        hasRunIdParam: runIdParam !== null,
+      });
 
       // Tear down on client abort. `once: true` handles listener cleanup.
       const abortSignal = request.signal;
       if (abortSignal.aborted) {
-        close();
+        close("client_abort_before_start");
         return;
       }
-      abortSignal.addEventListener("abort", () => close(), { once: true });
+      abortSignal.addEventListener("abort", () => close("client_abort"), {
+        once: true,
+      });
+      const replayedEventDedupeKeys = new Set<string>();
+      // Snapshot-first framing contract: always emit a baseline marker before
+      // replay or live-tail frames so clients can align first-paint lifecycle.
+      enqueue(encodeSseComment(BASELINE_SNAPSHOT_COMMENT));
 
       // Shared live-tail helper: block-polls Redis starting from the cursor
       // captured before the DB replay. Used after both the run-replay path
@@ -287,7 +409,11 @@ export async function GET(
                 errorCode: runContext.failureCategory ?? null,
               });
               enqueue(encodeSseEvent(terminalEvent));
-              close();
+              close(
+                phase === "idle"
+                  ? "durable_terminal_idle"
+                  : "durable_terminal_after_xread_error",
+              );
               return true;
             }
           } catch (error) {
@@ -341,9 +467,18 @@ export async function GET(
               for (const entry of entries) {
                 lastId = entry.id;
                 if (entry.event != null) {
+                  // Replay and live-tail intentionally overlap during connect so
+                  // we do not drop events written mid-replay. Skip the first
+                  // matching live event if it was already emitted from replay.
+                  const dedupeKey = getReplayDedupeKey(entry.event);
+                  if (replayedEventDedupeKeys.has(dedupeKey)) {
+                    replayedEventDedupeKeys.delete(dedupeKey);
+                    diagnostics.dedupeCount += 1;
+                    continue;
+                  }
                   enqueue(encodeSseEvent(entry.event));
                   if (isTerminalRunEventType(entry.event.type)) {
-                    close();
+                    close("terminal_event");
                     return;
                   }
                 }
@@ -354,11 +489,26 @@ export async function GET(
             // Reset adaptive growth on transport failures so the next read
             // re-enters with the smallest block window.
             consecutiveEmpty = 0;
-            console.warn(
-              "[ag-ui] XREAD failed, backing off",
-              { streamKey },
-              error,
-            );
+            diagnostics.xreadErrorCount += 1;
+            diagnostics.xreadBackoffCount += 1;
+            if (isXreadTimeoutError(error)) {
+              diagnostics.xreadTimeoutCount += 1;
+            }
+            const shouldLogXreadError =
+              diagnostics.xreadErrorCount <= XREAD_ERROR_LOG_INITIAL_BUDGET ||
+              diagnostics.xreadErrorCount % XREAD_ERROR_LOG_EVERY_N === 0;
+            if (shouldLogXreadError) {
+              console.warn(
+                "[ag-ui] XREAD failed, backing off",
+                {
+                  streamKey,
+                  xreadErrorCount: diagnostics.xreadErrorCount,
+                  xreadTimeoutCount: diagnostics.xreadTimeoutCount,
+                  xreadBackoffCount: diagnostics.xreadBackoffCount,
+                },
+                error,
+              );
+            }
             if (params?.runId && params.userId) {
               emptyPollsSinceTerminalCheck++;
               if (
@@ -400,6 +550,7 @@ export async function GET(
         runEvents = await getAgUiEventsForRun({
           db,
           runId: resolvedRunId,
+          threadChatId,
         });
       } catch (error) {
         console.error(
@@ -412,7 +563,7 @@ export async function GET(
           "replay_failed",
         );
         enqueue(encodeSseEvent(errorEvent));
-        close();
+        close("replay_failed");
         return;
       }
 
@@ -449,7 +600,7 @@ export async function GET(
           "run_not_found",
         );
         enqueue(encodeSseEvent(errorEvent));
-        close();
+        close("run_not_found");
         return;
       }
 
@@ -488,7 +639,7 @@ export async function GET(
           "replay_failed",
         );
         enqueue(encodeSseEvent(errorEvent));
-        close();
+        close("malformed_replay");
         return;
       }
 
@@ -499,6 +650,8 @@ export async function GET(
       );
 
       for (const event of runEvents) {
+        diagnostics.replayCount += 1;
+        replayedEventDedupeKeys.add(getReplayDedupeKey(event));
         enqueue(encodeSseEvent(event));
       }
 
@@ -507,7 +660,7 @@ export async function GET(
         // the client's SSE consumer knows the server has nothing more to
         // say. Live-tail here would block on an XREAD poll forever
         // without producing useful output.
-        close();
+        close("replay_already_terminal");
         return;
       }
 

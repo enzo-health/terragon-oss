@@ -1,24 +1,23 @@
-import { describe, expect, it, vi, beforeEach, beforeAll } from "vitest";
-import { NextRequest } from "next/server";
+import { env } from "@terragon/env/apps-www";
+import * as schema from "@terragon/shared/db/schema";
+import {
+  createTestGitHubPR,
+  createTestUser,
+} from "@terragon/shared/model/test-helpers";
 import crypto from "crypto";
-import { POST } from "./route";
-import { createMockNextRequest } from "@/test-helpers/mock-next";
+import { eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { getOctokitForApp, updateGitHubPR } from "@/lib/github";
 import {
   refreshGitHubPrProjection,
   refreshGitHubRepoProjection,
 } from "@/server-lib/github-projection-refresh";
+import { createMockNextRequest } from "@/test-helpers/mock-next";
 import { handleAppMention } from "./handle-app-mention";
+import { POST } from "./route";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
-import {
-  createTestUser,
-  createTestGitHubPR,
-} from "@terragon/shared/model/test-helpers";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
-import * as schema from "@terragon/shared/db/schema";
-import { eq } from "drizzle-orm";
-import { env } from "@terragon/env/apps-www";
 
 vi.mock("./handle-app-mention", () => ({
   handleAppMention: vi.fn(),
@@ -36,16 +35,6 @@ vi.mock("@/server-lib/github-projection-refresh", () => ({
   refreshGitHubPrProjection: vi.fn(),
   refreshGitHubRepoProjection: vi.fn(),
 }));
-
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", async () => {
-  const actual = await vi.importActual<
-    typeof import("@terragon/shared/delivery-loop/store/workflow-store")
-  >("@terragon/shared/delivery-loop/store/workflow-store");
-  return {
-    ...actual,
-    getActiveWorkflowForGithubPR: vi.fn(),
-  };
-});
 
 function createSignature(payload: string, secret: string): string {
   const hmac = crypto.createHmac("sha256", secret);
@@ -119,7 +108,6 @@ describe("GitHub webhook route", () => {
     vi.mocked(getOctokitForApp).mockResolvedValue(
       undefined as unknown as Awaited<ReturnType<typeof getOctokitForApp>>,
     );
-    vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValue([]);
     vi.mocked(refreshGitHubPrProjection).mockImplementation(async () => {
       return {} as Awaited<ReturnType<typeof refreshGitHubPrProjection>>;
     });
@@ -410,7 +398,7 @@ describe("GitHub webhook route", () => {
 
       expect(secondResponse.status).toBe(202);
       expect(secondData.success).toBe(true);
-      expect(secondData.claimOutcome).toBe("stale_stolen");
+      expect(secondData.claimOutcome).toBe("claimed_new");
       expect(updateGitHubPR).toHaveBeenCalledTimes(2);
     });
 
@@ -884,7 +872,7 @@ describe("GitHub webhook route", () => {
         commentBody: "@test-app please take a look at this PR",
         commentGitHubAccountId: githubAccountId,
       });
-      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
       expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
         prNumber: githubPR.number,
@@ -893,10 +881,6 @@ describe("GitHub webhook route", () => {
 
     it("fans out review feedback routing to each enrolled loop user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        { id: "wf-1", userId: "loop-user-a" },
-        { id: "wf-2", userId: "loop-user-b" },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const request = await createMockRequest(
         createValidPullRequestReviewBody({
           repoFullName: githubPR.repoFullName,
@@ -914,10 +898,10 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: "loop-user-a",
+          userId: undefined,
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
@@ -925,7 +909,7 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: "loop-user-b",
+          userId: undefined,
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review.submitted",
@@ -1347,7 +1331,7 @@ describe("GitHub webhook route", () => {
         diffContext: "",
         commentContext: undefined,
       });
-      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
       expect(refreshGitHubPrProjection).toHaveBeenCalledWith({
         repoFullName: githubPR.repoFullName,
         prNumber: githubPR.number,
@@ -1356,10 +1340,6 @@ describe("GitHub webhook route", () => {
 
     it("fans out review-comment feedback routing to each enrolled loop user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        { id: "wf-1", userId: "loop-user-a" },
-        { id: "wf-2", userId: "loop-user-b" },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const request = await createMockRequest(
         createValidPullRequestReviewCommentBody({
           repoFullName: githubPR.repoFullName,
@@ -1377,10 +1357,10 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: "loop-user-a",
+          userId: undefined,
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review_comment.created",
@@ -1388,7 +1368,7 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: "loop-user-b",
+          userId: undefined,
           repoFullName: githubPR.repoFullName,
           prNumber: githubPR.number,
           eventType: "pull_request_review_comment.created",
@@ -1662,14 +1642,8 @@ describe("GitHub webhook route", () => {
       expect(refreshGitHubPrProjection).not.toHaveBeenCalled();
     });
 
-    it("routes successful check runs only when an SDLC loop is enrolled", async () => {
+    it("does not create feedback follow-ups for successful check runs", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-id",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-run-success-enrolled";
       const body = createCheckRunBody({
         repoFullName: pr.repoFullName,
@@ -1687,29 +1661,11 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-id",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-          deliveryId,
-          sourceType: "automation",
-          checkRunId: 123,
-          checkSummary: "CI / tests (completed:pass)",
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
-    it("attaches trusted CI snapshot metadata for successful check runs", async () => {
+    it("skips feedback routing metadata for successful check runs", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-id",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       vi.mocked(getOctokitForApp).mockResolvedValueOnce({
         rest: {
           checks: {
@@ -1747,23 +1703,11 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
-    it("skips CI snapshot metadata when check-runs response is truncated", async () => {
+    it("does not fetch CI snapshot metadata for successful check runs", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-id",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       vi.mocked(getOctokitForApp).mockResolvedValueOnce({
         rest: {
           checks: {
@@ -1804,27 +1748,11 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
-      const routedPayload = vi.mocked(routeGithubFeedbackOrSpawnThread).mock
-        .calls[0]?.[0];
-      expect(routedPayload).toEqual(
-        expect.objectContaining({
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-          checkRunId: 321,
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
-    it("hydrates CI snapshot metadata across paginated check-runs responses", async () => {
+    it("does not hydrate CI snapshot metadata for successful check runs", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-id",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const listForRef = vi
         .fn()
         .mockResolvedValueOnce({
@@ -1877,28 +1805,12 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(listForRef).toHaveBeenCalledTimes(2);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-        }),
-      );
+      expect(listForRef).not.toHaveBeenCalled();
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
-    it("routes successful check runs to each enrolled loop user", async () => {
+    it("does not route successful check runs through feedback fanout", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-a",
-        },
-        {
-          id: "wf-2",
-          userId: "loop-user-b",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-run-success-multi-loop";
       const request = await createMockRequest(
         createCheckRunBody({
@@ -1918,27 +1830,7 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-a",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-          deliveryId,
-          checkRunId: 222,
-        }),
-      );
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-b",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_run.completed",
-          deliveryId,
-          checkRunId: 222,
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
     it("should handle check runs with multiple PRs", async () => {
@@ -2262,14 +2154,8 @@ describe("GitHub webhook route", () => {
       });
     });
 
-    it("routes successful check suites only when an SDLC loop is enrolled", async () => {
+    it("does not create feedback follow-ups for successful check suites", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-id",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-suite-success-enrolled";
       const body = createCheckSuiteBody({
         repoFullName: pr.repoFullName,
@@ -2287,33 +2173,11 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-id",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_suite.completed",
-          deliveryId,
-          sourceType: "automation",
-          checkSuiteId: 456,
-          checkSummary: "Check suite (completed:pass)",
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
-    it("routes successful check suites to each enrolled loop user", async () => {
+    it("does not route successful check suites through feedback fanout", async () => {
       const pr = await createTestGitHubPR({ db });
-      vi.mocked(getActiveWorkflowForGithubPR).mockResolvedValueOnce([
-        {
-          id: "wf-1",
-          userId: "loop-user-a",
-        },
-        {
-          id: "wf-2",
-          userId: "loop-user-b",
-        },
-      ] as Awaited<ReturnType<typeof getActiveWorkflowForGithubPR>>);
       const deliveryId = "delivery-check-suite-success-multi-loop";
       const request = await createMockRequest(
         createCheckSuiteBody({
@@ -2333,27 +2197,7 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-a",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_suite.completed",
-          deliveryId,
-          checkSuiteId: 654,
-        }),
-      );
-      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: "loop-user-b",
-          repoFullName: pr.repoFullName,
-          prNumber: pr.number,
-          eventType: "check_suite.completed",
-          deliveryId,
-          checkSuiteId: 654,
-        }),
-      );
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
     it("should route actionable failed check suites for each associated PR", async () => {

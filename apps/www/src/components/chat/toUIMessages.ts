@@ -1,19 +1,18 @@
 import type { AIAgent } from "@terragon/agent/types";
 import type {
-  DBMessage,
-  UIMessage,
-  UIUserMessage,
   DBAgentMessagePart,
-} from "@terragon/shared";
-import type {
-  UIAgentMessage,
-  UIToolPart,
-  UICompletedToolPart,
-  UIPart,
-  UIGitDiffPart,
+  DBMessage,
   ThreadStatus,
+  UIAgentMessage,
+  UICompletedToolPart,
+  UIGitDiffPart,
+  UIMessage,
+  UIPart,
+  UIStructuredPlanPart,
+  UIToolPart,
+  UIUserMessage,
 } from "@terragon/shared";
-import type { UIPartExtended, UIStructuredPlanPart } from "./ui-parts-extended";
+import type { UIPartExtended } from "./ui-parts-extended";
 
 /**
  * Convert a DBAgentMessage part to a UIPartExtended (the local www union),
@@ -73,10 +72,9 @@ type InternalToolPart = UIToolPart<string, Record<string, any>> & {
  * DBMessages store each interaction separately (user messages, agent messages, tool calls, tool results),
  * while UIMessages group tool calls and results as parts of agent messages.
  *
- * Task 6B: This pure function is used as the initial hydration seed for
- * `useAgUiMessages`. It is NOT the live projection — AG-UI events supersede
- * any patches. Callers that need incremental updates should feed the result
- * into `useAgUiMessages` which folds an AG-UI event stream on top.
+ * This pure function is now a read-only legacy snapshot adapter. Active task
+ * rendering feeds the result into `ThreadViewModel`, where AG-UI and optimistic
+ * events are folded on top.
  *
  * @param dbMessages - The messages from the database
  * @param threadStatus - Optional thread status to determine if pending tools should be marked complete
@@ -85,10 +83,20 @@ export function toUIMessages({
   dbMessages,
   agent,
   threadStatus,
+  skipSeededAssistantText = false,
 }: {
   dbMessages: DBMessage[];
   agent: AIAgent;
   threadStatus?: ThreadStatus | null;
+  /**
+   * Suppresses top-level assistant text parts in bootstrap seeds.
+   *
+   * This is used when canonical AG-UI replay is expected to stream the same
+   * text immediately after mount; skipping text in the seed avoids
+   * seed+replay duplicate assistant bubbles while preserving non-text parts
+   * (tool cards, plans, rich parts) for first paint.
+   */
+  skipSeededAssistantText?: boolean;
 }): UIMessage[] {
   const uiMessages: UIMessage[] = [];
   let currentAgentMessage: UIAgentMessage | null = null;
@@ -206,17 +214,24 @@ export function toUIMessages({
       });
     } else if (dbMessage.type === "agent") {
       clearCurrentUserMessage();
+      const filteredParts =
+        skipSeededAssistantText && dbMessage.parent_tool_use_id === null
+          ? dbMessage.parts.filter((part) => part.type !== "text")
+          : dbMessage.parts;
+      if (filteredParts.length === 0) {
+        continue;
+      }
       if (dbMessage.parent_tool_use_id) {
         const found = toolPartsById[dbMessage.parent_tool_use_id];
         if (found) {
-          for (const part of dbMessage.parts) {
+          for (const part of filteredParts) {
             const uiPart = dbAgentPartToUIPart(part);
             if (uiPart) pushPart(found.parts, uiPart);
           }
         }
       } else {
         currentAgentMessage = getOrCreateAgentMessage();
-        for (const part of dbMessage.parts) {
+        for (const part of filteredParts) {
           const uiPart = dbAgentPartToUIPart(part);
           if (!uiPart) continue;
           // Merge consecutive text parts into one (e.g. ACP streams word-by-word)
@@ -239,6 +254,10 @@ export function toUIMessages({
           pushPart(currentAgentMessage.parts, uiPart);
         }
       }
+    } else if (dbMessage.type === "delegation") {
+      clearCurrentUserMessage();
+      currentAgentMessage = getOrCreateAgentMessage();
+      pushPart(currentAgentMessage.parts, dbMessage);
     } else if (dbMessage.type === "tool-call") {
       clearCurrentUserMessage();
       const existingToolPart = toolPartsById[dbMessage.id];

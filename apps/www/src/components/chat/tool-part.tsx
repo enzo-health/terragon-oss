@@ -47,6 +47,7 @@ export type ToolPartProps = {
   githubRepoFullName: string;
   repoBaseBranchName: string;
   branchName: string | null;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 };
@@ -62,6 +63,7 @@ const ToolPart = memo(function ToolPart({
   githubRepoFullName,
   repoBaseBranchName,
   branchName,
+  onOptimisticPermissionModeUpdate,
   artifactDescriptors = [],
   onOpenArtifact,
 }: ToolPartProps) {
@@ -165,6 +167,9 @@ const ToolPart = memo(function ToolPart({
                 githubRepoFullName={githubRepoFullName}
                 repoBaseBranchName={repoBaseBranchName}
                 branchName={branchName}
+                onOptimisticPermissionModeUpdate={
+                  onOptimisticPermissionModeUpdate
+                }
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
               />
@@ -209,7 +214,7 @@ const ToolPart = memo(function ToolPart({
             threadChatId={threadChatId}
             messages={messages}
             isReadOnly={isReadOnly}
-            promptBoxRef={promptBoxRef}
+            onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
             artifactDescriptors={artifactDescriptors}
             onOpenArtifact={onOpenArtifact}
           />
@@ -393,6 +398,8 @@ function areToolPartPropsEqual(
     prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
     prevProps.repoBaseBranchName !== nextProps.repoBaseBranchName ||
     prevProps.branchName !== nextProps.branchName ||
+    prevProps.onOptimisticPermissionModeUpdate !==
+      nextProps.onOptimisticPermissionModeUpdate ||
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact
   ) {

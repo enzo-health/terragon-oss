@@ -109,6 +109,63 @@ async function readReplayBurst(
   return events;
 }
 
+type ParsedSseFrame = {
+  comment: string | null;
+  event: BaseEvent | null;
+};
+
+function parseSseFrame(frame: string): ParsedSseFrame {
+  const lines = frame.split("\n");
+  const commentLine = lines.find((line) => line.startsWith(":"));
+  if (commentLine) {
+    return { comment: commentLine.slice(1).trimStart(), event: null };
+  }
+
+  const dataLine = lines.find((line) => line.startsWith("data: "));
+  if (!dataLine) {
+    return { comment: null, event: null };
+  }
+
+  return {
+    comment: null,
+    event: JSON.parse(dataLine.slice("data: ".length)) as BaseEvent,
+  };
+}
+
+async function readFirstSseFrames(
+  response: Response,
+  expectedFrameCount: number,
+): Promise<ParsedSseFrame[]> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const frames: ParsedSseFrame[] = [];
+  const timeout = setTimeout(() => reader.cancel("test-timeout"), 1_000);
+  try {
+    while (frames.length < expectedFrameCount) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      const chunks = buffered.split("\n\n");
+      buffered = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        if (chunk.trim().length === 0) {
+          continue;
+        }
+        frames.push(parseSseFrame(chunk));
+        if (frames.length >= expectedFrameCount) {
+          break;
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+    await reader.cancel();
+    reader.releaseLock();
+  }
+  return frames;
+}
+
 function makeContext(threadId: string) {
   return { params: Promise.resolve({ threadId }) };
 }
@@ -125,8 +182,6 @@ function makeRunContext(
   const { runId, status, ...rest } = overrides;
   return {
     runId,
-    workflowId: null,
-    runSeq: null,
     userId: "user-1",
     threadId: "thread-1",
     threadChatId: "chat-1",
@@ -135,19 +190,27 @@ function makeRunContext(
     protocolVersion: 2,
     agent: "codex",
     permissionMode: "allowAll",
-    requestedSessionId: null,
-    resolvedSessionId: null,
     status,
     tokenNonce: "nonce-1",
-    daemonTokenKeyId: null,
-    failureCategory: null,
-    failureSource: null,
-    failureRetryable: null,
-    failureSignatureHash: null,
-    failureTerminalReason: null,
     createdAt: now,
     updatedAt: now,
     ...rest,
+    requestedSessionId: rest.requestedSessionId ?? null,
+    resolvedSessionId: rest.resolvedSessionId ?? null,
+    runtimeProvider: rest.runtimeProvider ?? null,
+    externalSessionId: rest.externalSessionId ?? null,
+    previousResponseId: rest.previousResponseId ?? null,
+    checkpointPointer: rest.checkpointPointer ?? null,
+    hibernationValid: rest.hibernationValid ?? null,
+    compactionGeneration: rest.compactionGeneration ?? null,
+    lastAcceptedSeq: rest.lastAcceptedSeq ?? null,
+    terminalEventId: rest.terminalEventId ?? null,
+    failureCategory: rest.failureCategory ?? null,
+    failureSource: rest.failureSource ?? null,
+    failureRetryable: rest.failureRetryable ?? null,
+    failureSignatureHash: rest.failureSignatureHash ?? null,
+    failureTerminalReason: rest.failureTerminalReason ?? null,
+    daemonTokenKeyId: rest.daemonTokenKeyId ?? null,
   };
 }
 
@@ -267,6 +330,7 @@ describe("ag-ui SSE route", () => {
     expect(getAgUiEventsForRun).toHaveBeenCalledWith({
       db: dbMocks.db,
       runId: "run-42",
+      threadChatId: "chat-1",
     });
     // When the caller supplies an explicit runId, the server MUST NOT fall
     // back to the "latest run" helper.
@@ -279,6 +343,42 @@ describe("ag-ui SSE route", () => {
       (e) => e.type === EventType.RUN_STARTED,
     ).length;
     expect(runStartedCount).toBe(1);
+  });
+
+  it("emits the baseline snapshot marker frame before replay deltas", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-baseline-first",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "chat-1",
+        runId: "run-baseline-first",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-baseline-first",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const frames = await readFirstSseFrames(response, 2);
+    expect(frames[0]).toEqual({
+      comment: "baseline-snapshot",
+      event: null,
+    });
+    expect(frames[1]?.event).toMatchObject({
+      type: EventType.RUN_STARTED,
+      runId: "run-baseline-first",
+    });
   });
 
   it("synthesizes a terminal SSE event from durable run status when replay misses it", async () => {
@@ -570,6 +670,100 @@ describe("ag-ui SSE route", () => {
     ]);
   });
 
+  it("dedupes overlapping replay + live-tail events on connect", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-dedupe",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "msg-dedupe",
+        role: "assistant",
+      } as BaseEvent,
+    ];
+    vi.mocked(getAgUiEventsForRun).mockResolvedValue(runEvents);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-dedupe", status: "processing" }),
+    );
+
+    redisMocks.xread.mockResolvedValueOnce([
+      [
+        "agui:thread:chat-1",
+        [
+          [
+            "1700000000000-0",
+            [
+              "event",
+              JSON.stringify({
+                type: EventType.TEXT_MESSAGE_START,
+                timestamp: 2,
+                messageId: "msg-dedupe",
+                role: "assistant",
+              }),
+            ],
+          ],
+          [
+            "1700000000001-0",
+            [
+              "event",
+              JSON.stringify({
+                type: EventType.RUN_FINISHED,
+                timestamp: 3,
+                threadId: "thread-1",
+                runId: "run-dedupe",
+              }),
+            ],
+          ],
+        ],
+      ],
+    ]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-dedupe",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const events: BaseEvent[] = [];
+    const timeout = setTimeout(() => reader.cancel("test-timeout"), 2_000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split("\n\n");
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          events.push(JSON.parse(line.slice("data: ".length)) as BaseEvent);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      reader.releaseLock();
+    }
+
+    const textStartCount = events.filter(
+      (event) => event.type === EventType.TEXT_MESSAGE_START,
+    ).length;
+    expect(textStartCount).toBe(1);
+    expect(events).toMatchObject([
+      { type: EventType.RUN_STARTED, runId: "run-dedupe" },
+      { type: EventType.TEXT_MESSAGE_START, messageId: "msg-dedupe" },
+      { type: EventType.RUN_FINISHED, runId: "run-dedupe" },
+    ]);
+  });
+
   it("emits RUN_FINISHED and closes when XREAD throws and durable status flips terminal", async () => {
     const runEvents: BaseEvent[] = [
       {
@@ -780,6 +974,7 @@ describe("ag-ui SSE route", () => {
     expect(getAgUiEventsForRun).toHaveBeenCalledWith({
       db: dbMocks.db,
       runId: "run-latest",
+      threadChatId: "chat-1",
     });
     // Drain to let the stream close cleanly on RUN_FINISHED.
     const reader = response.body!.getReader();
@@ -839,6 +1034,28 @@ describe("ag-ui SSE route", () => {
       expect(redisMocks.xread).toHaveBeenCalled();
     });
     await response.body!.cancel();
+  });
+
+  it("emits the baseline snapshot marker before awaiting-first-run on empty threads", async () => {
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-new?threadChatId=chat-empty",
+      ),
+      makeContext("thread-new"),
+    );
+    expect(response.status).toBe(200);
+
+    const frames = await readFirstSseFrames(response, 2);
+    expect(frames[0]).toEqual({
+      comment: "baseline-snapshot",
+      event: null,
+    });
+    expect(frames[1]).toEqual({
+      comment: "awaiting-first-run",
+      event: null,
+    });
   });
 
   it("treats a missing getLatestRunIdForThreadChat as an empty-thread case (defensive)", async () => {

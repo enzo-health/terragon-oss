@@ -70,8 +70,6 @@ export default defineConfig({
             "**/batch-threads.test.*",
             "**/handle-app-mention.test.*",
             "**/webhooks/github/route.test.*",
-            "**/delivery-loop/v3/worker.test.*",
-            "**/delivery-loop/v3/durable-delivery.test.*",
             "**/e2e.test.*",
           ]
         : []),

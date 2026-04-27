@@ -4,7 +4,6 @@ import type {
   GithubSurfaceBinding,
   GithubWorkspaceRun,
 } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import {
   listGithubWorkspaceRunsForWorkspace,
   upsertGithubWorkspaceRun,
@@ -26,7 +25,6 @@ type GitHubWorkspaceBootstrapDependencies = {
     repoFullName: string;
     prNumber: number;
   }): Promise<RefreshGithubPrProjectionResult>;
-  getActiveWorkflowForThread: typeof getActiveWorkflowForThread;
 };
 
 export type BootstrapThreadGithubWorkspaceParams = {
@@ -112,8 +110,6 @@ export function createGitHubWorkspaceBootstrapClient(
     db: resolvedDb,
     refreshPrProjection:
       dependencies?.refreshPrProjection ?? refreshGitHubPrProjection,
-    getActiveWorkflowForThread:
-      dependencies?.getActiveWorkflowForThread ?? getActiveWorkflowForThread,
   };
 
   return {
@@ -155,11 +151,6 @@ export function createGitHubWorkspaceBootstrapClient(
               workspaceHeadSha: boundHeadSha,
             },
           );
-        const activeWorkflow =
-          await resolvedDependencies.getActiveWorkflowForThread({
-            db: tx,
-            threadId: params.threadId,
-          });
         const existingRuns = await listGithubWorkspaceRunsForWorkspace({
           db: tx,
           workspaceId: workspace.id,
@@ -177,8 +168,7 @@ export function createGitHubWorkspaceBootstrapClient(
           attempt,
           threadId: params.threadId,
           fields: {
-            ...(activeWorkflow ? { workflowId: activeWorkflow.id } : {}),
-            ...(activeWorkflow ? { status: "running" as const } : {}),
+            status: "running",
           },
         });
 

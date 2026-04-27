@@ -26,17 +26,17 @@
  * blow past the bound; if not, the numbers will document the current budget.
  */
 
-import { act, createElement, Profiler, type ReactElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { HttpAgent } from "@ag-ui/client";
+import { type BaseEvent, EventType } from "@ag-ui/core";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  DBMessage,
   ThreadPageChat,
   ThreadPageShell,
-  DBMessage,
 } from "@terragon/shared";
+import { act, createElement, Profiler, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mocks — these MUST come before any imports that transitively touch them.
@@ -122,18 +122,6 @@ vi.mock("@/collections/thread-chat-collection", () => ({
   useChatFromCollection: () => mockChatState.current ?? undefined,
   getThreadChatCollection: vi.fn(),
   applyChatPatchToCollection: vi.fn(),
-}));
-
-// Delivery-loop status: always "no data".
-vi.mock("@/queries/delivery-loop-status-queries", () => ({
-  deliveryLoopStatusQueryKeys: {
-    detail: (id: string) => ["delivery-loop-status", "detail", id],
-  },
-  useDeliveryLoopStatusQuery: () => ({ data: undefined }),
-  deliveryLoopStatusQueryOptions: (id: string) => ({
-    queryKey: ["delivery-loop-status", "detail", id],
-    queryFn: async () => undefined,
-  }),
 }));
 
 // Feature flag hook — default off for unknown flags, keep contextUsageChip off.
@@ -254,8 +242,8 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 // Imports AFTER mocks.
 // ---------------------------------------------------------------------------
 
-import ChatUI from "@/components/chat/chat-ui";
 import * as threadContextModule from "@/components/chat/assistant-ui/thread-context";
+import ChatUI from "@/components/chat/chat-ui";
 
 // ---------------------------------------------------------------------------
 // Fixture factories.
@@ -297,7 +285,7 @@ function makeShell(): ThreadPageShell {
     skipSetup: false,
     disableGitCheckpointing: false,
     sourceType: "www",
-    sourceMetadata: { type: "www", deliveryLoopOptIn: false },
+    sourceMetadata: { type: "www" },
     version: 1,
     isUnread: false,
     messageSeq: 0,
@@ -686,7 +674,7 @@ describe("ChatUI streaming render budget", () => {
 describe("ChatUI tool-call rendering polish", () => {
   it("clamps long tool prompts and shows a 'Show more' toggle", async () => {
     const longPrompt =
-      "You are the PR-linking agent for delivery-loop phase awaiting_pr_link. Follow repo instructions from AGENTS/CLAUDE conventions and produce a structured plan that covers every edge case, failure mode, retry budget, and observability hook for the downstream delivery pipeline.";
+      "You are the PR-linking agent for the awaiting_pr_link phase. Follow repo instructions from AGENTS/CLAUDE conventions and produce a structured plan that covers every edge case, failure mode, retry budget, and observability hook for the downstream pipeline.";
     const messages: DBMessage[] = [
       {
         type: "user",

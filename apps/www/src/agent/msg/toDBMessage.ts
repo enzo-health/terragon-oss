@@ -42,6 +42,9 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
           type: "error",
           error_type: "agent-generic-error",
           error_info: claudeMessage.error_info ?? "",
+          ...(claudeMessage.runtimeRecovery
+            ? { runtimeRecovery: claudeMessage.runtimeRecovery }
+            : {}),
           timestamp: new Date().toISOString(),
         },
       ];

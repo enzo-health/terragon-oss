@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 
 // ---------------------------------------------------------------------------

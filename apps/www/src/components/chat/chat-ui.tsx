@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AIAgent } from "@terragon/agent/types";
 import { ensureAgent } from "@terragon/agent/utils";
+import type { BootingSubstatus } from "@terragon/sandbox/types";
 import {
   DBMessage,
   DBUserMessage,
@@ -13,7 +14,6 @@ import {
   ThreadInfoFull,
   ThreadStatus,
 } from "@terragon/shared";
-import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import type {
   ThreadPageChat,
   ThreadPageShell,
@@ -41,7 +41,11 @@ import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
-import { useCurrentRunId } from "@/hooks/use-current-run-id";
+import {
+  type ScopedRunIdState,
+  selectScopedRunId,
+  useCurrentRunId,
+} from "@/hooks/use-current-run-id";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
@@ -49,10 +53,8 @@ import {
   convertToPlainText,
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
-import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";
 import { unwrapError } from "@/lib/server-actions";
 import { cn } from "@/lib/utils";
-import { useDeliveryLoopStatusQuery } from "@/queries/delivery-loop-status-queries";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import {
   threadChatQueryOptions,
@@ -71,16 +73,19 @@ import { TerragonThread } from "./assistant-ui/terragon-thread";
 import { ChatHeader } from "./chat-header";
 import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
-import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
 import {
   useMarkChatAsRead,
-  useOptimisticUpdateThreadChat,
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
-import { toUIMessages } from "./toUIMessages";
-import { useAgUiMessages } from "./use-ag-ui-messages";
+import { createThreadViewSnapshot } from "./thread-view-model/legacy-db-message-adapter";
+import {
+  createOptimisticPermissionModeUpdatedEvent,
+  createOptimisticQueuedMessagesUpdatedEvent,
+  createOptimisticUserSubmittedEvent,
+} from "./thread-view-model/optimistic-events";
+import { useThreadViewModel } from "./use-ag-ui-messages";
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -89,14 +94,6 @@ const TerminalPanel = dynamic(
 
 const SecondaryPanel = dynamic(
   () => import("./secondary-panel").then((mod) => mod.SecondaryPanel),
-  { ssr: false },
-);
-
-const DeliveryLoopTopProgressStepper = dynamic(
-  () =>
-    import("@/components/patterns/delivery-loop-top-progress-stepper").then(
-      (mod) => mod.DeliveryLoopTopProgressStepper,
-    ),
   { ssr: false },
 );
 
@@ -192,11 +189,13 @@ function ChatUI({
 
   return (
     <ChatUIContent
+      key={`${threadId}:${threadChatId}`}
       threadId={threadId}
       threadChatId={threadChatId}
       isReadOnly={isReadOnly}
       shell={shell}
       threadChat={threadChat}
+      threadChatSource={chatFromCollection ? "collection" : "react-query"}
     />
   );
 }
@@ -207,12 +206,14 @@ function ChatUIContent({
   isReadOnly,
   shell,
   threadChat,
+  threadChatSource,
 }: {
   threadId: string;
   threadChatId: string;
   isReadOnly: boolean;
   shell: ThreadPageShell;
   threadChat: ThreadPageChat;
+  threadChatSource: "collection" | "react-query";
 }) {
   const queryClient = useQueryClient();
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -244,26 +245,6 @@ function ChatUIContent({
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const dbMessages = useMemo(() => {
-    // Prefer the canonical-event projection, but fall back to the legacy
-    // `messages` snapshot when `projectedMessages` is empty. Without this
-    // fallback, a completed thread whose canonical replay rows are missing
-    // `threadChatMessageSeq` (old data, or a replay projection that skipped
-    // rows) renders an empty transcript even though `messages` still holds
-    // the full DB-backed history.
-    const projected = threadChat.projectedMessages as DBMessage[] | null;
-    const legacy = threadChat.messages as DBMessage[] | null;
-    if (projected && projected.length > 0) return projected;
-    if (legacy && legacy.length > 0) return legacy;
-    return projected ?? legacy ?? [];
-  }, [threadChat.messages, threadChat.projectedMessages]);
-  const queuedMessages = useMemo(
-    () =>
-      threadChat.queuedMessages?.length
-        ? (threadChat.queuedMessages as DBUserMessage[])
-        : null,
-    [threadChat.queuedMessages],
-  );
   const hasLiveDiffSignal = Boolean(
     shell.hasGitDiff || (shell.gitDiffStats?.files ?? 0) > 0,
   );
@@ -328,12 +309,6 @@ function ChatUIContent({
     };
   }, [shell, threadDiff, threadPreviewChat]);
 
-  const isDeliveryLoopOptedIn =
-    shell.sourceType === "www" &&
-    shell.sourceMetadata?.type === "www" &&
-    shell.sourceMetadata.deliveryLoopOptIn;
-  const shouldShowDeliveryLoopStatus =
-    Boolean(isDeliveryLoopOptedIn) || Boolean(shell.githubPRNumber);
   const hasAnyDiffSignal = hasLiveDiffSignal;
 
   // Auto-open secondary panel when gitDiff exists (only once, desktop only)
@@ -363,26 +338,55 @@ function ChatUIContent({
     threadIsUnread: !!shell.isUnread,
     isReadOnly,
   });
-  // Status / queuedMessages / error / delivery-loop freshness all ride on
+  // Status / queuedMessages / error freshness all ride on
   // the AG-UI event stream: `useAgUiQueryInvalidator` (mounted below, once
   // the transport is constructed) refetches thread-shell, thread-chat, and
-  // delivery-loop-status query keys on `thread.status_changed` CUSTOM
-  // events and on `RUN_FINISHED` / `RUN_ERROR`. No polling fallback — the
-  // AG-UI SSE stream is the push channel.
+  // list query keys on `thread.status_changed` CUSTOM events and on
+  // `RUN_FINISHED` / `RUN_ERROR`. No polling fallback — the AG-UI SSE stream
+  // is the push channel.
   const chatAgent = ensureAgent(threadChat.agent);
-  const hasCheckpoint = useMemo(
-    () => dbMessages.some((message) => message.type === "git-diff"),
-    [dbMessages],
+  const [capturedRun, setCapturedRun] = useState<ScopedRunIdState | null>(null);
+  const capturedRunId = selectScopedRunId({
+    state: capturedRun,
+    threadId,
+    threadChatId: threadChat.id,
+  });
+  const threadViewSnapshot = useMemo(
+    () =>
+      createThreadViewSnapshot({
+        threadChat,
+        agent: chatAgent,
+        source: threadChatSource,
+        artifactThread: {
+          id: thread.id,
+          updatedAt: thread.updatedAt,
+          gitDiff: thread.gitDiff,
+          gitDiffStats: thread.gitDiffStats ?? null,
+        },
+        githubSummary: {
+          prStatus: thread.prStatus,
+          prChecksStatus: thread.prChecksStatus,
+          githubPRNumber: thread.githubPRNumber,
+          githubRepoFullName: thread.githubRepoFullName,
+        },
+        runId: capturedRunId,
+      }),
+    [
+      capturedRunId,
+      chatAgent,
+      thread.gitDiff,
+      thread.gitDiffStats,
+      thread.githubPRNumber,
+      thread.githubRepoFullName,
+      thread.id,
+      thread.prChecksStatus,
+      thread.prStatus,
+      thread.updatedAt,
+      threadChat,
+      threadChatSource,
+    ],
   );
-  const latestGitDiffTimestamp = useMemo(() => {
-    for (let index = dbMessages.length - 1; index >= 0; index--) {
-      const message = dbMessages[index];
-      if (message?.type === "git-diff") {
-        return message.timestamp ?? null;
-      }
-    }
-    return null;
-  }, [dbMessages]);
+  const dbMessages = threadViewSnapshot.dbMessages;
   const lastUsedModel = useMemo(
     () => getLastUserMessageModel(dbMessages),
     [dbMessages],
@@ -398,7 +402,7 @@ function ChatUIContent({
       repoBaseBranchName: thread.repoBaseBranchName ?? "main",
       disableGitCheckpointing: thread.disableGitCheckpointing ?? false,
       skipSetup: thread.skipSetup ?? false,
-      permissionMode: threadChat.permissionMode ?? "allowAll",
+      permissionMode: threadViewSnapshot.permissionMode ?? "allowAll",
       initialUserMessage,
     }),
     [
@@ -407,7 +411,7 @@ function ChatUIContent({
       thread.githubRepoFullName,
       thread.repoBaseBranchName,
       thread.skipSetup,
-      threadChat.permissionMode,
+      threadViewSnapshot.permissionMode,
       threadId,
     ],
   );
@@ -437,69 +441,19 @@ function ChatUIContent({
       threadId,
     ],
   );
-  const toolProps = useMemo(
-    () => ({
-      threadId,
-      threadChatId: threadChat.id,
-      messages: dbMessages,
-      isReadOnly,
-      promptBoxRef,
-      childThreads: shell.childThreads ?? [],
-      githubRepoFullName: thread.githubRepoFullName ?? "",
-      repoBaseBranchName: thread.repoBaseBranchName ?? "main",
-      branchName: thread.branchName ?? null,
-    }),
-    [
-      dbMessages,
-      isReadOnly,
-      shell.childThreads,
-      thread.branchName,
-      thread.githubRepoFullName,
-      thread.repoBaseBranchName,
-      threadChat.id,
-      threadId,
-    ],
-  );
-  const { data: deliveryLoopStatus } = useDeliveryLoopStatusQuery({
-    threadId,
-    enabled: shouldShowDeliveryLoopStatus,
-  });
-  const effectiveThreadStatus = useMemo(
-    () =>
-      getDeliveryLoopAwareThreadStatus({
-        threadStatus: threadChat.status ?? null,
-        deliveryLoopState: deliveryLoopStatus?.state,
-        deliveryLoopUpdatedAtIso: deliveryLoopStatus?.updatedAtIso ?? null,
-        threadChatUpdatedAt: threadChat.updatedAt ?? null,
-      }),
-    [
-      deliveryLoopStatus?.state,
-      deliveryLoopStatus?.updatedAtIso,
-      threadChat.status,
-      threadChat.updatedAt,
-    ],
-  );
   // Snapshot the DB messages for both the AG-UI transport hydration seed
   // (so the HttpAgent starts from a non-empty state) AND the aggregator's
   // initial UIMessage[] seed. Because the parent `ChatUI` only mounts this
   // component once `threadChat.id === shell.primaryThreadChatId`, the
   // seeds are guaranteed-valid on first render: `useAgUiMessages`'s lazy
   // reducer initializer will snapshot them correctly.
-  const [agUiInitialMessages] = useState(() =>
-    dbMessagesToAgUiMessages(dbMessages),
-  );
-  const [initialUiMessages] = useState(() =>
-    toUIMessages({
-      dbMessages,
-      agent: chatAgent,
-      threadStatus: threadChat.status,
-    }),
+  const [agUiInitialMessages] = useState(
+    () => threadViewSnapshot.agUiInitialMessages,
   );
   // runId state is maintained across renders by subscribing to the agent's
   // RUN_STARTED events (see `useCurrentRunId`). The transport hook reads
   // the latest runId and mirrors it into `agent.url` so reconnects pick it
   // up without forcing an `HttpAgent` reconstruction.
-  const [capturedRunId, setCapturedRunId] = useState<string | null>(null);
   const agent = useAgUiTransport({
     threadId,
     threadChatId,
@@ -512,26 +466,83 @@ function ChatUIContent({
     // the current HttpAgent. Reset to null on agent identity change (thread
     // switch) so a stale runId from the previous thread chat never leaks
     // into a new thread's reconnect URL.
-    setCapturedRunId(observedRunId);
-  }, [observedRunId]);
-  const messages = useAgUiMessages({
+    setCapturedRun({
+      threadId,
+      threadChatId: threadChat.id,
+      runId: observedRunId,
+    });
+  }, [observedRunId, threadChat.id, threadId]);
+  const threadViewModel = useThreadViewModel({
     agent,
-    agentKind: chatAgent,
-    initialMessages: initialUiMessages,
+    snapshot: threadViewSnapshot,
   });
-  const artifactDescriptors = useMemo(
-    () =>
-      getArtifactDescriptors({
-        messages,
-        thread: {
+  const messages = threadViewModel.messages;
+  const queuedMessages = threadViewModel.queuedMessages;
+  const artifactDescriptors = threadViewModel.artifacts.descriptors;
+  const toolProps = useMemo(
+    () => ({
+      threadId,
+      threadChatId: threadViewModel.threadChatId,
+      messages: threadViewModel.dbMessages,
+      isReadOnly,
+      promptBoxRef,
+      childThreads: shell.childThreads ?? [],
+      githubRepoFullName: thread.githubRepoFullName ?? "",
+      repoBaseBranchName: thread.repoBaseBranchName ?? "main",
+      branchName: thread.branchName ?? null,
+      onOptimisticPermissionModeUpdate: (mode: "allowAll" | "plan") => {
+        threadViewModel.dispatchThreadViewEvent(
+          createOptimisticPermissionModeUpdatedEvent(mode),
+        );
+      },
+    }),
+    [
+      isReadOnly,
+      shell.childThreads,
+      thread.branchName,
+      thread.githubRepoFullName,
+      thread.repoBaseBranchName,
+      threadViewModel.dbMessages,
+      threadViewModel.dispatchThreadViewEvent,
+      threadViewModel.threadChatId,
+      threadId,
+    ],
+  );
+  const reconcileActiveChatFromServer = useCallback(async () => {
+    const reconciledChat = await queryClient.fetchQuery(
+      threadChatQueryOptions({ threadId, threadChatId }),
+    );
+    threadViewModel.dispatchThreadViewEvent({
+      type: "server.refetch-reconciled",
+      snapshot: createThreadViewSnapshot({
+        threadChat: reconciledChat,
+        agent: chatAgent,
+        source: "react-query",
+        artifactThread: {
           id: thread.id,
           updatedAt: thread.updatedAt,
           gitDiff: thread.gitDiff,
-          gitDiffStats: thread.gitDiffStats,
+          gitDiffStats: thread.gitDiffStats ?? null,
         },
+        githubSummary: threadViewModel.githubSummary,
+        meta: threadViewModel.meta,
+        runId: threadViewModel.lifecycle.runId,
       }),
-    [messages, thread],
-  );
+    });
+  }, [
+    chatAgent,
+    queryClient,
+    thread.gitDiff,
+    thread.gitDiffStats,
+    thread.id,
+    thread.updatedAt,
+    threadChatId,
+    threadId,
+    threadViewModel.dispatchThreadViewEvent,
+    threadViewModel.githubSummary,
+    threadViewModel.lifecycle.runId,
+    threadViewModel.meta,
+  ]);
   const handleOpenArtifact = useCallback(
     (artifactId: string) => {
       setActiveArtifactId(artifactId);
@@ -575,6 +586,7 @@ function ChatUIContent({
     threadId,
   ]);
 
+  const effectiveThreadStatus = threadViewModel.lifecycle.threadStatus;
   const isAgentCurrentlyWorking =
     effectiveThreadStatus !== null && isAgentWorking(effectiveThreadStatus);
   const previousAgentWorkingRef = useRef<boolean | null>(null);
@@ -669,11 +681,20 @@ function ChatUIContent({
     await retryMutation.mutateAsync();
   };
 
-  const refetchActiveChat = useCallback(() => {
-    return queryClient.invalidateQueries({
-      queryKey: threadQueryKeys.chat(threadId, threadChatId),
-    });
-  }, [queryClient, threadChatId, threadId]);
+  const threadWithViewModelStatus = useMemo<ThreadInfoFull>(() => {
+    const viewModelThreadStatus = threadViewModel.threadStatus;
+    if (!viewModelThreadStatus || thread.threadChats.length === 0) {
+      return thread;
+    }
+    return {
+      ...thread,
+      threadChats: thread.threadChats.map((chat) =>
+        chat.id === threadChat.id
+          ? { ...chat, status: viewModelThreadStatus }
+          : chat,
+      ),
+    };
+  }, [thread, threadChat.id, threadViewModel.threadStatus]);
 
   if (!agent) {
     // `useAgUiTransport` returns null only when `threadChatId` is falsy,
@@ -695,20 +716,15 @@ function ChatUIContent({
       />
       <div className="flex flex-col h-full w-full">
         <ChatHeader
-          thread={thread}
+          thread={threadWithViewModelStatus}
           threadAgent={chatAgent}
           redoDialogData={redoDialogData}
           isReadOnly={isReadOnly}
           onHeaderClick={platform === "mobile" ? scrollToTop : undefined}
           onTerminalClick={() => setShowTerminal(true)}
+          metaSnapshot={threadViewModel.meta}
+          githubSummary={threadViewModel.githubSummary}
         />
-        {shouldShowDeliveryLoopStatus ? (
-          <DeliveryLoopTopProgressStepper
-            threadId={threadId}
-            threadChatId={threadChatId}
-            enabled={true}
-          />
-        ) : null}
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="relative flex-1 overflow-hidden">
@@ -721,16 +737,13 @@ function ChatUIContent({
                     agent={agent}
                     messages={messages}
                     threadStatus={effectiveThreadStatus}
-                    thread={thread}
-                    latestGitDiffTimestamp={latestGitDiffTimestamp}
-                    isAgentWorking={isAgentCurrentlyWorking}
-                    deliveryLoopState={deliveryLoopStatus?.state ?? null}
-                    deliveryLoopUpdatedAtIso={
-                      deliveryLoopStatus?.updatedAtIso ?? null
+                    thread={threadWithViewModelStatus}
+                    latestGitDiffTimestamp={
+                      threadViewModel.latestGitDiffTimestamp
                     }
-                    threadChatUpdatedAt={threadChat.updatedAt ?? null}
-                    deliveryLoopBlockedReason={
-                      deliveryLoopStatus?.blockedReason ?? null
+                    isAgentWorking={isAgentCurrentlyWorking}
+                    threadChatUpdatedAt={
+                      threadViewModel.lifecycle.threadChatUpdatedAt
                     }
                     artifactDescriptors={artifactDescriptors}
                     onOpenArtifact={handleOpenArtifact}
@@ -743,7 +756,7 @@ function ChatUIContent({
                     redoDialogData={redoDialogData}
                     forkDialogData={forkDialogData}
                     toolProps={toolProps}
-                    hasCheckpoint={hasCheckpoint}
+                    hasCheckpoint={threadViewModel.hasCheckpoint}
                     error={error || threadChat.errorMessageInfo || undefined}
                     errorType={threadChat.errorMessage || undefined}
                     errorInfo={
@@ -754,6 +767,7 @@ function ChatUIContent({
                     isReadOnly={isReadOnly}
                     chatAgent={chatAgent}
                     bootingSubstatus={thread.bootingSubstatus ?? undefined}
+                    metaSnapshot={threadViewModel.meta}
                     reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
                     threadChatId={threadChat.id}
                     scheduleAt={threadChat.scheduleAt}
@@ -786,12 +800,13 @@ function ChatUIContent({
                 threadId={thread.id}
                 threadChatId={threadChat.id}
                 threadStatus={effectiveThreadStatus}
-                runStarted={observedRunId !== null}
+                bootingSubstatus={thread.bootingSubstatus ?? null}
+                runStarted={threadViewModel.lifecycle.runStarted}
                 queuedMessages={queuedMessages}
-                permissionMode={threadChat.permissionMode ?? "allowAll"}
-                prStatus={thread.prStatus}
-                prChecksStatus={thread.prChecksStatus}
-                githubPRNumber={thread.githubPRNumber}
+                permissionMode={threadViewModel.permissionMode ?? "allowAll"}
+                prStatus={threadViewModel.githubSummary.prStatus}
+                prChecksStatus={threadViewModel.githubSummary.prChecksStatus}
+                githubPRNumber={threadViewModel.githubSummary.githubPRNumber}
                 sandboxId={thread.codesandboxId}
                 repoFullName={thread.githubRepoFullName}
                 branchName={thread.branchName ?? thread.repoBaseBranchName}
@@ -800,7 +815,25 @@ function ChatUIContent({
                 lastUsedModel={lastUsedModel}
                 contextLength={threadChat.contextLength ?? null}
                 setError={setError}
-                refetch={refetchActiveChat}
+                onOptimisticUserSubmit={(userMessage, optimisticStatus) => {
+                  threadViewModel.dispatchThreadViewEvent(
+                    createOptimisticUserSubmittedEvent({
+                      message: userMessage,
+                      optimisticStatus,
+                    }),
+                  );
+                }}
+                onOptimisticQueuedMessagesUpdate={(messages) => {
+                  threadViewModel.dispatchThreadViewEvent(
+                    createOptimisticQueuedMessagesUpdatedEvent(messages),
+                  );
+                }}
+                onPermissionModeChange={(mode) => {
+                  threadViewModel.dispatchThreadViewEvent(
+                    createOptimisticPermissionModeUpdatedEvent(mode),
+                  );
+                }}
+                refetch={reconcileActiveChatFromServer}
                 forceScrollToBottom={forceScrollToBottom}
                 promptBoxRef={promptBoxRef}
               />
@@ -808,15 +841,20 @@ function ChatUIContent({
           </div>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
-              thread={thread}
+              thread={threadWithViewModelStatus}
               artifactDescriptors={artifactDescriptors}
               activeArtifactId={activeArtifactId}
               onActiveArtifactChange={setActiveArtifactId}
               containerRef={chatContainerRef}
-              messages={dbMessages}
-              threadChatId={threadChat.id}
+              messages={threadViewModel.sidePanel.messages}
+              threadChatId={threadViewModel.sidePanel.threadChatId}
               isReadOnly={isReadOnly}
               promptBoxRef={promptBoxRef}
+              onOptimisticPermissionModeUpdate={(mode) => {
+                threadViewModel.dispatchThreadViewEvent(
+                  createOptimisticPermissionModeUpdatedEvent(mode),
+                );
+              }}
             />
           ) : null}
         </div>
@@ -850,6 +888,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   threadId,
   threadChatId,
   threadStatus,
+  bootingSubstatus,
   runStarted,
   queuedMessages,
   permissionMode,
@@ -864,6 +903,9 @@ const ChatPromptBox = memo(function ChatPromptBox({
   lastUsedModel,
   contextLength,
   setError,
+  onOptimisticUserSubmit,
+  onOptimisticQueuedMessagesUpdate,
+  onPermissionModeChange,
   refetch,
   forceScrollToBottom,
   promptBoxRef,
@@ -871,6 +913,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
   threadId: string;
   threadChatId: string;
   threadStatus: ThreadStatus | null;
+  bootingSubstatus: BootingSubstatus | null;
   runStarted: boolean;
   queuedMessages: DBUserMessage[] | null;
   permissionMode: "allowAll" | "plan";
@@ -885,6 +928,12 @@ const ChatPromptBox = memo(function ChatPromptBox({
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   contextLength: number | null;
   setError: (error: ThreadErrorMessage | null) => void;
+  onOptimisticUserSubmit: (
+    userMessage: DBUserMessage,
+    optimisticStatus: ThreadStatus,
+  ) => void;
+  onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
+  onPermissionModeChange: (mode: "allowAll" | "plan") => void;
   forceScrollToBottom: () => void;
   refetch: () => Promise<unknown>;
   promptBoxRef: React.RefObject<{
@@ -894,11 +943,6 @@ const ChatPromptBox = memo(function ChatPromptBox({
 }) {
   const chatAgent = ensureAgent(agent);
   const showContextUsageChip = useFeatureFlag("contextUsageChip");
-
-  const updateThreadChat = useOptimisticUpdateThreadChat({
-    threadId,
-    threadChatId,
-  });
 
   const handleSubmit = useCallback<HandleSubmit>(
     async ({ userMessage }) => {
@@ -911,15 +955,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
       // Optimistically add the message to the thread
       const optimisticStatus =
         plainText.trim() === "/clear" ? "complete" : "booting";
-      updateThreadChat((currentChat) => ({
-        projectedMessages: [
-          ...(currentChat.projectedMessages ?? currentChat.messages ?? []),
-          userMessage,
-        ],
-        errorMessage: null,
-        errorMessageInfo: null,
-        status: optimisticStatus,
-      }));
+      onOptimisticUserSubmit(userMessage, optimisticStatus);
       const followUpResult = await followUp({
         threadId,
         threadChatId,
@@ -927,18 +963,18 @@ const ChatPromptBox = memo(function ChatPromptBox({
       });
       if (!followUpResult.success) {
         setError(followUpResult.errorMessage);
-        // Revert optimistic update on error
-        refetch();
+        await refetch();
         return;
       }
+      await refetch();
     },
     [
       threadId,
       threadChatId,
-      updateThreadChat,
       refetch,
       setError,
       forceScrollToBottom,
+      onOptimisticUserSubmit,
     ],
   );
 
@@ -949,7 +985,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
 
   const updateQueuedMessages = useCallback(
     async (messages: DBUserMessage[]) => {
-      updateThreadChat({ queuedMessages: messages });
+      onOptimisticQueuedMessagesUpdate(messages);
       const queueFollowUpResult = await queueFollowUp({
         threadId,
         threadChatId,
@@ -957,11 +993,18 @@ const ChatPromptBox = memo(function ChatPromptBox({
       });
       if (!queueFollowUpResult.success) {
         setError(queueFollowUpResult.errorMessage);
-        refetch();
+        await refetch();
         return;
       }
+      await refetch();
     },
-    [threadId, threadChatId, updateThreadChat, refetch, setError],
+    [
+      threadId,
+      threadChatId,
+      refetch,
+      setError,
+      onOptimisticQueuedMessagesUpdate,
+    ],
   );
 
   const handleQueueMessage = useCallback(
@@ -990,6 +1033,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
         threadId={threadId}
         threadChatId={threadChatId}
         status={threadStatus}
+        bootingSubstatus={bootingSubstatus}
         runStarted={runStarted}
         prStatus={prStatus}
         prChecksStatus={prChecksStatus}
@@ -1001,6 +1045,7 @@ const ChatPromptBox = memo(function ChatPromptBox({
         agentVersion={agentVersion}
         lastUsedModel={lastUsedModel}
         permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         handleStop={handleStop}
         handleSubmit={handleSubmit}
         queuedMessages={queuedMessages}

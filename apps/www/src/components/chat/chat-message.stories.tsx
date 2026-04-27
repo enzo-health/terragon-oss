@@ -3,6 +3,7 @@ import { ChatMessage } from "./chat-message";
 import { WorkingMessage } from "./chat-messages";
 import { BootChecklist } from "./boot-checklist";
 import { UIMessage } from "@terragon/shared";
+import { createInitialThreadMetaSnapshot } from "./thread-view-model/legacy-db-message-adapter";
 
 export default {
   title: "Chat/Chat Message",
@@ -81,6 +82,7 @@ export const SystemMessageClearContext: Story = () => {
 const defaultProps = {
   agent: "claudeCode" as const,
   reattemptQueueAt: null,
+  metaSnapshot: createInitialThreadMetaSnapshot(),
 };
 
 // ----- BootChecklist stories -----
@@ -90,7 +92,10 @@ export const BootChecklist_FirstStep: Story = () => (
     <p className="text-xs text-muted-foreground mb-2">
       First step — provisioning in-progress, no meta events yet
     </p>
-    <BootChecklist threadId="story-thread-1" currentSubstatus="provisioning" />
+    <BootChecklist
+      currentSubstatus="provisioning"
+      metaSnapshot={defaultProps.metaSnapshot}
+    />
   </div>
 );
 
@@ -99,7 +104,10 @@ export const BootChecklist_MidBoot: Story = () => (
     <p className="text-xs text-muted-foreground mb-2">
       Mid-boot — cloning-repo in-progress (fallback from currentSubstatus)
     </p>
-    <BootChecklist threadId="story-thread-2" currentSubstatus="cloning-repo" />
+    <BootChecklist
+      currentSubstatus="cloning-repo"
+      metaSnapshot={defaultProps.metaSnapshot}
+    />
   </div>
 );
 
@@ -109,8 +117,8 @@ export const BootChecklist_InstallingAgent: Story = () => (
       Installing agent — in-progress (no install progress events yet)
     </p>
     <BootChecklist
-      threadId="story-thread-3"
       currentSubstatus="installing-agent"
+      metaSnapshot={defaultProps.metaSnapshot}
     />
   </div>
 );
@@ -119,8 +127,8 @@ export const BootChecklist_RunningSetupScript: Story = () => (
   <div className="p-4 max-w-sm">
     <p className="text-xs text-muted-foreground mb-2">Running setup script</p>
     <BootChecklist
-      threadId="story-thread-4"
       currentSubstatus="running-setup-script"
+      metaSnapshot={defaultProps.metaSnapshot}
     />
   </div>
 );
@@ -130,7 +138,10 @@ export const BootChecklist_BootingDone: Story = () => (
     <p className="text-xs text-muted-foreground mb-2">
       Booting done — waiting for assistant to start
     </p>
-    <BootChecklist threadId="story-thread-5" currentSubstatus="booting-done" />
+    <BootChecklist
+      currentSubstatus="booting-done"
+      metaSnapshot={defaultProps.metaSnapshot}
+    />
   </div>
 );
 
@@ -139,7 +150,10 @@ export const BootChecklist_NoSubstatus: Story = () => (
     <p className="text-xs text-muted-foreground mb-2">
       No substatus yet — first step shown as in-progress
     </p>
-    <BootChecklist threadId="story-thread-6" currentSubstatus={null} />
+    <BootChecklist
+      currentSubstatus={null}
+      metaSnapshot={defaultProps.metaSnapshot}
+    />
   </div>
 );
 

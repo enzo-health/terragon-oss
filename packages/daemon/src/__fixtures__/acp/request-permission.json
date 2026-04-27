@@ -1,5 +1,6 @@
 {
   "jsonrpc": "2.0",
+  "id": 42,
   "method": "session/request_permission",
   "params": {
     "sessionId": "019cb55a-6ab5-7ad2-876b-dd1d3dedcf52",

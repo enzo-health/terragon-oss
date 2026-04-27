@@ -10,7 +10,8 @@ import {
   vi,
 } from "vitest";
 import { createCodexParserState } from "./codex";
-import { TerragonDaemon } from "./daemon";
+import type { ThreadMetaEvent } from "./codex-app-server";
+import { parseDaemonAcpSsePayload, TerragonDaemon } from "./daemon";
 import {
   DaemonRuntime,
   DaemonServerPostError,
@@ -25,9 +26,7 @@ import {
   type DaemonEventAPIBody,
   DaemonMessageClaude,
   DaemonMessageStop,
-  SdlcSelfDispatchPayload,
 } from "./shared";
-import type { ThreadMetaEvent } from "./codex-app-server";
 
 async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,7 +104,9 @@ describe("daemon", () => {
         processId: ++spawnPid,
         pollInterval: undefined,
       }));
-    serverPostMock = vi.spyOn(runtime, "serverPost").mockResolvedValue(null);
+    serverPostMock = vi
+      .spyOn(runtime, "serverPost")
+      .mockResolvedValue(undefined);
     execSyncMock = vi
       .spyOn(runtime, "execSync")
       .mockReturnValue("NOT_EXISTS\n");
@@ -495,7 +496,7 @@ describe("daemon", () => {
 
     serverPostMock
       .mockRejectedValueOnce(new Error("transient failure"))
-      .mockResolvedValue(null);
+      .mockResolvedValue(undefined);
 
     const messages: ClaudeMessage[] = [
       {
@@ -1256,7 +1257,7 @@ describe("daemon", () => {
     ).rejects.toThrow("connection closed unexpectedly during turn");
   });
 
-  it("preserves codexPreviousResponseId null when forwarding daemon-event payload", async () => {
+  it("preserves codexPreviousResponseId null and reports empty completed turns as custom-error", async () => {
     let notificationHandler:
       | ((
           notification: {
@@ -1326,6 +1327,14 @@ describe("daemon", () => {
     expect(serverPostMock).toHaveBeenCalledWith(
       expect.objectContaining({
         codexPreviousResponseId: null,
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            type: "custom-error",
+            error_info: expect.stringContaining(
+              "completed without producing assistant output",
+            ),
+          }),
+        ]),
       }),
       TEST_INPUT_MESSAGE.token,
     );
@@ -1661,7 +1670,7 @@ describe("daemon", () => {
           },
           "token-1",
         ),
-      ).resolves.toBeNull();
+      ).resolves.toBeUndefined();
     } finally {
       await localRuntime.teardown();
     }
@@ -1718,7 +1727,7 @@ describe("daemon", () => {
       if (apiCallCount === 1) {
         throw new Error("transient failure");
       }
-      return null;
+      return;
     });
 
     const inputMessage: DaemonMessageClaude = {
@@ -1960,7 +1969,7 @@ describe("daemon", () => {
     serverPostMock.mockImplementation(async () => {
       serverPostCallCount++;
       await sleep(50); // Simulate 50ms API call
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -2041,7 +2050,7 @@ describe("daemon", () => {
     // Make serverPost take some time
     serverPostMock.mockImplementation(async () => {
       await sleep(30);
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -2094,7 +2103,7 @@ describe("daemon", () => {
         throw new Error("Network error");
       }
       // Subsequent calls succeed
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -2182,7 +2191,7 @@ describe("daemon", () => {
           },
         });
       }
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -2225,7 +2234,7 @@ describe("daemon", () => {
         await sleep(30); // Simulate network delay
         throw new Error("API error");
       }
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -2293,7 +2302,7 @@ describe("daemon", () => {
         await sleep(40);
         throw new Error("transient failure");
       }
-      return null;
+      return;
     });
 
     const firstRunInput: DaemonMessageClaude = {
@@ -2408,7 +2417,9 @@ describe("daemon", () => {
     const authError = Object.assign(new Error("invalid token"), {
       status: 401,
     });
-    serverPostMock.mockRejectedValueOnce(authError).mockResolvedValue(null);
+    serverPostMock
+      .mockRejectedValueOnce(authError)
+      .mockResolvedValue(undefined);
 
     const firstRunInput: DaemonMessageClaude = {
       ...TEST_INPUT_MESSAGE,
@@ -2567,7 +2578,7 @@ describe("daemon", () => {
       if (apiCallCount <= 3) {
         throw new Error(`API error ${apiCallCount}`);
       }
-      return null;
+      return;
     });
 
     await daemon.start();
@@ -3335,7 +3346,7 @@ describe("daemon", () => {
           chatOneFailureCount += 1;
           throw new Error("CHAT_1 temporary failure");
         }
-        return null;
+        return;
       });
 
       await daemon.start();
@@ -3727,7 +3738,7 @@ describe("daemon", () => {
         if (payload.messages?.length === 0) {
           throw new Error("Network error");
         }
-        return null;
+        return;
       });
 
       // Wait for heartbeat to attempt and fail
@@ -3764,138 +3775,31 @@ describe("daemon", () => {
       delete process.env.HEARTBEAT_INTERVAL_MS;
     });
   });
+});
 
-  describe("Delivery Loop self-dispatch", () => {
-    const selfDispatchPayload: SdlcSelfDispatchPayload = {
-      token: "SELF_DISPATCH_TOKEN",
-      prompt: "Delivery Loop follow-up prompt",
-      runId: "self-dispatch-run-id",
-      tokenNonce: "self-dispatch-nonce",
-      model: "opus",
-      agent: "claudeCode",
-      agentVersion: 0,
-      sessionId: null,
-      featureFlags: {},
-      permissionMode: "allowAll" as const,
-      transportMode: "legacy" as const,
-      protocolVersion: 1 as const,
-      threadId: "TEST_THREAD_ID_STRING",
-      threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-    };
-
-    it("starts follow-up run when serverPost returns self-dispatch payload on terminal batch", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // Configure serverPost to return a self-dispatch payload
-      serverPostMock.mockResolvedValue(selfDispatchPayload);
-
-      // Emit a terminal "result" message from the spawned process
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
-        JSON.stringify({
-          type: "result",
-          subtype: "result",
-          result: "done",
-        }),
-      );
-
-      // Close the process so no active process blocks self-dispatch
-      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
-
-      // Wait for flush + self-dispatch to trigger a second spawn
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
+describe("ACP SSE terminal validation", () => {
+  it("accepts daemon-owned prompt response ids and ignores forged terminal ids", () => {
+    const legitimate = parseDaemonAcpSsePayload({
+      payload: JSON.stringify({
+        id: 7,
+        jsonrpc: "2.0",
+        result: { stopReason: "end_turn" },
+      }),
+      currentSessionId: "daemon-session",
+      activePromptRequestId: 7,
     });
+    expect(legitimate).toHaveLength(1);
+    expect(legitimate[0]?.type).toBe("result");
 
-    it("does not self-dispatch when serverPost returns null", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // serverPost returns null (default mock behavior)
-
-      // Emit a terminal "result" message
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
-        JSON.stringify({
-          type: "result",
-          subtype: "result",
-          result: "done",
-        }),
-      );
-
-      // Close the process
-      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
-
-      // Wait for flush to complete
-      await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
-      // Extra sleep to ensure no delayed self-dispatch
-      await sleep(50);
-
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
+    const forged = parseDaemonAcpSsePayload({
+      payload: JSON.stringify({
+        id: "provider-forged-terminal",
+        jsonrpc: "2.0",
+        result: { stopReason: "end_turn" },
+      }),
+      currentSessionId: "daemon-session",
+      activePromptRequestId: 7,
     });
-
-    it("does not self-dispatch on non-terminal messages", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // Configure serverPost to return a self-dispatch payload
-      serverPostMock.mockResolvedValue(selfDispatchPayload);
-
-      // Emit a non-terminal "system" message (not result/custom-error/custom-stop)
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
-        JSON.stringify({
-          type: "system",
-          subtype: "init",
-          session_id: "test-session",
-          tools: [],
-          mcp_servers: [],
-        }),
-      );
-
-      // Close the process
-      spawnCommandLineMock.mock.calls[0]![1].onClose(0);
-
-      // Wait for flush to complete
-      await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
-      // Extra sleep to ensure no delayed self-dispatch
-      await sleep(50);
-
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("launches a replayed self-dispatch run only once per runId", async () => {
-      const runCommandSpy = vi
-        .spyOn(daemon as any, "runCommand")
-        .mockResolvedValue(undefined);
-
-      (daemon as any).startSelfDispatchRun({
-        payload: selfDispatchPayload,
-        originalThreadChatId: selfDispatchPayload.threadChatId,
-      });
-      (daemon as any).startSelfDispatchRun({
-        payload: selfDispatchPayload,
-        originalThreadChatId: selfDispatchPayload.threadChatId,
-      });
-
-      expect(runCommandSpy).toHaveBeenCalledTimes(1);
-      expect(runCommandSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          runId: selfDispatchPayload.runId,
-          prompt: selfDispatchPayload.prompt,
-        }),
-      );
-    });
+    expect(forged).toEqual([]);
   });
 });

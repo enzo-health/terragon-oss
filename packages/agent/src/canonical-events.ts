@@ -31,6 +31,11 @@ export const EventCategorySchema = z.enum([
   "operational",
   "transcript",
   "tool_lifecycle",
+  "reasoning",
+  "artifact",
+  "permission",
+  "meta",
+  "quarantine",
 ]);
 export type EventCategory = z.infer<typeof EventCategorySchema>;
 
@@ -108,11 +113,100 @@ export const ToolCallResultEventSchema = BaseEventEnvelopeSchema.extend({
 });
 export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
 
+export const ToolCallProgressEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("tool_lifecycle"),
+  type: z.literal("tool-call-progress"),
+  toolCallId: ToolCallIdSchema,
+  delta: z.string(),
+  progressKind: z
+    .enum(["args", "stdout", "stderr", "status", "artifact"])
+    .optional(),
+});
+export type ToolCallProgressEvent = z.infer<typeof ToolCallProgressEventSchema>;
+
+export const ReasoningMessageEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("reasoning"),
+  type: z.literal("reasoning-message"),
+  messageId: MessageIdSchema,
+  content: z.string(),
+  model: AIModelSchema.optional(),
+});
+export type ReasoningMessageEvent = z.infer<typeof ReasoningMessageEventSchema>;
+
+export const PermissionRequestEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("permission"),
+  type: z.literal("permission-request"),
+  permissionRequestId: z.string().min(1),
+  toolCallId: ToolCallIdSchema.nullable().optional(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  options: z.array(z.enum(["approve", "deny"])).min(1),
+});
+export type PermissionRequestEvent = z.infer<
+  typeof PermissionRequestEventSchema
+>;
+
+export const PermissionResponseEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("permission"),
+  type: z.literal("permission-response"),
+  permissionRequestId: z.string().min(1),
+  response: z.enum(["approved", "denied"]),
+});
+export type PermissionResponseEvent = z.infer<
+  typeof PermissionResponseEventSchema
+>;
+
+export const ArtifactReferenceEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("artifact"),
+  type: z.literal("artifact-reference"),
+  artifactId: z.string().min(1),
+  artifactType: z.enum([
+    "diff",
+    "terminal",
+    "image",
+    "audio",
+    "resource-link",
+    "plan",
+    "log",
+  ]),
+  title: z.string().min(1),
+  uri: z.string().min(1).optional(),
+  status: z.enum(["pending", "ready", "failed"]),
+});
+export type ArtifactReferenceEvent = z.infer<
+  typeof ArtifactReferenceEventSchema
+>;
+
+export const MetaEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("meta"),
+  type: z.literal("meta"),
+  name: z.string().min(1),
+  value: z.record(z.string(), z.unknown()),
+});
+export type MetaEvent = z.infer<typeof MetaEventSchema>;
+
+export const UnknownProviderEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("quarantine"),
+  type: z.literal("unknown-provider-event"),
+  provider: TransportModeSchema,
+  reason: z.string().min(1),
+  rawEventType: z.string().min(1).optional(),
+  redactedPayload: z.record(z.string(), z.unknown()),
+});
+export type UnknownProviderEvent = z.infer<typeof UnknownProviderEventSchema>;
+
 export const CanonicalEventSchema = z.union([
   OperationalRunStartedEventSchema,
   OperationalRunTerminalEventSchema,
   AssistantMessageEventSchema,
   ToolCallStartEventSchema,
+  ToolCallProgressEventSchema,
   ToolCallResultEventSchema,
+  ReasoningMessageEventSchema,
+  PermissionRequestEventSchema,
+  PermissionResponseEventSchema,
+  ArtifactReferenceEventSchema,
+  MetaEventSchema,
+  UnknownProviderEventSchema,
 ]);
 export type CanonicalEvent = z.infer<typeof CanonicalEventSchema>;

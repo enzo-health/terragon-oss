@@ -12,7 +12,6 @@ import { ListCommand } from "./commands/list.js";
 import { QueryProvider } from "./providers/QueryProvider.js";
 import { RootLayout } from "./components/RootLayout.js";
 import { startMCPServer } from "./mcp-server/index.js";
-import { QACommand } from "./commands/qa.js";
 import type { AIModelExternal } from "@terragon/agent/types";
 
 // Set up global error handlers
@@ -181,76 +180,5 @@ program
       process.exit(1);
     }
   });
-
-const qaCommand = program
-  .command("qa")
-  .description("Quality assurance - validate task consistency");
-
-qaCommand
-  .command("verify <threadId>")
-  .description(
-    "Validate a thread's consistency across UI, database, and container",
-  )
-  .option("-d, --deep", "Include deep validation (event journal, signals)")
-  .option("-j, --json", "Output results as JSON")
-  .option(
-    "-f, --fail-on-discrepancy",
-    "Exit with error code if discrepancies found",
-  )
-  .action(
-    (
-      threadId: string,
-      options: { deep?: boolean; json?: boolean; failOnDiscrepancy?: boolean },
-    ) => {
-      render(
-        <QueryProvider>
-          <RootLayout>
-            <QACommand
-              command="verify"
-              threadId={threadId}
-              options={{
-                deep: options.deep,
-                json: options.json,
-                failOnDiscrepancy: options.failOnDiscrepancy,
-              }}
-            />
-          </RootLayout>
-        </QueryProvider>,
-      );
-    },
-  );
-
-qaCommand
-  .command("watch <threadId>")
-  .description("Continuously validate a thread with polling")
-  .option("-i, --interval <ms>", "Poll interval in milliseconds", "30000")
-  .option("-t, --timeout <ms>", "Total timeout in milliseconds", "600000")
-  .option("-f, --fail-on-discrepancy", "Exit if critical discrepancies found")
-  .action(
-    (
-      threadId: string,
-      options: {
-        interval?: string;
-        timeout?: string;
-        failOnDiscrepancy?: boolean;
-      },
-    ) => {
-      render(
-        <QueryProvider>
-          <RootLayout>
-            <QACommand
-              command="watch"
-              threadId={threadId}
-              options={{
-                pollInterval: parseInt(options.interval || "30000", 10),
-                timeout: parseInt(options.timeout || "600000", 10),
-                failOnDiscrepancy: options.failOnDiscrepancy,
-              }}
-            />
-          </RootLayout>
-        </QueryProvider>,
-      );
-    },
-  );
 
 program.parse();

@@ -875,6 +875,37 @@ describe("toDBMessage", () => {
     });
   });
 
+  describe("custom-error messages", () => {
+    test("preserves runtime recovery metadata", () => {
+      const claudeMessage: ClaudeMessage = {
+        type: "custom-error",
+        session_id: null,
+        duration_ms: 0,
+        error_info: "Unsupported operation",
+        runtimeRecovery: {
+          operation: "compact-and-retry",
+          reason: "Compaction requires a fresh run.",
+          recovery: "retry-new-run",
+        },
+      };
+
+      const result = toDBMessage(claudeMessage);
+      expect(result).toEqual([
+        {
+          type: "error",
+          error_type: "agent-generic-error",
+          error_info: "Unsupported operation",
+          runtimeRecovery: {
+            operation: "compact-and-retry",
+            reason: "Compaction requires a fresh run.",
+            recovery: "retry-new-run",
+          },
+          timestamp: expect.any(String),
+        },
+      ]);
+    });
+  });
+
   describe("result and system messages", () => {
     test("converts result success message to DBMetaMessage", () => {
       const claudeMessage: ClaudeMessage = {

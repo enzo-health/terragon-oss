@@ -86,7 +86,7 @@ export type CodexAppServerNotificationHandler = (
 
 /**
  * Mirrors `BootingSubstatus` from `@terragon/sandbox/types`.  Duplicated here
- * (and in `@terragon/shared/delivery-loop/thread-meta-event`) because the
+ * (and in `@terragon/shared/runtime/thread-meta-event`) because the
  * daemon does not depend on `@terragon/sandbox` at runtime.
  */
 type BootingSubstatus =
@@ -1302,7 +1302,10 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
 
   if (method === "thread/status/changed") {
     const threadId = extractThreadIdFromParams(params) ?? "";
-    const status = readString(params, "status") ?? "";
+    const status = readString(params, "status")?.trim();
+    if (!status) {
+      return null;
+    }
     return {
       kind: "thread.status_changed",
       threadId,

@@ -4,6 +4,35 @@ import type { HttpAgent } from "@ag-ui/client";
 import { EventType, type BaseEvent, type RunStartedEvent } from "@ag-ui/core";
 import { useEffect, useState } from "react";
 
+interface CurrentRunState {
+  agent: HttpAgent | null;
+  runId: string | null;
+}
+
+export interface ScopedRunIdState {
+  threadId: string;
+  threadChatId: string;
+  runId: string | null;
+}
+
+export function selectScopedRunId({
+  state,
+  threadId,
+  threadChatId,
+}: {
+  state: ScopedRunIdState | null;
+  threadId: string;
+  threadChatId: string;
+}): string | null {
+  if (!state) {
+    return null;
+  }
+  if (state.threadId !== threadId || state.threadChatId !== threadChatId) {
+    return null;
+  }
+  return state.runId;
+}
+
 /**
  * Track the most recently observed `RUN_STARTED.runId` for a given
  * `HttpAgent`.
@@ -29,19 +58,23 @@ import { useEffect, useState } from "react";
  * observed.
  */
 export function useCurrentRunId(agent: HttpAgent | null): string | null {
-  const [runId, setRunId] = useState<string | null>(null);
+  const [state, setState] = useState<CurrentRunState>({
+    agent: null,
+    runId: null,
+  });
 
   useEffect(() => {
     if (!agent) {
-      setRunId(null);
+      setState({ agent: null, runId: null });
       return;
     }
+    setState({ agent, runId: null });
     const subscription = agent.subscribe({
       onEvent: ({ event }: { event: BaseEvent }) => {
         if (event.type !== EventType.RUN_STARTED) return;
         const candidate = (event as RunStartedEvent).runId;
         if (typeof candidate === "string" && candidate.length > 0) {
-          setRunId(candidate);
+          setState({ agent, runId: candidate });
         }
       },
     });
@@ -50,5 +83,5 @@ export function useCurrentRunId(agent: HttpAgent | null): string | null {
     };
   }, [agent]);
 
-  return runId;
+  return state.agent === agent ? state.runId : null;
 }

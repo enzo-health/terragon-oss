@@ -5,6 +5,7 @@ import { memo, useState, useRef, useEffect } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
 import { AIAgent } from "@terragon/agent/types";
 import { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
+import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
 import { PRStatusPill } from "../pr-status-pill";
 import { toast } from "sonner";
 import { Pill } from "@/components/shared/pill";
@@ -19,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { useCollapsibleThreadList } from "../thread-list/use-collapsible-thread-list";
 import { ThreadAgentIcon } from "../thread-agent-icon";
 import { headerClassName, headerSurfaceClassName } from "../shared/header";
-import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
 import { UsageChip } from "./meta-chips/usage-chip";
 import { RateLimitChip } from "./meta-chips/rate-limit-chip";
 import { ModelRoutingChip } from "./meta-chips/model-routing-chip";
@@ -32,6 +32,8 @@ export const ChatHeader = memo(function ChatHeader({
   isReadOnly,
   onHeaderClick,
   onTerminalClick,
+  metaSnapshot,
+  githubSummary,
 }: {
   thread: ThreadInfoFull;
   threadAgent: AIAgent;
@@ -47,9 +49,15 @@ export const ChatHeader = memo(function ChatHeader({
   isReadOnly: boolean;
   onHeaderClick?: () => void;
   onTerminalClick?: () => void;
+  metaSnapshot: ThreadMetaSnapshot;
+  githubSummary: {
+    prStatus: ThreadInfoFull["prStatus"];
+    prChecksStatus: ThreadInfoFull["prChecksStatus"];
+    githubPRNumber: ThreadInfoFull["githubPRNumber"];
+    githubRepoFullName: ThreadInfoFull["githubRepoFullName"];
+  };
 }) {
   const { isMobile } = useSidebar();
-  const { snapshot: metaSnapshot } = useThreadMetaEvents(thread.id);
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(thread.name || "");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -154,12 +162,12 @@ export const ChatHeader = memo(function ChatHeader({
                   <div className="opacity-70">
                     <ThreadAgentIcon thread={thread} />
                   </div>
-                  {thread.githubPRNumber && thread.prStatus && (
+                  {githubSummary.githubPRNumber && githubSummary.prStatus && (
                     <PRStatusPill
-                      checksStatus={thread.prChecksStatus}
-                      status={thread.prStatus}
-                      prNumber={thread.githubPRNumber}
-                      repoFullName={thread.githubRepoFullName}
+                      checksStatus={githubSummary.prChecksStatus}
+                      status={githubSummary.prStatus}
+                      prNumber={githubSummary.githubPRNumber}
+                      repoFullName={githubSummary.githubRepoFullName}
                     />
                   )}
                 </div>

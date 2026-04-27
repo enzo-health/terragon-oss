@@ -5,18 +5,6 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-
-function getMcpEnv(key: string): string | undefined {
-  if (process.env[key] !== undefined) return process.env[key] || undefined;
-  try {
-    const env = JSON.parse(readFileSync("/tmp/terragon-mcp-env.json", "utf-8"));
-    return env[key] ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const server = new Server(
   {
@@ -77,41 +65,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["tool_name"],
         },
       },
-      {
-        name: "MarkImplementingTasksComplete",
-        description:
-          "Mark plan tasks as complete during the implementing phase. Call this after completing each plan task or batch-mark all completed tasks at the end.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            completedTasks: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  stableTaskId: {
-                    type: "string",
-                    description: "The stable task ID from the plan",
-                  },
-                  status: {
-                    type: "string",
-                    enum: ["done", "skipped", "blocked"],
-                    description:
-                      "Task completion status. Defaults to 'done' if omitted.",
-                  },
-                  note: {
-                    type: "string",
-                    description:
-                      "Optional note about the completion (e.g., what was implemented)",
-                  },
-                },
-                required: ["stableTaskId"],
-              },
-            },
-          },
-          required: ["completedTasks"],
-        },
-      },
     ],
   };
 });
@@ -161,107 +114,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
         ],
       };
-    }
-    case "MarkImplementingTasksComplete": {
-      const { completedTasks } = request.params.arguments as {
-        completedTasks: Array<{
-          stableTaskId: string;
-          status?: "done" | "skipped" | "blocked";
-          note?: string;
-        }>;
-      };
-
-      const serverUrl = getMcpEnv("TERRAGON_SERVER_URL");
-      const daemonToken = getMcpEnv("DAEMON_TOKEN");
-      const threadId = getMcpEnv("TERRAGON_THREAD_ID");
-      const threadChatId = getMcpEnv("TERRAGON_THREAD_CHAT_ID");
-
-      if (!serverUrl || !daemonToken || !threadId || !threadChatId) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "⚠️ Missing environment context for marking tasks. Tasks will be verified at turn completion instead.",
-            },
-          ],
-        };
-      }
-
-      // Capture current git HEAD for evidence
-      let headSha: string | null = null;
-      try {
-        const sha = execSync("git rev-parse HEAD 2>/dev/null", {
-          encoding: "utf-8",
-        }).trim();
-        if (/^[0-9a-f]{40}$/i.test(sha)) {
-          headSha = sha;
-        }
-      } catch {
-        /* no git repo */
-      }
-
-      try {
-        const response = await fetch(
-          `${serverUrl.replace(/\/+$/, "")}/api/sdlc/mark-tasks`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Daemon-Token": daemonToken,
-            },
-            body: JSON.stringify({
-              threadId,
-              threadChatId,
-              headSha,
-              completedTasks: completedTasks.map((t) => ({
-                stableTaskId: t.stableTaskId,
-                status: t.status ?? "done",
-                note: t.note ?? null,
-              })),
-            }),
-          },
-        );
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "unknown error");
-          console.error(
-            `MarkImplementingTasksComplete failed: ${response.status} ${errorText}`,
-          );
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: `⚠️ Failed to mark tasks (${response.status}). Tasks will be verified at turn completion.`,
-              },
-            ],
-          };
-        }
-
-        const result = (await response.json()) as {
-          updatedTaskCount?: number;
-        };
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Marked ${result.updatedTaskCount ?? completedTasks.length} task(s) as complete.`,
-            },
-          ],
-        };
-      } catch (error) {
-        console.error("MarkImplementingTasksComplete error:", error);
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "⚠️ Failed to reach server to mark tasks. Tasks will be verified at turn completion.",
-            },
-          ],
-        };
-      }
     }
     default:
       throw new Error(`Unknown tool: ${request.params.name}`);

@@ -15,14 +15,22 @@ import {
   type ReasoningMessageStartEvent,
   type ReasoningMessageContentEvent,
   type ReasoningMessageEndEvent,
+  type ToolCallChunkEvent,
 } from "@ag-ui/core";
 
 import type {
   AssistantMessageEvent,
+  ArtifactReferenceEvent,
+  BaseEventEnvelope,
   CanonicalEvent,
+  MetaEvent as CanonicalMetaEvent,
   OperationalRunStartedEvent,
   OperationalRunTerminalEvent,
+  PermissionRequestEvent,
+  PermissionResponseEvent,
+  ReasoningMessageEvent,
   ToolCallResultEvent as CanonicalToolCallResultEvent,
+  ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   ToolCallStartEvent as CanonicalToolCallStartEvent,
 } from "./canonical-events";
 
@@ -50,8 +58,26 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
       return mapAssistantMessage(event, timestamp);
     case "tool-call-start":
       return mapToolCallStart(event, timestamp);
+    case "tool-call-progress":
+      return [mapToolCallProgress(event, timestamp)];
     case "tool-call-result":
       return [mapToolCallResult(event, timestamp)];
+    case "reasoning-message":
+      return mapReasoningMessage(event, timestamp);
+    case "permission-request":
+      return [mapPermissionRequest(event, timestamp)];
+    case "permission-response":
+      return [mapPermissionResponse(event, timestamp)];
+    case "artifact-reference":
+      return [mapArtifactReference(event, timestamp)];
+    case "meta":
+      return [mapCanonicalMeta(event, timestamp)];
+    case "unknown-provider-event":
+      return [];
+    default: {
+      const _exhaustiveCheck: never = event;
+      return _exhaustiveCheck;
+    }
   }
 }
 
@@ -64,7 +90,7 @@ function mapRunStarted(
     timestamp,
     threadId: event.threadId,
     runId: event.runId,
-  } as RunStartedEvent;
+  };
 }
 
 function mapRunTerminal(
@@ -95,7 +121,7 @@ function mapAssistantMessage(
     timestamp,
     messageId: event.messageId,
     role: "assistant",
-  } as TextMessageStartEvent;
+  };
 
   const events: BaseEvent[] = [start];
 
@@ -105,7 +131,7 @@ function mapAssistantMessage(
       timestamp,
       messageId: event.messageId,
       delta: content,
-    } as TextMessageContentEvent;
+    };
     events.push(contentEvent);
   }
 
@@ -113,7 +139,7 @@ function mapAssistantMessage(
     type: EventType.TEXT_MESSAGE_END,
     timestamp,
     messageId: event.messageId,
-  } as TextMessageEndEvent;
+  };
   events.push(end);
 
   return events;
@@ -131,7 +157,7 @@ function mapToolCallStart(
     ...(event.parentToolUseId
       ? { parentMessageId: event.parentToolUseId }
       : {}),
-  } as ToolCallStartEvent;
+  };
 
   // Serialize args as a single ARGS chunk. Daemons that support progressive
   // arg streaming can emit multiple ToolCallArgsEvents between START and END.
@@ -141,13 +167,13 @@ function mapToolCallStart(
     timestamp,
     toolCallId: event.toolCallId,
     delta: argsJson,
-  } as ToolCallArgsEvent;
+  };
 
   const end: ToolCallEndEvent = {
     type: EventType.TOOL_CALL_END,
     timestamp,
     toolCallId: event.toolCallId,
-  } as ToolCallEndEvent;
+  };
 
   return [start, args, end];
 }
@@ -156,14 +182,150 @@ function mapToolCallResult(
   event: CanonicalToolCallResultEvent,
   timestamp: number,
 ): ToolCallResultEvent {
-  return {
+  const result: ToolCallResultEvent = {
     type: EventType.TOOL_CALL_RESULT,
     timestamp,
     messageId: event.toolCallId,
     toolCallId: event.toolCallId,
     content: event.result,
-    ...(event.isError ? { role: "tool" as const } : {}),
-  } as ToolCallResultEvent;
+  };
+
+  if (event.isError) {
+    return { ...result, role: "tool" };
+  }
+
+  return result;
+}
+
+function mapToolCallProgress(
+  event: CanonicalToolCallProgressEvent,
+  timestamp: number,
+): ToolCallChunkEvent {
+  return {
+    type: EventType.TOOL_CALL_CHUNK,
+    timestamp,
+    toolCallId: event.toolCallId,
+    delta: event.delta,
+    ...(event.progressKind ? { progressKind: event.progressKind } : {}),
+  };
+}
+
+function mapReasoningMessage(
+  event: ReasoningMessageEvent,
+  timestamp: number,
+): BaseEvent[] {
+  const start: ReasoningMessageStartEvent = {
+    type: EventType.REASONING_MESSAGE_START,
+    timestamp,
+    messageId: event.messageId,
+    role: "reasoning",
+  };
+
+  const events: BaseEvent[] = [start];
+
+  if (event.content.length > 0) {
+    const content: ReasoningMessageContentEvent = {
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      timestamp,
+      messageId: event.messageId,
+      delta: event.content,
+    };
+    events.push(content);
+  }
+
+  const end: ReasoningMessageEndEvent = {
+    type: EventType.REASONING_MESSAGE_END,
+    timestamp,
+    messageId: event.messageId,
+  };
+  events.push(end);
+
+  return events;
+}
+
+function mapPermissionRequest(
+  event: PermissionRequestEvent,
+  timestamp: number,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    timestamp,
+    name: "permission-request",
+    value: {
+      ...canonicalIdentity(event),
+      permissionRequestId: event.permissionRequestId,
+      toolCallId: event.toolCallId ?? null,
+      title: event.title,
+      description: event.description ?? null,
+      options: event.options,
+    },
+  };
+}
+
+function mapPermissionResponse(
+  event: PermissionResponseEvent,
+  timestamp: number,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    timestamp,
+    name: "permission-response",
+    value: {
+      ...canonicalIdentity(event),
+      permissionRequestId: event.permissionRequestId,
+      response: event.response,
+    },
+  };
+}
+
+function mapArtifactReference(
+  event: ArtifactReferenceEvent,
+  timestamp: number,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    timestamp,
+    name: "artifact-reference",
+    value: {
+      ...canonicalIdentity(event),
+      artifactId: event.artifactId,
+      artifactType: event.artifactType,
+      title: event.title,
+      uri: event.uri ?? null,
+      status: event.status,
+    },
+  };
+}
+
+function mapCanonicalMeta(
+  event: CanonicalMetaEvent,
+  timestamp: number,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    timestamp,
+    name: event.name,
+    value: {
+      ...event.value,
+      ...canonicalIdentity(event),
+    },
+  };
+}
+
+type CanonicalIdentity = Pick<
+  BaseEventEnvelope,
+  "eventId" | "seq" | "runId" | "threadId" | "threadChatId" | "timestamp"
+>;
+
+function canonicalIdentity(event: BaseEventEnvelope): CanonicalIdentity {
+  return {
+    eventId: event.eventId,
+    seq: event.seq,
+    runId: event.runId,
+    threadId: event.threadId,
+    threadChatId: event.threadChatId,
+    timestamp: event.timestamp,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -183,19 +345,20 @@ export function mapDaemonDeltaToAgui(
   timestamp = Date.now(),
 ): BaseEvent {
   if (delta.kind === "thinking") {
-    return {
+    const event: ReasoningMessageContentEvent = {
       type: EventType.REASONING_MESSAGE_CONTENT,
       timestamp,
       messageId: delta.messageId,
       delta: delta.text,
-    } as BaseEvent;
+    };
+    return event;
   }
   return {
     type: EventType.TEXT_MESSAGE_CONTENT,
     timestamp,
     messageId: delta.messageId,
     delta: delta.text,
-  } as TextMessageContentEvent;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +376,7 @@ export function mapMetaEventToAgui(
     timestamp,
     name: meta.kind,
     value: meta,
-  } as CustomEvent;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +395,7 @@ export function mapRunFinishedToAgui(
     threadId,
     runId,
     ...(stopped ? { result: { stopped: true } } : {}),
-  } as RunFinishedEvent;
+  };
 }
 
 export function mapRunErrorToAgui(
@@ -245,7 +408,7 @@ export function mapRunErrorToAgui(
     timestamp,
     message,
     ...(code ? { code } : {}),
-  } as RunErrorEvent;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +493,7 @@ export function dbAgentMessagePartsToAgUi(
         timestamp,
         messageId: thinkingMessageId,
         role: "reasoning",
-      } as ReasoningMessageStartEvent;
+      };
       events.push(start);
       if (text.length > 0) {
         const content: ReasoningMessageContentEvent = {
@@ -338,14 +501,14 @@ export function dbAgentMessagePartsToAgUi(
           timestamp,
           messageId: thinkingMessageId,
           delta: text,
-        } as ReasoningMessageContentEvent;
+        };
         events.push(content);
       }
       const end: ReasoningMessageEndEvent = {
         type: EventType.REASONING_MESSAGE_END,
         timestamp,
         messageId: thinkingMessageId,
-      } as ReasoningMessageEndEvent;
+      };
       events.push(end);
       continue;
     }
@@ -359,7 +522,7 @@ export function dbAgentMessagePartsToAgUi(
         partIndex,
         part,
       },
-    } as CustomEvent;
+    };
     events.push(custom);
   }
   return events;

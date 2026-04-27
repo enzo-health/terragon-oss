@@ -75,7 +75,10 @@ export function applyChatPatchToCollection(patch: BroadcastThreadPatch): {
   if (!existing) return { shouldInvalidate: false };
   const result = validateChatPatch(existing, patch);
   if (result.action === "apply" && result.nextChat) {
-    c.update(key, () => result.nextChat!);
+    const nextChat = result.nextChat;
+    c.update(key, (draft) => {
+      Object.assign(draft, nextChat);
+    });
     return { shouldInvalidate: false };
   }
   return { shouldInvalidate: result.action === "invalidate" };
@@ -84,11 +87,77 @@ export function applyChatPatchToCollection(patch: BroadcastThreadPatch): {
 export function seedChat(chat: ThreadPageChat): void {
   const key = chatKey(chat.threadId, chat.id);
   const write: PendingCollectionWrite = (c) => {
-    if (c.state.has(key)) {
-      c.update(key, () => chat);
+    const existing = c.state.get(key) as ThreadPageChat | undefined;
+    if (existing) {
+      if (!isIncomingChatSeedFresh(existing, chat)) {
+        return;
+      }
+      c.update(key, (draft) => {
+        Object.assign(draft, chat);
+      });
     } else {
       c.insert(chat);
     }
+  };
+
+  const c = getCollection();
+  if (c.status !== "ready") {
+    _pendingWrites.push(write);
+    schedulePendingWriteFlush();
+    return;
+  }
+  write(c);
+}
+
+function isIncomingChatSeedFresh(
+  existing: ThreadPageChat,
+  incoming: ThreadPageChat,
+): boolean {
+  const existingMessageSeq = existing.messageSeq ?? null;
+  const incomingMessageSeq = incoming.messageSeq ?? null;
+  if (existingMessageSeq !== null && incomingMessageSeq !== null) {
+    if (incomingMessageSeq !== existingMessageSeq) {
+      return incomingMessageSeq > existingMessageSeq;
+    }
+  }
+
+  const existingPatchVersion = existing.patchVersion ?? null;
+  const incomingPatchVersion = incoming.patchVersion ?? null;
+  if (existingPatchVersion !== null && incomingPatchVersion !== null) {
+    return incomingPatchVersion >= existingPatchVersion;
+  }
+
+  return getTime(incoming.updatedAt) >= getTime(existing.updatedAt);
+}
+
+function getTime(value: Date | string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+export function updateChatInCollection({
+  threadId,
+  threadChatId,
+  updater,
+}: {
+  threadId: string;
+  threadChatId: string;
+  updater: (currentChat: ThreadPageChat) => ThreadPageChat;
+}): void {
+  const key = chatKey(threadId, threadChatId);
+  const write: PendingCollectionWrite = (c) => {
+    const existing = c.state.get(key) as ThreadPageChat | undefined;
+    if (!existing) {
+      return;
+    }
+    const nextChat = updater(existing);
+    c.update(key, (draft) => {
+      Object.assign(draft, nextChat);
+    });
   };
 
   const c = getCollection();

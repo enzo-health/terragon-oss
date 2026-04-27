@@ -1,8 +1,10 @@
 import {
-  agUiMessagesReducer,
-  createInitialAgUiMessagesState,
-  type AgUiMessagesState,
-} from "@/components/chat/ag-ui-messages-reducer";
+  createInitialThreadViewModelState,
+  projectThreadViewModel,
+  threadViewModelReducer,
+} from "@/components/chat/thread-view-model/reducer";
+import { createEmptyThreadViewSnapshot } from "@/components/chat/thread-view-model/legacy-db-message-adapter";
+import type { ThreadViewModelState } from "@/components/chat/thread-view-model/types";
 import type { BaseEvent } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
@@ -16,7 +18,7 @@ export type ReducerTimingEntry = {
 
 export type ReducerHarnessResult = {
   finalMessages: UIMessage[];
-  finalState: AgUiMessagesState;
+  finalState: ThreadViewModelState;
   timing: ReducerTimingEntry[];
   totalDurationMs: number;
   p50Us: number;
@@ -33,7 +35,9 @@ export function runReducerHarness(
   const agent: AIAgent = opts?.agent ?? "claudeCode";
   const initialMessages = opts?.initialMessages ?? [];
 
-  let state = createInitialAgUiMessagesState(agent, initialMessages);
+  let state = createInitialThreadViewModelState(
+    createEmptyThreadViewSnapshot({ agent, initialMessages }),
+  );
   const timing: ReducerTimingEntry[] = [];
 
   const wallStart = performance.now();
@@ -41,14 +45,14 @@ export function runReducerHarness(
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
     const t0 = performance.now();
-    state = agUiMessagesReducer(state, event);
+    state = threadViewModelReducer(state, { type: "ag-ui.event", event });
     const t1 = performance.now();
 
     timing.push({
       eventIndex: i,
       eventType: String(event.type),
       durationUs: (t1 - t0) * 1000,
-      messageCount: state.messages.length,
+      messageCount: projectThreadViewModel(state).messages.length,
     });
   }
 
@@ -58,7 +62,7 @@ export function runReducerHarness(
   const durations = timing.map((t) => t.durationUs).sort((a, b) => a - b);
 
   return {
-    finalMessages: state.messages,
+    finalMessages: projectThreadViewModel(state).messages,
     finalState: state,
     timing,
     totalDurationMs,

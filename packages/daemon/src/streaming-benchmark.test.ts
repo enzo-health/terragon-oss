@@ -5,14 +5,10 @@
  * These are micro-benchmarks of the core streaming logic.
  */
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TerragonDaemon } from "./daemon";
 import { DaemonRuntime } from "./runtime";
-import {
-  DaemonMessageClaude,
-  DaemonEventAPIBody,
-  ClaudeMessage,
-} from "./shared";
+import { DaemonEventAPIBody, ClaudeMessage } from "./shared";
 
 interface BenchmarkResult {
   medianLatencyMs: number;
@@ -164,7 +160,7 @@ async function runStreamingBenchmark(params: {
 
   // Calculate latency from message generation to flush
   const latencies = messageGenTimestamps.map((genTime, i) => {
-    const flushIndex = flushCountsAtMessage[i];
+    const flushIndex = flushCountsAtMessage[i] ?? 0;
     const flushTime =
       flushTimestamps[flushIndex] ??
       flushTimestamps[flushTimestamps.length - 1] ??

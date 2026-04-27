@@ -52,7 +52,7 @@ export function useTerragonRuntime({
     // AgUiThreadRuntimeCore.__internal_load in @assistant-ui/react-ag-ui.
     //
     // Returning `messages: []` to the core is safe: our render path reads
-    // from `useAgUiMessages` (the reducer seeded from threadChat), not
+    // from `useThreadViewModel` (the reducer seeded from threadChat), not
     // from `core.getMessages()`. `append` is a no-op because follow-ups
     // flow through the `followUp` server action, not through the runtime.
     adapters: {

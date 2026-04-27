@@ -27,8 +27,8 @@ import { TerragonDaemon } from "./daemon";
 import { DaemonRuntime, writeToUnixSocket } from "./runtime";
 import {
   ClaudeMessage,
-  DaemonMessageClaude,
   type DaemonEventAPIBody,
+  DaemonMessageClaude,
 } from "./shared";
 
 async function sleep(ms: number = 10) {
@@ -112,7 +112,9 @@ describe("daemon sandbox communication", () => {
         pollInterval: undefined,
       }));
 
-    serverPostMock = vi.spyOn(runtime, "serverPost").mockResolvedValue(null);
+    serverPostMock = vi
+      .spyOn(runtime, "serverPost")
+      .mockResolvedValue(undefined);
 
     daemon = new TerragonDaemon({
       runtime,

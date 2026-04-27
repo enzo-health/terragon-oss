@@ -1,13 +1,9 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { BootChecklist, formatDuration } from "./boot-checklist";
 import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
-import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
-
-// ---------------------------------------------------------------------------
-// Mock useThreadMetaEvents so the component doesn't need realtime/WebSocket.
-// ---------------------------------------------------------------------------
+import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
 
 const mockSnapshot: ThreadMetaSnapshot = {
   tokenUsage: null,
@@ -17,13 +13,6 @@ const mockSnapshot: ThreadMetaSnapshot = {
   bootSteps: [],
   installProgress: null,
 };
-
-vi.mock("./meta-chips/use-thread-meta-events", () => ({
-  useThreadMetaEvents: () => ({
-    snapshot: mockSnapshot,
-    dispatch: vi.fn(),
-  }),
-}));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,8 +37,8 @@ function render(
 
   return renderToStaticMarkup(
     <BootChecklist
-      threadId="test-thread"
       currentSubstatus={currentSubstatus}
+      metaSnapshot={mockSnapshot}
     />,
   );
 }

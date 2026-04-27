@@ -37,7 +37,6 @@ export function Dashboard({
       disableGitCheckpointing,
       skipSetup,
       createNewBranch,
-      runInDeliveryLoop,
     }) => {
       await createThreadMutation.mutateAsync({
         message: userMessage,
@@ -47,7 +46,6 @@ export function Dashboard({
         disableGitCheckpointing,
         skipSetup,
         createNewBranch,
-        runInDeliveryLoop,
         scheduleAt,
         selectedModels,
       });

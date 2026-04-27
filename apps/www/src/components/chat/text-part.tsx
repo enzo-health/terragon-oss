@@ -1,24 +1,10 @@
-import dynamic from "next/dynamic";
+import { ExternalLink } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ImagePart } from "./image-part";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import {
-  parsePlanSpecViewModelFromText,
-  parsePartialPlan,
-} from "@/lib/delivery-loop-plan-view-model";
-import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
-
-const DeliveryLoopPlanReviewCard = dynamic(
-  () =>
-    import("@/components/patterns/delivery-loop-plan-review-card").then(
-      (mod) => mod.DeliveryLoopPlanReviewCard,
-    ),
-  {
-    loading: () => null,
-  },
-);
 
 interface TextPartProps {
   text: string;
@@ -142,29 +128,12 @@ const TextPart = memo(function TextPart({
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
-  const deliveryPlanReviewCard = useFeatureFlag("deliveryPlanReviewCard");
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
-  const { parsedPlan, isPlanStreaming } = useMemo(() => {
-    if (!deliveryPlanReviewCard) {
-      return { parsedPlan: null, isPlanStreaming: false };
-    }
-
-    const hasOpenTag = /<proposed_plan>/i.test(text);
-    const hasCloseTag = /<\/proposed_plan>/i.test(text);
-
-    if (hasOpenTag && !hasCloseTag) {
-      return {
-        parsedPlan: parsePartialPlan(text),
-        isPlanStreaming: true,
-      };
-    }
-
-    return {
-      parsedPlan: parsePlanSpecViewModelFromText(text),
-      isPlanStreaming: false,
-    };
-  }, [deliveryPlanReviewCard, text]);
+  const hasCompleteProposedPlan = useMemo(() => {
+    PROPOSED_PLAN_RE.lastIndex = 0;
+    return PROPOSED_PLAN_RE.test(text);
+  }, [text]);
 
   const processedText = useMemo(() => {
     let t = normalizeBoldHeaders(
@@ -176,8 +145,7 @@ const TextPart = memo(function TextPart({
         hasCheckpoint,
       ),
     );
-    // Strip the plan XML when we already render a structured card
-    if (parsedPlan) {
+    if (hasCompleteProposedPlan && onOpenInArtifactWorkspace) {
       PROPOSED_PLAN_RE.lastIndex = 0;
       t = t.replace(PROPOSED_PLAN_RE, "").trim();
     }
@@ -188,7 +156,8 @@ const TextPart = memo(function TextPart({
     branchName,
     baseBranchName,
     hasCheckpoint,
-    parsedPlan,
+    hasCompleteProposedPlan,
+    onOpenInArtifactWorkspace,
   ]);
 
   // Scan for collapsible code blocks after DOM updates
@@ -320,25 +289,17 @@ const TextPart = memo(function TextPart({
 
   return (
     <div>
-      {parsedPlan ? (
-        <DeliveryLoopPlanReviewCard
-          plan={parsedPlan}
-          className="mb-2"
-          isStreaming={isPlanStreaming}
-          onOpenInArtifactWorkspace={onOpenInArtifactWorkspace}
-        />
-      ) : isPlanStreaming ? (
-        <DeliveryLoopPlanReviewCard
-          plan={{
-            title: "",
-            summary: "",
-            tasks: [],
-            assumptions: [],
-            source: "proposed_plan_tag",
-          }}
-          className="mb-2"
-          isStreaming
-        />
+      {hasCompleteProposedPlan && onOpenInArtifactWorkspace ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mb-2 h-8 gap-2"
+          onClick={onOpenInArtifactWorkspace}
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+          Open plan artifact
+        </Button>
       ) : null}
       {showStreamdown && (
         <div

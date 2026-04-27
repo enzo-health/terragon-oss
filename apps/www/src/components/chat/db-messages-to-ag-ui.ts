@@ -1,20 +1,31 @@
 import type { Message } from "@ag-ui/core";
 import type {
   DBMessage,
-  DBUserMessage,
-  DBToolCall,
   DBSystemMessage,
+  DBToolCall,
+  DBUserMessage,
 } from "@terragon/shared";
 
 // DBAgentMessage and DBToolResult are not exported from @terragon/shared;
 // redeclare the shapes used for hydration locally.
 type DBAgentMessageLike = Extract<DBMessage, { type: "agent" }>;
+type DBDelegationMessageLike = Extract<DBMessage, { type: "delegation" }>;
 type DBToolResultLike = Extract<DBMessage, { type: "tool-result" }>;
+
+type DbMessagesToAgUiOptions = {
+  /**
+   * When false, assistant-side history (agent/tool-call/tool-result) is
+   * omitted from the seed so replay remains the source of truth for prior
+   * assistant text. Useful when canonical replay is expected immediately.
+   */
+  includeAssistantHistory?: boolean;
+};
 
 /**
  * Convert persisted `DBMessage[]` into AG-UI `Message[]` for hydration.
  *
- * Used as `initialMessages` on `HttpAgent`. The goal is to seed the AG-UI
+ * Used by the ThreadViewModel snapshot adapter as `initialMessages` on `HttpAgent`.
+ * The goal is to seed the AG-UI
  * runtime with enough state that it knows the prior conversation before the
  * SSE stream begins emitting live events. We only encode what AG-UI's
  * `Message` union expresses natively (role + text content + tool calls/
@@ -26,10 +37,14 @@ type DBToolResultLike = Extract<DBMessage, { type: "tool-result" }>;
  * Unknown DB variants are skipped rather than throwing, consistent with the
  * read-side tolerance rule for the DBMessage discriminated union.
  */
-export function dbMessagesToAgUiMessages(dbMessages: DBMessage[]): Message[] {
+export function dbMessagesToAgUiMessages(
+  dbMessages: DBMessage[],
+  options?: DbMessagesToAgUiOptions,
+): Message[] {
   const out: Message[] = [];
   let idSeq = 0;
   const nextId = () => `hydrate-${idSeq++}`;
+  const includeAssistantHistory = options?.includeAssistantHistory ?? true;
 
   for (const msg of dbMessages) {
     switch (msg.type) {
@@ -37,26 +52,34 @@ export function dbMessagesToAgUiMessages(dbMessages: DBMessage[]): Message[] {
         out.push(userMessageToAgUi(msg, nextId()));
         break;
       case "agent":
+        if (!includeAssistantHistory) break;
         out.push(agentMessageToAgUi(msg, nextId()));
         break;
       case "tool-call":
+        if (!includeAssistantHistory) break;
         out.push(toolCallToAgUi(msg, nextId()));
         break;
       case "tool-result":
-        out.push(toolResultToAgUi(msg as DBToolResultLike, nextId()));
+        if (!includeAssistantHistory) break;
+        out.push(toolResultToAgUi(msg, nextId()));
         break;
       case "system":
         out.push(systemMessageToAgUi(msg, nextId()));
         break;
-      // Unknown / unrepresentable variants (git-diff, stop, error, meta,
-      // thread-context, thread-context-result, delegation) are skipped.
+      case "delegation":
+        if (!includeAssistantHistory) break;
+        out.push(delegationMessageToAgUi(msg, nextId()));
+        break;
+      case "git-diff":
+      case "stop":
+      case "error":
+      case "meta":
+      case "thread-context":
+      case "thread-context-result":
+        break;
       default:
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug(
-            `[ag-ui-hydrate] skipped unsupported message type: ${(msg as { type: string }).type}`,
-          );
-        }
+        const _exhaustiveCheck: never = msg;
+        void _exhaustiveCheck;
         break;
     }
   }
@@ -96,6 +119,17 @@ function agentMessageToAgUi(msg: DBAgentMessageLike, id: string): Message {
     id,
     role: "assistant",
     content,
+  };
+}
+
+function delegationMessageToAgUi(
+  msg: DBDelegationMessageLike,
+  id: string,
+): Message {
+  return {
+    id,
+    role: "assistant",
+    content: `Delegation ${msg.status}: ${msg.prompt}`,
   };
 }
 

@@ -845,7 +845,6 @@ The key change is not a prettier module tree. The key change is replacing post h
 
 ### 14.2 Internal references
 
-- `docs/delivery-loop-architecture-redesign.md`
 - `apps/docs/content/docs/integrations/github-integration.mdx`
 
 ### 14.3 External references

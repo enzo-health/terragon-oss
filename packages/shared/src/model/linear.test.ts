@@ -335,8 +335,6 @@ describe("linear", () => {
         settings: {
           defaultRepoFullName: "test/repo",
           defaultModel: "sonnet",
-          deliveryLoopOptIn: true,
-          deliveryPlanApprovalPolicy: "human_required",
         },
       });
 
@@ -351,8 +349,6 @@ describe("linear", () => {
         organizationId,
         defaultRepoFullName: "test/repo",
         defaultModel: "sonnet",
-        deliveryLoopOptIn: true,
-        deliveryPlanApprovalPolicy: "human_required",
       });
     });
 
@@ -362,8 +358,6 @@ describe("linear", () => {
         organizationId,
         defaultRepoFullName: "old/repo",
         defaultModel: "opus",
-        deliveryLoopOptIn: false,
-        deliveryPlanApprovalPolicy: "auto",
       });
 
       await upsertLinearSettings({
@@ -373,8 +367,6 @@ describe("linear", () => {
         settings: {
           defaultRepoFullName: "new/repo",
           defaultModel: "sonnet",
-          deliveryLoopOptIn: true,
-          deliveryPlanApprovalPolicy: "human_required",
         },
       });
 
@@ -386,8 +378,6 @@ describe("linear", () => {
 
       expect(settings?.defaultRepoFullName).toBe("new/repo");
       expect(settings?.defaultModel).toBe("sonnet");
-      expect(settings?.deliveryLoopOptIn).toBe(true);
-      expect(settings?.deliveryPlanApprovalPolicy).toBe("human_required");
     });
 
     it("should handle settings with null values", async () => {
@@ -398,8 +388,6 @@ describe("linear", () => {
         settings: {
           defaultRepoFullName: null,
           defaultModel: "opus",
-          deliveryLoopOptIn: false,
-          deliveryPlanApprovalPolicy: "auto",
         },
       });
 
@@ -411,8 +399,6 @@ describe("linear", () => {
 
       expect(settings?.defaultRepoFullName).toBeNull();
       expect(settings?.defaultModel).toBe("opus");
-      expect(settings?.deliveryLoopOptIn).toBe(false);
-      expect(settings?.deliveryPlanApprovalPolicy).toBe("auto");
     });
   });
 

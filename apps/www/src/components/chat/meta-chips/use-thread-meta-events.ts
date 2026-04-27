@@ -2,7 +2,7 @@ import { useCallback, useReducer } from "react";
 import type {
   ThreadMetaEvent,
   BootingSubstatus,
-} from "@terragon/shared/delivery-loop/thread-meta-event";
+} from "@terragon/shared/runtime/thread-meta-event";
 import type { CustomEvent as AgUiCustomEvent } from "@ag-ui/core";
 import { useAgUiAgent } from "../ag-ui-agent-context";
 import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
@@ -174,7 +174,7 @@ const INITIAL: ThreadMetaSnapshot = {
 
 /**
  * Known `ThreadMetaEvent.kind` values routed through AG-UI CUSTOM events.
- * Kept in sync with `packages/shared/src/delivery-loop/thread-meta-event.ts`.
+ * Kept in sync with `packages/shared/src/runtime/thread-meta-event.ts`.
  * Events NOT in this set are ignored; callers relying on additional kinds
  * must extend this list AND the reducer above.
  */

@@ -66,6 +66,18 @@ export type ThreadReplayEntry = {
   messages: DBMessage[];
 };
 
+export type AgUiEventEnvelope<TEvent extends BaseEvent = BaseEvent> = {
+  seq: number;
+  runId: string;
+  threadChatId: string;
+  payload: TEvent;
+};
+
+type AgUiReadableRow = Pick<
+  AgentEventLogRow,
+  "eventId" | "runId" | "eventType" | "payloadJson"
+>;
+
 const ENVELOPE_FIELDS = [
   "payloadVersion",
   "eventId",
@@ -76,6 +88,12 @@ const ENVELOPE_FIELDS = [
   "timestamp",
   "idempotencyKey",
 ] as const;
+
+const MAX_QUARANTINE_REDACTED_PAYLOAD_BYTES = 8 * 1024;
+
+function jsonByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
 
 function isMissingAgentEventLogSchemaError(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("code" in error)) {
@@ -134,11 +152,22 @@ export function validateCanonicalEvent(
     };
   }
 
+  if (
+    result.data.type === "unknown-provider-event" &&
+    jsonByteLength(result.data.redactedPayload) >
+      MAX_QUARANTINE_REDACTED_PAYLOAD_BYTES
+  ) {
+    return {
+      valid: false,
+      error: `Invalid canonical event: unknown-provider-event redactedPayload exceeds ${MAX_QUARANTINE_REDACTED_PAYLOAD_BYTES} bytes`,
+    };
+  }
+
   return { valid: true, event: result.data };
 }
 
-const AG_UI_EVENT_TYPES: ReadonlySet<string> = new Set(
-  Object.values(EventType) as string[],
+const AG_UI_EVENT_TYPES: ReadonlySet<unknown> = new Set(
+  Object.values(EventType),
 );
 
 function isAgUiBaseEvent(payload: unknown): payload is BaseEvent {
@@ -179,7 +208,7 @@ function isAgUiBaseEvent(payload: unknown): payload is BaseEvent {
  * Returns null and logs a console.warn ONLY when the payload matches neither
  * shape — that's real drift worth surfacing.
  */
-export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
+export function readAgUiPayload(row: AgUiReadableRow): BaseEvent | null {
   const payload = row.payloadJson;
 
   if (isAgUiBaseEvent(payload)) {
@@ -205,6 +234,32 @@ export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
   return null;
 }
 
+function toAgUiEventEnvelope({
+  row,
+  payload,
+}: {
+  row: Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId">;
+  payload: BaseEvent;
+}): AgUiEventEnvelope {
+  return {
+    seq: row.seq,
+    runId: row.runId,
+    threadChatId: row.threadChatId,
+    payload,
+  };
+}
+
+export function readAgUiEnvelope(
+  row: AgUiReadableRow &
+    Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId">,
+): AgUiEventEnvelope | null {
+  const payload = readAgUiPayload(row);
+  if (payload === null) {
+    return null;
+  }
+  return toAgUiEventEnvelope({ row, payload });
+}
+
 /**
  * Read an agent_event_log row's payload as the full list of AG-UI BaseEvents
  * it expands to. Unlike `readAgUiPayload` (which returns only the first),
@@ -218,7 +273,9 @@ export function readAgUiPayload(row: AgentEventLogRow): BaseEvent | null {
  * - Unrecognized rows: returns `[]` (warning already surfaced by
  *   `readAgUiPayload`).
  */
-export function readAllAgUiPayloads(row: AgentEventLogRow): BaseEvent[] {
+export function readAllAgUiPayloads(
+  row: Pick<AgentEventLogRow, "payloadJson">,
+): BaseEvent[] {
   const payload = row.payloadJson;
 
   if (isAgUiBaseEvent(payload)) {
@@ -231,6 +288,13 @@ export function readAllAgUiPayloads(row: AgentEventLogRow): BaseEvent[] {
   }
 
   return [];
+}
+
+export function readAllAgUiEnvelopes(
+  row: Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId" | "payloadJson">,
+): AgUiEventEnvelope[] {
+  const payloads = readAllAgUiPayloads(row);
+  return payloads.map((payload) => toAgUiEventEnvelope({ row, payload }));
 }
 
 function toIdempotencyKey(envelope: BaseEventEnvelope): string {
@@ -522,9 +586,19 @@ function canonicalEventToReplayMessage(
         result: event.result,
       };
     case "run-started":
+    case "run-terminal":
+    case "tool-call-progress":
+    case "reasoning-message":
+    case "permission-request":
+    case "permission-response":
+    case "artifact-reference":
+    case "meta":
+    case "unknown-provider-event":
       return null;
-    default:
-      return null;
+    default: {
+      const _exhaustiveCheck: never = event;
+      return _exhaustiveCheck;
+    }
   }
 }
 
@@ -618,17 +692,24 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
  * silently skipped — readAgUiPayload already warns on truly unrecognized
  * payloads.
  */
-export async function getAgUiEventsForRun({
+export async function getAgUiEventEnvelopesForRun({
   db,
   runId,
+  threadChatId,
 }: {
   db: Pick<DB, "query">;
   runId: RunId;
-}): Promise<BaseEvent[]> {
+  threadChatId?: string;
+}): Promise<AgUiEventEnvelope[]> {
   let rows: AgentEventLogRow[];
   try {
     rows = await db.query.agentEventLog.findMany({
-      where: eq(schema.agentEventLog.runId, runId),
+      where: threadChatId
+        ? and(
+            eq(schema.agentEventLog.runId, runId),
+            eq(schema.agentEventLog.threadChatId, threadChatId),
+          )
+        : eq(schema.agentEventLog.runId, runId),
       orderBy: [asc(schema.agentEventLog.seq)],
     });
   } catch (error) {
@@ -638,16 +719,33 @@ export async function getAgUiEventsForRun({
     throw error;
   }
 
-  const events: BaseEvent[] = [];
+  const events: AgUiEventEnvelope[] = [];
   for (const row of rows) {
     // Canonical rows expand to multiple events (START + CONTENT + END); use
     // the full-expansion helper so callers get a faithful event sequence,
     // not just the head of each row.
-    for (const event of readAllAgUiPayloads(row)) {
-      events.push(event);
+    for (const envelope of readAllAgUiEnvelopes(row)) {
+      events.push(envelope);
     }
   }
   return events;
+}
+
+export async function getAgUiEventsForRun({
+  db,
+  runId,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  runId: RunId;
+  threadChatId?: string;
+}): Promise<BaseEvent[]> {
+  const envelopes = await getAgUiEventEnvelopesForRun({
+    db,
+    runId,
+    threadChatId,
+  });
+  return envelopes.map((entry) => entry.payload);
 }
 
 /**
@@ -680,8 +778,8 @@ export async function getLatestRunIdForThreadChat({
 }): Promise<RunId | null> {
   try {
     // Find each run's (min_seq, max_seq) within the thread chat, then keep
-    // only those whose min-seq row has event_type = 'RUN_STARTED', and
-    // return the run_id with the greatest max_seq.
+    // only those whose min-seq row starts a run. This accepts both AG-UI
+    // native rows (`RUN_STARTED`) and canonical rows (`run-started`).
     const result = await db.execute<{ run_id: string }>(sql`
       WITH run_bounds AS (
         SELECT
@@ -697,13 +795,13 @@ export async function getLatestRunIdForThreadChat({
       JOIN ${schema.agentEventLog} ael
         ON ael.run_id = rb.run_id
         AND ael.seq = rb.min_seq
-      WHERE ael.event_type = 'RUN_STARTED'
+      WHERE ael.event_type IN ('RUN_STARTED', 'run-started')
       ORDER BY rb.max_seq DESC
       LIMIT 1
     `);
 
     const first = result.rows[0];
-    return first ? (first.run_id as RunId) : null;
+    return first ? first.run_id : null;
   } catch (error) {
     if (isMissingAgentEventLogSchemaError(error)) {
       return null;
@@ -734,6 +832,13 @@ export type OpenAgUiMessage = {
   messageId: string;
   kind: "text" | "thinking";
 };
+
+function getAgUiMessageId(event: BaseEvent): string | null {
+  if (!("messageId" in event)) {
+    return null;
+  }
+  return typeof event.messageId === "string" ? event.messageId : null;
+}
 
 /**
  * Scan every agent_event_log row for `runId` and compute which TEXT_MESSAGE
@@ -771,48 +876,70 @@ export async function findOpenAgUiMessagesForRun({
   for (const row of rows) {
     const events = readAllAgUiPayloads(row);
     for (const event of events) {
-      switch (event.type) {
+      const eventType = event.type;
+
+      switch (eventType) {
         case EventType.TEXT_MESSAGE_START: {
-          const messageId = Reflect.get(
-            event as unknown as Record<string, unknown>,
-            "messageId",
-          );
-          if (typeof messageId === "string") {
+          const messageId = getAgUiMessageId(event);
+          if (messageId !== null) {
             openText.set(messageId, true);
           }
           break;
         }
         case EventType.TEXT_MESSAGE_END: {
-          const messageId = Reflect.get(
-            event as unknown as Record<string, unknown>,
-            "messageId",
-          );
-          if (typeof messageId === "string") {
+          const messageId = getAgUiMessageId(event);
+          if (messageId !== null) {
             openText.delete(messageId);
           }
           break;
         }
         case EventType.REASONING_MESSAGE_START: {
-          const messageId = Reflect.get(
-            event as unknown as Record<string, unknown>,
-            "messageId",
-          );
-          if (typeof messageId === "string") {
+          const messageId = getAgUiMessageId(event);
+          if (messageId !== null) {
             openThinking.set(messageId, true);
           }
           break;
         }
         case EventType.REASONING_MESSAGE_END: {
-          const messageId = Reflect.get(
-            event as unknown as Record<string, unknown>,
-            "messageId",
-          );
-          if (typeof messageId === "string") {
+          const messageId = getAgUiMessageId(event);
+          if (messageId !== null) {
             openThinking.delete(messageId);
           }
           break;
         }
+        case EventType.TEXT_MESSAGE_CONTENT:
+        case EventType.TEXT_MESSAGE_CHUNK:
+        case EventType.TOOL_CALL_START:
+        case EventType.TOOL_CALL_ARGS:
+        case EventType.TOOL_CALL_END:
+        case EventType.TOOL_CALL_CHUNK:
+        case EventType.TOOL_CALL_RESULT:
+        case EventType.THINKING_START:
+        case EventType.THINKING_END:
+        case EventType.THINKING_TEXT_MESSAGE_START:
+        case EventType.THINKING_TEXT_MESSAGE_CONTENT:
+        case EventType.THINKING_TEXT_MESSAGE_END:
+        case EventType.STATE_SNAPSHOT:
+        case EventType.STATE_DELTA:
+        case EventType.MESSAGES_SNAPSHOT:
+        case EventType.ACTIVITY_SNAPSHOT:
+        case EventType.ACTIVITY_DELTA:
+        case EventType.RAW:
+        case EventType.CUSTOM:
+        case EventType.RUN_STARTED:
+        case EventType.RUN_FINISHED:
+        case EventType.RUN_ERROR:
+        case EventType.STEP_STARTED:
+        case EventType.STEP_FINISHED:
+        case EventType.REASONING_START:
+        case EventType.REASONING_MESSAGE_CONTENT:
+        case EventType.REASONING_MESSAGE_CHUNK:
+        case EventType.REASONING_END:
+        case EventType.REASONING_ENCRYPTED_VALUE:
+          break;
         default:
+          const _exhaustiveCheck: never = eventType;
+          void _exhaustiveCheck;
           break;
       }
     }
@@ -930,7 +1057,7 @@ export async function peekNextThreadChatSeqLocked({
   return nextSeq;
 }
 
-type AppendAgUiEventRow = {
+type AppendAgUiEventRowLegacy = {
   eventId: string;
   runId: string;
   threadId: string;
@@ -943,6 +1070,37 @@ type AppendAgUiEventRow = {
   timestamp: Date;
 };
 
+type AppendAgUiEventRowWithEnvelope = Omit<
+  AppendAgUiEventRowLegacy,
+  "runId" | "threadChatId" | "seq" | "payload"
+> & {
+  envelope: AgUiEventEnvelope;
+};
+
+type AppendAgUiEventRow =
+  | AppendAgUiEventRowLegacy
+  | AppendAgUiEventRowWithEnvelope;
+
+function normalizeAppendAgUiEventRow(
+  row: AppendAgUiEventRow,
+): AppendAgUiEventRowLegacy {
+  if ("envelope" in row) {
+    return {
+      eventId: row.eventId,
+      runId: row.envelope.runId,
+      threadId: row.threadId,
+      threadChatId: row.envelope.threadChatId,
+      seq: row.envelope.seq,
+      eventType: row.eventType,
+      category: row.category,
+      payload: row.envelope.payload,
+      idempotencyKey: row.idempotencyKey,
+      timestamp: row.timestamp,
+    };
+  }
+  return row;
+}
+
 /**
  * Convert an AG-UI BaseEvent to the jsonb column payload shape.
  *
@@ -952,7 +1110,7 @@ type AppendAgUiEventRow = {
  * persistence boundary without a load-bearing `as unknown as` double cast.
  */
 function toPayloadJson(event: BaseEvent): Record<string, unknown> {
-  return { ...(event as unknown as Record<string, unknown>) };
+  return Object.fromEntries(Object.entries(event));
 }
 
 /**
@@ -971,19 +1129,20 @@ export async function appendAgUiEventRow({
   tx: Pick<DB, "insert">;
   row: AppendAgUiEventRow;
 }): Promise<{ inserted: boolean }> {
+  const normalizedRow = normalizeAppendAgUiEventRow(row);
   const inserted = await tx
     .insert(schema.agentEventLog)
     .values({
-      eventId: row.eventId,
-      runId: row.runId,
-      threadId: row.threadId,
-      threadChatId: row.threadChatId,
-      seq: row.seq,
-      eventType: row.eventType,
-      category: row.category,
-      payloadJson: toPayloadJson(row.payload),
-      idempotencyKey: row.idempotencyKey,
-      timestamp: row.timestamp,
+      eventId: normalizedRow.eventId,
+      runId: normalizedRow.runId,
+      threadId: normalizedRow.threadId,
+      threadChatId: normalizedRow.threadChatId,
+      seq: normalizedRow.seq,
+      eventType: normalizedRow.eventType,
+      category: normalizedRow.category,
+      payloadJson: toPayloadJson(normalizedRow.payload),
+      idempotencyKey: normalizedRow.idempotencyKey,
+      timestamp: normalizedRow.timestamp,
     })
     .onConflictDoNothing({
       target: [schema.agentEventLog.runId, schema.agentEventLog.eventId],

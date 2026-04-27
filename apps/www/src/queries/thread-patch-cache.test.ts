@@ -1,15 +1,14 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
 import type {
   ThreadInfo,
   ThreadPageChat,
   ThreadPageShell,
 } from "@terragon/shared";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyThreadPatchToListQueries,
   applyThreadPatchToQueryClient,
 } from "./thread-patch-cache";
-import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";
 import { threadQueryKeys } from "./thread-queries";
 
 const INITIAL_CHAT_UPDATED_AT = "2026-03-09T00:00:00.000Z";
@@ -52,7 +51,6 @@ function createThreadShell(): ThreadPageShell {
     sourceType: "www",
     sourceMetadata: {
       type: "www",
-      deliveryLoopOptIn: false,
     },
     version: 1,
     isUnread: false,
@@ -212,7 +210,7 @@ describe("applyThreadPatchToQueryClient", () => {
     });
   });
 
-  it("invalidates explicit refetch targets without delivery-loop", () => {
+  it("invalidates explicit shell refetch targets", () => {
     const queryClient = createQueryClient();
     queryClient.setQueryData(
       threadQueryKeys.shell("thread-1"),
@@ -293,38 +291,6 @@ describe("applyThreadPatchToQueryClient", () => {
     ).toBe(previousChat);
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
-    });
-  });
-
-  it("does not invalidate chat for exact delivery-loop refetch patches", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-      createThreadChat(),
-    );
-    const previousChat = queryClient.getQueryData<ThreadPageChat>(
-      threadQueryKeys.chat("thread-1", "chat-1"),
-    );
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToQueryClient({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    });
-
-    expect(
-      queryClient.getQueryData(threadQueryKeys.chat("thread-1", "chat-1")),
-    ).toBe(previousChat);
-    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
-      queryKey: threadQueryKeys.chat("thread-1", "chat-1"),
-    });
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
     });
   });
 
@@ -441,7 +407,7 @@ describe("applyThreadPatchToListQueries", () => {
     ).toBe(previousChat);
   });
 
-  it("keeps list query references stable on append ticks with no visible sidebar change", () => {
+  it("updates list timestamps when chat activity advances updatedAt", () => {
     const queryClient = createQueryClient();
     setThreadListData(queryClient, { archived: false }, [
       createThreadListEntry(),
@@ -474,27 +440,14 @@ describe("applyThreadPatchToListQueries", () => {
       },
     });
 
-    expect(
-      queryClient.getQueryData(threadQueryKeys.list({ archived: false })),
-    ).toBe(previousList);
-  });
+    const nextList = queryClient.getQueryData(
+      threadQueryKeys.list({ archived: false }),
+    ) as { pageParams: number[]; pages: ThreadInfo[][] };
 
-  it("invalidates the delivery-loop status query when the sidebar receives a delivery-loop refetch patch", () => {
-    const queryClient = createQueryClient();
-    const invalidateQueriesSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    applyThreadPatchToListQueries({
-      queryClient,
-      patch: {
-        threadId: "thread-1",
-        op: "refetch",
-        refetch: ["delivery-loop"],
-      },
-    });
-
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: deliveryLoopStatusQueryKeys.detail("thread-1"),
-    });
+    expect(nextList).not.toBe(previousList);
+    expect(nextList.pages[0]?.[0]?.updatedAt).toEqual(
+      new Date(NEXT_CHAT_UPDATED_AT),
+    );
   });
 
   it("inserts a new thread into matching list queries from shell-only data", () => {
@@ -517,7 +470,6 @@ describe("applyThreadPatchToListQueries", () => {
           sourceType: "www",
           sourceMetadata: {
             type: "www",
-            deliveryLoopOptIn: false,
           },
           visibility: "private",
           archived: true,

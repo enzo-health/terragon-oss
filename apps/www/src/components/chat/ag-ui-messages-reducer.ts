@@ -105,7 +105,9 @@ export function agUiMessagesReducer(
   state: AgUiMessagesState,
   event: BaseEvent,
 ): AgUiMessagesState {
-  switch (event.type) {
+  const eventType = event.type;
+
+  switch (eventType) {
     case EventType.TEXT_MESSAGE_START: {
       const messageId = getField<string>(event, "messageId");
       if (!messageId) return state;
@@ -264,17 +266,45 @@ export function agUiMessagesReducer(
       const messageId = getField<string>(value, "messageId");
       const part = getField<unknown>(value, "part");
       if (!messageId || !part || typeof part !== "object") return state;
+      if (!isRenderablePart(part)) return state;
+      const normalizedPart = normalizeRenderablePart(part);
       const { messages, changed } = insertRichPart(
         state.messages,
         messageId,
-        part as UIPartExtended,
+        normalizedPart,
         state.agent,
       );
       return changed ? { ...state, messages } : state;
     }
 
-    default:
+    case EventType.TEXT_MESSAGE_CHUNK:
+    case EventType.THINKING_TEXT_MESSAGE_START:
+    case EventType.THINKING_TEXT_MESSAGE_CONTENT:
+    case EventType.THINKING_TEXT_MESSAGE_END:
+    case EventType.TOOL_CALL_CHUNK:
+    case EventType.THINKING_START:
+    case EventType.THINKING_END:
+    case EventType.STATE_SNAPSHOT:
+    case EventType.STATE_DELTA:
+    case EventType.MESSAGES_SNAPSHOT:
+    case EventType.ACTIVITY_SNAPSHOT:
+    case EventType.ACTIVITY_DELTA:
+    case EventType.RAW:
+    case EventType.RUN_STARTED:
+    case EventType.RUN_FINISHED:
+    case EventType.RUN_ERROR:
+    case EventType.STEP_STARTED:
+    case EventType.STEP_FINISHED:
+    case EventType.REASONING_START:
+    case EventType.REASONING_MESSAGE_CHUNK:
+    case EventType.REASONING_END:
+    case EventType.REASONING_ENCRYPTED_VALUE:
       return state;
+
+    default: {
+      const _exhaustiveCheck: never = eventType;
+      return _exhaustiveCheck;
+    }
   }
 }
 
@@ -491,11 +521,14 @@ function insertRichPart(
     // (terminal / diff / image) are appended each time; the backend's
     // `(runId, eventId)` dedupe at the SSE layer prevents real
     // duplicates in practice.
-    const partAsAny = part as unknown as { type: string; id?: string };
-    if (typeof partAsAny.id === "string") {
+    const partIdentity = getPartIdentity(part);
+    if (partIdentity.id) {
       const dup = m.parts.some((p) => {
-        const pAny = p as unknown as { id?: string; type: string };
-        return pAny.type === partAsAny.type && pAny.id === partAsAny.id;
+        const existingIdentity = getPartIdentity(p);
+        return (
+          existingIdentity.type === partIdentity.type &&
+          existingIdentity.id === partIdentity.id
+        );
       });
       if (dup) return m;
     }
@@ -561,4 +594,97 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function isRenderablePart(value: unknown): value is UIPartExtended {
+  if (!value || typeof value !== "object") return false;
+  const type = getField<string>(value, "type");
+  switch (type) {
+    case "text":
+      return typeof getField<unknown>(value, "text") === "string";
+    case "thinking":
+      return typeof getField<unknown>(value, "thinking") === "string";
+    case "image":
+      return typeof getField<unknown>(value, "image_url") === "string";
+    case "rich-text":
+      return Array.isArray(getField<unknown>(value, "nodes"));
+    case "pdf":
+      return typeof getField<unknown>(value, "pdf_url") === "string";
+    case "text-file":
+      return typeof getField<unknown>(value, "file_url") === "string";
+    case "plan":
+      return (
+        typeof getField<unknown>(value, "planText") === "string" ||
+        (Array.isArray(getField<unknown>(value, "entries")) &&
+          (getField<unknown>(value, "entries") as unknown[]).every(
+            isValidPlanEntryShape,
+          ))
+      );
+    case "tool":
+      return (
+        typeof getField<unknown>(value, "id") === "string" &&
+        typeof getField<unknown>(value, "name") === "string" &&
+        Array.isArray(getField<unknown>(value, "parts"))
+      );
+    case "delegation":
+      return (
+        typeof getField<unknown>(value, "id") === "string" &&
+        typeof getField<unknown>(value, "agentName") === "string" &&
+        typeof getField<unknown>(value, "message") === "string" &&
+        typeof getField<unknown>(value, "status") === "string"
+      );
+    case "audio":
+    case "resource-link":
+    case "terminal":
+    case "diff":
+    case "auto-approval-review":
+    case "plan-structured":
+    case "server-tool-use":
+    case "web-search-result":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isValidPlanEntryShape(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const content = getField<unknown>(value, "content");
+  const priority = getField<unknown>(value, "priority");
+  const status = getField<unknown>(value, "status");
+  return (
+    typeof content === "string" &&
+    (priority === "high" || priority === "medium" || priority === "low") &&
+    (status === "pending" ||
+      status === "in_progress" ||
+      status === "completed" ||
+      status === "failed")
+  );
+}
+
+function normalizeRenderablePart(part: UIPartExtended): UIPartExtended {
+  if (
+    part.type === "plan" &&
+    "entries" in part &&
+    Array.isArray(part.entries)
+  ) {
+    return {
+      type: "plan-structured",
+      entries: part.entries,
+    };
+  }
+  return part;
+}
+
+function getPartIdentity(part: UIPartExtended): {
+  type: string;
+  id: string | null;
+} {
+  const id = getField<unknown>(part, "id");
+  return {
+    type: part.type,
+    id: typeof id === "string" ? id : null,
+  };
 }

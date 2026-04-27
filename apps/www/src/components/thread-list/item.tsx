@@ -234,12 +234,14 @@ function useReconciliationAnimation(
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
   pathname,
+  relativeTimeTick: _relativeTimeTick,
   className,
   hideRepository,
   style,
 }: {
   pathname: string;
   thread: ThreadInfo;
+  relativeTimeTick: number;
   className?: string;
   hideRepository: boolean;
   style?: React.CSSProperties;
@@ -252,10 +254,7 @@ export const ThreadListItem = memo(function ThreadListItem({
     title,
   );
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const relativeTime = useMemo(
-    () => formatRelativeTime(thread.updatedAt),
-    [thread.updatedAt],
-  );
+  const relativeTime = formatRelativeTime(thread.updatedAt);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
 

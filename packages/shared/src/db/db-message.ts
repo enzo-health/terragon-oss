@@ -288,6 +288,20 @@ type DBErrorMessage = {
   type: "error";
   error_type?: string; // Can be ThreadErrorType or any string
   error_info?: string;
+  runtimeRecovery?: {
+    operation:
+      | "start"
+      | "resume"
+      | "stop"
+      | "restart"
+      | "retry"
+      | "permission-response"
+      | "event-normalization"
+      | "compact-and-retry"
+      | "human-intervention";
+    reason: string;
+    recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+  };
   timestamp?: string;
 };
 

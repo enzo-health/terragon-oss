@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import {
-  EVENT_ENVELOPE_VERSION,
   type CanonicalEvent,
+  EVENT_ENVELOPE_VERSION,
 } from "@terragon/agent/canonical-events";
 import { AIAgent, type AIModel, AIModelSchema } from "@terragon/agent/types";
 import {
   coalesceAssistantTextMessages,
+  createAcpPermissionRequestMessage,
+  normalizeAcpPermissionRequest,
   parseAcpLineToClaudeMessages,
 } from "./acp-adapter";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
@@ -29,11 +31,11 @@ import {
 } from "./codex";
 import {
   type CodexAppServerDiagnostics,
-  type ThreadMetaEvent,
   CodexAppServerManager,
   extractMetaEvent,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
+  type ThreadMetaEvent,
 } from "./codex-app-server";
 import {
   createGeminiParserState,
@@ -45,16 +47,20 @@ import {
   opencodeCommand,
   parseOpencodeLine,
 } from "./opencode";
-import { sanitizeRepoSkillFiles } from "./sanitize-skills";
 import { DEFAULT_RETRY_CONFIG, RetryBackoff, RetryConfig } from "./retry";
 import {
   DaemonServerPostError,
+  getRuntimeAdapterLifecycleOperation,
+  hasRuntimeAdapterContractDrift,
   IDaemonRuntime,
+  requireRuntimeAdapterOperation,
+  resolveDaemonRuntimeAdapterContract,
+  runtimeAdapterUnsupportedOperationToMessage,
   writeToUnixSocket,
 } from "./runtime";
+import { sanitizeRepoSkillFiles } from "./sanitize-skills";
 import {
   ClaudeMessage,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_VERSION,
   DaemonDelta,
   DaemonEventAPIBody,
@@ -63,7 +69,7 @@ import {
   DaemonMessageSchema,
   DaemonTransportMode,
   FeatureFlags,
-  SdlcSelfDispatchPayload,
+  RuntimeAdapterContract,
 } from "./shared";
 import {
   createIdleWatchdog,
@@ -314,6 +320,7 @@ type ActiveProcessState = {
   acpUrl: string | null;
   /** Idle watchdog reference, used by heartbeat to reset timeout. */
   watchdog: IdleWatchdog | null;
+  runtimeAdapterContract: RuntimeAdapterContract;
 };
 
 type AppServerTurnCompletion = {
@@ -343,10 +350,37 @@ type AppServerRunContext = {
    * when the turn completes, so N file edits produce ONE DBDiffPart.
    */
   pendingTurnDiff: string | null;
+  /**
+   * Count of user-visible messages emitted from Codex thread events during
+   * this turn. A completed turn with zero visible output is treated as an
+   * execution failure so the UI does not get stuck showing "waiting" with no
+   * assistant content.
+   */
+  turnOutputMessageCount: number;
   resolveTurnComplete: (result: AppServerTurnCompletion) => void;
   rejectTurnComplete: (error: Error) => void;
   resolveThreadReady: (threadId: string) => void;
+  runtimeAdapterContract: RuntimeAdapterContract;
 };
+
+function isCodexTurnOutputMessage(message: ClaudeMessage): boolean {
+  switch (message.type) {
+    case "assistant":
+    case "acp-tool-call":
+    case "acp-plan":
+    case "codex-plan":
+    case "codex-auto-approval-review":
+    case "codex-diff":
+    case "acp-image":
+    case "acp-audio":
+    case "acp-resource-link":
+    case "acp-terminal":
+    case "acp-diff":
+      return true;
+    default:
+      return false;
+  }
+}
 
 type DaemonEventRunState = {
   runId: string;
@@ -379,6 +413,23 @@ type DaemonEventEnvelopePayload = {
   seq: number;
 };
 
+export function parseDaemonAcpSsePayload({
+  payload,
+  currentSessionId,
+  activePromptRequestId,
+}: {
+  payload: string;
+  currentSessionId: string;
+  activePromptRequestId: unknown | null;
+}): ClaudeMessage[] {
+  return parseAcpLineToClaudeMessages(payload, currentSessionId, undefined, {
+    allowedTerminalResponseIds:
+      activePromptRequestId === null
+        ? undefined
+        : new Set<unknown>([activePromptRequestId]),
+  });
+}
+
 export class TerragonDaemon {
   private startTime: number = 0;
   private messageBuffer: MessageBufferEntry[] = [];
@@ -405,7 +456,6 @@ export class TerragonDaemon {
   private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   private daemonEventRunStates: Map<string, DaemonEventRunState> = new Map();
   private appServerCrashTimestamps: number[] = [];
-  private launchedSelfDispatchRunIds: Set<string> = new Set();
 
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
@@ -630,6 +680,38 @@ export class TerragonDaemon {
           const processState = this.activeProcesses.get(
             parsedMessage.threadChatId,
           );
+          if (!processState) {
+            this.runtime.logger.warn(
+              "Permission response received but no active process found",
+              {
+                promptId: parsedMessage.promptId,
+                threadChatId: parsedMessage.threadChatId,
+              },
+            );
+            break;
+          }
+          const operationResult = requireRuntimeAdapterOperation({
+            contract: processState.runtimeAdapterContract,
+            operation: "permission-response",
+          });
+          if (operationResult.status === "unsupported") {
+            this.runtime.logger.warn("Permission response unsupported", {
+              promptId: parsedMessage.promptId,
+              threadChatId: parsedMessage.threadChatId,
+              reason: operationResult.reason,
+              recovery: operationResult.recovery,
+            });
+            this.addMessageToBuffer({
+              agent: null,
+              message:
+                runtimeAdapterUnsupportedOperationToMessage(operationResult),
+              threadId: parsedMessage.threadId,
+              threadChatId: parsedMessage.threadChatId,
+              token: parsedMessage.token,
+            });
+            this.flushMessageBuffer();
+            break;
+          }
           const pending = processState?.pendingPermissions?.get(
             parsedMessage.promptId,
           );
@@ -826,80 +908,6 @@ export class TerragonDaemon {
     });
   }
 
-  private startSelfDispatchRun(params: {
-    payload: SdlcSelfDispatchPayload;
-    originalThreadChatId: string;
-  }): void {
-    const { payload, originalThreadChatId } = params;
-    if (this.launchedSelfDispatchRunIds.has(payload.runId)) {
-      this.runtime.logger.info(
-        "Delivery Loop self-dispatch: skipping duplicate follow-up run",
-        {
-          threadId: payload.threadId,
-          threadChatId: payload.threadChatId,
-          runId: payload.runId,
-        },
-      );
-      return;
-    }
-    if (this.activeProcesses.has(originalThreadChatId)) {
-      this.runtime.logger.warn(
-        "Delivery Loop self-dispatch skipped: active process exists",
-        { threadChatId: originalThreadChatId },
-      );
-      return;
-    }
-    this.launchedSelfDispatchRunIds.add(payload.runId);
-    const syntheticInput: DaemonMessageClaude = {
-      type: "claude",
-      token: payload.token,
-      prompt: payload.prompt,
-      model: payload.model,
-      agent: payload.agent,
-      agentVersion: payload.agentVersion,
-      sessionId: payload.sessionId,
-      featureFlags: payload.featureFlags,
-      permissionMode: payload.permissionMode,
-      transportMode: payload.transportMode,
-      protocolVersion: payload.protocolVersion,
-      threadId: payload.threadId,
-      threadChatId: payload.threadChatId,
-      runId: payload.runId,
-      useCredits: payload.useCredits,
-    };
-    this.runtime.logger.info(
-      "Delivery Loop self-dispatch: starting follow-up run",
-      {
-        threadId: payload.threadId,
-        threadChatId: payload.threadChatId,
-        runId: payload.runId,
-      },
-    );
-    this.runCommand(syntheticInput).catch(async (error) => {
-      this.runtime.logger.error("Delivery Loop self-dispatch failed", {
-        error: formatError(error),
-        runId: payload.runId,
-        threadChatId: payload.threadChatId,
-      });
-      this.addMessageToBuffer({
-        agent: payload.agent,
-        message: {
-          type: "custom-error",
-          session_id: null,
-          duration_ms: 0,
-          error_info:
-            error instanceof Error
-              ? `Delivery Loop self-dispatch failed: ${error.message}`
-              : "Delivery Loop self-dispatch failed",
-        },
-        threadId: payload.threadId,
-        threadChatId: payload.threadChatId,
-        token: payload.token,
-      });
-      await this.flushMessageBuffer();
-    });
-  }
-
   private async runCommand(input: DaemonMessageClaude): Promise<void> {
     // Store feature flags if provided
     if (input.featureFlags) {
@@ -908,10 +916,6 @@ export class TerragonDaemon {
         featureFlags: this.featureFlags,
       });
     }
-    // Always advertise SDLC self-dispatch capability
-    this.runtime.additionalCapabilities?.add(
-      DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
-    );
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
     await this.stopAppServerTurn({
@@ -954,6 +958,41 @@ export class TerragonDaemon {
     this.initializeDaemonEventRunStateForNewRun({
       input,
     });
+    const runtimeAdapterContract = resolveDaemonRuntimeAdapterContract(input);
+    if (
+      hasRuntimeAdapterContractDrift({
+        inbound: input.runtimeAdapterContract,
+        canonical: runtimeAdapterContract,
+      })
+    ) {
+      this.runtime.logger.warn(
+        "Inbound runtime adapter contract drift detected; enforcing daemon canonical contract",
+        {
+          threadChatId: input.threadChatId,
+          transportMode: input.transportMode ?? "legacy",
+          inboundAdapterId: input.runtimeAdapterContract?.adapterId,
+          canonicalAdapterId: runtimeAdapterContract.adapterId,
+        },
+      );
+    }
+    const startOperation = requireRuntimeAdapterOperation({
+      contract: runtimeAdapterContract,
+      operation: getRuntimeAdapterLifecycleOperation({
+        input,
+        contract: runtimeAdapterContract,
+      }),
+    });
+    if (startOperation.status === "unsupported") {
+      this.addMessageToBuffer({
+        agent: input.agent,
+        message: runtimeAdapterUnsupportedOperationToMessage(startOperation),
+        threadId: input.threadId,
+        threadChatId: input.threadChatId,
+        token: input.token,
+      });
+      await this.flushMessageBuffer();
+      return;
+    }
     if (input.transportMode === "codex-app-server") {
       if (input.agent !== "codex") {
         throw new Error(
@@ -983,6 +1022,7 @@ export class TerragonDaemon {
       pendingPermissions: new Map(),
       acpUrl: null,
       watchdog: null,
+      runtimeAdapterContract,
     };
     this.activeProcesses.set(input.threadChatId, newProcessState);
     this.startHeartbeat(input.threadChatId);
@@ -1064,6 +1104,8 @@ export class TerragonDaemon {
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
       pendingTurnDiff: null,
+      turnOutputMessageCount: 0,
+      runtimeAdapterContract: resolveDaemonRuntimeAdapterContract(input),
       resolveTurnComplete: (result) => {
         if (context.isCompleted) {
           return;
@@ -1734,6 +1776,9 @@ export class TerragonDaemon {
                   threadId: context.threadId,
                 })
               : parsedMessage;
+            if (isCodexTurnOutputMessage(normalized)) {
+              context.turnOutputMessageCount += 1;
+            }
             this.addMessageToBuffer({
               agent: "codex",
               message: normalized,
@@ -1954,24 +1999,49 @@ export class TerragonDaemon {
       const normalizedThreadId = context.threadId ?? input.sessionId ?? "";
 
       if (!context.isStopping && completion.status === "completed") {
-        this.addMessageToBuffer({
-          agent: "codex",
-          message: {
-            type: "result",
-            subtype: "success",
-            total_cost_usd: 0,
-            duration_ms: processDurationMs,
-            duration_api_ms: processDurationMs,
-            is_error: false,
-            num_turns: 1,
-            result: "Codex successfully completed",
-            session_id: normalizedThreadId,
-          },
-          threadId: input.threadId,
-          threadChatId: input.threadChatId,
-          token: input.token,
-          codexPreviousResponseId: completion.codexPreviousResponseId,
-        });
+        if (context.turnOutputMessageCount === 0) {
+          this.runtime.logger.warn(
+            "Codex turn completed without assistant output",
+            {
+              threadChatId: input.threadChatId,
+              threadId: normalizedThreadId || null,
+              codexPreviousResponseId: completion.codexPreviousResponseId,
+            },
+          );
+          this.addMessageToBuffer({
+            agent: "codex",
+            message: {
+              type: "custom-error",
+              session_id: null,
+              duration_ms: processDurationMs,
+              error_info:
+                "Codex completed without producing assistant output. Check provider credentials (for example OpenAI 401 invalid_api_key) and retry.",
+            },
+            threadId: input.threadId,
+            threadChatId: input.threadChatId,
+            token: input.token,
+            codexPreviousResponseId: completion.codexPreviousResponseId,
+          });
+        } else {
+          this.addMessageToBuffer({
+            agent: "codex",
+            message: {
+              type: "result",
+              subtype: "success",
+              total_cost_usd: 0,
+              duration_ms: processDurationMs,
+              duration_api_ms: processDurationMs,
+              is_error: false,
+              num_turns: 1,
+              result: "Codex successfully completed",
+              session_id: normalizedThreadId,
+            },
+            threadId: input.threadId,
+            threadChatId: input.threadChatId,
+            token: input.token,
+            codexPreviousResponseId: completion.codexPreviousResponseId,
+          });
+        }
       } else if (!context.isStopping) {
         const errorInfo =
           completion.errorMessage ??
@@ -2181,6 +2251,7 @@ export class TerragonDaemon {
     };
 
     let nextRequestId = 1;
+    let activePromptRequestId: unknown | null = null;
     const postEnvelope = async ({
       method,
       params,
@@ -2406,94 +2477,71 @@ export class TerragonDaemon {
       // (has an `id` field) over SSE. The agent blocks until a response is
       // POSTed back. In allowAll mode, auto-approve immediately. In plan mode,
       // emit a synthetic PermissionRequest tool call for user approval.
-      try {
-        const envelope = JSON.parse(payload);
-        if (
-          envelope &&
-          typeof envelope === "object" &&
-          envelope.method === "session/request_permission" &&
-          envelope.id !== undefined
-        ) {
-          lastAcpMessageAtMs = Date.now();
+      const normalizedPermissionProbe = normalizeAcpPermissionRequest({
+        payload,
+        promptId: "permission-probe",
+        sessionId: "",
+      });
+      if (normalizedPermissionProbe) {
+        const permissionRequest = normalizedPermissionProbe.request;
+        lastAcpMessageAtMs = Date.now();
 
-          // In allowAll mode (default), auto-approve immediately
-          if (input.permissionMode !== "plan") {
-            this.runtime.logger.info("ACP auto-approving permission request", {
-              threadChatId: input.threadChatId,
-              requestId: envelope.id,
-            });
-            fetch(createUrl(false), {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: envelope.id,
-                result: { optionId: "approved" },
-              }),
-            }).catch((err) => {
-              this.runtime.logger.error("ACP permission approval POST failed", {
-                threadChatId: input.threadChatId,
-                error: getErrorMessage(err),
-              });
-            });
-            return;
-          }
-
-          // In plan mode, surface as a synthetic tool call for user approval
-          const promptId = `perm-${randomUUID()}`;
-          const params =
-            typeof envelope.params === "object" && envelope.params
-              ? envelope.params
-              : {};
-          const processState = this.activeProcesses.get(input.threadChatId);
-          if (processState) {
-            processState.pendingPermissions.set(promptId, {
-              acpRequestId: envelope.id,
-            });
-          }
-
-          this.runtime.logger.info(
-            "ACP permission request surfaced for user approval",
-            {
-              threadChatId: input.threadChatId,
-              requestId: envelope.id,
-              promptId,
+        // In allowAll mode (default), auto-approve immediately
+        if (input.permissionMode !== "plan") {
+          this.runtime.logger.info("ACP auto-approving permission request", {
+            threadChatId: input.threadChatId,
+            requestId: permissionRequest.acpRequestId,
+          });
+          fetch(createUrl(false), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
             },
-          );
-
-          const currentSessionId =
-            this.activeProcesses.get(input.threadChatId)?.sessionId ??
-            input.sessionId ??
-            "";
-          applyAcpMessages([
-            {
-              type: "assistant",
-              session_id: currentSessionId,
-              parent_tool_use_id: null,
-              message: {
-                role: "assistant",
-                content: [
-                  {
-                    type: "tool_use",
-                    id: promptId,
-                    name: "PermissionRequest",
-                    input: {
-                      options: params.options ?? [],
-                      description: params.description ?? "",
-                      tool_name: params.tool_name ?? "",
-                    },
-                  },
-                ],
-              },
-            },
-          ]);
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: permissionRequest.acpRequestId,
+              result: { optionId: "approved" },
+            }),
+          }).catch((err) => {
+            this.runtime.logger.error("ACP permission approval POST failed", {
+              threadChatId: input.threadChatId,
+              error: getErrorMessage(err),
+            });
+          });
           return;
         }
-      } catch {
-        // Not valid JSON — fall through to normal handler
+
+        // In plan mode, surface as a synthetic tool call for user approval
+        const promptId = `perm-${randomUUID()}`;
+        const processState = this.activeProcesses.get(input.threadChatId);
+        if (processState) {
+          processState.pendingPermissions.set(promptId, {
+            acpRequestId: permissionRequest.acpRequestId,
+          });
+        }
+
+        this.runtime.logger.info(
+          "ACP permission request surfaced for user approval",
+          {
+            threadChatId: input.threadChatId,
+            requestId: permissionRequest.acpRequestId,
+            promptId,
+          },
+        );
+
+        const currentSessionId =
+          this.activeProcesses.get(input.threadChatId)?.sessionId ??
+          input.sessionId ??
+          "";
+        applyAcpMessages([
+          createAcpPermissionRequestMessage({
+            request: permissionRequest,
+            promptId,
+            sessionId: currentSessionId,
+          }),
+        ]);
+        return;
       }
 
       const currentSessionId =
@@ -2518,7 +2566,11 @@ export class TerragonDaemon {
       }
 
       // Generic ACP parsing fallback
-      const messages = parseAcpLineToClaudeMessages(payload, currentSessionId);
+      const messages = parseDaemonAcpSsePayload({
+        payload,
+        currentSessionId,
+        activePromptRequestId,
+      });
       if (messages.length > 0) {
         applyAcpMessages(messages);
       } else {
@@ -2847,6 +2899,7 @@ export class TerragonDaemon {
       promptIssuedAtMs = Date.now();
       suppressedPostInitInternalErrors = 0;
       sawAssistantOrUserMessage = false;
+      activePromptRequestId = nextRequestId;
       postEnvelope({
         method: "session/prompt",
         params: {
@@ -4449,10 +4502,6 @@ export class TerragonDaemon {
     this.pendingFlushRequired = false;
 
     let retryDelayOverrideMs: number | null = null;
-    let pendingSelfDispatch: {
-      payload: SdlcSelfDispatchPayload;
-      originalThreadChatId: string;
-    } | null = null;
     try {
       if (this.messageFlushTimer) {
         clearTimeout(this.messageFlushTimer);
@@ -4552,7 +4601,7 @@ export class TerragonDaemon {
           const codexPreviousResponseId = codexPreviousResponseEntry
             ? codexPreviousResponseEntry.codexPreviousResponseId
             : undefined;
-          const selfDispatchResult = await this.sendMessagesToAPI({
+          await this.sendMessagesToAPI({
             messages: messagesToSend,
             entryCount: tokenScopedEntries.length,
             timezone,
@@ -4561,21 +4610,6 @@ export class TerragonDaemon {
             threadChatId,
             codexPreviousResponseId,
           });
-          // Track self-dispatch payload from terminal batches
-          if (selfDispatchResult) {
-            const hasTerminalMessage = messagesToSend.some(
-              (m) =>
-                m.type === "result" ||
-                m.type === "custom-error" ||
-                m.type === "custom-stop",
-            );
-            if (hasTerminalMessage) {
-              pendingSelfDispatch = {
-                payload: selfDispatchResult,
-                originalThreadChatId: threadChatId,
-              };
-            }
-          }
           for (const entry of entriesToSend) {
             handledEntries.add(entry);
           }
@@ -4706,7 +4740,7 @@ export class TerragonDaemon {
               threadId: tail.threadId,
               deltaCount: tail.deltas.length,
               metaEventCount: tail.metaEvents.length,
-              error,
+              error: formatError(error),
             });
           }
         }
@@ -4865,12 +4899,6 @@ export class TerragonDaemon {
       }, delay);
     }
     this.maybeCleanupAllDaemonEventRunStates();
-
-    // SDLC self-dispatch: if the server included a follow-up payload in the
-    // terminal batch response, start the new run now that flush is complete.
-    if (pendingSelfDispatch) {
-      this.startSelfDispatchRun(pendingSelfDispatch);
-    }
   }
 
   /**
@@ -4892,7 +4920,7 @@ export class TerragonDaemon {
     threadId: string;
     threadChatId: string;
     codexPreviousResponseId?: string | null;
-  }): Promise<SdlcSelfDispatchPayload | null> {
+  }): Promise<void> {
     try {
       this.runtime.logger.info("Sending messages to API", {
         messageCount: messages.length,
@@ -4983,7 +5011,7 @@ export class TerragonDaemon {
           : {}),
       };
 
-      const selfDispatchPayload = await this.runtime.serverPost(payload, token);
+      await this.runtime.serverPost(payload, token);
       if (envelopeV2) {
         this.markDaemonEventEnvelopeDelivered({
           threadChatId,
@@ -4993,7 +5021,6 @@ export class TerragonDaemon {
       this.runtime.logger.info("Messages sent successfully", {
         messageCount: messages.length,
       });
-      return selfDispatchPayload;
     } catch (error) {
       this.runtime.logger.error("Failed to send messages to API", {
         error: formatError(error),

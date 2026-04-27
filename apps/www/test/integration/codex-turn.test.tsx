@@ -15,17 +15,17 @@
  * the UI assertion operates on pre-synthesized parts that match the fixture
  * data shapes.
  */
+
+import type { DBDelegationMessage, DBTerminalPart } from "@terragon/shared";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { replay } from "./replayer";
 import {
-  renderDelegationItem,
-  renderTerminalPart,
   queryDelegationCard,
   queryTerminalOutput,
+  renderDelegationItem,
+  renderTerminalPart,
 } from "./chat-page";
-import type { DBDelegationMessage } from "@terragon/shared";
-import type { DBTerminalPart } from "@terragon/shared";
+import { replay } from "./replayer";
 
 // ---------------------------------------------------------------------------
 // Route-level mocks (same pattern as replayer.test.ts)
@@ -83,13 +83,6 @@ vi.mock("@/server-lib/handle-daemon-event", () => ({
 
 vi.mock("@/lib/db", () => ({ db: dbMocks.db }));
 
-vi.mock("@terragon/shared/delivery-loop/store/dispatch-intent-store", () => ({
-  createDispatchIntent: vi.fn().mockResolvedValue("di-1"),
-  markDispatchIntentDispatched: vi.fn().mockResolvedValue(undefined),
-  markDispatchIntentCompleted: vi.fn().mockResolvedValue(undefined),
-  markDispatchIntentFailed: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("@/server-lib/process-follow-up-queue", () => ({
   maybeProcessFollowUpQueue: vi.fn().mockResolvedValue({
     processed: false,
@@ -100,19 +93,6 @@ vi.mock("@/server-lib/process-follow-up-queue", () => ({
 
 vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/server-lib/delivery-loop/dispatch-intent", () => ({
-  buildDispatchIntentId: vi.fn(
-    (loopId: string, runId: string) => `di_${loopId}_${runId}`,
-  ),
-  createDispatchIntent: vi
-    .fn()
-    .mockResolvedValue({ id: "di-1", status: "prepared" }),
-  storeSelfDispatchReplay: vi.fn().mockResolvedValue(undefined),
-  getReplayableSelfDispatch: vi.fn().mockResolvedValue(null),
-  updateDispatchIntent: vi.fn().mockResolvedValue(undefined),
-  getActiveDispatchIntent: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
@@ -147,22 +127,8 @@ vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
-  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
-}));
-
 vi.mock("@terragon/shared/broadcast-server", () => ({
   publishBroadcastUserMessage: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/server-lib/delivery-loop/v3/kernel", () => ({
-  appendEventAndAdvance: vi.fn().mockResolvedValue(undefined),
-  appendEventAndAdvanceExplicit: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/server-lib/delivery-loop/v3/store", () => ({
-  getWorkflowHead: vi.fn().mockResolvedValue(null),
-  getActiveWorkflowForThread: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/redis", () => ({
@@ -178,10 +144,6 @@ vi.mock("@/lib/redis", () => ({
   },
   isLocalRedisHttpMode: vi.fn().mockReturnValue(false),
   isRedisTransportParseError: vi.fn().mockReturnValue(false),
-}));
-
-vi.mock("@/server-lib/delivery-loop/ack-lifecycle", () => ({
-  handleAckReceived: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ---------------------------------------------------------------------------

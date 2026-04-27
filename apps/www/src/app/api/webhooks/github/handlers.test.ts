@@ -39,10 +39,9 @@ describe("buildCiSignalSnapshotFromCheckRuns", () => {
   });
 
   describe("Terragon self-check exclusion", () => {
-    // Regression guard for the CI gate deadlock: `Terragon Delivery Loop`
-    // is itself published as `in_progress` during the `gating_ci` state. If
-    // the aggregator counted it, the gate could never resolve because it
-    // would be waiting on itself.
+    // Regression guard for the runtime self-check deadlock: Terragon can
+    // publish its own `in_progress` check while waiting on external CI. If the
+    // aggregator counted it, Terragon would be waiting on itself.
     it("excludes the self-check (matched by name) when computing completeness — 20 green + 1 self=in_progress is complete+green", () => {
       const checkRuns: Array<{
         name: string;

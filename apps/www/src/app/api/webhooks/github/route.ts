@@ -36,13 +36,9 @@
 
 import { Webhooks } from "@octokit/webhooks";
 import { env } from "@terragon/env/apps-www";
-import {
-  claimGithubWebhookDelivery,
-  completeGithubWebhookDelivery,
-  getGithubWebhookClaimHttpStatus,
-  releaseGithubWebhookDeliveryClaim,
-} from "@terragon/shared/delivery-loop/store/webhook-delivery-store";
+import * as schema from "@terragon/shared/db/schema";
 import { randomUUID } from "crypto";
+import { and, eq, isNull, lte } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -80,6 +76,139 @@ const supportedGitHubWebhookNames = new Set<string>([
   "issues",
 ]);
 
+type GitHubWebhookClaimOutcome =
+  | "claimed_new"
+  | "stale_stolen"
+  | "already_completed"
+  | "in_progress_fresh";
+
+type GitHubWebhookClaim = {
+  shouldProcess: boolean;
+  outcome: GitHubWebhookClaimOutcome;
+};
+
+const GITHUB_WEBHOOK_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+function getGithubWebhookClaimHttpStatus(
+  outcome: GitHubWebhookClaimOutcome,
+): number {
+  switch (outcome) {
+    case "claimed_new":
+    case "stale_stolen":
+    case "in_progress_fresh":
+      return 202;
+    case "already_completed":
+      return 200;
+  }
+}
+
+async function claimGithubWebhookDelivery(params: {
+  deliveryId: string;
+  claimantToken: string;
+  eventType: string;
+}): Promise<GitHubWebhookClaim> {
+  const now = new Date();
+  const claimExpiresAt = new Date(now.getTime() + GITHUB_WEBHOOK_CLAIM_TTL_MS);
+  const inserted = await db
+    .insert(schema.githubWebhookDeliveries)
+    .values({
+      deliveryId: params.deliveryId,
+      claimantToken: params.claimantToken,
+      claimExpiresAt,
+      eventType: params.eventType,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing()
+    .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
+
+  if (inserted.length > 0) {
+    return { shouldProcess: true, outcome: "claimed_new" };
+  }
+
+  const [existing] = await db
+    .select({
+      claimantToken: schema.githubWebhookDeliveries.claimantToken,
+      claimExpiresAt: schema.githubWebhookDeliveries.claimExpiresAt,
+      completedAt: schema.githubWebhookDeliveries.completedAt,
+    })
+    .from(schema.githubWebhookDeliveries)
+    .where(eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId))
+    .limit(1);
+
+  if (!existing) {
+    return claimGithubWebhookDelivery(params);
+  }
+  if (existing.completedAt) {
+    return { shouldProcess: false, outcome: "already_completed" };
+  }
+  if (existing.claimExpiresAt.getTime() > now.getTime()) {
+    return { shouldProcess: false, outcome: "in_progress_fresh" };
+  }
+
+  const stolen = await db
+    .update(schema.githubWebhookDeliveries)
+    .set({
+      claimantToken: params.claimantToken,
+      claimExpiresAt,
+      eventType: params.eventType,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId),
+        eq(
+          schema.githubWebhookDeliveries.claimantToken,
+          existing.claimantToken,
+        ),
+        eq(
+          schema.githubWebhookDeliveries.claimExpiresAt,
+          existing.claimExpiresAt,
+        ),
+        isNull(schema.githubWebhookDeliveries.completedAt),
+        lte(schema.githubWebhookDeliveries.claimExpiresAt, now),
+      ),
+    )
+    .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
+  if (stolen.length > 0) {
+    return { shouldProcess: true, outcome: "stale_stolen" };
+  }
+
+  return claimGithubWebhookDelivery(params);
+}
+
+async function completeGithubWebhookDelivery(params: {
+  deliveryId: string;
+  claimantToken: string;
+}): Promise<boolean> {
+  const completed = await db
+    .update(schema.githubWebhookDeliveries)
+    .set({ completedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId),
+        eq(schema.githubWebhookDeliveries.claimantToken, params.claimantToken),
+      ),
+    )
+    .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
+  return completed.length > 0;
+}
+
+async function releaseGithubWebhookDeliveryClaim(params: {
+  deliveryId: string;
+  claimantToken: string;
+}): Promise<void> {
+  await db
+    .delete(schema.githubWebhookDeliveries)
+    .where(
+      and(
+        eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId),
+        eq(schema.githubWebhookDeliveries.claimantToken, params.claimantToken),
+        isNull(schema.githubWebhookDeliveries.completedAt),
+      ),
+    );
+}
+
 function isSupportedGitHubWebhookName(
   name: string,
 ): name is SupportedGitHubWebhookName {
@@ -95,6 +224,11 @@ export async function POST(request: NextRequest) {
   const eventType = headersList.get("x-github-event") ?? "";
   const requestId = headersList.get("x-github-delivery") ?? "";
   let parsedPayload: unknown = null;
+  let ownedClaim: {
+    deliveryId: string;
+    claimantToken: string;
+    claimOutcome: GitHubWebhookClaimOutcome;
+  } | null = null;
   try {
     parsedPayload = JSON.parse(body);
   } catch {
@@ -218,7 +352,6 @@ export async function POST(request: NextRequest) {
 
     const claimantToken = `github-webhook:${randomUUID()}`;
     const claim = await claimGithubWebhookDelivery({
-      db,
       deliveryId: requestId,
       claimantToken,
       eventType,
@@ -233,6 +366,11 @@ export async function POST(request: NextRequest) {
         { status: getGithubWebhookClaimHttpStatus(claim.outcome) },
       );
     }
+    ownedClaim = {
+      deliveryId: requestId,
+      claimantToken,
+      claimOutcome: claim.outcome,
+    };
 
     if (shadowRefreshEvent) {
       await shadowRefreshGitHubProjectionsForWebhook(shadowRefreshEvent);
@@ -250,62 +388,47 @@ export async function POST(request: NextRequest) {
       throw new Error(`Unsupported GitHub webhook event: ${eventType}`);
     }
 
-    try {
-      await webhooks.receive({
-        id: requestId,
-        name: eventType,
-        payload: JSON.parse(body),
-      });
-    } catch (error) {
-      try {
-        const released = await releaseGithubWebhookDeliveryClaim({
-          db,
-          deliveryId: requestId,
-          claimantToken,
-        });
-        if (!released) {
-          console.warn(
-            "[github webhook] failed to release delivery claim after receive error",
-            {
-              deliveryId: requestId,
-              claimOutcome: claim.outcome,
-            },
-          );
-        }
-      } catch (releaseError) {
-        console.error(
-          "[github webhook] error releasing delivery claim after receive error",
-          releaseError,
-        );
-      }
-      throw error;
-    }
+    await webhooks.receive({
+      id: requestId,
+      name: eventType,
+      payload: JSON.parse(body),
+    });
 
     const completed = await completeGithubWebhookDelivery({
-      db,
       deliveryId: requestId,
       claimantToken,
     });
-
     if (!completed) {
       return NextResponse.json(
         {
           success: false,
           error: "Failed to complete GitHub webhook delivery claim",
-          claimOutcome: claim.outcome,
+          claimOutcome: ownedClaim.claimOutcome,
         },
         { status: 500 },
       );
     }
+    const claimOutcome = ownedClaim.claimOutcome;
+    ownedClaim = null;
 
     return NextResponse.json(
       {
         success: true,
-        claimOutcome: claim.outcome,
+        claimOutcome,
       },
-      { status: getGithubWebhookClaimHttpStatus(claim.outcome) },
+      { status: getGithubWebhookClaimHttpStatus(claimOutcome) },
     );
   } catch (error) {
+    if (ownedClaim) {
+      await releaseGithubWebhookDeliveryClaim(ownedClaim).catch(
+        (releaseError) => {
+          console.error(
+            "[github webhook] error releasing delivery claim",
+            releaseError,
+          );
+        },
+      );
+    }
     console.error("[github webhook] error", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },

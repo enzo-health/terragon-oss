@@ -1,44 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { SquareKanban } from "lucide-react";
-import { useUpdateLinearSettings } from "@/queries/linear-mutations";
-import { ConnectionStatusPill } from "../../credentials/connection-status-pill";
-import { toast } from "sonner";
-import {
-  disconnectLinearAccount,
-  getLinearAccountConnectUrl,
-  getLinearAgentInstallUrl,
-  uninstallLinearWorkspace,
-} from "@/server-actions/linear";
-import { useRouter } from "next/navigation";
-import { ModelSelector } from "../../model-selector";
-import { RepoSelector } from "../../repo-branch-selector";
-import { useRealtimeUser } from "@/hooks/useRealtime";
+import { AIModel } from "@terragon/agent/types";
 import {
   LinearAccountWithSettingsAndInstallation,
   LinearInstallationPublic,
 } from "@terragon/shared/db/types";
-import { AIModel } from "@terragon/agent/types";
-import type { DeliveryPlanApprovalPolicy } from "@terragon/shared/db/types";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
+import { SquareKanban } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
 import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useRealtimeUser } from "@/hooks/useRealtime";
+import { useUpdateLinearSettings } from "@/queries/linear-mutations";
+import { useServerActionMutation } from "@/queries/server-action-helpers";
+import {
+  disconnectLinearAccount,
+  getLinearAccountConnectUrl,
+  getLinearAgentInstallUrl,
+  uninstallLinearWorkspace,
+} from "@/server-actions/linear";
+import { ConnectionStatusPill } from "../../credentials/connection-status-pill";
+import { ModelSelector } from "../../model-selector";
+import { RepoSelector } from "../../repo-branch-selector";
 
 // ── Workspace Install Panel ──────────────────────────────────────────────────
 
@@ -204,13 +195,6 @@ function LinearAccountItem({
   const [defaultModel, setDefaultModel] = useState<AIModel | null>(
     account.settings?.defaultModel || null,
   );
-  const [runInDeliveryLoop, setRunInDeliveryLoop] = useState(
-    account.settings?.deliveryLoopOptIn ?? false,
-  );
-  const [deliveryPlanApprovalPolicy, setDeliveryPlanApprovalPolicy] =
-    useState<DeliveryPlanApprovalPolicy>(
-      account.settings?.deliveryPlanApprovalPolicy ?? "auto",
-    );
 
   const disconnectMutation = useServerActionMutation({
     mutationFn: disconnectLinearAccount,
@@ -251,8 +235,6 @@ function LinearAccountItem({
                   settings: {
                     defaultRepoFullName: repoFullName,
                     defaultModel: defaultModel!,
-                    deliveryLoopOptIn: runInDeliveryLoop,
-                    deliveryPlanApprovalPolicy,
                   },
                 });
               }
@@ -269,80 +251,17 @@ function LinearAccountItem({
             supportsMultiAgentPromptSubmission={false}
             setIsMultiAgentMode={() => {}}
             selectedModels={{}}
-            selectedModel={defaultModel as any}
+            selectedModel={defaultModel ?? "sonnet"}
             setSelectedModel={({ model }: { model: AIModel }) => {
               setDefaultModel(model);
               updateMutation.mutate({
                 organizationId: account.organizationId,
                 settings: {
                   defaultModel: model,
-                  deliveryLoopOptIn: runInDeliveryLoop,
-                  deliveryPlanApprovalPolicy,
                 },
               });
             }}
           />
-        </div>
-        <div className="space-y-3 rounded-md border p-3 sm:min-w-80">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <Label className="text-sm">Delivery Loop for Linear tasks</Label>
-              <p className="text-xs text-muted-foreground">
-                Automatically start Linear-created tasks in the delivery loop.
-              </p>
-            </div>
-            <Switch
-              checked={runInDeliveryLoop}
-              onCheckedChange={(checked) => {
-                setRunInDeliveryLoop(checked);
-                updateMutation.mutate({
-                  organizationId: account.organizationId,
-                  settings: {
-                    defaultRepoFullName: defaultRepo || null,
-                    defaultModel,
-                    deliveryLoopOptIn: checked,
-                    deliveryPlanApprovalPolicy,
-                  },
-                });
-              }}
-              aria-label="Toggle Delivery Loop for Linear tasks"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-sm">Plan approval</Label>
-            <Select
-              value={deliveryPlanApprovalPolicy}
-              onValueChange={(value) => {
-                const nextValue = value as DeliveryPlanApprovalPolicy;
-                setDeliveryPlanApprovalPolicy(nextValue);
-                updateMutation.mutate({
-                  organizationId: account.organizationId,
-                  settings: {
-                    defaultRepoFullName: defaultRepo || null,
-                    defaultModel,
-                    deliveryLoopOptIn: runInDeliveryLoop,
-                    deliveryPlanApprovalPolicy: nextValue,
-                  },
-                });
-              }}
-              disabled={!runInDeliveryLoop}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto approve plans</SelectItem>
-                <SelectItem value="human_required">
-                  Require manual plan approval
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Choose whether Linear delivery loop runs can continue
-              automatically after planning or wait for manual approval.
-            </p>
-          </div>
         </div>
       </div>
       <div className="space-x-2">

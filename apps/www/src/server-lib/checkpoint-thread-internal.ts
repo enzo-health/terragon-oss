@@ -32,7 +32,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
-import { getActiveWorkflowForThread } from "./delivery-loop/v3/store";
 
 const DELIVERY_PLAN_TOOL_NAMES = {
   EXIT_PLAN_MODE: "ExitPlanMode",
@@ -449,18 +448,6 @@ export async function checkpointThreadAndPush({
       throw commitAndPushError;
     }
 
-    // Enrolled threads beyond implementing are handled entirely by the
-    // delivery loop — skip the legacy checkpoint path.
-    // We allow `implementing` through so the first PR gets created.
-    const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
-    if (activeWorkflow) {
-      const currentState = activeWorkflow.head.state;
-      if (currentState !== "planning" && currentState !== "implementing") {
-        return;
-      }
-    }
-
-    // Non-delivery-loop fallback path:
     // 1. Normal case: diffOutput exists and diff has changed
     // 2. After git retry: diffOutput exists but thread doesn't have a PR yet
     //    (handles the case where git push failed after diff was captured)

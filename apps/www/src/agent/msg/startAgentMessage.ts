@@ -7,7 +7,6 @@ import {
   normalizedModelForDaemon,
   shouldUseCredits as shouldUseCreditsUtil,
 } from "@terragon/agent/utils";
-import { env } from "@terragon/env/apps-www";
 import { gitPullUpstream } from "@terragon/sandbox/commands";
 import {
   type BootingSubstatus,
@@ -22,9 +21,7 @@ import {
 } from "@terragon/shared";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { DB } from "@terragon/shared/db";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { AgentRuntimeProvider } from "@terragon/shared/db/types";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
@@ -36,11 +33,14 @@ import {
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
 import { waitUntil } from "@vercel/functions";
-import { z } from "zod";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
-import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
+import {
+  type RuntimeAdapterContract,
+  resolveImplementationRuntimeAdapter,
+} from "@/agent/runtime/implementation-adapter";
 import {
   createSandboxForThread,
   getSandboxForThreadOrNull,
@@ -61,13 +61,6 @@ import { redis } from "@/lib/redis";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
 import { compactThreadChat, tryAutoCompactThread } from "@/server-lib/compact";
-import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
-import {
-  ensureDeliveryLoopEnrollmentForThreadIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
-import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
-import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
@@ -82,19 +75,6 @@ const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
 const FOLLOW_UP_TTFR_START_TTL_SECONDS = 60 * 60;
-
-const planArtifactPromptPayloadSchema = z.object({
-  planText: z.string().min(1),
-  tasks: z
-    .array(
-      z.object({
-        stableTaskId: z.string().min(1),
-        title: z.string().min(1),
-        description: z.string().nullable().optional(),
-      }),
-    )
-    .default([]),
-});
 
 function getUpstreamPullKey(threadId: string) {
   return `${LAST_UPSTREAM_PULL_PREFIX}${threadId}`;
@@ -169,80 +149,43 @@ async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   }
 }
 
-async function resolveDispatchRunIdentity({
-  db,
-  threadId,
-  threadChatId,
-  workflowId,
-  workflowRunSeq,
+function runtimeProviderForDispatch({
+  agent,
+  adapterId,
 }: {
-  db: DB;
-  threadId: string;
-  threadChatId: string;
-  workflowId: string | null;
-  workflowRunSeq: number | null;
-}): Promise<{
-  workflowId: string | null;
-  workflowRunSeq: number | null;
-  runId: string;
-}> {
-  if (workflowId !== null && workflowRunSeq === null) {
-    console.warn(
-      "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-      },
-    );
+  agent: AIAgent;
+  adapterId: RuntimeAdapterContract["adapterId"];
+}): AgentRuntimeProvider {
+  switch (adapterId) {
+    case "codex-app-server":
+      return "codex-app-server";
+    case "claude-acp":
+      return "claude-acp";
+    case "legacy": {
+      switch (agent) {
+        case "claudeCode":
+          return "legacy-claude";
+        case "gemini":
+          return "legacy-gemini";
+        case "amp":
+          return "legacy-amp";
+        case "opencode":
+          return "legacy-opencode";
+        case "codex":
+          return "codex-app-server";
+        default: {
+          const _exhaustiveCheck: never = agent;
+          throw new Error(
+            `unsupported legacy runtime provider for ${_exhaustiveCheck}`,
+          );
+        }
+      }
+    }
+    default: {
+      const _exhaustiveCheck: never = adapterId;
+      throw new Error(`unsupported runtime adapter ${_exhaustiveCheck}`);
+    }
   }
-
-  // DB intent is canonical. Redis intent is a realtime cache and may
-  // be stale or unavailable in local redis-http mode.
-  const durableIntent =
-    workflowId === null
-      ? null
-      : await getLatestActiveDispatchIntentForThreadChat(db, {
-          threadChatId,
-          loopId: workflowId,
-        });
-  const activeIntent =
-    workflowId === null ? null : await getActiveDispatchIntent(threadChatId);
-
-  if (
-    activeIntent &&
-    durableIntent &&
-    activeIntent.runId !== durableIntent.runId
-  ) {
-    console.warn(
-      "[startAgentMessage] dispatch run identity mismatch between redis and db",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-        redisRunId: activeIntent.runId,
-        dbRunId: durableIntent.runId,
-      },
-    );
-  }
-
-  if (workflowId !== null && !durableIntent && activeIntent) {
-    console.warn(
-      "[startAgentMessage] missing durable dispatch intent for delivery-loop run; using redis fallback",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-        redisRunId: activeIntent.runId,
-      },
-    );
-  }
-
-  return {
-    workflowId,
-    workflowRunSeq,
-    runId: durableIntent?.runId ?? activeIntent?.runId ?? randomUUID(),
-  };
 }
 
 export type StartAgentMessageParams = {
@@ -725,112 +668,7 @@ export async function startAgentMessage({
           }
 
           const agentForModel = modelToAgent(model);
-          const deliveryEligibleForThread =
-            isDeliveryLoopEnrollmentAllowedForThread({
-              sourceType: thread?.sourceType ?? null,
-              sourceMetadata: thread?.sourceMetadata ?? null,
-            });
-          let activeWorkflow = await getActiveWorkflowForThread({
-            db,
-            threadId,
-          });
-          if (deliveryEligibleForThread && !activeWorkflow) {
-            try {
-              const planApprovalPolicy =
-                thread?.sourceMetadata?.type === "www" ||
-                thread?.sourceMetadata?.type === "linear-mention"
-                  ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
-                  : "auto";
-              await ensureDeliveryLoopEnrollmentForThreadIfEnabled({
-                userId,
-                repoFullName: thread.githubRepoFullName,
-                threadId,
-                planApprovalPolicy,
-              });
-              activeWorkflow = await getActiveWorkflowForThread({
-                db,
-                threadId,
-              });
-            } catch (error) {
-              console.warn(
-                "[startAgentMessage] failed to self-heal Delivery Loop enrollment",
-                {
-                  userId,
-                  threadId,
-                  repoFullName: thread.githubRepoFullName,
-                  error,
-                },
-              );
-            }
-          }
-          if (deliveryEligibleForThread && !activeWorkflow) {
-            throw new ThreadError(
-              "unknown-error",
-              "Delivery Loop enrollment missing for eligible thread",
-              null,
-            );
-          }
-          // Read authoritative state from v3 head
-          const effectiveState: DeliveryLoopState | null = activeWorkflow
-            ? stateToDeliveryLoopState(activeWorkflow.head.state)
-            : null;
-          let planContext: {
-            planText: string;
-            tasks: Array<{
-              stableTaskId: string;
-              title: string;
-              description?: string | null;
-            }>;
-          } | null = null;
-          const effectiveLoopId = activeWorkflow?.workflow.id;
-          if (effectiveState === "implementing" && effectiveLoopId) {
-            try {
-              const { getLatestAcceptedArtifact } = await import(
-                "@terragon/shared/delivery-loop/store/artifact-store"
-              );
-              const artifact = await getLatestAcceptedArtifact({
-                db,
-                loopId: effectiveLoopId,
-                phase: "planning",
-                includeApprovedForPlanning: true,
-              });
-              if (artifact?.payload) {
-                const payload = planArtifactPromptPayloadSchema.safeParse(
-                  artifact.payload,
-                );
-                if (payload.success) {
-                  planContext = {
-                    planText: payload.data.planText,
-                    tasks: payload.data.tasks,
-                  };
-                } else {
-                  console.warn(
-                    "[startAgentMessage] ignored invalid plan artifact payload for implementing phase",
-                    {
-                      loopId: effectiveLoopId,
-                      issues: payload.error.issues,
-                    },
-                  );
-                }
-              }
-            } catch (err) {
-              console.warn(
-                "[startAgentMessage] failed to load plan artifact for implementing phase",
-                {
-                  loopId: effectiveLoopId,
-                  error: err instanceof Error ? err.message : String(err),
-                },
-              );
-            }
-          }
-          const deliveryLoopPhasePromptPrefix =
-            buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext, {
-              blockedReason: activeWorkflow?.head.blockedReason ?? null,
-              fixAttemptCount: activeWorkflow?.head.fixAttemptCount ?? 0,
-              infraRetryCount: activeWorkflow?.head.infraRetryCount ?? 0,
-            });
-
-          if (!userMessageToSend && deliveryLoopPhasePromptPrefix === null) {
+          if (!userMessageToSend) {
             throw new ThreadError("no-user-message", "", null);
           }
 
@@ -851,10 +689,7 @@ export async function startAgentMessage({
             /(?:^|\s)\/compact(?=\s|$)/g,
             "",
           );
-          let finalFinalPrompt =
-            deliveryLoopPhasePromptPrefix === null
-              ? sanitizedPrompt
-              : `${deliveryLoopPhasePromptPrefix}\n\n${sanitizedPrompt}`;
+          let finalFinalPrompt = sanitizedPrompt;
 
           if (threadChat.agent === "codex") {
             const initialTurnStartChars =
@@ -920,21 +755,10 @@ export async function startAgentMessage({
             userCredentials,
           );
 
-          // When dispatched by the delivery loop, reuse the canonical dispatch
-          // run identity so timeout checks and daemon events stay correlated.
-          const { workflowId, workflowRunSeq, runId } =
-            await resolveDispatchRunIdentity({
-              db,
-              threadId,
-              threadChatId,
-              workflowId: activeWorkflow?.workflow.id ?? null,
-              workflowRunSeq: activeWorkflow?.head.activeRunSeq ?? null,
-            });
+          const runId = randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
-          const effectivePermissionMode = activeWorkflow
-            ? "allowAll"
-            : rawPermissionMode;
+          const effectivePermissionMode = rawPermissionMode;
           const implementationDispatch = resolveImplementationRuntimeAdapter(
             threadChat.agent,
           ).createDispatch({
@@ -966,12 +790,19 @@ export async function startAgentMessage({
             codexPreviousResponseId =
               implementationDispatch.codexPreviousResponseId;
           }
+          const runtimeProvider = runtimeProviderForDispatch({
+            agent: threadChat.agent,
+            adapterId:
+              implementationDispatch.message.runtimeAdapterContract.adapterId,
+          });
+          const externalSessionId =
+            implementationDispatch.message.acpSessionId ??
+            implementationDispatch.message.sessionId ??
+            null;
 
           await upsertAgentRunContext({
             db,
             runId,
-            workflowId,
-            runSeq: workflowRunSeq,
             userId,
             threadId,
             threadChatId,
@@ -982,6 +813,9 @@ export async function startAgentMessage({
             permissionMode: effectivePermissionMode,
             requestedSessionId: implementationDispatch.requestedSessionId,
             resolvedSessionId: null,
+            runtimeProvider,
+            externalSessionId,
+            previousResponseId: implementationDispatch.codexPreviousResponseId,
             status: "pending",
             tokenNonce,
             daemonTokenKeyId: null,
@@ -1118,135 +952,4 @@ async function preparePromptForModel({
     }
   }
   return { prompt };
-}
-
-function buildDeliveryLoopPhasePromptPrefix(
-  state: DeliveryLoopState | null,
-  planContext?: {
-    planText: string;
-    tasks: Array<{
-      stableTaskId: string;
-      title: string;
-      description?: string | null;
-    }>;
-  } | null,
-  headContext?: {
-    blockedReason: string | null;
-    fixAttemptCount: number;
-    infraRetryCount: number;
-  } | null,
-): string | null {
-  if (!state) {
-    return null;
-  }
-
-  switch (state) {
-    // v3-reachable: planning
-    case "planning":
-      return [
-        "Delivery Loop phase: planning. Generate an implementation plan only.",
-        "Output your plan as a JSON code block. Example:",
-        "",
-        "```json",
-        '{ "planText": "Brief summary of approach.",',
-        '  "tasks": [',
-        '    { "stableTaskId": "setup-auth", "title": "Set up authentication module",',
-        '      "description": "Create auth middleware.", "acceptance": ["Login returns JWT"] }',
-        "  ] }",
-        "```",
-        "",
-        "Required: tasks[] with at least one task. Each task needs title.",
-        "Do not edit files, run mutating commands, or open/update a PR.",
-      ].join("\n");
-    // v3-reachable: implementing
-    case "implementing": {
-      const isRetry =
-        (headContext?.fixAttemptCount ?? 0) > 0 ||
-        (headContext?.infraRetryCount ?? 0) > 0;
-      const lines: string[] = ["Delivery Loop phase: implementing."];
-      if (isRetry && headContext?.blockedReason) {
-        lines.push(
-          "",
-          `## Previous Failure`,
-          `This is retry attempt #${(headContext.fixAttemptCount ?? 0) + (headContext.infraRetryCount ?? 0) + 1}. The previous run failed:`,
-          `**${headContext.blockedReason}**`,
-          "",
-          "You MUST fix this specific issue before completing. Do not just re-run the same code — make targeted changes to resolve the failure.",
-          "",
-        );
-      }
-      if (planContext?.planText) {
-        lines.push("", "## Approved Plan", "", planContext.planText);
-        if (planContext.tasks?.length) {
-          lines.push("", "## Tasks");
-          for (const task of planContext.tasks) {
-            lines.push(
-              `- [${task.stableTaskId}] ${task.title}${task.description ? `: ${task.description}` : ""}`,
-            );
-          }
-        }
-        lines.push("");
-      }
-      lines.push(
-        "Implement the approved plan with concrete code changes.",
-        "When you complete a plan task, call the MarkImplementingTasksComplete tool with the task's stableTaskId and status.",
-        "After completing all tasks, call MarkImplementingTasksComplete with all completed task IDs.",
-        "",
-      );
-      if (env.SKIP_LOCAL_QUALITY_CHECKS) {
-        lines.push(
-          "Local lint/typecheck/test checks are temporarily skipped in this environment.",
-          "Rely on required GitHub CI checks before merge.",
-        );
-      } else {
-        lines.push(
-          "Before marking all tasks complete, you MUST verify:",
-          "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
-          "2. Linting passes (run the project's lint command if available)",
-          "3. Type checking passes (run the project's typecheck command if available)",
-          "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
-          "Fix any failures before marking tasks complete.",
-        );
-      }
-      lines.push("", "Do not skip directly to PR babysitting in this phase.");
-      return lines.join("\n");
-    }
-    // v3-reachable: review_gate (mapped from "gating_review")
-    case "review_gate":
-      return [
-        "Delivery Loop phase: review_gate.",
-        "Audit the current implementation for correctness, regressions, edge cases, and maintainability.",
-        "If you find a blocking issue, fix it in this run instead of just reporting it.",
-        "Only move forward once there are zero blocking findings left.",
-      ].join(" ");
-    // v3-reachable: ci_gate (mapped from "gating_ci")
-    case "ci_gate":
-      return [
-        "Delivery Loop phase: ci_gate.",
-        "Verify the change exactly the way CI will verify it: lint, typecheck, and targeted tests.",
-        "If a check fails, fix the underlying issue and rerun the relevant command until it passes.",
-        "Do not hand off with known local quality failures.",
-      ].join(" ");
-    // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
-    case "awaiting_pr_link":
-      return [
-        "Delivery Loop phase: awaiting_pr_link.",
-        "Create or link a pull request, then signal phaseComplete: true.",
-      ].join(" ");
-    // v3-reachable: blocked (mapped from awaiting_manual_fix / awaiting_operator_action)
-    case "blocked":
-      return [
-        "Delivery Loop phase: blocked.",
-        "Wait for explicit human feedback before making additional loop progression decisions.",
-        "Use explicit human-triggered controls to resume or bypass.",
-      ].join(" ");
-    // v3-reachable: done, stopped, terminated_pr_closed (v3 maps "terminated" → "terminated_pr_closed")
-    case "done":
-    case "stopped":
-    case "terminated_pr_closed":
-    case "terminated_pr_merged":
-      return `Delivery Loop phase: ${state}. Avoid new Delivery Loop actions unless explicitly requested.`;
-    default:
-      return null;
-  }
 }
