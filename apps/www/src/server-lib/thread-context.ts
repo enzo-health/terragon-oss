@@ -1,28 +1,7 @@
-import { ThreadChat, DBThreadContextMessage } from "@terragon/shared";
+import { DBThreadContextMessage } from "@terragon/shared";
 import { DB } from "@terragon/shared/db/index";
 import { updateThreadChat } from "@terragon/shared/model/threads";
 import { generateSessionSummary } from "./generate-session-summary";
-
-export function getThreadContextMessageToGenerate({
-  threadChat,
-}: {
-  threadChat: ThreadChat;
-}) {
-  const messages = threadChat.messages ?? [];
-  if (messages[0]?.type !== "thread-context") {
-    return null;
-  }
-  for (let i = 1; i < messages.length; i++) {
-    const message = messages[i];
-    if (!message) {
-      continue;
-    }
-    if (message.type === "thread-context-result") {
-      return null;
-    }
-  }
-  return messages[0];
-}
 
 export async function generateThreadContextResult({
   db,
@@ -44,28 +23,29 @@ export async function generateThreadContextResult({
   if (!threadContextSummary) {
     return;
   }
+  const messagesToAppend = [
+    {
+      type: "thread-context-result" as const,
+      summary: threadContextSummary,
+    },
+    {
+      type: "user" as const,
+      model: null,
+      parts: [
+        {
+          type: "text" as const,
+          text: `\n\n---\n\nContext from previous task:\n\n${threadContextSummary}`,
+        },
+      ],
+    },
+  ];
   await updateThreadChat({
     db,
     userId,
     threadId,
     threadChatId,
     updates: {
-      appendMessages: [
-        {
-          type: "thread-context-result",
-          summary: threadContextSummary,
-        },
-        {
-          type: "user",
-          model: null,
-          parts: [
-            {
-              type: "text",
-              text: `\n\n---\n\nContext from previous task:\n\n${threadContextSummary}`,
-            },
-          ],
-        },
-      ],
+      appendMessages: messagesToAppend,
     },
   });
 }

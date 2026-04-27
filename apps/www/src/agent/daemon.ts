@@ -1,16 +1,16 @@
-import { auth } from "@/lib/auth";
-import { DaemonMessage } from "@terragon/daemon/shared";
-import { ThreadErrorType } from "@terragon/shared";
-import { ISandboxSession } from "@terragon/sandbox/types";
-import { sendMessage } from "@terragon/sandbox/daemon";
-import { setActiveThreadChat } from "./sandbox-resource";
-import { wrapError } from "./error";
-import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
-import { db } from "@/lib/db";
-import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { AIAgent } from "@terragon/agent/types";
+import { DaemonMessage } from "@terragon/daemon/shared";
+import { sendMessage } from "@terragon/sandbox/daemon";
+import { ISandboxSession } from "@terragon/sandbox/types";
+import { ThreadErrorType } from "@terragon/shared";
+import { updateAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
+import { RuntimeFailureCategory } from "@terragon/shared/runtime/failure";
 import { createDaemonRunCredentials } from "@/agent/helpers/create-daemon-run";
-import { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { wrapError } from "./error";
+import { setActiveThreadChat } from "./sandbox-resource";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends any
   ? Omit<T, K>
@@ -74,7 +74,7 @@ export function classifyDaemonError(
   error: unknown,
 ): {
   errorType: ThreadErrorType;
-  failureCategory: DeliveryLoopFailureCategory;
+  failureCategory: RuntimeFailureCategory;
 } {
   if (isInfrastructureError(error)) {
     return { errorType: "unknown-error", failureCategory: "config_error" };

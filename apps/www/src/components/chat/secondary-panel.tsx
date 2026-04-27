@@ -52,6 +52,7 @@ export function SecondaryPanel({
   threadChatId,
   isReadOnly = false,
   promptBoxRef,
+  onOptimisticPermissionModeUpdate,
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
@@ -62,6 +63,7 @@ export function SecondaryPanel({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
 }) {
   const platform = usePlatform();
   const {
@@ -191,6 +193,7 @@ export function SecondaryPanel({
         threadChatId={threadChatId}
         isReadOnly={isReadOnly}
         promptBoxRef={promptBoxRef}
+        onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
       />
     );
   }
@@ -252,6 +255,7 @@ export function SecondaryPanel({
           threadChatId={threadChatId}
           isReadOnly={isReadOnly}
           promptBoxRef={promptBoxRef}
+          onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
         />
       </div>
     </>

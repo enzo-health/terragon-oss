@@ -132,7 +132,7 @@ export function DelegationItemCard({ delegation }: DelegationItemCardProps) {
           Prompt
         </button>
         {promptExpanded && (
-          <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap break-words border-l-2 border-border pl-2">
+          <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap break-words pl-3">
             {delegation.prompt}
           </p>
         )}

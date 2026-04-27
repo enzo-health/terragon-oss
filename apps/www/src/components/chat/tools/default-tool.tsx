@@ -5,7 +5,11 @@ import {
   GenericToolPartContentOneLine,
   GenericToolPartContentResultWithPreview,
 } from "./generic-ui";
-import { formatToolParameters } from "./utils";
+import {
+  formatToolParameters,
+  getToolVerb,
+  summarizeToolResult,
+} from "./utils";
 import { Plug } from "lucide-react";
 
 function parseMcpToolName(name: string): {
@@ -57,7 +61,7 @@ export function DefaultTool({ toolPart }: { toolPart: AllToolParts }) {
     >
       {toolPart.status === "pending" ? (
         <GenericToolPartContentOneLine toolStatus="pending">
-          Working...
+          {getToolVerb(toolPart.name, "pending")}
         </GenericToolPartContentOneLine>
       ) : toolPart.status === "error" ? (
         <GenericToolPartContentResultWithPreview
@@ -67,7 +71,7 @@ export function DefaultTool({ toolPart }: { toolPart: AllToolParts }) {
         />
       ) : (
         <GenericToolPartContentResultWithPreview
-          preview="Done"
+          preview={summarizeToolResult(toolPart.result)}
           content={toolPart.result}
           toolStatus="completed"
         />

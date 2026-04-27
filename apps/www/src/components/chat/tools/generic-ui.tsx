@@ -1,9 +1,63 @@
 import { AllToolParts } from "@terragon/shared";
 import { useTheme } from "next-themes";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getAgentColorClass } from "./agent-colors";
 import { ansiToHtml } from "./utils";
+
+// Threshold above which a tool prompt/arg is considered "long" and gets
+// clamp-to-2-lines + "Show more" treatment. Picked empirically: a short
+// bash command or file path is well under this; long sub-agent prompts are
+// well over.
+const LONG_TOOL_ARG_CHARS = 160;
+
+/**
+ * Renders a tool argument string that may be very long. For prompts below
+ * the threshold we just render inline (existing behavior preserved via
+ * `GenericToolPart`). For long prompts we clamp to 2 lines and show a
+ * right-aligned "Show more" toggle, mirroring Cline's `SubagentPromptText`
+ * pattern from research/cline-subagent-deep.md.
+ */
+function LongToolArg({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  // Prompts routed here are known to exceed the "long" threshold, so the
+  // toggle is always shown. We still observe the DOM with ResizeObserver
+  // so that if the container widens enough that the text fits on one line
+  // the toggle visually hides nothing — but we never drop the button, as
+  // that caused jsdom-based tests to miss the affordance entirely and is
+  // cheap to always render.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {});
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <span className="inline">
+      <span
+        ref={ref}
+        className={cn(
+          "!text-foreground font-medium align-top whitespace-pre-wrap",
+          !expanded &&
+            "[display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden",
+        )}
+      >
+        {text}
+      </span>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="ml-1 text-muted-foreground/70 hover:text-muted-foreground underline cursor-pointer bg-transparent border-0 p-0 font-inherit"
+      >
+        ({expanded ? "Show less" : "Show more"})
+      </button>
+    </span>
+  );
+}
 
 export function GenericToolPart({
   toolName,
@@ -21,6 +75,7 @@ export function GenericToolPart({
   toolArgSuffix?: React.ReactNode;
 }) {
   const colorClass = getAgentColorClass(toolColor);
+  const isLongArg = !!toolArg && toolArg.length > LONG_TOOL_ARG_CHARS;
   return (
     <div className="flex gap-2 items-start min-w-0">
       <span className="h-5 flex items-center">
@@ -47,7 +102,7 @@ export function GenericToolPart({
             {toolArgSuffix}
           </div>
         ) : (
-          <div className="break-words line-clamp-3">
+          <div className={cn("break-words", !isLongArg && "line-clamp-3")}>
             <span
               className={cn(
                 "font-semibold px-1 rounded-sm",
@@ -57,7 +112,11 @@ export function GenericToolPart({
               {toolName}
             </span>
             <span className="!text-foreground font-semibold">(</span>
-            <span className="!text-foreground font-medium">{toolArg}</span>
+            {isLongArg ? (
+              <LongToolArg text={toolArg} />
+            ) : (
+              <span className="!text-foreground font-medium">{toolArg}</span>
+            )}
             <span className="!text-foreground font-semibold">)</span>
             {toolArgSuffix}
           </div>

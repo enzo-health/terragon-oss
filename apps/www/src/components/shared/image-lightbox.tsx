@@ -117,6 +117,9 @@ export function ImageLightbox({
             <img
               src={displayUrl}
               alt="Expanded image"
+              width={800}
+              height={600}
+              loading="lazy"
               className="max-w-full max-h-[70vh] object-contain rounded bg-background"
             />
           </div>

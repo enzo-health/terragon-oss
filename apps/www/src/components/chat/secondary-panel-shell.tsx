@@ -34,6 +34,7 @@ export function SecondaryPanelContent({
   threadChatId,
   isReadOnly,
   promptBoxRef,
+  onOptimisticPermissionModeUpdate,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -46,6 +47,7 @@ export function SecondaryPanelContent({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -60,6 +62,7 @@ export function SecondaryPanelContent({
       threadChatId={threadChatId}
       isReadOnly={isReadOnly}
       promptBoxRef={promptBoxRef}
+      onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -81,6 +84,7 @@ function ArtifactWorkspaceShell({
   threadChatId,
   isReadOnly,
   promptBoxRef,
+  onOptimisticPermissionModeUpdate,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -94,6 +98,7 @@ function ArtifactWorkspaceShell({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   emptyState: {
     title: string;
     description: string;
@@ -289,6 +294,9 @@ function ArtifactWorkspaceShell({
               threadChatId={threadChatId}
               isReadOnly={isReadOnly}
               promptBoxRef={promptBoxRef}
+              onOptimisticPermissionModeUpdate={
+                onOptimisticPermissionModeUpdate
+              }
             />
           </div>
         )}
@@ -304,6 +312,7 @@ function ActiveArtifactRenderer({
   threadChatId,
   isReadOnly,
   promptBoxRef,
+  onOptimisticPermissionModeUpdate,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -311,6 +320,7 @@ function ActiveArtifactRenderer({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
@@ -329,7 +339,7 @@ function ActiveArtifactRenderer({
           threadId={thread.id}
           threadChatId={threadChatId}
           isReadOnly={isReadOnly}
-          promptBoxRef={promptBoxRef}
+          onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
         />
       );
     default:

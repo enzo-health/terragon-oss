@@ -4,7 +4,7 @@ import {
   findPlanFromWriteToolCall,
   resolvePlanText,
 } from "./plan-utils";
-import type { DBMessage } from "@terragon/shared";
+import type { UIAgentMessage, UIMessage } from "@terragon/shared";
 
 describe("formatPlanForDisplay", () => {
   it("returns raw text for non-JSON plans", () => {
@@ -45,23 +45,10 @@ describe("formatPlanForDisplay", () => {
 
 describe("findPlanFromWriteToolCall", () => {
   it("finds a Write to plans/*.md before ExitPlanMode", () => {
-    const messages: DBMessage[] = [
-      {
-        id: "write-1",
-        type: "tool-call",
-        name: "Write",
-        parameters: {
-          file_path: "/workspace/plans/my-plan.md",
-          content: "# Plan from Write",
-        },
-      } as unknown as DBMessage,
-      {
-        id: "exit-1",
-        type: "tool-call",
-        name: "ExitPlanMode",
-        parameters: { plan: "" },
-      } as unknown as DBMessage,
-    ];
+    const messages = agentMessages([
+      writeTool("write-1", "/workspace/plans/my-plan.md", "# Plan from Write"),
+      exitPlanModeTool("exit-1"),
+    ]);
 
     expect(
       findPlanFromWriteToolCall({
@@ -72,14 +59,7 @@ describe("findPlanFromWriteToolCall", () => {
   });
 
   it("returns null when no Write to plans/ is found", () => {
-    const messages: DBMessage[] = [
-      {
-        id: "exit-1",
-        type: "tool-call",
-        name: "ExitPlanMode",
-        parameters: { plan: "" },
-      } as unknown as DBMessage,
-    ];
+    const messages = agentMessages([exitPlanModeTool("exit-1")]);
 
     expect(
       findPlanFromWriteToolCall({
@@ -90,26 +70,16 @@ describe("findPlanFromWriteToolCall", () => {
   });
 
   it("stops at user messages when searching backwards", () => {
-    const messages: DBMessage[] = [
-      {
-        id: "write-old",
-        type: "tool-call",
-        name: "Write",
-        parameters: {
-          file_path: "/workspace/plans/old-plan.md",
-          content: "# Old Plan",
-        },
-      } as unknown as DBMessage,
+    const messages: UIMessage[] = [
+      ...agentMessages([
+        writeTool("write-old", "/workspace/plans/old-plan.md", "# Old Plan"),
+      ]),
       {
         id: "user-1",
-        type: "user",
-      } as unknown as DBMessage,
-      {
-        id: "exit-1",
-        type: "tool-call",
-        name: "ExitPlanMode",
-        parameters: { plan: "" },
-      } as unknown as DBMessage,
+        role: "user",
+        parts: [{ type: "text", text: "new task" }],
+      },
+      ...agentMessages([exitPlanModeTool("exit-1")]),
     ];
 
     expect(
@@ -132,23 +102,10 @@ describe("resolvePlanText", () => {
   });
 
   it("falls back to Write tool call when planParam is empty", () => {
-    const messages: DBMessage[] = [
-      {
-        id: "write-1",
-        type: "tool-call",
-        name: "Write",
-        parameters: {
-          file_path: "/workspace/plans/fallback.md",
-          content: "# Fallback Plan",
-        },
-      } as unknown as DBMessage,
-      {
-        id: "exit-1",
-        type: "tool-call",
-        name: "ExitPlanMode",
-        parameters: { plan: "" },
-      } as unknown as DBMessage,
-    ];
+    const messages = agentMessages([
+      writeTool("write-1", "/workspace/plans/fallback.md", "# Fallback Plan"),
+      exitPlanModeTool("exit-1"),
+    ]);
 
     const result = resolvePlanText({
       planParam: "",
@@ -167,3 +124,41 @@ describe("resolvePlanText", () => {
     expect(result).toBe("");
   });
 });
+
+function agentMessages(parts: UIAgentMessage["parts"]): UIMessage[] {
+  return [
+    {
+      id: "agent-message",
+      role: "agent",
+      agent: "claudeCode",
+      parts,
+    },
+  ];
+}
+
+function writeTool(id: string, filePath: string, content: string) {
+  return {
+    type: "tool",
+    id,
+    agent: "claudeCode",
+    name: "Write",
+    parameters: {
+      file_path: filePath,
+      content,
+    },
+    parts: [],
+    status: "pending",
+  } satisfies UIAgentMessage["parts"][number];
+}
+
+function exitPlanModeTool(id: string) {
+  return {
+    type: "tool",
+    id,
+    agent: "claudeCode",
+    name: "ExitPlanMode",
+    parameters: { plan: "" },
+    parts: [],
+    status: "pending",
+  } satisfies UIAgentMessage["parts"][number];
+}

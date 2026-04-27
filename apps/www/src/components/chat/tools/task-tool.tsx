@@ -8,6 +8,7 @@ import {
   GenericToolPartContentResultWithLines,
   GenericToolPartClickToExpand,
 } from "./generic-ui";
+import { getToolVerb } from "./utils";
 
 function countToolParts(parts: AllToolParts["parts"]) {
   let total = 0;
@@ -90,7 +91,7 @@ function TaskToolContent({
   if (toolPart.status === "pending" && toolPart.parts.length === 0) {
     return (
       <GenericToolPartContentOneLine toolStatus="pending">
-        Working...
+        {getToolVerb("Task", "pending")}
       </GenericToolPartContentOneLine>
     );
   }
@@ -120,7 +121,7 @@ function TaskToolContent({
       toolStatus={toolPart.status}
       className="text-foreground"
     >
-      <div className="col-span-full border-l-2 border-border pl-2">
+      <div className="col-span-full pl-3">
         {numToolsToHide > 0 && !expanded && (
           <GenericToolPartContentRow index={0}>
             <div className="text-sm text-muted-foreground italic">

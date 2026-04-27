@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { BannerContainer } from "@/components/system/banner-container";
+import { BannerSkeleton } from "@/components/system/banner-skeleton";
 import { PageHeaderProvider } from "@/contexts/page-header";
 import { ThreadListSidebar } from "@/components/thread-list/sidebar";
 import {
@@ -14,18 +16,27 @@ export default async function TaskListLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const userId = await getUserIdOrNull();
+  // Resolve auth + prefetch the thread list in parallel. The thread-list
+  // server action gets its user scope via cached `getSessionOrNull()`
+  // internally, so it doesn't need `userId` as an arg — we only need
+  // userId to decide whether to render the sidebar. Parallelizing saves
+  // one session-check-worth of wall-clock time from TTFB.
   const queryClient = new QueryClient();
-  await queryClient.prefetchInfiniteQuery(
-    threadListQueryOptions({ archived: false }),
-  );
+  const [userId] = await Promise.all([
+    getUserIdOrNull(),
+    queryClient.prefetchInfiniteQuery(
+      threadListQueryOptions({ archived: false }),
+    ),
+  ]);
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-4 md:pr-4 md:pl-2">
         <div className="flex min-h-0 flex-1 overflow-hidden bg-card transition-[border-radius,box-shadow] duration-200 md:rounded-[10px] md:border md:border-border md:shadow-sm">
           {userId ? <ThreadListSidebar /> : null}
           <div className="flex flex-col h-full min-w-0 flex-1">
-            <BannerContainer />
+            <Suspense fallback={<BannerSkeleton />}>
+              <BannerContainer />
+            </Suspense>
             <PageHeaderProvider>{children}</PageHeaderProvider>
           </div>
         </div>

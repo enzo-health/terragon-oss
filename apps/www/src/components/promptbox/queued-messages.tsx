@@ -2,10 +2,10 @@
 
 import React, { useMemo, useState } from "react";
 import { DBUserMessage } from "@terragon/shared";
+import { UIMessage } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
 import { cn } from "@/lib/utils";
 import { ChatMessage } from "../chat/chat-message";
-import { toUIMessages } from "../chat/toUIMessages";
 import { Button } from "../ui/button";
 import { ChevronRight, X } from "lucide-react";
 
@@ -18,17 +18,15 @@ interface QueuedMessagesProps {
 
 export function QueuedMessages({
   messages,
-  agent,
+  agent: _agent,
   onRemove,
   className,
 }: QueuedMessagesProps) {
   const uiMessages = useMemo(() => {
-    // We don't want to merge queued messages the same way we do
-    // regular messages so that the user can delete them individually.
-    return messages.map(
-      (message) => toUIMessages({ agent, dbMessages: [message] })[0]!,
+    return messages.map((message, index) =>
+      queuedUserMessageToUiMessage(message, index),
     );
-  }, [messages, agent]);
+  }, [messages]);
   const [collapsed, setCollapsed] = useState(false);
   if (messages.length === 0) {
     return null;
@@ -67,6 +65,7 @@ export function QueuedMessages({
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label="Remove queued message"
                       className="size-6 hover:bg-transparent cursor-pointer shrink-0 py-5 -ml-8 z-10 opacity-75 hover:opacity-100"
                       onClick={() => onRemove?.(index)}
                     >
@@ -81,4 +80,17 @@ export function QueuedMessages({
       </div>
     </div>
   );
+}
+
+function queuedUserMessageToUiMessage(
+  message: DBUserMessage,
+  index: number,
+): UIMessage {
+  return {
+    id: `queued-${index}-${message.timestamp ?? "pending"}`,
+    role: "user",
+    parts: message.parts,
+    timestamp: message.timestamp,
+    model: message.model,
+  };
 }

@@ -73,9 +73,23 @@ function getStatusLabel({
 
 export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
   thread,
+  isOptimistic,
 }: {
   thread: Pick<ThreadInfo, "isUnread" | "threadChats" | "draftMessage">;
+  isOptimistic?: boolean;
 }) {
+  // For optimistic threads, show creating state
+  if (isOptimistic) {
+    return (
+      <div className="flex-shrink-0" title="Creating">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/30 opacity-60" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary/50" />
+        </span>
+      </div>
+    );
+  }
+
   const status = combineThreadStatuses(
     thread.threadChats.map((chat) => chat.status),
   );

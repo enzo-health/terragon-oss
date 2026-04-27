@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type {
   AllToolParts,
   UIAgentMessage,
+  UIImagePart,
   UIMessage,
   UITextPart,
+  UIThinkingPart,
   UIUserMessage,
 } from "@terragon/shared";
 import { getActiveAgentMessageId, groupParts } from "./chat-message.utils";
@@ -45,6 +47,14 @@ function readTool(id: string): AllToolParts {
     status: "completed",
     result: "contents",
   };
+}
+
+function thinking(s: string): UIThinkingPart {
+  return { type: "thinking", thinking: s };
+}
+
+function image(url: string): UIImagePart {
+  return { type: "image", image_url: url };
 }
 
 describe("groupParts", () => {
@@ -142,6 +152,66 @@ describe("groupParts", () => {
     }
     const flattened = groups.flatMap((g) => g.parts);
     expect(flattened).toEqual(parts);
+  });
+
+  it("preserves input part object references — invariant required by group memo comparators", () => {
+    // CollapsibleAgentActivityGroup and ImageGroup rely on a `memo`
+    // comparator that does element-wise `===` reference compare on
+    // `group.parts`. If `groupParts` ever wrapped or cloned a part, every
+    // comparator call would return false and memoization would silently
+    // evaporate. This test pins the invariant: every input part must
+    // appear exactly once in the output, by identity.
+    const parts: UIUserOrAgentPart[] = [
+      bashTool("a"),
+      readTool("b"),
+      thinking("thinking hard"),
+      text("Intermediate note"),
+      image("https://example.com/1.png"),
+      image("https://example.com/2.png"),
+      bashTool("c"),
+      text("Final answer"),
+    ];
+
+    const groups = groupParts({ parts, isActiveTurn: false });
+    const seen = groups.flatMap((g) => g.parts);
+
+    // Same count — no drops, no duplicates.
+    expect(seen).toHaveLength(parts.length);
+
+    // Every input part appears in the output by reference (===).
+    for (const original of parts) {
+      expect(seen).toContain(original);
+    }
+
+    // Every output part came from the input by reference — no wrapping.
+    for (const group of groups) {
+      for (const p of group.parts) {
+        expect(parts).toContain(p);
+      }
+    }
+  });
+
+  it("preserves input part object references on active turn too", () => {
+    const parts: UIUserOrAgentPart[] = [
+      bashTool("a"),
+      thinking("mid-thought"),
+      text("streaming"),
+      image("https://example.com/x.png"),
+      bashTool("b"),
+    ];
+
+    const groups = groupParts({ parts, isActiveTurn: true });
+    const seen = groups.flatMap((g) => g.parts);
+
+    expect(seen).toHaveLength(parts.length);
+    for (const original of parts) {
+      expect(seen).toContain(original);
+    }
+    for (const group of groups) {
+      for (const p of group.parts) {
+        expect(parts).toContain(p);
+      }
+    }
   });
 
   it("supersession: same parts flip from expanded (active) to collapsed (historical) with no other input", () => {

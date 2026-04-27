@@ -1,28 +1,24 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
-import { SingleEntityTable } from "./single-entity-table";
-import { EntityIdInput } from "./entity-id-input";
-import { Button } from "@/components/ui/button";
-import { PRStatusPill } from "@/components/pr-status-pill";
-import { GitDiffStats } from "@/components/admin/git-diff-stats";
-import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
-import { Copy, Check, Download } from "lucide-react";
-import { toast } from "sonner";
-import { downloadClaudeSessionJSONL } from "@/server-actions/admin/thread";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { ChatMessages } from "@/components/chat/chat-messages";
-import { toUIMessages } from "@/components/chat/toUIMessages";
 import { ThreadChatInfoFull } from "@terragon/shared";
-import { ensureAgent } from "@terragon/agent/utils";
-import { type ThreadForAdmin } from "@/server-actions/admin/thread";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { ThreadStatusIndicator } from "../thread-status";
+import { Check, Copy, Download } from "lucide-react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useState } from "react";
+import { toast } from "sonner";
+import { GitDiffStats } from "@/components/admin/git-diff-stats";
+import { PRStatusPill } from "@/components/pr-status-pill";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
+import {
+  downloadClaudeSessionJSONL,
+  type ThreadForAdmin,
+} from "@/server-actions/admin/thread";
 import { ThreadAgentIcon } from "../thread-agent-icon";
+import { ThreadStatusIndicator } from "../thread-status";
+import { EntityIdInput } from "./entity-id-input";
+import { SingleEntityTable } from "./single-entity-table";
 
 type Keys = keyof ThreadForAdmin | `threadChats.${keyof ThreadChatInfoFull}`;
 
@@ -165,20 +161,9 @@ export function AdminThreadContent({
     { label: "Threads", href: "/internal/admin/thread" },
     ...(threadIdOrNull ? [{ label: threadIdOrNull }] : []),
   ]);
-  const threadChat = threadOrNull ? getPrimaryThreadChat(threadOrNull) : null;
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab") || "details";
-  const [showMessagesJson, setShowMessagesJson] = useState(false);
-  const uiMessages = useMemo(() => {
-    if (!threadChat) {
-      return null;
-    }
-    const agent = ensureAgent(threadChat?.agent);
-    return threadChat?.messages
-      ? toUIMessages({ agent, dbMessages: threadChat?.messages })
-      : null;
-  }, [threadChat]);
 
   const handleTabChange = useCallback(
     (value: string) => {
@@ -389,41 +374,8 @@ export function AdminThreadContent({
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-md font-semibold">Messages</h2>
-
-                  {threadChat?.messages && (
-                    <div className="flex items-center gap-2">
-                      <Label
-                        className="text-xs text-muted-foreground"
-                        htmlFor="messages-json"
-                      >
-                        JSON
-                        <Switch
-                          id="messages-json"
-                          checked={showMessagesJson}
-                          onCheckedChange={setShowMessagesJson}
-                        />
-                      </Label>
-                      <CopyButton
-                        text={JSON.stringify(threadChat.messages, null, 2)}
-                      />
-                    </div>
-                  )}
                 </div>
-                {showMessagesJson ? (
-                  threadChat?.messages ? (
-                    <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
-                      {JSON.stringify(threadChat.messages, null, 2)}
-                    </pre>
-                  ) : (
-                    <p className="text-muted-foreground">
-                      No messages available
-                    </p>
-                  )
-                ) : uiMessages ? (
-                  <ChatMessages messages={uiMessages} isAgentWorking={false} />
-                ) : (
-                  <p className="text-muted-foreground">No messages available</p>
-                )}
+                <p className="text-muted-foreground">No messages available</p>
               </div>
             </TabsContent>
           </Tabs>

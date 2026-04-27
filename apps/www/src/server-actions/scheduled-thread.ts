@@ -38,6 +38,11 @@ export const cancelScheduledThread = userOnlyAction(
         threadChatId,
       },
     });
+    const cancelMessage = {
+      type: "system" as const,
+      message_type: "cancel-schedule" as const,
+      parts: [],
+    };
     const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,
@@ -45,9 +50,7 @@ export const cancelScheduledThread = userOnlyAction(
       eventType: "user.cancel-schedule",
       chatUpdates: {
         scheduleAt: null,
-        appendMessages: [
-          { type: "system", message_type: "cancel-schedule", parts: [] },
-        ],
+        appendMessages: [cancelMessage],
       },
     });
     if (!didUpdateStatus) {

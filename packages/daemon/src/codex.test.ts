@@ -921,6 +921,48 @@ describe("parseCodexLine", () => {
     }
   });
 
+  test("should not complete collab task when child agents are still pending", () => {
+    const state = createCodexParserState();
+    const startedLine =
+      '{"type":"item.started","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{},"status":"in_progress"}}';
+    const nonTerminalCompletedLine =
+      '{"type":"item.completed","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"pendingInit"}},"status":"completed"}}';
+    const terminalUpdatedLine =
+      '{"type":"item.updated","item":{"id":"item_collab_pending","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Investigate deployment failure","agents_states":{"thread_child":{"status":"completed","message":"done"}},"status":"completed"}}';
+
+    const started = parseCodexLine({
+      line: startedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const nonTerminalCompleted = parseCodexLine({
+      line: nonTerminalCompletedLine,
+      runtime: mockRuntime,
+      state,
+    });
+    const terminalUpdated = parseCodexLine({
+      line: terminalUpdatedLine,
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(started).toHaveLength(1);
+    expect(nonTerminalCompleted).toHaveLength(0);
+    expect(terminalUpdated).toHaveLength(1);
+    expect(terminalUpdated[0]?.type).toBe("user");
+    if (terminalUpdated[0]?.type === "user") {
+      const content = terminalUpdated[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_collab_pending",
+          is_error: false,
+        });
+      }
+    }
+  });
+
   test("should not emit duplicate Task start if item.updated arrives before item.started", () => {
     const state = createCodexParserState();
     const updated = parseCodexLine({
@@ -989,7 +1031,7 @@ describe("parseCodexLine", () => {
     ).toBeNull();
   });
 
-  test("should preserve active collab task parent context across turn boundaries", () => {
+  test("should close active collab tasks at clean turn completion", () => {
     const state = createCodexParserState();
     parseCodexLine({
       line: '{"type":"item.started","item":{"id":"item_cross_turn","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Long-running delegated task","agents_states":{},"status":"in_progress"}}',
@@ -997,11 +1039,26 @@ describe("parseCodexLine", () => {
       state,
     });
 
-    parseCodexLine({
+    const turnCompleted = parseCodexLine({
       line: '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}',
       runtime: mockRuntime,
       state,
     });
+
+    expect(turnCompleted).toHaveLength(1);
+    expect(turnCompleted[0]?.type).toBe("user");
+    if (turnCompleted[0]?.type === "user") {
+      const content = turnCompleted[0].message.content;
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({
+          type: "tool_result",
+          tool_use_id: "item_cross_turn",
+          content: "Delegated Codex sub-agent task completed",
+          is_error: false,
+        });
+      }
+    }
 
     const commandStarted = parseCodexLine({
       line: '{"type":"item.started","item":{"id":"item_cross_turn_cmd","type":"command_execution","command":"bash -lc ls","aggregated_output":"","status":"in_progress"}}',
@@ -1014,7 +1071,48 @@ describe("parseCodexLine", () => {
       commandStarted[0] && "parent_tool_use_id" in commandStarted[0]
         ? commandStarted[0].parent_tool_use_id
         : null,
-    ).toBe("item_cross_turn");
+    ).toBeNull();
+  });
+
+  test("should close nested active collab tasks with their original parents", () => {
+    const state = createCodexParserState();
+    parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_parent","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"Parent","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_child","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_child","receiver_thread_ids":["thread_grandchild"],"prompt":"Child","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    const turnCompleted = parseCodexLine({
+      line: '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(turnCompleted).toHaveLength(2);
+    expect(
+      turnCompleted.map((message) =>
+        message.type === "user"
+          ? {
+              parent: message.parent_tool_use_id,
+              toolUseId: Array.isArray(message.message.content)
+                ? (
+                    message.message.content[0] as
+                      | { tool_use_id?: string }
+                      | undefined
+                  )?.tool_use_id
+                : null,
+            }
+          : null,
+      ),
+    ).toEqual([
+      { parent: "item_parent", toolUseId: "item_child" },
+      { parent: null, toolUseId: "item_parent" },
+    ]);
   });
 
   test("should nest delegated collab tasks under parent collab task", () => {

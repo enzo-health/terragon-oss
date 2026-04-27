@@ -79,7 +79,7 @@ export function SettingsSection({
   cta?: React.ReactNode;
 }) {
   return (
-    <div className="bg-card rounded-[16px] border shadow-card p-6 space-y-6">
+    <div className="bg-card rounded-lg border p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
           <h3 className="text-lg font-display font-[300]">{label}</h3>

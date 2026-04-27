@@ -1,24 +1,25 @@
+import { Suspense } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { NotificationProvider } from "@/components/system/notification-provider";
 import { SidebarInset } from "@/components/ui/sidebar";
-import { getUserIdOrNull } from "@/lib/auth-server";
+import { SidebarAuthWrapper } from "@/components/sidebar-auth-wrapper";
+import { SidebarSkeleton } from "@/components/sidebar-skeleton";
 
-export const dynamic = "force-dynamic";
-
-export default async function SidebarLayout({
+// Note: Removed force-dynamic - auth is now handled by client component wrapper
+// This allows static optimization and prefetching for the layout shell
+export default function SidebarLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const userId = await getUserIdOrNull();
   return (
     <>
-      {userId ? (
-        <>
+      <Suspense fallback={<SidebarSkeleton />}>
+        <SidebarAuthWrapper>
           <NotificationProvider />
           <AppSidebar />
-        </>
-      ) : null}
+        </SidebarAuthWrapper>
+      </Suspense>
       <SidebarInset className="!m-0 !overflow-hidden !rounded-none !shadow-none max-h-svh min-w-0 bg-app-background">
         {children}
       </SidebarInset>

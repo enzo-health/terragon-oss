@@ -14,7 +14,7 @@ export function buildQualityCheckScript(): string {
   return `#!/bin/bash
 set -o pipefail
 
-# --- Quality check Stop hook for Terragon SDLC ---
+# --- Terragon quality check Stop hook ---
 
 # Skip if no package.json (not a JS/TS project)
 if [ ! -f package.json ]; then

@@ -32,6 +32,7 @@ export function MobileArtifactDrawer({
   threadChatId,
   isReadOnly,
   promptBoxRef,
+  onOptimisticPermissionModeUpdate,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,6 +45,7 @@ export function MobileArtifactDrawer({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
 }) {
   const [activeSnap, setActiveSnap] = useState<number | string | null>(
     MOBILE_DRAWER_DEFAULT_SNAP,
@@ -116,6 +118,7 @@ export function MobileArtifactDrawer({
             threadChatId={threadChatId}
             isReadOnly={isReadOnly}
             promptBoxRef={promptBoxRef}
+            onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
           />
         </div>
         {showScrollFade && (

@@ -614,6 +614,15 @@ describe("extractMetaEvent (Task 2.8)", () => {
     expect(meta.status).toBe("running");
   });
 
+  test("thread/status/changed inline without status is ignored", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "thread/status/changed",
+      params: { threadId: "t-abc" },
+    });
+    expect(meta).toBeNull();
+  });
+
   // config/warning (synthesized inline — no fixture).
   test("config/warning inline → config.warning", () => {
     const meta = extractMetaEvent({

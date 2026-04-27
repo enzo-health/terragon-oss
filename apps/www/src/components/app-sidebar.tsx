@@ -246,12 +246,14 @@ function Item({
   icon,
   count,
   external = false,
+  prefetch = true,
 }: {
   title: string;
   href: string;
   icon: React.ReactNode;
   count?: number;
   external?: boolean;
+  prefetch?: boolean;
 }) {
   const pathname = usePathname();
   const isActive = pathname === href;
@@ -272,6 +274,7 @@ function Item({
         ) : (
           <Link
             href={href}
+            prefetch={prefetch}
             className="font-normal text-xs transition-colors duration-150"
           >
             {icon}

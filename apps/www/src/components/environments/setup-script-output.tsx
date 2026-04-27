@@ -90,7 +90,7 @@ export function SetupScriptOutput({
         ))}
         {isRunning && (
           <div className="text-gray-400">
-            <span className="animate-shine">Running...</span>
+            <span className="text-muted-foreground">Running...</span>
           </div>
         )}
 

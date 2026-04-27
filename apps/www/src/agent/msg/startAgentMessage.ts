@@ -7,7 +7,6 @@ import {
   normalizedModelForDaemon,
   shouldUseCredits as shouldUseCreditsUtil,
 } from "@terragon/agent/utils";
-import { env } from "@terragon/env/apps-www";
 import { gitPullUpstream } from "@terragon/sandbox/commands";
 import {
   type BootingSubstatus,
@@ -16,19 +15,16 @@ import {
 } from "@terragon/sandbox/types";
 import {
   DBMessage,
+  DBThreadContextMessage,
   DBUserMessage,
   DBUserMessageWithModel,
-  Thread,
 } from "@terragon/shared";
-import { DB } from "@terragon/shared/db";
-import type { DeliveryLoopState } from "@terragon/shared/db/types";
-import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";
-import { stateToDeliveryLoopState } from "@/server-lib/delivery-loop/v3/types";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import { DB } from "@terragon/shared/db";
+import type { AgentRuntimeProvider } from "@terragon/shared/db/types";
+import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   activeThreadStatuses,
   getActiveThreadCount,
@@ -38,8 +34,9 @@ import {
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
+import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { waitUntil } from "@vercel/functions";
-import { z } from "zod";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
@@ -53,7 +50,6 @@ import { withThreadChat } from "@/agent/thread-resource";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   convertToPrompt,
-  getLastUserMessageModel,
   getUserMessageToSend,
 } from "@/lib/db-message-helpers";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -61,40 +57,19 @@ import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
-import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
 import { compactThreadChat, tryAutoCompactThread } from "@/server-lib/compact";
-import { getActiveDispatchIntent } from "@/server-lib/delivery-loop/dispatch-intent";
-import {
-  ensureDeliveryLoopEnrollmentForThreadIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
+import { getLatestNativeAgUiSnapshotMessage } from "@/server-lib/ag-ui-side-effect-messages";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "@/server-lib/process-follow-up-queue";
-import {
-  generateThreadContextResult,
-  getThreadContextMessageToGenerate,
-} from "@/server-lib/thread-context";
+import { generateThreadContextResult } from "@/server-lib/thread-context";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
 const FOLLOW_UP_TTFR_START_TTL_SECONDS = 60 * 60;
-
-const planArtifactPromptPayloadSchema = z.object({
-  planText: z.string().min(1),
-  tasks: z
-    .array(
-      z.object({
-        stableTaskId: z.string().min(1),
-        title: z.string().min(1),
-        description: z.string().nullable().optional(),
-      }),
-    )
-    .default([]),
-});
 
 function getUpstreamPullKey(threadId: string) {
   return `${LAST_UPSTREAM_PULL_PREFIX}${threadId}`;
@@ -169,80 +144,56 @@ async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
   }
 }
 
-async function resolveDispatchRunIdentity({
-  db,
-  threadId,
-  threadChatId,
-  workflowId,
-  workflowRunSeq,
+function runtimeProviderForDispatch({
+  agent,
+  adapterId,
 }: {
-  db: DB;
-  threadId: string;
-  threadChatId: string;
-  workflowId: string | null;
-  workflowRunSeq: number | null;
-}): Promise<{
-  workflowId: string | null;
-  workflowRunSeq: number | null;
-  runId: string;
-}> {
-  if (workflowId !== null && workflowRunSeq === null) {
-    console.warn(
-      "[startAgentMessage] delivery-loop workflow missing active run sequence; continuing with degraded run linkage",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-      },
-    );
+  agent: AIAgent;
+  adapterId: RuntimeAdapterContract["adapterId"];
+}): AgentRuntimeProvider {
+  switch (adapterId) {
+    case "codex-app-server":
+      return "codex-app-server";
+    case "claude-acp":
+      return "claude-acp";
+    case "legacy": {
+      switch (agent) {
+        case "claudeCode":
+          return "legacy-claude";
+        case "gemini":
+          return "legacy-gemini";
+        case "amp":
+          return "legacy-amp";
+        case "opencode":
+          return "legacy-opencode";
+        case "codex":
+          return "codex-app-server";
+        default: {
+          const _exhaustiveCheck: never = agent;
+          throw new Error(
+            `unsupported legacy runtime provider for ${_exhaustiveCheck}`,
+          );
+        }
+      }
+    }
+    default: {
+      const _exhaustiveCheck: never = adapterId;
+      throw new Error(`unsupported runtime adapter ${_exhaustiveCheck}`);
+    }
   }
+}
 
-  // DB intent is canonical. Redis intent is a realtime cache and may
-  // be stale or unavailable in local redis-http mode.
-  const durableIntent =
-    workflowId === null
-      ? null
-      : await getLatestActiveDispatchIntentForThreadChat(db, {
-          threadChatId,
-          loopId: workflowId,
-        });
-  const activeIntent =
-    workflowId === null ? null : await getActiveDispatchIntent(threadChatId);
-
+function replayMessagesForDispatch(messages: DBMessage[]): DBMessage[] {
+  const latest = messages.at(-1);
   if (
-    activeIntent &&
-    durableIntent &&
-    activeIntent.runId !== durableIntent.runId
+    latest?.type === "system" &&
+    latest.message_type !== "compact-result" &&
+    latest.message_type !== "clear-context" &&
+    latest.message_type !== "cancel-schedule"
   ) {
-    console.warn(
-      "[startAgentMessage] dispatch run identity mismatch between redis and db",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-        redisRunId: activeIntent.runId,
-        dbRunId: durableIntent.runId,
-      },
-    );
+    return [latest];
   }
-
-  if (workflowId !== null && !durableIntent && activeIntent) {
-    console.warn(
-      "[startAgentMessage] missing durable dispatch intent for delivery-loop run; using redis fallback",
-      {
-        threadId,
-        threadChatId,
-        workflowId,
-        redisRunId: activeIntent.runId,
-      },
-    );
-  }
-
-  return {
-    workflowId,
-    workflowRunSeq,
-    runId: durableIntent?.runId ?? activeIntent?.runId ?? randomUUID(),
-  };
+  return messages;
 }
 
 export type StartAgentMessageParams = {
@@ -252,6 +203,7 @@ export type StartAgentMessageParams = {
   // For example, when retrying a thread, we don't want to upload the message again.
   // See also: getUserMessageToSend.
   message?: DBUserMessageWithModel | null;
+  threadContextMessage?: DBThreadContextMessage | null;
   threadId: string;
   threadChatId: string;
   isNewThread: boolean;
@@ -270,6 +222,7 @@ export async function startAgentMessage({
   db,
   userId,
   message,
+  threadContextMessage,
   threadId,
   threadChatId,
   isNewThread,
@@ -333,6 +286,21 @@ export async function startAgentMessage({
         ? await uploadUserMessageImages({ userId, message })
         : null;
 
+      let threadContextPromise: Promise<void> | null = null;
+      const getThreadContextPromise = (): Promise<void> | null => {
+        if (!threadContextMessage) {
+          return null;
+        }
+        threadContextPromise ??= generateThreadContextResult({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          threadContextMessage,
+        });
+        return threadContextPromise;
+      };
+
       // Only check rate limits if the thread doesn't have any active thread chats.
       const thread = await getThread({ db, threadId, userId });
       if (!thread) {
@@ -379,6 +347,10 @@ export async function startAgentMessage({
               ...queuedThreadCounts,
             },
           });
+          const contextPromise = getThreadContextPromise();
+          if (contextPromise) {
+            await contextPromise;
+          }
           await updateThreadChatWithTransition({
             userId,
             threadId,
@@ -415,6 +387,10 @@ export async function startAgentMessage({
               ...queuedThreadCounts,
             },
           });
+          const contextPromise = getThreadContextPromise();
+          if (contextPromise) {
+            await contextPromise;
+          }
           await updateThreadChatWithTransition({
             userId,
             threadId,
@@ -431,20 +407,7 @@ export async function startAgentMessage({
         }
       }
 
-      // If there's a thread-context message without a thread-context-result message, we need to generate it
-      let threadContextPromise: Promise<void> | null = null;
-      const threadContextMessage = getThreadContextMessageToGenerate({
-        threadChat,
-      });
-      if (threadContextMessage) {
-        threadContextPromise = generateThreadContextResult({
-          db,
-          userId,
-          threadId,
-          threadChatId,
-          threadContextMessage,
-        });
-      }
+      getThreadContextPromise();
 
       await updateThreadChatWithTransition({
         userId,
@@ -466,6 +429,50 @@ export async function startAgentMessage({
       // for the boot.substatus_changed meta event.
       let lastBootingSubstatus: BootingSubstatus | null = null;
       let lastBootingTransitionAt: number | null = null;
+      const emitBootSubstatusChanged = (
+        nextSubstatus: BootingSubstatus,
+        now: number,
+      ) => {
+        if (nextSubstatus === lastBootingSubstatus) {
+          return;
+        }
+        const durationMs =
+          lastBootingTransitionAt !== null
+            ? now - lastBootingTransitionAt
+            : undefined;
+        const metaEvent: ThreadMetaEvent = {
+          kind: "boot.substatus_changed",
+          threadId,
+          from: lastBootingSubstatus,
+          to: nextSubstatus,
+          timestamp: new Date(now).toISOString(),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        };
+        publishBroadcastUserMessage({
+          type: "user",
+          id: userId,
+          data: {
+            threadPatches: [
+              {
+                threadId,
+                op: "upsert",
+                metaEvents: [metaEvent],
+              },
+            ],
+          },
+        }).catch((error) => {
+          console.warn(
+            "[start-agent-message] boot.substatus_changed broadcast failed",
+            {
+              threadId,
+              to: nextSubstatus,
+              error,
+            },
+          );
+        });
+        lastBootingSubstatus = nextSubstatus;
+        lastBootingTransitionAt = now;
+      };
 
       const onStatusUpdate: CreateSandboxOptions["onStatusUpdate"] = async ({
         sandboxId,
@@ -490,49 +497,7 @@ export async function startAgentMessage({
               ? "provisioning"
               : bootingStatus;
 
-          // Skip duplicate transitions — same substatus arriving twice would
-          // corrupt the client reducer by appending a row with from === to.
-          if (normalised === lastBootingSubstatus) {
-            return;
-          }
-
-          const now = Date.now();
-          const durationMs =
-            lastBootingTransitionAt !== null
-              ? now - lastBootingTransitionAt
-              : undefined;
-          const metaEvent: ThreadMetaEvent = {
-            kind: "boot.substatus_changed",
-            threadId,
-            from: lastBootingSubstatus,
-            to: normalised,
-            timestamp: new Date(now).toISOString(),
-            ...(durationMs !== undefined ? { durationMs } : {}),
-          };
-          publishBroadcastUserMessage({
-            type: "user",
-            id: userId,
-            data: {
-              threadPatches: [
-                {
-                  threadId,
-                  op: "upsert",
-                  metaEvents: [metaEvent],
-                },
-              ],
-            },
-          }).catch((error) => {
-            console.warn(
-              "[start-agent-message] boot.substatus_changed broadcast failed",
-              {
-                threadId,
-                to: bootingStatus,
-                error,
-              },
-            );
-          });
-          lastBootingSubstatus = normalised;
-          lastBootingTransitionAt = now;
+          emitBootSubstatusChanged(normalised, Date.now());
         }
       };
       await withSandboxResource({
@@ -586,6 +551,7 @@ export async function startAgentMessage({
               bootingSubstatus: "booting-done",
             },
           });
+          emitBootSubstatusChanged("booting-done", Date.now());
           if (threadContextPromise) {
             await threadContextPromise;
           }
@@ -616,10 +582,12 @@ export async function startAgentMessage({
           }
 
           // Pick up any queued messages that were added while we were waiting for the sandbox to boot.
+          let promotedQueuedMessageToSend: DBUserMessage | null = null;
           if (
             threadChat.queuedMessages &&
             threadChat.queuedMessages.length > 0
           ) {
+            const queuedMessagesSnapshot = [...threadChat.queuedMessages];
             await updateThreadChat({
               db,
               userId,
@@ -635,11 +603,73 @@ export async function startAgentMessage({
               threadChatId,
               userId,
             }))!;
+            if (!message) {
+              promotedQueuedMessageToSend =
+                queuedMessagesSnapshot.length === 1
+                  ? queuedMessagesSnapshot[0]!
+                  : {
+                      type: "user",
+                      model:
+                        queuedMessagesSnapshot.at(-1)?.model ??
+                        getDefaultModelForAgent({
+                          agent: threadChat.agent,
+                          agentVersion: threadChat.agentVersion,
+                        }),
+                      permissionMode:
+                        queuedMessagesSnapshot.at(-1)?.permissionMode ??
+                        threadChat.permissionMode ??
+                        "allowAll",
+                      parts: queuedMessagesSnapshot.flatMap(
+                        (queuedMessage, index) =>
+                          index === 0
+                            ? queuedMessage.parts
+                            : [
+                                {
+                                  type: "text" as const,
+                                  text: "\n\n---\n\n",
+                                },
+                                ...queuedMessage.parts,
+                              ],
+                      ),
+                      timestamp: queuedMessagesSnapshot.at(-1)?.timestamp,
+                    };
+            }
           }
+          const replayMessages = (
+            await getThreadReplayEntriesFromCanonicalEvents({
+              db,
+              threadId,
+              threadChatId,
+              fromThreadChatMessageSeq: 0,
+            })
+          ).flatMap((entry) => entry.messages);
           let userMessageToSend = getUserMessageToSend({
-            messages: threadChat.messages ?? [],
-            currentMessage: message ?? null,
+            messages:
+              replayMessages.length > 0
+                ? replayMessagesForDispatch(replayMessages)
+                : [],
+            currentMessage: message ?? promotedQueuedMessageToSend,
           });
+          if (!userMessageToSend) {
+            const latestNativeMessage =
+              await getLatestNativeAgUiSnapshotMessage({
+                db,
+                threadChatId,
+              });
+            if (latestNativeMessage) {
+              userMessageToSend = {
+                type: "user",
+                model: null,
+                permissionMode: threadChat.permissionMode ?? "allowAll",
+                parts: [
+                  {
+                    type: "text",
+                    text: latestNativeMessage.content,
+                  },
+                ],
+              };
+            }
+          }
           // Update permission mode if it's different from the thread's permission mode
           const newPermissionMode =
             userMessageToSend?.permissionMode ??
@@ -703,7 +733,6 @@ export async function startAgentMessage({
           // Prepare prompt based on model
           const model =
             userMessageToSend?.model ??
-            getLastUserMessageModel(threadChat.messages ?? []) ??
             getDefaultModelForAgent({
               agent: threadChat.agent,
               agentVersion: threadChat.agentVersion,
@@ -722,112 +751,7 @@ export async function startAgentMessage({
           }
 
           const agentForModel = modelToAgent(model);
-          const deliveryEligibleForThread =
-            isDeliveryLoopEnrollmentAllowedForThread({
-              sourceType: thread?.sourceType ?? null,
-              sourceMetadata: thread?.sourceMetadata ?? null,
-            });
-          let activeWorkflow = await getActiveWorkflowForThread({
-            db,
-            threadId,
-          });
-          if (deliveryEligibleForThread && !activeWorkflow) {
-            try {
-              const planApprovalPolicy =
-                thread?.sourceMetadata?.type === "www" ||
-                thread?.sourceMetadata?.type === "linear-mention"
-                  ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
-                  : "auto";
-              await ensureDeliveryLoopEnrollmentForThreadIfEnabled({
-                userId,
-                repoFullName: thread.githubRepoFullName,
-                threadId,
-                planApprovalPolicy,
-              });
-              activeWorkflow = await getActiveWorkflowForThread({
-                db,
-                threadId,
-              });
-            } catch (error) {
-              console.warn(
-                "[startAgentMessage] failed to self-heal Delivery Loop enrollment",
-                {
-                  userId,
-                  threadId,
-                  repoFullName: thread.githubRepoFullName,
-                  error,
-                },
-              );
-            }
-          }
-          if (deliveryEligibleForThread && !activeWorkflow) {
-            throw new ThreadError(
-              "unknown-error",
-              "Delivery Loop enrollment missing for eligible thread",
-              null,
-            );
-          }
-          // Read authoritative state from v3 head
-          const effectiveState: DeliveryLoopState | null = activeWorkflow
-            ? stateToDeliveryLoopState(activeWorkflow.head.state)
-            : null;
-          let planContext: {
-            planText: string;
-            tasks: Array<{
-              stableTaskId: string;
-              title: string;
-              description?: string | null;
-            }>;
-          } | null = null;
-          const effectiveLoopId = activeWorkflow?.workflow.id;
-          if (effectiveState === "implementing" && effectiveLoopId) {
-            try {
-              const { getLatestAcceptedArtifact } = await import(
-                "@terragon/shared/delivery-loop/store/artifact-store"
-              );
-              const artifact = await getLatestAcceptedArtifact({
-                db,
-                loopId: effectiveLoopId,
-                phase: "planning",
-                includeApprovedForPlanning: true,
-              });
-              if (artifact?.payload) {
-                const payload = planArtifactPromptPayloadSchema.safeParse(
-                  artifact.payload,
-                );
-                if (payload.success) {
-                  planContext = {
-                    planText: payload.data.planText,
-                    tasks: payload.data.tasks,
-                  };
-                } else {
-                  console.warn(
-                    "[startAgentMessage] ignored invalid plan artifact payload for implementing phase",
-                    {
-                      loopId: effectiveLoopId,
-                      issues: payload.error.issues,
-                    },
-                  );
-                }
-              }
-            } catch (err) {
-              console.warn(
-                "[startAgentMessage] failed to load plan artifact for implementing phase",
-                {
-                  loopId: effectiveLoopId,
-                  error: err instanceof Error ? err.message : String(err),
-                },
-              );
-            }
-          }
-          const deliveryLoopPhasePromptPrefix =
-            buildDeliveryLoopPhasePromptPrefix(effectiveState, planContext, {
-              blockedReason: activeWorkflow?.head.blockedReason ?? null,
-              fixAttemptCount: activeWorkflow?.head.fixAttemptCount ?? 0,
-              infraRetryCount: activeWorkflow?.head.infraRetryCount ?? 0,
-            });
-
-          if (!userMessageToSend && deliveryLoopPhasePromptPrefix === null) {
+          if (!userMessageToSend) {
             throw new ThreadError("no-user-message", "", null);
           }
 
@@ -836,9 +760,7 @@ export async function startAgentMessage({
                 await preparePromptForModel({
                   model,
                   agent: threadChat.agent,
-                  agentVersion: threadChat.agentVersion,
                   userMessageToSend,
-                  threadMessages: threadChat.messages ?? [],
                   session,
                 })
               ).prompt
@@ -848,10 +770,7 @@ export async function startAgentMessage({
             /(?:^|\s)\/compact(?=\s|$)/g,
             "",
           );
-          let finalFinalPrompt =
-            deliveryLoopPhasePromptPrefix === null
-              ? sanitizedPrompt
-              : `${deliveryLoopPhasePromptPrefix}\n\n${sanitizedPrompt}`;
+          let finalFinalPrompt = sanitizedPrompt;
 
           if (threadChat.agent === "codex") {
             const initialTurnStartChars =
@@ -917,21 +836,10 @@ export async function startAgentMessage({
             userCredentials,
           );
 
-          // When dispatched by the delivery loop, reuse the canonical dispatch
-          // run identity so timeout checks and daemon events stay correlated.
-          const { workflowId, workflowRunSeq, runId } =
-            await resolveDispatchRunIdentity({
-              db,
-              threadId,
-              threadChatId,
-              workflowId: activeWorkflow?.workflow.id ?? null,
-              workflowRunSeq: activeWorkflow?.head.activeRunSeq ?? null,
-            });
+          const runId = randomUUID();
           const tokenNonce = randomUUID();
           const rawPermissionMode = threadChat.permissionMode || "allowAll";
-          const effectivePermissionMode = activeWorkflow
-            ? "allowAll"
-            : rawPermissionMode;
+          const effectivePermissionMode = rawPermissionMode;
           const implementationDispatch = resolveImplementationRuntimeAdapter(
             threadChat.agent,
           ).createDispatch({
@@ -963,12 +871,19 @@ export async function startAgentMessage({
             codexPreviousResponseId =
               implementationDispatch.codexPreviousResponseId;
           }
+          const runtimeProvider = runtimeProviderForDispatch({
+            agent: threadChat.agent,
+            adapterId:
+              implementationDispatch.message.runtimeAdapterContract.adapterId,
+          });
+          const externalSessionId =
+            implementationDispatch.message.acpSessionId ??
+            implementationDispatch.message.sessionId ??
+            null;
 
           await upsertAgentRunContext({
             db,
             runId,
-            workflowId,
-            runSeq: workflowRunSeq,
             userId,
             threadId,
             threadChatId,
@@ -979,6 +894,9 @@ export async function startAgentMessage({
             permissionMode: effectivePermissionMode,
             requestedSessionId: implementationDispatch.requestedSessionId,
             resolvedSessionId: null,
+            runtimeProvider,
+            externalSessionId,
+            previousResponseId: implementationDispatch.codexPreviousResponseId,
             status: "pending",
             tokenNonce,
             daemonTokenKeyId: null,
@@ -1052,16 +970,12 @@ function estimateTurnStartRequestSizeChars(prompt: string): number {
 async function preparePromptForModel({
   model,
   agent,
-  agentVersion,
   userMessageToSend,
-  threadMessages,
   session,
 }: {
   model: AIModel;
   agent: AIAgent;
-  agentVersion: number;
   userMessageToSend: DBUserMessage;
-  threadMessages: Thread["messages"];
   session: ISandboxSession;
 }): Promise<{
   prompt: string;
@@ -1083,22 +997,10 @@ async function preparePromptForModel({
     return convertToPrompt(userMessageToSend, formatMessageOptions);
   };
 
-  const promptWithFullHistory = async () => {
-    if (threadMessages && threadMessages.length > 0) {
-      return await formatThreadToMsg(threadMessages, formatMessageOptions);
-    }
-    // No thread history, just format the current message
-    return promptWithMessageToSendOnly();
-  };
-
   let prompt: string;
   switch (agent) {
     case "codex": {
-      if (agentVersion < 1) {
-        prompt = await promptWithFullHistory();
-      } else {
-        prompt = await promptWithMessageToSendOnly();
-      }
+      prompt = await promptWithMessageToSendOnly();
       break;
     }
     case "amp":
@@ -1115,135 +1017,4 @@ async function preparePromptForModel({
     }
   }
   return { prompt };
-}
-
-function buildDeliveryLoopPhasePromptPrefix(
-  state: DeliveryLoopState | null,
-  planContext?: {
-    planText: string;
-    tasks: Array<{
-      stableTaskId: string;
-      title: string;
-      description?: string | null;
-    }>;
-  } | null,
-  headContext?: {
-    blockedReason: string | null;
-    fixAttemptCount: number;
-    infraRetryCount: number;
-  } | null,
-): string | null {
-  if (!state) {
-    return null;
-  }
-
-  switch (state) {
-    // v3-reachable: planning
-    case "planning":
-      return [
-        "Delivery Loop phase: planning. Generate an implementation plan only.",
-        "Output your plan as a JSON code block. Example:",
-        "",
-        "```json",
-        '{ "planText": "Brief summary of approach.",',
-        '  "tasks": [',
-        '    { "stableTaskId": "setup-auth", "title": "Set up authentication module",',
-        '      "description": "Create auth middleware.", "acceptance": ["Login returns JWT"] }',
-        "  ] }",
-        "```",
-        "",
-        "Required: tasks[] with at least one task. Each task needs title.",
-        "Do not edit files, run mutating commands, or open/update a PR.",
-      ].join("\n");
-    // v3-reachable: implementing
-    case "implementing": {
-      const isRetry =
-        (headContext?.fixAttemptCount ?? 0) > 0 ||
-        (headContext?.infraRetryCount ?? 0) > 0;
-      const lines: string[] = ["Delivery Loop phase: implementing."];
-      if (isRetry && headContext?.blockedReason) {
-        lines.push(
-          "",
-          `## Previous Failure`,
-          `This is retry attempt #${(headContext.fixAttemptCount ?? 0) + (headContext.infraRetryCount ?? 0) + 1}. The previous run failed:`,
-          `**${headContext.blockedReason}**`,
-          "",
-          "You MUST fix this specific issue before completing. Do not just re-run the same code — make targeted changes to resolve the failure.",
-          "",
-        );
-      }
-      if (planContext?.planText) {
-        lines.push("", "## Approved Plan", "", planContext.planText);
-        if (planContext.tasks?.length) {
-          lines.push("", "## Tasks");
-          for (const task of planContext.tasks) {
-            lines.push(
-              `- [${task.stableTaskId}] ${task.title}${task.description ? `: ${task.description}` : ""}`,
-            );
-          }
-        }
-        lines.push("");
-      }
-      lines.push(
-        "Implement the approved plan with concrete code changes.",
-        "When you complete a plan task, call the MarkImplementingTasksComplete tool with the task's stableTaskId and status.",
-        "After completing all tasks, call MarkImplementingTasksComplete with all completed task IDs.",
-        "",
-      );
-      if (env.SKIP_LOCAL_QUALITY_CHECKS) {
-        lines.push(
-          "Local lint/typecheck/test checks are temporarily skipped in this environment.",
-          "Rely on required GitHub CI checks before merge.",
-        );
-      } else {
-        lines.push(
-          "Before marking all tasks complete, you MUST verify:",
-          "1. Dependencies are installed (if node_modules is missing, run the project's install command)",
-          "2. Linting passes (run the project's lint command if available)",
-          "3. Type checking passes (run the project's typecheck command if available)",
-          "4. Tests pass (run targeted tests for affected package(s)/files; avoid full monorepo test runs unless explicitly required by the task or requested by the user)",
-          "Fix any failures before marking tasks complete.",
-        );
-      }
-      lines.push("", "Do not skip directly to PR babysitting in this phase.");
-      return lines.join("\n");
-    }
-    // v3-reachable: review_gate (mapped from "gating_review")
-    case "review_gate":
-      return [
-        "Delivery Loop phase: review_gate.",
-        "Audit the current implementation for correctness, regressions, edge cases, and maintainability.",
-        "If you find a blocking issue, fix it in this run instead of just reporting it.",
-        "Only move forward once there are zero blocking findings left.",
-      ].join(" ");
-    // v3-reachable: ci_gate (mapped from "gating_ci")
-    case "ci_gate":
-      return [
-        "Delivery Loop phase: ci_gate.",
-        "Verify the change exactly the way CI will verify it: lint, typecheck, and targeted tests.",
-        "If a check fails, fix the underlying issue and rerun the relevant command until it passes.",
-        "Do not hand off with known local quality failures.",
-      ].join(" ");
-    // v3-reachable: awaiting_pr_link (mapped from "awaiting_pr")
-    case "awaiting_pr_link":
-      return [
-        "Delivery Loop phase: awaiting_pr_link.",
-        "Create or link a pull request, then signal phaseComplete: true.",
-      ].join(" ");
-    // v3-reachable: blocked (mapped from awaiting_manual_fix / awaiting_operator_action)
-    case "blocked":
-      return [
-        "Delivery Loop phase: blocked.",
-        "Wait for explicit human feedback before making additional loop progression decisions.",
-        "Use explicit human-triggered controls to resume or bypass.",
-      ].join(" ");
-    // v3-reachable: done, stopped, terminated_pr_closed (v3 maps "terminated" → "terminated_pr_closed")
-    case "done":
-    case "stopped":
-    case "terminated_pr_closed":
-    case "terminated_pr_merged":
-      return `Delivery Loop phase: ${state}. Avoid new Delivery Loop actions unless explicitly requested.`;
-    default:
-      return null;
-  }
 }

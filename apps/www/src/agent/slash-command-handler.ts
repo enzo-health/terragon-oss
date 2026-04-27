@@ -88,13 +88,14 @@ async function handleClearCommand({
     parts: [],
     timestamp: new Date().toISOString(),
   };
+  const messagesToAppend = [message, systemMessage];
   await updateThreadChatWithTransition({
     userId,
     threadId,
     threadChatId,
     eventType: "system.slash-command-done",
     chatUpdates: {
-      appendMessages: [message, systemMessage],
+      appendMessages: messagesToAppend,
       sessionId: null,
       errorMessage: null,
       errorMessageInfo: null,

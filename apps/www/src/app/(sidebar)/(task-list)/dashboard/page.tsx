@@ -21,9 +21,8 @@ export default async function DashboardPage({
     archived?: string;
   }>;
 }) {
-  await getUserInfoOrRedirect();
-  // Get the archived param
-  const params = await searchParams;
+  // Auth + params in parallel. Auth doesn't need the URL params.
+  const [, params] = await Promise.all([getUserInfoOrRedirect(), searchParams]);
   const queryClient = new QueryClient();
   const showArchived = params.archived === "true";
   // If archived is true, prefetch the archived threads otherwise do nothing

@@ -266,7 +266,6 @@ async function getTargetsForCheckRunEvent(
     const prNumbers = await resolvePrNumbersFromSha({
       repoFullName,
       headSha: payload.check_run.head_sha,
-      includeTerminal: true,
     });
 
     if (prNumbers.length > 0) {
@@ -303,7 +302,6 @@ async function getTargetsForCheckSuiteEvent(
     const prNumbers = await resolvePrNumbersFromSha({
       repoFullName,
       headSha: payload.check_suite.head_sha,
-      includeTerminal: true,
     });
 
     if (prNumbers.length > 0) {

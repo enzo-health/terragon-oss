@@ -1,34 +1,34 @@
-import { db } from "@/lib/db";
+import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
+import { env } from "@terragon/env/apps-www";
 import { publicAppUrl } from "@terragon/env/next-public";
 import type { LinearMentionSourceMetadataInsert } from "@terragon/shared/db/types";
+import { getEnvironments } from "@terragon/shared/model/environments";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
-  getLinearAccountForLinearUserId,
-  getLinearSettingsForUserAndOrg,
-  getLinearInstallationForOrg,
   claimLinearWebhookDelivery,
   completeLinearWebhookDelivery,
+  getLinearAccountForLinearUserId,
+  getLinearInstallationForOrg,
+  getLinearSettingsForUserAndOrg,
 } from "@terragon/shared/model/linear";
 import {
+  getThread,
   getThreadByLinearAgentSessionId,
   getThreadByLinearDeliveryId,
-  getThread,
 } from "@terragon/shared/model/threads";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { getDefaultModel } from "@/server-lib/default-ai-model";
-import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
-import {
-  emitAgentActivity,
-  updateAgentSession,
-  type LinearClientFactory,
-  type AgentSessionExternalUrlInput,
-} from "@/server-lib/linear-agent-activity";
-import { getEnvironments } from "@terragon/shared/model/environments";
-import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
 import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
+import { db } from "@/lib/db";
+import { getDefaultModel } from "@/server-lib/default-ai-model";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import {
+  type AgentSessionExternalUrlInput,
+  emitAgentActivity,
+  type LinearClientFactory,
+  updateAgentSession,
+} from "@/server-lib/linear-agent-activity";
+import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
 
 // ---------------------------------------------------------------------------
 // Webhook payload types (mirrors @linear/sdk AgentSessionEventWebhookPayload)
@@ -568,9 +568,6 @@ async function createThreadRecord({
   const defaultModel = linearSettings?.defaultModel
     ? linearSettings.defaultModel
     : await getDefaultModel({ userId });
-  const deliveryLoopOptIn = linearSettings?.deliveryLoopOptIn ?? false;
-  const deliveryPlanApprovalPolicy =
-    linearSettings?.deliveryPlanApprovalPolicy ?? "auto";
 
   // Build message — use Linear's promptContext (formatted string with issue
   // details, comments, and guidance) when available, falling back to basic info.
@@ -592,8 +589,6 @@ async function createThreadRecord({
   console.log("[linear webhook] Creating thread for user", {
     userId,
     agentSessionId,
-    deliveryLoopOptIn,
-    deliveryPlanApprovalPolicy,
   });
 
   const sourceMetadata: LinearMentionSourceMetadataInsert = {
@@ -603,8 +598,6 @@ async function createThreadRecord({
     issueIdentifier,
     issueUrl,
     agentSessionId,
-    deliveryLoopOptIn,
-    deliveryPlanApprovalPolicy,
     ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
   };
 

@@ -1,4 +1,4 @@
-import ChatUI from "@/components/chat/chat-ui";
+import dynamic from "next/dynamic";
 import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
 import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
@@ -15,6 +15,12 @@ import {
 import { ThreadPageShell } from "@terragon/shared";
 import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 import { unwrapResult } from "@/lib/server-actions";
+import { ChatUISkeleton } from "@/components/chat/chat-ui-skeleton";
+
+// Dynamically import the heavy ChatUI component for code splitting
+const ChatUI = dynamic(() => import("@/components/chat/chat-ui"), {
+  loading: () => <ChatUISkeleton />,
+});
 
 export async function generateMetadata({
   params,
@@ -41,8 +47,16 @@ export default async function TaskPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ readonly?: boolean }>;
 }) {
-  const userId = await getUserIdOrRedirect();
-  const [{ id }, { readonly }] = await Promise.all([params, searchParams]);
+  // Resolve params + searchParams + auth in parallel. `params` and
+  // `searchParams` are fast (already-resolved promises in Next 15);
+  // `getUserIdOrRedirect()` is a session cookie check. Serializing them
+  // added unnecessary TTFB; Promise.all lets the shell prefetch below
+  // start as soon as we have `id`.
+  const [userId, { id }, { readonly }] = await Promise.all([
+    getUserIdOrRedirect(),
+    params,
+    searchParams,
+  ]);
   const queryClient = new QueryClient();
   const shellOptions = threadShellQueryOptions(id);
   await queryClient.prefetchQuery(shellOptions);

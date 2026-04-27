@@ -12,9 +12,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 1s
+      timeout: 2s
+      retries: 10
+      start_period: 0s
   redis:
     image: redis:7-alpine
     container_name: terragon_redis_${ENV:-dev}

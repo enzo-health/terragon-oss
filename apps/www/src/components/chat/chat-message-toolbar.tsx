@@ -154,7 +154,7 @@ export function MessageToolbar({
         {isFirstUserMessage && redoDialogData && (
           <button
             onClick={() => setShowRedoDialog(true)}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity"
+            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Retry task"
           >
             <RefreshCw className="h-3 w-3" />
@@ -163,7 +163,7 @@ export function MessageToolbar({
         {hasTextContent && (
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity"
+            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Copy message"
           >
             {copied ? (
@@ -176,7 +176,7 @@ export function MessageToolbar({
         {messageIndex !== undefined && hasTextContent && (
           <button
             onClick={handleCopyLink}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity"
+            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Copy link to message"
           >
             {linkCopied ? (
@@ -192,7 +192,7 @@ export function MessageToolbar({
           !isAgentWorking && (
             <button
               onClick={() => setShowForkDialog(true)}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
               title="Fork task"
             >
               <Split className="h-3 w-3" />

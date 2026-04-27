@@ -169,30 +169,20 @@ export type BroadcastActiveChatRealtimeFields = z.infer<
 const BroadcastThreadPatchSchema = z.object({
   threadId: z.string(),
   threadChatId: z.string().optional(),
-  op: z.enum(["upsert", "delete", "refetch", "delta"]),
+  op: z.enum(["upsert", "delete", "refetch"]),
   chatSequence: z.number().int().nonnegative().optional(),
   messageSeq: z.number().int().nonnegative().optional(),
   patchVersion: z.number().int().nonnegative().optional(),
   shell: BroadcastThreadShellRealtimeFieldsSchema.optional(),
   chat: BroadcastActiveChatRealtimeFieldsSchema.optional(),
   appendMessages: z.array(z.unknown()).optional(),
-  expectedMessageCount: z.number().int().nonnegative().optional(),
   diffChanged: z.boolean().optional(),
   notifyUnread: z
     .object({
       threadName: z.string().optional(),
     })
     .optional(),
-  refetch: z
-    .array(z.enum(["shell", "chat", "diff", "list", "delivery-loop"]))
-    .optional(),
-  // Delta fields — token-level streaming with durable sequencing/replay support
-  messageId: z.string().optional(),
-  partIndex: z.number().int().nonnegative().optional(),
-  deltaSeq: z.number().int().nonnegative().optional(),
-  deltaIdempotencyKey: z.string().optional(),
-  deltaKind: z.enum(["text", "thinking"]).optional(),
-  text: z.string().optional(),
+  refetch: z.array(z.enum(["shell", "chat", "diff", "list"])).optional(),
   // Meta events — non-chat operational signals (token usage, rate limits,
   // model re-routing, MCP server health, config warnings). Typed as
   // `unknown[]` here to avoid a dep cycle with @terragon/shared, which owns

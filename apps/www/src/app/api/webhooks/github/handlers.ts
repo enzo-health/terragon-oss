@@ -1,40 +1,34 @@
-import { db } from "@/lib/db";
-import {
-  updateGitHubPR,
-  getOctokitForApp,
-  getIsPRAuthor,
-  getIsIssueAuthor,
-  parseRepoFullName,
-} from "@/lib/github";
-import { getGithubPR } from "@terragon/shared/model/github";
-import { handleAppMention } from "./handle-app-mention";
-import {
-  isAppMentioned,
-  getDiffContextStr,
-  fetchReviewCommentThreadContext,
-} from "./utils";
 import { EmitterWebhookEvent } from "@octokit/webhooks";
 import {
-  getPullRequestAutomationsForRepo,
-  getIssueAutomationsForRepo,
-} from "@terragon/shared/model/automations";
-import {
-  PullRequestTriggerConfig,
+  AutomationTriggerSchema,
   IssueTriggerConfig,
+  PullRequestTriggerConfig,
 } from "@terragon/shared/automations";
-import {
-  getActiveWorkflowForGithubPR,
-  TERMINAL_KINDS,
-} from "@terragon/shared/delivery-loop/store/workflow-store";
-import { and, eq, isNotNull, notInArray } from "drizzle-orm";
-import * as schema from "@terragon/shared/db/schema";
-import {
-  runPullRequestAutomation,
-  runIssueAutomation,
-} from "@/server-lib/automations";
 import { Automation } from "@terragon/shared/db/types";
+import {
+  getIssueAutomationsForRepo,
+  getPullRequestAutomationsForRepo,
+} from "@terragon/shared/model/automations";
+import { getGithubPR } from "@terragon/shared/model/github";
+import { db } from "@/lib/db";
+import {
+  getIsIssueAuthor,
+  getIsPRAuthor,
+  getOctokitForApp,
+  parseRepoFullName,
+  updateGitHubPR,
+} from "@/lib/github";
+import {
+  runIssueAutomation,
+  runPullRequestAutomation,
+} from "@/server-lib/automations";
+import { handleAppMention } from "./handle-app-mention";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
-import type { LoopEvent } from "@/server-lib/delivery-loop/v3/types";
+import {
+  fetchReviewCommentThreadContext,
+  getDiffContextStr,
+  isAppMentioned,
+} from "./utils";
 // publicAppUrl is used within utils via postBillingLinkComment
 export type PullRequestEvent = EmitterWebhookEvent<"pull_request">["payload"];
 export type IssueEvent = EmitterWebhookEvent<"issues">["payload"];
@@ -45,6 +39,10 @@ export type PullRequestReviewEvent =
   EmitterWebhookEvent<"pull_request_review">["payload"];
 export type CheckRunEvent = EmitterWebhookEvent<"check_run">["payload"];
 export type CheckSuiteEvent = EmitterWebhookEvent<"check_suite">["payload"];
+
+const TERRAGON_RUNTIME_CHECK_RUN_NAME = "Terragon Runtime";
+const TERRAGON_RUNTIME_CHECK_RUN_EXTERNAL_ID_PREFIX =
+  "terragon-runtime-check-run:";
 
 function isActionableCheckFailure(conclusion: string | null): boolean {
   if (!conclusion) {
@@ -72,146 +70,6 @@ function getCheckSignalOutcome(
   }
 
   return null;
-}
-
-function getRouteUserIdsForCheckSignal({
-  enrolledLoopUserIds,
-  signalOutcome,
-}: {
-  enrolledLoopUserIds: string[];
-  signalOutcome: "pass" | "fail";
-}): Array<string | null> {
-  if (enrolledLoopUserIds.length > 0) {
-    return enrolledLoopUserIds;
-  }
-
-  if (signalOutcome === "fail") {
-    return [null];
-  }
-
-  return [];
-}
-
-function getRouteUserIdsForReviewSignal({
-  enrolledLoopUserIds,
-}: {
-  enrolledLoopUserIds: string[];
-}): Array<string | null> {
-  if (enrolledLoopUserIds.length > 0) {
-    return enrolledLoopUserIds;
-  }
-
-  return [null];
-}
-
-function getUniqueUserIdsFromActiveLoops(
-  activeLoops: Array<{ userId: string }>,
-): string[] {
-  const seenUserIds = new Set<string>();
-  const routeUserIds: string[] = [];
-
-  for (const loop of activeLoops) {
-    if (seenUserIds.has(loop.userId)) {
-      continue;
-    }
-    seenUserIds.add(loop.userId);
-    routeUserIds.push(loop.userId);
-  }
-
-  return routeUserIds;
-}
-
-// Single source of truth for which workflow kinds count as terminal lives in
-// `workflow-store.ts`. When a webhook matches a terminal workflow, handlers
-// emit a `workflow_resurrected` event so the agent can wake and triage rather
-// than silently dropping the signal.
-const TERMINAL_WORKFLOW_KINDS: ReadonlySet<string> = new Set(TERMINAL_KINDS);
-
-function isTerminalWorkflowKind(kind: string): boolean {
-  return TERMINAL_WORKFLOW_KINDS.has(kind);
-}
-
-function splitWorkflowsByTerminality<T extends { kind: string }>(
-  workflows: T[],
-): { active: T[]; terminal: T[] } {
-  const active: T[] = [];
-  const terminal: T[] = [];
-  for (const w of workflows) {
-    if (isTerminalWorkflowKind(w.kind)) {
-      terminal.push(w);
-    } else {
-      active.push(w);
-    }
-  }
-  return { active, terminal };
-}
-
-async function emitWorkflowResurrectedForTerminals(params: {
-  terminalWorkflows: Array<{ id: string }>;
-  deliveryId?: string;
-  cause:
-    | "check_failure"
-    | "review_comment"
-    | "pr_comment"
-    | "pr_review"
-    | "pr_reopened"
-    | "pr_synchronize";
-  reason: string;
-  scopeSuffix: string;
-}): Promise<void> {
-  if (params.terminalWorkflows.length === 0) {
-    return;
-  }
-  await appendV3EventForWorkflowIds({
-    workflowIds: params.terminalWorkflows.map((w) => w.id),
-    deliveryId: params.deliveryId,
-    idempotencyScope: `resurrection:${params.cause}:${params.scopeSuffix}`,
-    event: {
-      type: "workflow_resurrected",
-      cause: params.cause,
-      reason: params.reason,
-    },
-  });
-}
-
-async function appendV3EventForWorkflowIds(params: {
-  workflowIds: string[];
-  deliveryId?: string;
-  idempotencyScope: string;
-  event: LoopEvent;
-}): Promise<void> {
-  const workflowIds = [...new Set(params.workflowIds)];
-  if (workflowIds.length === 0) {
-    return;
-  }
-
-  try {
-    const { appendEventAndAdvanceExplicit } = await import(
-      "@/server-lib/delivery-loop/v3/kernel"
-    );
-    await Promise.all(
-      workflowIds.map(async (workflowId) => {
-        await appendEventAndAdvanceExplicit({
-          db,
-          workflowId,
-          source: "github",
-          idempotencyKey: `${params.idempotencyScope}:${params.deliveryId ?? "no-delivery-id"}`,
-          event: params.event,
-          behavior: {
-            applyGateBypass: false,
-            drainEffects: true,
-          },
-        });
-      }),
-    );
-  } catch (error) {
-    console.warn("[github webhook] failed to append v3 event", {
-      idempotencyScope: params.idempotencyScope,
-      workflowCount: workflowIds.length,
-      eventType: params.event.type,
-      error,
-    });
-  }
 }
 
 function deriveUnresolvedThreadCountFromReviewState(
@@ -243,20 +101,38 @@ export type CiSignalSnapshot = {
   complete: boolean;
 };
 
-function buildCiSignalSnapshotFromCheckRuns(
+export function buildCiSignalSnapshotFromCheckRuns(
   checkRuns: Array<{
     name?: string | null;
     status?: string | null;
     conclusion?: string | null;
+    external_id?: string | null;
   }>,
 ): CiSignalSnapshot | null {
   if (checkRuns.length === 0) {
     return null;
   }
 
+  // Exclude Terragon's own runtime self-check from CI aggregation. The
+  // self-check can stay `in_progress` while the agent is waiting on external
+  // checks, so counting it here would make Terragon wait on itself. See
+  // `isTerragonRuntimeSelfCheck` for the match rule
+  // (external_id prefix OR exact name match).
+  const relevantCheckRuns = checkRuns.filter(
+    (run) =>
+      !isTerragonRuntimeSelfCheck({
+        name: run.name ?? null,
+        externalId: run.external_id ?? null,
+      }),
+  );
+
+  if (relevantCheckRuns.length === 0) {
+    return null;
+  }
+
   const checkNames = Array.from(
     new Set(
-      checkRuns
+      relevantCheckRuns
         .map((run) => run.name?.trim() ?? "")
         .filter((name) => name.length > 0),
     ),
@@ -267,20 +143,34 @@ function buildCiSignalSnapshotFromCheckRuns(
 
   const failingChecks = Array.from(
     new Set(
-      checkRuns
+      relevantCheckRuns
         .filter((run) => isActionableCheckFailure(run.conclusion ?? null))
         .map((run) => run.name?.trim() ?? "")
         .filter((name) => name.length > 0),
     ),
   ).sort((a, b) => a.localeCompare(b));
 
-  const complete = checkRuns.every((run) => run.status === "completed");
+  const complete = relevantCheckRuns.every((run) => run.status === "completed");
 
   return {
     checkNames,
     failingChecks,
     complete,
   };
+}
+
+function isTerragonRuntimeSelfCheck(input: {
+  name?: string | null;
+  externalId?: string | null;
+}): boolean {
+  return (
+    (typeof input.externalId === "string" &&
+      input.externalId.startsWith(
+        TERRAGON_RUNTIME_CHECK_RUN_EXTERNAL_ID_PREFIX,
+      )) ||
+    (typeof input.name === "string" &&
+      input.name.trim() === TERRAGON_RUNTIME_CHECK_RUN_NAME)
+  );
 }
 
 export async function fetchCiSignalSnapshotForHeadSha({
@@ -296,10 +186,10 @@ export async function fetchCiSignalSnapshotForHeadSha({
 
   try {
     const [owner, repo] = parseRepoFullName(repoFullName);
-    const octokit = (await getOctokitForApp({
+    const octokit = await getOctokitForApp({
       owner,
       repo,
-    })) as Awaited<ReturnType<typeof getOctokitForApp>> | null | undefined;
+    });
     if (!octokit) {
       return null;
     }
@@ -313,6 +203,7 @@ export async function fetchCiSignalSnapshotForHeadSha({
       name: run.name,
       status: run.status,
       conclusion: run.conclusion,
+      external_id: run.external_id ?? null,
     }));
     const totalCheckRunCount = response.data.total_count;
     if (
@@ -333,6 +224,7 @@ export async function fetchCiSignalSnapshotForHeadSha({
           name: run.name,
           status: run.status,
           conclusion: run.conclusion,
+          external_id: run.external_id ?? null,
         }));
         allCheckRuns.push(...pageRuns);
         if (
@@ -396,10 +288,10 @@ export async function fetchUnresolvedReviewThreadCount({
 }): Promise<number | null> {
   try {
     const [owner, repo] = parseRepoFullName(repoFullName);
-    const octokit = (await getOctokitForApp({
+    const octokit = await getOctokitForApp({
       owner,
       repo,
-    })) as Awaited<ReturnType<typeof getOctokitForApp>> | null | undefined;
+    });
     if (!octokit) {
       return null;
     }
@@ -560,66 +452,6 @@ export async function handlePullRequestStatusChange(
       createIfNotFound: false,
     });
 
-    if (event.action === "closed") {
-      const activeWorkflows = await getActiveWorkflowForGithubPR({
-        db,
-        repoFullName: repoName,
-        prNumber,
-      });
-      await appendV3EventForWorkflowIds({
-        workflowIds: activeWorkflows.map((workflow) => workflow.id),
-        deliveryId,
-        idempotencyScope: `pull_request.closed:${repoName}:${prNumber}:${event.pull_request.merged ? "merged" : "closed"}`,
-        event: {
-          type: "pr_closed",
-          merged: event.pull_request.merged === true,
-        },
-      });
-    }
-
-    // Resurrect terminal workflows on reopen. A user reopened a PR that was
-    // previously done / stopped / terminated — bring the thread back so the
-    // agent can pick up whatever conversation prompted the reopen. Include
-    // the current head SHA in the scope so a reopen-close-reopen sequence
-    // doesn't collide on idempotency with the first reopen.
-    if (event.action === "reopened") {
-      const matched = await getActiveWorkflowForGithubPR({
-        db,
-        repoFullName: repoName,
-        prNumber,
-        includeTerminal: true,
-      });
-      const { terminal } = splitWorkflowsByTerminality(matched);
-      await emitWorkflowResurrectedForTerminals({
-        terminalWorkflows: terminal,
-        deliveryId,
-        cause: "pr_reopened",
-        reason: `PR #${prNumber} reopened`,
-        scopeSuffix: `${repoName}:${prNumber}:${event.pull_request.head?.sha ?? "unknown-sha"}`,
-      });
-    }
-
-    // Resurrect terminal workflows when a NEW non-Terragon commit lands on the
-    // PR branch. We only care about `synchronize` for terminal states — active
-    // workflows either already own the push or will handle the follow-up CI
-    // events naturally.
-    if (event.action === "synchronize") {
-      const matched = await getActiveWorkflowForGithubPR({
-        db,
-        repoFullName: repoName,
-        prNumber,
-        includeTerminal: true,
-      });
-      const { terminal } = splitWorkflowsByTerminality(matched);
-      await emitWorkflowResurrectedForTerminals({
-        terminalWorkflows: terminal,
-        deliveryId,
-        cause: "pr_synchronize",
-        reason: `New commit pushed to PR #${prNumber} branch`,
-        scopeSuffix: `${repoName}:${prNumber}:${event.pull_request.head?.sha ?? "unknown-sha"}`,
-      });
-    }
-
     console.log(`Successfully updated PR #${prNumber} status in ${repoName}`);
     return;
   } catch (error) {
@@ -687,7 +519,14 @@ async function handlePullRequestAutomation(
   if (automation.repoFullName !== repoFullName) {
     return;
   }
-  const config = automation.triggerConfig as PullRequestTriggerConfig;
+  const trigger = AutomationTriggerSchema.parse({
+    type: automation.triggerType,
+    config: automation.triggerConfig,
+  });
+  if (trigger.type !== "pull_request") {
+    return;
+  }
+  const config: PullRequestTriggerConfig = trigger.config;
   // Check if this automation should trigger for the current event
   let shouldTrigger = false;
   switch (event.action) {
@@ -790,48 +629,22 @@ export async function handleIssueCommentEvent(
     // the agent should see it. Route through the feedback queue like
     // pull_request_review_comment does.
     if (issueType === "pull_request") {
-      const matched = await getActiveWorkflowForGithubPR({
-        db,
+      const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
         repoFullName,
         prNumber: issueNumber,
-        includeTerminal: true,
-      });
-      const { terminal } = splitWorkflowsByTerminality(matched);
-      await emitWorkflowResurrectedForTerminals({
-        terminalWorkflows: terminal,
+        eventType: "issue_comment.created",
         deliveryId,
-        cause: "pr_comment",
-        reason: `Comment on PR #${issueNumber}`,
-        scopeSuffix: `${repoFullName}:${issueNumber}:${event.comment.id}`,
+        reviewBody: commentBody,
+        commentId: event.comment.id,
+        sourceType: isMention ? "github-mention" : "automation",
+        authorGitHubAccountId: event.issue.user?.id,
       });
-
-      const enrolledLoopUserIds = getUniqueUserIdsFromActiveLoops(matched);
-      if (enrolledLoopUserIds.length > 0) {
-        await Promise.all(
-          enrolledLoopUserIds.map(async (routeUserId) => {
-            const feedbackRoutingResult =
-              await routeGithubFeedbackOrSpawnThread({
-                userId: routeUserId,
-                repoFullName,
-                prNumber: issueNumber,
-                eventType: "issue_comment.created",
-                deliveryId,
-                reviewBody: commentBody,
-                commentId: event.comment.id,
-                sourceType: isMention ? "github-mention" : "automation",
-                authorGitHubAccountId: event.issue.user?.id,
-              });
-            console.log("GitHub feedback routed from PR comment", {
-              repoFullName,
-              prNumber: issueNumber,
-              enrolledWorkflowCount: matched.length,
-              enrolledLoopUserCount: enrolledLoopUserIds.length,
-              routeUserId,
-              ...feedbackRoutingResult,
-            });
-          }),
-        );
-      }
+      console.log("GitHub feedback routed from PR comment", {
+        repoFullName,
+        prNumber: issueNumber,
+        routeUserId: null,
+        ...feedbackRoutingResult,
+      });
     }
 
     // Check if the comment mentions our app
@@ -891,76 +704,38 @@ export async function handlePullRequestReviewCommentEvent(
     const commentUsername = event.comment.user.login;
     const commentUserId = event.comment.user.id;
     const isMention = isAppMentioned(commentBody);
-    const matchedWorkflows = await getActiveWorkflowForGithubPR({
-      db,
-      repoFullName,
-      prNumber,
-      includeTerminal: true,
-    });
-    const { active: activeWorkflows, terminal: terminalWorkflows } =
-      splitWorkflowsByTerminality(matchedWorkflows);
-    await emitWorkflowResurrectedForTerminals({
-      terminalWorkflows,
-      deliveryId,
-      cause: "review_comment",
-      reason: `Review comment on PR #${prNumber}`,
-      scopeSuffix: `${repoFullName}:${prNumber}:${event.comment.id}`,
-    });
-    const enrolledLoopUserIds =
-      getUniqueUserIdsFromActiveLoops(matchedWorkflows);
-    const shouldSkipFeedbackRoutingForMention =
-      isMention && enrolledLoopUserIds.length === 0;
-    const routeUserIds = shouldSkipFeedbackRoutingForMention
-      ? []
-      : getRouteUserIdsForReviewSignal({
-          enrolledLoopUserIds,
-        });
+    const routeUserIds: Array<string | null> = [null];
 
-    const feedbackRoutingResults =
-      routeUserIds.length > 0
-        ? await Promise.all(
-            routeUserIds.map(async (routeUserId) => {
-              const feedbackRoutingResult =
-                await routeGithubFeedbackOrSpawnThread({
-                  userId: routeUserId ?? undefined,
-                  repoFullName,
-                  prNumber,
-                  eventType: "pull_request_review_comment.created",
-                  deliveryId,
-                  reviewBody: commentBody,
-                  commentId: event.comment.id,
-                  sourceType: isMention ? "github-mention" : "automation",
-                  authorGitHubAccountId: event.pull_request.user?.id,
-                  baseBranchName: event.pull_request.base?.ref,
-                  headBranchName: event.pull_request.head?.ref,
-                });
-              console.log("GitHub feedback routed from review comment", {
-                repoFullName,
-                prNumber,
-                enrolledWorkflowCount: activeWorkflows.length,
-                terminalWorkflowCount: terminalWorkflows.length,
-                enrolledLoopUserCount: enrolledLoopUserIds.length,
-                routeUserId: routeUserId ?? null,
-                ...feedbackRoutingResult,
-              });
-              return feedbackRoutingResult;
-            }),
-          )
-        : [];
-    const hasConcreteFeedbackRouting = feedbackRoutingResults.some(
-      (result) => result?.mode !== "noop_owner_unresolved",
-    );
-
+    if (routeUserIds.length > 0) {
+      await Promise.all(
+        routeUserIds.map(async (routeUserId) => {
+          const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+            userId: routeUserId ?? undefined,
+            repoFullName,
+            prNumber,
+            eventType: "pull_request_review_comment.created",
+            deliveryId,
+            reviewBody: commentBody,
+            commentId: event.comment.id,
+            sourceType: isMention ? "github-mention" : "automation",
+            authorGitHubAccountId: event.pull_request.user?.id,
+            baseBranchName: event.pull_request.base?.ref,
+            headBranchName: event.pull_request.head?.ref,
+          });
+          console.log("GitHub feedback routed from review comment", {
+            repoFullName,
+            prNumber,
+            routeUserId: routeUserId ?? null,
+            ...feedbackRoutingResult,
+          });
+          return feedbackRoutingResult;
+        }),
+      );
+    }
     // Check if the comment mentions our app
     if (!isMention) {
       console.log(
         `Review comment on PR #${prNumber} in ${repoFullName} does not mention the app`,
-      );
-      return;
-    }
-    if (hasConcreteFeedbackRouting) {
-      console.log(
-        `Skipping app-mention direct routing because feedback routing already handled PR #${prNumber} in ${repoFullName}`,
       );
       return;
     }
@@ -1044,125 +819,48 @@ export async function handlePullRequestReviewEvent(
           ? "review_state_heuristic"
           : undefined;
 
-    const matchedWorkflows = await getActiveWorkflowForGithubPR({
-      db,
-      repoFullName,
-      prNumber,
-      includeTerminal: true,
-    });
-    const { active: activeWorkflows, terminal: terminalWorkflows } =
-      splitWorkflowsByTerminality(matchedWorkflows);
     const normalizedReviewState = event.review.state.trim().toLowerCase();
-    let v3ReviewEvent: LoopEvent | null = null;
-    if (normalizedReviewState === "changes_requested") {
-      v3ReviewEvent = {
-        type: "gate_review_failed",
-        runId: event.review.commit_id ?? null,
-        reason: reviewBody?.trim() || "Review requested changes",
-      };
-    } else if (normalizedReviewState === "approved") {
-      if (unresolvedThreadCount !== null && unresolvedThreadCount > 0) {
-        v3ReviewEvent = {
-          type: "gate_review_failed",
-          runId: event.review.commit_id ?? null,
-          reason: `Review approved but ${unresolvedThreadCount} unresolved thread(s) remain`,
-        };
-      } else {
-        v3ReviewEvent = {
-          type: "gate_review_passed",
-          runId: event.review.commit_id ?? null,
-        };
-      }
-    }
-    if (v3ReviewEvent) {
-      await appendV3EventForWorkflowIds({
-        workflowIds: activeWorkflows.map((workflow) => workflow.id),
-        deliveryId,
-        idempotencyScope: `pull_request_review.submitted:${repoFullName}:${prNumber}:${event.review.id}:${normalizedReviewState}`,
-        event: v3ReviewEvent,
-      });
-    }
-    // Terminal workflows can't accept gate_review_* events (the reducer drops
-    // them on terminal states). Resurrect only when the review is actually
-    // actionable: changes_requested, or any review with a non-empty body.
-    // An "approved" review with no body is just a thumbs-up on a shipped PR —
-    // no reason to wake the agent.
     const reviewIsActionable =
       normalizedReviewState === "changes_requested" ||
       (reviewBody != null && reviewBody.trim().length > 0);
-    if (reviewIsActionable) {
-      await emitWorkflowResurrectedForTerminals({
-        terminalWorkflows,
-        deliveryId,
-        cause: "pr_review",
-        reason:
-          reviewBody?.trim() ||
-          `Review ${normalizedReviewState} on PR #${prNumber}`,
-        scopeSuffix: `${repoFullName}:${prNumber}:${event.review.id}`,
-      });
+    const routeUserIds: Array<string | null> = reviewIsActionable ? [null] : [];
+
+    if (routeUserIds.length > 0) {
+      await Promise.all(
+        routeUserIds.map(async (routeUserId) => {
+          const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+            userId: routeUserId ?? undefined,
+            repoFullName,
+            prNumber,
+            eventType: "pull_request_review.submitted",
+            deliveryId,
+            reviewBody: reviewBody ?? undefined,
+            commentId: event.review.id,
+            reviewId: event.review.id,
+            reviewState: event.review.state,
+            failureDetails: `Review state: ${event.review.state}`,
+            sourceType: isMention ? "github-mention" : "automation",
+            authorGitHubAccountId: event.pull_request.user?.id,
+            baseBranchName: event.pull_request.base?.ref,
+            headBranchName: event.pull_request.head?.ref,
+          });
+          console.log("GitHub feedback routed from review", {
+            repoFullName,
+            prNumber,
+            reviewState: event.review.state,
+            unresolvedThreadCount: unresolvedThreadCount ?? null,
+            unresolvedThreadCountSource: unresolvedThreadCountSource ?? null,
+            routeUserId: routeUserId ?? null,
+            ...feedbackRoutingResult,
+          });
+          return feedbackRoutingResult;
+        }),
+      );
     }
-
-    const enrolledLoopUserIds =
-      getUniqueUserIdsFromActiveLoops(matchedWorkflows);
-    const shouldSkipFeedbackRoutingForMention =
-      isMention && enrolledLoopUserIds.length === 0;
-    const routeUserIds = shouldSkipFeedbackRoutingForMention
-      ? []
-      : getRouteUserIdsForReviewSignal({
-          enrolledLoopUserIds,
-        });
-
-    const feedbackRoutingResults =
-      routeUserIds.length > 0
-        ? await Promise.all(
-            routeUserIds.map(async (routeUserId) => {
-              const feedbackRoutingResult =
-                await routeGithubFeedbackOrSpawnThread({
-                  userId: routeUserId ?? undefined,
-                  repoFullName,
-                  prNumber,
-                  eventType: "pull_request_review.submitted",
-                  deliveryId,
-                  reviewBody: reviewBody ?? undefined,
-                  commentId: event.review.id,
-                  reviewId: event.review.id,
-                  reviewState: event.review.state,
-                  failureDetails: `Review state: ${event.review.state}`,
-                  sourceType: isMention ? "github-mention" : "automation",
-                  authorGitHubAccountId: event.pull_request.user?.id,
-                  baseBranchName: event.pull_request.base?.ref,
-                  headBranchName: event.pull_request.head?.ref,
-                });
-              console.log("GitHub feedback routed from review", {
-                repoFullName,
-                prNumber,
-                reviewState: event.review.state,
-                unresolvedThreadCount: unresolvedThreadCount ?? null,
-                unresolvedThreadCountSource:
-                  unresolvedThreadCountSource ?? null,
-                enrolledWorkflowCount: activeWorkflows.length,
-                enrolledLoopUserCount: enrolledLoopUserIds.length,
-                routeUserId: routeUserId ?? null,
-                ...feedbackRoutingResult,
-              });
-              return feedbackRoutingResult;
-            }),
-          )
-        : [];
-    const hasConcreteFeedbackRouting = feedbackRoutingResults.some(
-      (result) => result?.mode !== "noop_owner_unresolved",
-    );
-
     // Check if the review body exists and mentions our app
     if (!isMention) {
       console.log(
         `Review on PR #${prNumber} in ${repoFullName} does not mention the app or has no body`,
-      );
-      return;
-    }
-    if (hasConcreteFeedbackRouting) {
-      console.log(
-        `Skipping app-mention direct routing because feedback routing already handled PR #${prNumber} in ${repoFullName}`,
       );
       return;
     }
@@ -1193,67 +891,32 @@ export async function handlePullRequestReviewEvent(
 export async function resolvePrNumbersFromSha({
   repoFullName,
   headSha,
-  includeTerminal,
 }: {
   repoFullName: string;
   headSha: string;
-  // When true, include PRs whose delivery workflow is in a terminal state.
-  // Webhook handlers that may resurrect a finished thread need this so a
-  // check_suite without inline pull_requests[] can still route to the
-  // already-shipped thread's workflow.
-  includeTerminal?: boolean;
 }): Promise<number[]> {
   const [owner, repo] = parseRepoFullName(repoFullName);
 
-  const [githubPrNumbers, dbPrNumbers] = await Promise.all([
-    (async (): Promise<number[]> => {
-      try {
-        const octokit = await getOctokitForApp({ owner, repo });
-        const { data } =
-          await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
-            owner,
-            repo,
-            commit_sha: headSha,
-          });
-        return data.filter((pr) => pr.state === "open").map((pr) => pr.number);
-      } catch (error) {
-        console.error(
-          `GitHub API SHA→PR lookup failed for ${repoFullName}@${headSha}`,
-          error,
-        );
-        return [];
-      }
-    })(),
-    (async (): Promise<number[]> => {
-      const whereClauses = [
-        eq(schema.deliveryWorkflow.repoFullName, repoFullName),
-        eq(schema.deliveryWorkflow.currentHeadSha, headSha),
-        isNotNull(schema.deliveryWorkflow.prNumber),
-      ];
-      if (!includeTerminal) {
-        whereClauses.push(
-          notInArray(schema.deliveryWorkflow.kind, [
-            "done",
-            "stopped",
-            "terminated",
-          ]),
-        );
-      }
-      const workflows = await db.query.deliveryWorkflow.findMany({
-        where: and(...whereClauses),
-        columns: { prNumber: true },
+  try {
+    const octokit = await getOctokitForApp({ owner, repo });
+    const { data } =
+      await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+        owner,
+        repo,
+        commit_sha: headSha,
       });
-      return [
-        ...new Set(
-          workflows
-            .map((w) => w.prNumber)
-            .filter((n): n is number => n !== null),
-        ),
-      ];
-    })(),
-  ]);
-
-  return [...new Set([...githubPrNumbers, ...dbPrNumbers])];
+    return [
+      ...new Set(
+        data.filter((pr) => pr.state === "open").map((pr) => pr.number),
+      ),
+    ];
+  } catch (error) {
+    console.error(
+      `GitHub API SHA→PR lookup failed for ${repoFullName}@${headSha}`,
+      error,
+    );
+    return [];
+  }
 }
 
 // Handle check run events
@@ -1272,7 +935,6 @@ export async function handleCheckRunEvent(
       prNumbers = await resolvePrNumbersFromSha({
         repoFullName,
         headSha: checkRun.head_sha,
-        includeTerminal: true,
       });
     }
     if (prNumbers.length === 0) {
@@ -1296,7 +958,7 @@ export async function handleCheckRunEvent(
 
     if (event.action === "completed") {
       const signalOutcome = getCheckSignalOutcome(checkRun.conclusion);
-      if (signalOutcome) {
+      if (signalOutcome === "fail") {
         const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
           repoFullName,
           headSha: checkRun.head_sha ?? null,
@@ -1308,51 +970,7 @@ export async function handleCheckRunEvent(
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
-            const matchedWorkflows = await getActiveWorkflowForGithubPR({
-              db,
-              repoFullName,
-              prNumber,
-              includeTerminal: true,
-            });
-            const { active: activeWorkflows, terminal: terminalWorkflows } =
-              splitWorkflowsByTerminality(matchedWorkflows);
-            const v3CiEvent: LoopEvent =
-              signalOutcome === "pass"
-                ? {
-                    type: "gate_ci_passed",
-                    runId: String(checkRun.id),
-                    headSha: checkRun.head_sha ?? null,
-                  }
-                : {
-                    type: "gate_ci_failed",
-                    runId: String(checkRun.id),
-                    headSha: checkRun.head_sha ?? null,
-                    reason: failureDetails ?? "CI checks failed",
-                  };
-            await appendV3EventForWorkflowIds({
-              workflowIds: activeWorkflows.map((workflow) => workflow.id),
-              deliveryId,
-              idempotencyScope: `check_run.completed:${repoFullName}:${prNumber}:${checkRun.id}:${signalOutcome}`,
-              event: v3CiEvent,
-            });
-            // CI failure on a terminated thread's PR — resurrect so the agent
-            // can triage. Passes don't warrant waking a terminal thread.
-            if (signalOutcome === "fail") {
-              await emitWorkflowResurrectedForTerminals({
-                terminalWorkflows,
-                deliveryId,
-                cause: "check_failure",
-                reason: failureDetails ?? `Check ${checkRun.name} failed`,
-                scopeSuffix: `${repoFullName}:${prNumber}:${checkRun.id}`,
-              });
-            }
-
-            const enrolledLoopUserIds =
-              getUniqueUserIdsFromActiveLoops(matchedWorkflows);
-            const routeUserIds = getRouteUserIdsForCheckSignal({
-              enrolledLoopUserIds,
-              signalOutcome,
-            });
+            const routeUserIds: Array<string | null> = [null];
 
             if (routeUserIds.length === 0) {
               return;
@@ -1378,8 +996,6 @@ export async function handleCheckRunEvent(
                   checkRunId: checkRun.id,
                   conclusion: checkRun.conclusion,
                   signalOutcome,
-                  enrolledWorkflowCount: activeWorkflows.length,
-                  enrolledLoopUserCount: enrolledLoopUserIds.length,
                   ciSnapshotComplete: ciSnapshot?.complete ?? null,
                   ciSnapshotFailingChecksCount:
                     ciSnapshot?.failingChecks.length ?? null,
@@ -1420,7 +1036,6 @@ export async function handleCheckSuiteEvent(
       prNumbers = await resolvePrNumbersFromSha({
         repoFullName,
         headSha: checkSuite.head_sha,
-        includeTerminal: true,
       });
     }
     if (prNumbers.length === 0) {
@@ -1445,7 +1060,7 @@ export async function handleCheckSuiteEvent(
 
     if (event.action === "completed") {
       const signalOutcome = getCheckSignalOutcome(checkSuite.conclusion);
-      if (signalOutcome) {
+      if (signalOutcome === "fail") {
         const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
           repoFullName,
           headSha: checkSuite.head_sha ?? null,
@@ -1457,51 +1072,7 @@ export async function handleCheckSuiteEvent(
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
-            const matchedWorkflows = await getActiveWorkflowForGithubPR({
-              db,
-              repoFullName,
-              prNumber,
-              includeTerminal: true,
-            });
-            const { active: activeWorkflows, terminal: terminalWorkflows } =
-              splitWorkflowsByTerminality(matchedWorkflows);
-            const v3CiEvent: LoopEvent =
-              signalOutcome === "pass"
-                ? {
-                    type: "gate_ci_passed",
-                    runId: String(checkSuite.id),
-                    headSha: checkSuite.head_sha ?? null,
-                  }
-                : {
-                    type: "gate_ci_failed",
-                    runId: String(checkSuite.id),
-                    headSha: checkSuite.head_sha ?? null,
-                    reason: failureDetails ?? "CI checks failed",
-                  };
-            await appendV3EventForWorkflowIds({
-              workflowIds: activeWorkflows.map((workflow) => workflow.id),
-              deliveryId,
-              idempotencyScope: `check_suite.completed:${repoFullName}:${prNumber}:${checkSuite.id}:${signalOutcome}`,
-              event: v3CiEvent,
-            });
-            // CI failure on a terminated thread's PR — resurrect so the agent
-            // can triage. Passes don't warrant waking a terminal thread.
-            if (signalOutcome === "fail") {
-              await emitWorkflowResurrectedForTerminals({
-                terminalWorkflows,
-                deliveryId,
-                cause: "check_failure",
-                reason: failureDetails ?? "CI checks failed",
-                scopeSuffix: `${repoFullName}:${prNumber}:${checkSuite.id}`,
-              });
-            }
-
-            const enrolledLoopUserIds =
-              getUniqueUserIdsFromActiveLoops(matchedWorkflows);
-            const routeUserIds = getRouteUserIdsForCheckSignal({
-              enrolledLoopUserIds,
-              signalOutcome,
-            });
+            const routeUserIds: Array<string | null> = [null];
 
             if (routeUserIds.length === 0) {
               return;
@@ -1527,8 +1098,6 @@ export async function handleCheckSuiteEvent(
                   checkSuiteId: checkSuite.id,
                   conclusion: checkSuite.conclusion,
                   signalOutcome,
-                  enrolledWorkflowCount: activeWorkflows.length,
-                  enrolledLoopUserCount: enrolledLoopUserIds.length,
                   ciSnapshotComplete: ciSnapshot?.complete ?? null,
                   ciSnapshotFailingChecksCount:
                     ciSnapshot?.failingChecks.length ?? null,
@@ -1603,7 +1172,14 @@ async function handleIssueAutomation(
   if (automation.repoFullName !== repoFullName) {
     return;
   }
-  const config = automation.triggerConfig as IssueTriggerConfig;
+  const trigger = AutomationTriggerSchema.parse({
+    type: automation.triggerType,
+    config: automation.triggerConfig,
+  });
+  if (trigger.type !== "issue") {
+    return;
+  }
+  const config: IssueTriggerConfig = trigger.config;
   // Check if this automation should trigger for the current event
   let shouldTrigger = false;
   switch (event.action) {

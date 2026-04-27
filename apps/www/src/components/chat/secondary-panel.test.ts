@@ -149,7 +149,7 @@ describe("secondary-panel artifact shell helpers", () => {
     });
   });
 
-  it("creates a plan artifact summary for delivery-loop plan from proposed_plan tags", () => {
+  it("creates a plan artifact summary from proposed_plan tags", () => {
     const items = getArtifactWorkspaceItems({
       messages: [
         {

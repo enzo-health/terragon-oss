@@ -7,19 +7,25 @@ import EventEmitter from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import readline from "node:readline";
+import { nanoid } from "nanoid/non-secure";
 import stripAnsi from "strip-ansi";
 import { Logger, OutputFormat } from "./logger";
 import {
-  DaemonDelta,
-  DaemonEventAPIBody,
+  getRuntimeAdapterContract,
+  unsupportedRuntimeOperation,
+} from "./runtime-contracts";
+import {
+  ClaudeMessage,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
   DAEMON_VERSION,
-  SdlcSelfDispatchPayload,
+  DaemonEventAPIBody,
+  DaemonMessageClaude,
+  DaemonTransportMode,
+  RuntimeAdapterContract,
+  RuntimeAdapterOperation,
 } from "./shared";
-import { nanoid } from "nanoid/non-secure";
 
 function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
   if (body.payloadVersion !== 2) {
@@ -35,39 +41,6 @@ function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
     return false;
   }
   return body.seq >= 0;
-}
-
-export function parseSdlcSelfDispatchPayload(
-  body: unknown,
-): SdlcSelfDispatchPayload | null {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-  const selfDispatch = (body as { selfDispatch?: unknown }).selfDispatch;
-  if (!selfDispatch || typeof selfDispatch !== "object") {
-    return null;
-  }
-  const sd = selfDispatch as Record<string, unknown>;
-  if (
-    typeof sd.token !== "string" ||
-    typeof sd.prompt !== "string" ||
-    typeof sd.runId !== "string" ||
-    typeof sd.threadId !== "string" ||
-    typeof sd.threadChatId !== "string" ||
-    typeof sd.tokenNonce !== "string" ||
-    typeof sd.model !== "string" ||
-    typeof sd.agent !== "string" ||
-    typeof sd.agentVersion !== "number" ||
-    typeof sd.protocolVersion !== "number" ||
-    typeof sd.transportMode !== "string" ||
-    typeof sd.permissionMode !== "string" ||
-    (sd.sessionId !== null && typeof sd.sessionId !== "string") ||
-    typeof sd.featureFlags !== "object" ||
-    sd.featureFlags === null
-  ) {
-    return null;
-  }
-  return selfDispatch as SdlcSelfDispatchPayload;
 }
 
 function extractDaemonServerErrorCode(body: unknown): string | null {
@@ -125,6 +98,120 @@ export class DaemonServerPostError extends Error {
   }
 }
 
+export type RuntimeAdapterOperationResult =
+  | { status: "ok" }
+  | {
+      status: "unsupported";
+      operation: RuntimeAdapterOperation;
+      reason: string;
+      recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+    };
+
+export function createDaemonRuntimeAdapterContract({
+  transportMode,
+}: {
+  transportMode: DaemonTransportMode;
+}): RuntimeAdapterContract {
+  return getRuntimeAdapterContract(transportMode);
+}
+
+export function resolveDaemonRuntimeAdapterContract(
+  input: Partial<
+    Pick<DaemonMessageClaude, "transportMode" | "runtimeAdapterContract">
+  >,
+): RuntimeAdapterContract {
+  return createDaemonRuntimeAdapterContract({
+    transportMode: input.transportMode ?? "legacy",
+  });
+}
+
+export function hasRuntimeAdapterContractDrift({
+  inbound,
+  canonical,
+}: {
+  inbound: RuntimeAdapterContract | undefined;
+  canonical: RuntimeAdapterContract;
+}): boolean {
+  if (!inbound) {
+    return false;
+  }
+  return JSON.stringify(inbound) !== JSON.stringify(canonical);
+}
+
+export function getRuntimeAdapterRequestedSessionId({
+  input,
+  contract,
+}: {
+  input: Pick<DaemonMessageClaude, "sessionId" | "acpSessionId">;
+  contract: RuntimeAdapterContract;
+}): string | null {
+  switch (contract.session.requestedSessionField) {
+    case "sessionId":
+      return input.sessionId ?? null;
+    case "acpSessionId":
+      return input.acpSessionId ?? null;
+    case null:
+      return null;
+    default: {
+      const _exhaustiveCheck: never = contract.session.requestedSessionField;
+      return _exhaustiveCheck;
+    }
+  }
+}
+
+export function getRuntimeAdapterLifecycleOperation({
+  input,
+  contract,
+}: {
+  input: Pick<DaemonMessageClaude, "sessionId" | "acpSessionId">;
+  contract: RuntimeAdapterContract;
+}): "start" | "resume" {
+  return getRuntimeAdapterRequestedSessionId({ input, contract })
+    ? "resume"
+    : "start";
+}
+
+export function requireRuntimeAdapterOperation({
+  contract,
+  operation,
+}: {
+  contract: RuntimeAdapterContract;
+  operation: RuntimeAdapterOperation;
+}): RuntimeAdapterOperationResult {
+  const support = contract.operations[operation];
+  if (support?.status === "supported") {
+    return { status: "ok" };
+  }
+  const unsupported =
+    support ??
+    unsupportedRuntimeOperation(
+      `${operation} is not implemented by ${contract.adapterId}`,
+      "manual-intervention",
+    );
+  return {
+    status: "unsupported",
+    operation,
+    reason: unsupported.reason,
+    recovery: unsupported.recovery,
+  };
+}
+
+export function runtimeAdapterUnsupportedOperationToMessage(
+  result: Extract<RuntimeAdapterOperationResult, { status: "unsupported" }>,
+): ClaudeMessage {
+  return {
+    type: "custom-error",
+    session_id: null,
+    duration_ms: 0,
+    error_info: `Runtime operation "${result.operation}" is unsupported. Reason: ${result.reason} Recovery: ${result.recovery}.`,
+    runtimeRecovery: {
+      operation: result.operation,
+      reason: result.reason,
+      recovery: result.recovery,
+    },
+  };
+}
+
 export interface IDaemonRuntime {
   url: string;
   unixSocketPath: string;
@@ -136,19 +223,7 @@ export interface IDaemonRuntime {
 
   additionalCapabilities?: Set<string>;
 
-  serverPost: (
-    body: DaemonEventAPIBody,
-    token: string,
-  ) => Promise<SdlcSelfDispatchPayload | null>;
-
-  serverPostDelta: (
-    body: {
-      threadId: string;
-      threadChatId: string;
-      deltas: DaemonDelta[];
-    },
-    token: string,
-  ) => void;
+  serverPost: (body: DaemonEventAPIBody, token: string) => Promise<void>;
 
   listenToUnixSocket: (callback: (data: string) => void) => Promise<void>;
 
@@ -304,15 +379,12 @@ export class DaemonRuntime implements IDaemonRuntime {
     this.eventEmitter.on("teardown", callback);
   }
 
-  async serverPost(
-    body: DaemonEventAPIBody,
-    token: string,
-  ): Promise<SdlcSelfDispatchPayload | null> {
+  async serverPost(body: DaemonEventAPIBody, token: string): Promise<void> {
     const url = `${this.url}/api/daemon-event`;
     const logArgs = { url, body: JSON.stringify(body) };
     if (this.skipReportingDaemonEvents) {
       this.logger.info(`[SKIPPED] POST to ${url}`, logArgs);
-      return null;
+      return;
     }
     this.logger.info(`POST to ${url}`, logArgs);
     const headers: Record<string, string> = {
@@ -330,11 +402,14 @@ export class DaemonRuntime implements IDaemonRuntime {
     if (allCapabilities.length > 0) {
       headers[DAEMON_EVENT_CAPABILITIES_HEADER] = allCapabilities.join(",");
     }
-    const response = await fetch(url, {
+
+    const requestInit: RequestInit = {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-    });
+    };
+
+    const response = await fetch(url, requestInit);
     if (!response.ok) {
       let responseBody: unknown = null;
       try {
@@ -371,45 +446,8 @@ export class DaemonRuntime implements IDaemonRuntime {
           `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
         );
       }
-      return parseSdlcSelfDispatchPayload(responseBody);
-    }
-
-    if (this.additionalCapabilities.has(DAEMON_CAPABILITY_SDLC_SELF_DISPATCH)) {
-      let responseBody: unknown = null;
-      try {
-        responseBody = await response.json();
-      } catch {
-        responseBody = null;
-      }
-      return parseSdlcSelfDispatchPayload(responseBody);
-    }
-    return null;
-  }
-
-  serverPostDelta(
-    body: {
-      threadId: string;
-      threadChatId: string;
-      deltas: DaemonDelta[];
-    },
-    token: string,
-  ): void {
-    if (this.skipReportingDaemonEvents) {
       return;
     }
-    const url = `${this.url}/api/daemon-delta`;
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Daemon-Token": token,
-      },
-      body: JSON.stringify(body),
-    }).catch((err) => {
-      this.logger.debug("Delta POST failed (non-critical)", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 
   async listenToUnixSocket(

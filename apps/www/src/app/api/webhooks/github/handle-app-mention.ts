@@ -1,42 +1,37 @@
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import {
-  getOctokitForUser,
-  parseRepoFullName,
-  getOctokitForApp,
-  getIssueAuthorGitHubUsername,
-  getPRAuthorGitHubUsername,
-  getIsIssueAuthor,
-  getIsPRAuthor,
-} from "@/lib/github";
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import { modelToAgent } from "@terragon/agent/utils";
+import type { ThreadSourceMetadata } from "@terragon/shared";
+import { GitHubMentionTriggerConfig } from "@terragon/shared/automations";
+import { DBUserMessage } from "@terragon/shared/db/db-message";
+import { Automation } from "@terragon/shared/db/types";
+import { getGitHubMentionAutomationsForRepo } from "@terragon/shared/model/automations";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { getThreadForGithubPRAndUser } from "@terragon/shared/model/github";
+import { getThreadChat } from "@terragon/shared/model/threads";
 import {
   getUserIdByGitHubAccountId,
   getUserSettings,
 } from "@terragon/shared/model/user";
+import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+import { maybeBatchThreads } from "@/lib/batch-threads";
 import { db } from "@/lib/db";
-import { getThreadForGithubPRAndUser } from "@terragon/shared/model/github";
+import {
+  getIsIssueAuthor,
+  getIsPRAuthor,
+  getIssueAuthorGitHubUsername,
+  getOctokitForApp,
+  getOctokitForUser,
+  getPRAuthorGitHubUsername,
+  parseRepoFullName,
+} from "@/lib/github";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { getGitHubMentionAutomationsForRepo } from "@terragon/shared/model/automations";
-import { GitHubMentionTriggerConfig } from "@terragon/shared/automations";
-import { Automation } from "@terragon/shared/db/types";
-import { DBUserMessage } from "@terragon/shared/db/db-message";
-import type { ThreadSource, ThreadSourceMetadata } from "@terragon/shared";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import {
   addEyesReactionToComment,
+  extractModelFromComment,
   isKnownGitHubAccount,
   postIntegrationSetupComment,
-  extractModelFromComment,
 } from "./utils";
-import { maybeBatchThreads } from "@/lib/batch-threads";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import { getThread, getThreadChat } from "@terragon/shared/model/threads";
-import { modelToAgent } from "@terragon/agent/utils";
-import {
-  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
-import { getActiveWorkflowForGithubPR } from "@terragon/shared/delivery-loop/store/workflow-store";
 
 // Handle app mention by adding to existing thread or creating a new one
 export async function handleAppMention({
@@ -398,56 +393,11 @@ async function triggerTasksForUser({
       threadIdOrNull,
       threadChatIdOrNull,
       forcedAgent,
-      threadSourceType,
-      threadSourceMetadata,
     }: {
       threadIdOrNull: string | null;
       threadChatIdOrNull: string | null;
       forcedAgent: AIAgent | null;
-      threadSourceType?: ThreadSource | null;
-      threadSourceMetadata?: ThreadSourceMetadata | null;
     }): Promise<{ threadId: string; threadChatId: string }> => {
-      const maybeEnsureDeliveryEnrollment = async ({
-        threadId,
-        sourceType,
-        sourceMetadata,
-      }: {
-        threadId: string;
-        sourceType: ThreadSource | null;
-        sourceMetadata: ThreadSourceMetadata | null;
-      }) => {
-        if (issueOrPrType !== "pull_request") {
-          return;
-        }
-        if (
-          !isDeliveryLoopEnrollmentAllowedForThread({
-            sourceType,
-            sourceMetadata,
-          })
-        ) {
-          return;
-        }
-        try {
-          await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
-            userId,
-            repoFullName,
-            prNumber: issueOrPrNumber,
-            threadId,
-          });
-        } catch (error) {
-          console.warn(
-            "Delivery Loop enrollment wiring failed for PR mention routing; continuing with standard thread flow",
-            {
-              userId,
-              repoFullName,
-              issueOrPrNumber,
-              threadId,
-              error,
-            },
-          );
-        }
-      };
-
       if (threadIdOrNull && threadChatIdOrNull) {
         console.log(`Queuing follow-up to existing thread`, {
           threadId: threadIdOrNull,
@@ -464,22 +414,6 @@ async function triggerTasksForUser({
           messages: [getUserMessageToSend({ forcedAgent, isFollowUp: true })],
           source: "github",
           appendOrReplace: "append",
-        });
-        let sourceType = threadSourceType ?? null;
-        let sourceMetadata = threadSourceMetadata ?? null;
-        if (!sourceType && !sourceMetadata) {
-          const existingThread = await getThread({
-            db,
-            userId,
-            threadId: threadIdOrNull,
-          });
-          sourceType = existingThread?.sourceType ?? null;
-          sourceMetadata = existingThread?.sourceMetadata ?? null;
-        }
-        await maybeEnsureDeliveryEnrollment({
-          threadId: threadIdOrNull,
-          sourceType,
-          sourceMetadata,
         });
         return { threadId: threadIdOrNull, threadChatId: threadChatIdOrNull };
       }
@@ -520,62 +454,8 @@ async function triggerTasksForUser({
         repoFullName,
         userId,
       });
-      await maybeEnsureDeliveryEnrollment({
-        threadId,
-        sourceType: "github-mention",
-        sourceMetadata: mentionSourceMetadata,
-      });
       return { threadId, threadChatId };
     };
-
-    if (issueOrPrType === "pull_request") {
-      const activeWorkflows = await getActiveWorkflowForGithubPR({
-        db,
-        repoFullName,
-        prNumber: issueOrPrNumber,
-      });
-      const activeWorkflow = activeWorkflows[0];
-
-      if (activeWorkflow) {
-        const enrolledThread = await getThread({
-          db,
-          userId,
-          threadId: activeWorkflow.threadId,
-        });
-        let enrolledThreadChat: ReturnType<typeof getPrimaryThreadChat> | null =
-          null;
-        if (enrolledThread) {
-          try {
-            enrolledThreadChat = getPrimaryThreadChat(enrolledThread);
-          } catch (_error) {
-            enrolledThreadChat = null;
-          }
-        }
-
-        if (enrolledThreadChat) {
-          await queueOrCreateThreadForGitHubMention({
-            threadIdOrNull: activeWorkflow.threadId,
-            threadChatIdOrNull: enrolledThreadChat.id,
-            forcedAgent: enrolledThreadChat.agent,
-            threadSourceType: enrolledThread?.sourceType ?? null,
-            threadSourceMetadata: enrolledThread?.sourceMetadata ?? null,
-          });
-          return;
-        }
-
-        console.warn(
-          "Delivery Loop enrollment found but thread/chat is not routable; falling back to standard mention routing",
-          {
-            userId,
-            repoFullName,
-            issueOrPrNumber,
-            workflowId: activeWorkflow.id,
-            workflowThreadId: activeWorkflow.threadId,
-            hasThread: !!enrolledThread,
-          },
-        );
-      }
-    }
 
     if (userSettings.singleThreadForGitHubMentions) {
       const threadOrNull = await getThreadForGithubPRAndUser({
@@ -590,8 +470,6 @@ async function triggerTasksForUser({
           threadIdOrNull: threadOrNull.id,
           threadChatIdOrNull: threadChat.id,
           forcedAgent: threadChat.agent,
-          threadSourceType: threadOrNull.sourceType,
-          threadSourceMetadata: threadOrNull.sourceMetadata,
         });
         return;
       }
@@ -627,17 +505,10 @@ async function triggerTasksForUser({
         threadChatId,
         userId,
       });
-      const threadOrNull = await getThread({
-        db,
-        userId,
-        threadId,
-      });
       await queueOrCreateThreadForGitHubMention({
         threadIdOrNull: threadId,
         threadChatIdOrNull: threadChatId,
         forcedAgent: threadChat?.agent ?? null,
-        threadSourceType: threadOrNull?.sourceType ?? null,
-        threadSourceMetadata: threadOrNull?.sourceMetadata ?? null,
       });
     }
   } catch (error) {

@@ -1,31 +1,31 @@
-import { describe, expect, it, vi, beforeEach, beforeAll } from "vitest";
-import { handleAppMention } from "./handle-app-mention";
-import { User, GitHubPR } from "@terragon/shared";
+import { GitHubPR, User } from "@terragon/shared";
+import * as schema from "@terragon/shared/db/schema";
+import { createAutomation } from "@terragon/shared/model/automations";
 import {
   createTestGitHubPR,
   createTestThread,
   createTestUser,
   setFeatureFlagOverrideForTest,
 } from "@terragon/shared/model/test-helpers";
-import { updateUserSettings } from "@terragon/shared/model/user";
-import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import {
-  getOctokitForUser,
-  getOctokitForApp,
-  getIsPRAuthor,
-  getIsIssueAuthor,
-  getPRAuthorGitHubUsername,
-  getIssueAuthorGitHubUsername,
-} from "@/lib/github";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { getDiffContextStr } from "./utils";
-import { createAutomation } from "@terragon/shared/model/automations";
-import { convertToPlainText } from "@/lib/db-message-helpers";
-import { redis } from "@/lib/redis";
-import { createWorkflow } from "@terragon/shared/delivery-loop/store/workflow-store";
 import * as threadModel from "@terragon/shared/model/threads";
+import { updateUserSettings } from "@terragon/shared/model/user";
+import { eq } from "drizzle-orm";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/lib/db";
+import { convertToPlainText } from "@/lib/db-message-helpers";
+import {
+  getIsIssueAuthor,
+  getIsPRAuthor,
+  getIssueAuthorGitHubUsername,
+  getOctokitForApp,
+  getOctokitForUser,
+  getPRAuthorGitHubUsername,
+} from "@/lib/github";
+import { redis } from "@/lib/redis";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
+import { handleAppMention } from "./handle-app-mention";
+import { getDiffContextStr } from "./utils";
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
   newThreadInternal: vi.fn().mockResolvedValue({ id: "new-thread-created-id" }),
@@ -47,7 +47,11 @@ describe("handleAppMention", () => {
   beforeAll(async () => {
     const testUserResult = await createTestUser({ db });
     user = testUserResult.user;
-    githubAccountId = parseInt(testUserResult.githubAccount.id);
+    githubAccountId = 42_424_242;
+    await db
+      .update(schema.account)
+      .set({ accountId: githubAccountId.toString() })
+      .where(eq(schema.account.id, testUserResult.githubAccount.id));
     pr = await createTestGitHubPR({ db });
     prWithNoThread = await createTestGitHubPR({ db });
     const createTestThreadResult = await createTestThread({
@@ -63,15 +67,6 @@ describe("handleAppMention", () => {
   });
 
   beforeEach(async () => {
-    // Scope deletion to this test file's user to avoid cross-test-file interference
-    // when the test DB is shared across concurrent Vitest workers.
-    if (user?.id) {
-      const { eq } = await import("drizzle-orm");
-      await db
-        .delete(schema.deliveryWorkflow)
-        .where(eq(schema.deliveryWorkflow.userId, user.id));
-    }
-
     // Clear Redis batch keys to ensure test isolation
     const keys = await redis.keys("thread-batch:*");
     if (keys.length > 0) {
@@ -180,39 +175,7 @@ describe("handleAppMention", () => {
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
-  it("routes to enrolled SDLC loop thread and suppresses sibling thread creation", async () => {
-    await createWorkflow({
-      db,
-      threadId: threadIdWithPR,
-      generation: 1,
-      kind: "planning",
-      stateJson: {},
-      repoFullName: pr.repoFullName,
-      prNumber: pr.number,
-      userId: user.id,
-    });
-
-    await handleAppMention({
-      repoFullName: pr.repoFullName,
-      issueOrPrNumber: pr.number,
-      issueOrPrType: "pull_request",
-      commentId: 123456,
-      commentGitHubUsername: "commenter",
-      commentBody: "Hey @app, please handle this in the loop",
-      commentGitHubAccountId: githubAccountId,
-    });
-
-    expect(queueFollowUpInternal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: user.id,
-        threadId: threadIdWithPR,
-        threadChatId: threadChatIdWithPR,
-      }),
-    );
-    expect(newThreadInternal).not.toHaveBeenCalled();
-  });
-
-  it("enrolls an existing PR thread into SDLC loop when coordinator routing is enabled", async () => {
+  it("routes to an existing PR thread without creating a sibling thread", async () => {
     await updateUserSettings({
       db,
       userId: user.id,
@@ -247,16 +210,6 @@ describe("handleAppMention", () => {
       commentGitHubAccountId: githubAccountId,
     });
 
-    // V2 workflow should be created (no v1 sdlcLoop)
-    const workflow = await db.query.deliveryWorkflow.findFirst({
-      where: (wf, { eq }) => eq(wf.threadId, mentionThread.threadId),
-    });
-
-    expect(workflow).toMatchObject({
-      threadId: mentionThread.threadId,
-      kind: "planning",
-      prNumber: isolatedPr.number,
-    });
     expect(queueFollowUpInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: mentionThread.threadId,
@@ -266,57 +219,7 @@ describe("handleAppMention", () => {
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
 
-  it("does not enroll an opted-out dashboard thread when reusing single-thread mention routing", async () => {
-    await updateUserSettings({
-      db,
-      userId: user.id,
-      updates: {
-        singleThreadForGitHubMentions: true,
-      },
-    });
-
-    const isolatedPr = await createTestGitHubPR({ db });
-    const optedOutThread = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        githubRepoFullName: isolatedPr.repoFullName,
-        githubPRNumber: isolatedPr.number,
-        sourceType: "www",
-        sourceMetadata: { type: "www", deliveryLoopOptIn: false },
-      },
-    });
-
-    await handleAppMention({
-      repoFullName: isolatedPr.repoFullName,
-      issueOrPrNumber: isolatedPr.number,
-      issueOrPrType: "pull_request",
-      commentId: 999124,
-      commentGitHubUsername: "commenter",
-      commentBody: "Please keep this out of the loop",
-      commentGitHubAccountId: githubAccountId,
-    });
-
-    const enrolledWorkflow = await db.query.deliveryWorkflow.findFirst({
-      where: (wf, { and, eq }) =>
-        and(
-          eq(wf.userId, user.id),
-          eq(wf.repoFullName, isolatedPr.repoFullName),
-          eq(wf.prNumber, isolatedPr.number),
-        ),
-    });
-
-    expect(enrolledWorkflow).toBeUndefined();
-    expect(queueFollowUpInternal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId: optedOutThread.threadId,
-        threadChatId: optedOutThread.threadChatId,
-      }),
-    );
-    expect(newThreadInternal).not.toHaveBeenCalled();
-  });
-
-  it("falls back to standard routing when enrolled loop thread is not routable", async () => {
+  it("falls back to standard routing when existing PR thread is not routable", async () => {
     await setFeatureFlagOverrideForTest({
       db,
       userId: user.id,
@@ -332,7 +235,7 @@ describe("handleAppMention", () => {
     });
 
     const isolatedPr = await createTestGitHubPR({ db });
-    const isolatedThread = await createTestThread({
+    await createTestThread({
       db,
       userId: user.id,
       overrides: {
@@ -341,16 +244,6 @@ describe("handleAppMention", () => {
       },
     });
 
-    await createWorkflow({
-      db,
-      threadId: isolatedThread.threadId,
-      generation: 1,
-      kind: "planning",
-      stateJson: {},
-      repoFullName: isolatedPr.repoFullName,
-      prNumber: isolatedPr.number,
-      userId: user.id,
-    });
     const getThreadSpy = vi
       .spyOn(threadModel, "getThread")
       .mockResolvedValueOnce(undefined);

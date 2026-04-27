@@ -1,9 +1,23 @@
+import dynamic from "next/dynamic";
 import { getAdminUserOrThrow } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import * as schema from "@terragon/shared/db/schema";
 import { desc, eq, sql, count, countDistinct } from "drizzle-orm";
-import { AdminUsersList } from "@/components/admin/users-list";
 import { getUserListForAdminPage } from "@/server-lib/admin";
+import { Skeleton } from "@/components/ui/skeleton";
+
+// Dynamically import the heavy admin users list component
+const AdminUsersList = dynamic(
+  () => import("@/components/admin/users-list").then((m) => m.AdminUsersList),
+  {
+    loading: () => (
+      <div className="flex flex-col gap-4 p-4">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    ),
+  },
+);
 
 const LIMIT = 150;
 

@@ -17,6 +17,89 @@ export function ansiToHtml(text: string, theme: "light" | "dark"): string {
   return convert.toHtml(text);
 }
 
+/**
+ * Maps known tool names to action verbs shown in the in-progress tool chip
+ * in place of a generic "Working...". Verbs are written in their -ing form;
+ * `getToolVerb` toggles the suffix based on status. Keep this list in sync
+ * with `apps/www/src/components/chat/tools/*-tool.tsx` renderers.
+ */
+const TOOL_VERB_BY_NAME: Record<string, string> = {
+  Bash: "Running",
+  Read: "Reading",
+  Write: "Writing",
+  Edit: "Editing",
+  MultiEdit: "Editing",
+  Grep: "Searching",
+  Glob: "Matching",
+  LS: "Listing",
+  WebFetch: "Fetching",
+  WebSearch: "Searching",
+  Task: "Delegating",
+  TodoRead: "Reading todos",
+  TodoWrite: "Updating todos",
+  NotebookRead: "Reading notebook",
+  NotebookEdit: "Editing notebook",
+  FileChange: "Editing",
+  ExitPlanMode: "Planning",
+  PermissionRequest: "Awaiting approval",
+  SuggestFollowupTask: "Suggesting follow-up",
+};
+
+/**
+ * Returns a human-readable verb describing a tool's current state. Falls
+ * back to "Running"/"Done" when no specific verb is configured so that new
+ * or MCP-delegated tools render something sensible without plumbing.
+ */
+export function getToolVerb(
+  toolName: string,
+  status: "pending" | "completed" | "error",
+): string {
+  const base = TOOL_VERB_BY_NAME[toolName];
+  if (status === "pending") {
+    return `${base ?? "Running"}...`;
+  }
+  if (!base) return "Done";
+  // "Running" → "Ran", "Reading" → "Read", etc. Only swap the trailing
+  // "ing" suffix on simple verbs; multi-word phrases stay as-is to avoid
+  // mangling (e.g. "Awaiting approval" → past tense adds no value).
+  if (/^[A-Z][a-z]+ing$/.test(base)) {
+    return base.replace(/ing$/, "ed");
+  }
+  return base;
+}
+
+/**
+ * Summarizes a tool result string for the collapsed preview row. For JSON
+ * payloads we render a compact field count (e.g. `JSON result (5 fields)`)
+ * so the user can expand to see the raw structure on demand, mirroring
+ * Cline's expand-toggle pattern. For plaintext we fall back to the literal
+ * first line. Empty strings produce "Done".
+ */
+export function summarizeToolResult(result: string): string {
+  const trimmed = result.trim();
+  if (!trimmed) return "Done";
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return `JSON result (${parsed.length} item${parsed.length === 1 ? "" : "s"})`;
+      }
+      if (parsed && typeof parsed === "object") {
+        const keys = Object.keys(parsed);
+        return `JSON result (${keys.length} field${keys.length === 1 ? "" : "s"})`;
+      }
+    } catch {
+      // fallthrough to plaintext preview
+    }
+  }
+  const firstLine = trimmed.split("\n", 1)[0] ?? "";
+  if (firstLine.length <= 100) return firstLine || "Done";
+  return firstLine.slice(0, 100) + "…";
+}
+
 export function formatToolParameters(
   parameters: AllToolParts["parameters"],
   options: {

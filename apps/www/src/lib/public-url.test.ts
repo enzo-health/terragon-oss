@@ -33,4 +33,14 @@ describe("resolvePublicAppUrl", () => {
       }),
     ).toBe("https://terragon-git-feature.vercel.app");
   });
+
+  it("uses the current browser origin in development", () => {
+    expect(
+      resolvePublicAppUrl({
+        nodeEnv: "development",
+        appUrl: "https://terragon-lake.vercel.app",
+        windowOrigin: "http://localhost:3000",
+      }),
+    ).toBe("http://localhost:3000");
+  });
 });

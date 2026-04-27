@@ -1,3 +1,8 @@
+import {
+  claudeAcpRuntimeAdapterContract,
+  legacyRuntimeAdapterContract,
+} from "@terragon/daemon/runtime-contracts";
+import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import type {
   ImplementationAdapterInput,
   ImplementationDispatch,
@@ -5,7 +10,14 @@ import type {
 } from "./implementation-adapter";
 
 export const claudeCodeImplementationAdapter: ImplementationRuntimeAdapter = {
+  contract(input: ImplementationAdapterInput): RuntimeAdapterContract {
+    if (input.enableAcpTransport === false) {
+      return legacyRuntimeAdapterContract;
+    }
+    return claudeAcpRuntimeAdapterContract;
+  },
   createDispatch(input: ImplementationAdapterInput): ImplementationDispatch {
+    const contract = this.contract(input);
     if (input.enableAcpTransport === false) {
       return {
         transportMode: "legacy",
@@ -24,6 +36,7 @@ export const claudeCodeImplementationAdapter: ImplementationRuntimeAdapter = {
           runId: input.runId,
           transportMode: "legacy",
           protocolVersion: 1,
+          runtimeAdapterContract: contract,
           ...(input.shouldUseCredits ? { useCredits: true } : {}),
         },
       };
@@ -48,6 +61,7 @@ export const claudeCodeImplementationAdapter: ImplementationRuntimeAdapter = {
         protocolVersion: 2,
         acpServerId: `terragon-${input.runId}`,
         acpSessionId: input.sessionId ?? null,
+        runtimeAdapterContract: contract,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },
     };

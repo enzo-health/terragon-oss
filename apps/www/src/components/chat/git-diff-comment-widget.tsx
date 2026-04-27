@@ -66,7 +66,7 @@ export function CommentWidget({
 
     // Optimistic update
     updateThreadChat({
-      messages: [...threadMessages, contextualMessage],
+      projectedMessages: [...threadMessages, contextualMessage],
       errorMessage: null,
       errorMessageInfo: null,
       status: "booting",
@@ -83,7 +83,7 @@ export function CommentWidget({
     if (!result.success) {
       // Revert the optimistic message and surface the error to the user.
       updateThreadChat({
-        messages: prevMessages,
+        projectedMessages: prevMessages,
         errorMessage: result.errorMessage,
         errorMessageInfo: null,
         status: "complete",

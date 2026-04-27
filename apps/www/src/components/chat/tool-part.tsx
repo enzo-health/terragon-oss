@@ -2,10 +2,10 @@ import React, { memo } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
 import {
   AllToolParts,
-  DBMessage,
   type UIImagePart,
   type UIPdfPart,
   type UIRichTextPart,
+  type UIMessage,
   type UITextFilePart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -26,6 +26,7 @@ import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
+import { getToolVerb } from "./tools/utils";
 import { Badge } from "@/components/ui/badge";
 import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
@@ -39,13 +40,14 @@ export type ToolPartProps = {
   toolPart: AllToolParts;
   threadId: string;
   threadChatId: string;
-  messages: DBMessage[];
+  messagesRef: { current: UIMessage[] };
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   childThreads: ChildThreadInfo[];
   githubRepoFullName: string;
   repoBaseBranchName: string;
   branchName: string | null;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 };
@@ -54,13 +56,14 @@ const ToolPart = memo(function ToolPart({
   toolPart: rawToolPart,
   threadId,
   threadChatId,
-  messages,
+  messagesRef,
   isReadOnly,
   promptBoxRef,
   childThreads,
   githubRepoFullName,
   repoBaseBranchName,
   branchName,
+  onOptimisticPermissionModeUpdate,
   artifactDescriptors = [],
   onOpenArtifact,
 }: ToolPartProps) {
@@ -157,13 +160,16 @@ const ToolPart = memo(function ToolPart({
                 toolPart={childToolPart}
                 threadId={threadId}
                 threadChatId={threadChatId}
-                messages={messages}
+                messagesRef={messagesRef}
                 isReadOnly={isReadOnly}
                 promptBoxRef={promptBoxRef}
                 childThreads={childThreads}
                 githubRepoFullName={githubRepoFullName}
                 repoBaseBranchName={repoBaseBranchName}
                 branchName={branchName}
+                onOptimisticPermissionModeUpdate={
+                  onOptimisticPermissionModeUpdate
+                }
                 artifactDescriptors={artifactDescriptors}
                 onOpenArtifact={onOpenArtifact}
               />
@@ -206,9 +212,9 @@ const ToolPart = memo(function ToolPart({
             }
             threadId={threadId}
             threadChatId={threadChatId}
-            messages={messages}
+            messages={messagesRef.current}
             isReadOnly={isReadOnly}
-            promptBoxRef={promptBoxRef}
+            onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
             artifactDescriptors={artifactDescriptors}
             onOpenArtifact={onOpenArtifact}
           />
@@ -293,7 +299,7 @@ const ToolPart = memo(function ToolPart({
       )}
       {isInProgress && !progressChunks?.length && (
         <span className="text-xs text-muted-foreground animate-pulse">
-          Working…
+          {getToolVerb(toolPart.name, "pending")}
         </span>
       )}
     </>
@@ -392,6 +398,8 @@ function areToolPartPropsEqual(
     prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
     prevProps.repoBaseBranchName !== nextProps.repoBaseBranchName ||
     prevProps.branchName !== nextProps.branchName ||
+    prevProps.onOptimisticPermissionModeUpdate !==
+      nextProps.onOptimisticPermissionModeUpdate ||
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact
   ) {
@@ -406,8 +414,6 @@ function areToolPartPropsEqual(
     case "SuggestFollowupTask":
     case "mcp__terry__SuggestFollowupTask":
       return prevProps.childThreads === nextProps.childThreads;
-    case "ExitPlanMode":
-      return prevProps.messages === nextProps.messages;
     default:
       return true;
   }

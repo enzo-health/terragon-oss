@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { DB } from "@terragon/shared/db";
 import { AIAgent, AIModel, AIAgentCredentials } from "@terragon/agent/types";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
 import {
   getThreadMinimal,
   updateThread,
@@ -46,7 +46,6 @@ import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { ensureAgent } from "@terragon/agent/utils";
-import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import type { UserSettings } from "@terragon/shared";
 import { redis } from "@/lib/redis";
 
@@ -586,7 +585,6 @@ async function getOrCreateSandboxForThread({
       });
       if (threadChat) {
         agentOrNull = ensureAgent(threadChat.agent);
-        modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
       }
     }
     const [
@@ -878,8 +876,8 @@ async function getOrCreateSandboxForThread({
     // ID will never succeed — only creating a fresh sandbox can make
     // progress. Previously this recovery was gated behind `shouldFastResume`,
     // which left regular cold boots in a retry loop producing chat errors
-    // reading "Sandbox not found" while the delivery loop kept the thread
-    // in "active" indefinitely.
+    // reading "Sandbox not found" while the runtime status kept the thread
+    // active indefinitely.
     if (isRecoverableSandboxIdError(error)) {
       session = await getOrCreateSandboxWithTimeout(null, {
         ...bootstrapOptions,

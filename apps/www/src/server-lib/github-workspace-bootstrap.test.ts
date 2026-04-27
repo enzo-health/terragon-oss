@@ -1,6 +1,5 @@
 import { env } from "@terragon/env/apps-www";
 import { createDb } from "@terragon/shared/db";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
 import { getGithubSurfaceBindingBySurface } from "@terragon/shared/model/github-surface-bindings";
 import {
   getGithubPrWorkspaceByCanonicalId,
@@ -15,7 +14,6 @@ import {
   createTestThread,
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
-import * as schema from "@terragon/shared/db/schema";
 import { describe, expect, it, vi } from "vitest";
 import { createGitHubWorkspaceBootstrapClient } from "./github-workspace-bootstrap";
 
@@ -88,13 +86,6 @@ describe("github workspace bootstrap", () => {
         githubRepoFullName: projections.repoProjection.currentSlug,
       },
     });
-    await db.insert(schema.deliveryWorkflow).values({
-      threadId,
-      generation: 1,
-      kind: "github_shadow_write",
-      stateJson: {},
-      userId: user.id,
-    });
     const bootstrapClient = createGitHubWorkspaceBootstrapClient({
       db,
       refreshPrProjection: vi.fn().mockResolvedValue(projections),
@@ -110,7 +101,6 @@ describe("github workspace bootstrap", () => {
       },
     });
 
-    const workflow = await getActiveWorkflowForThread({ db, threadId });
     const persistedWorkspace = await getGithubPrWorkspaceByCanonicalId({
       db,
       installationId: projections.installationProjection.installationId,
@@ -130,7 +120,6 @@ describe("github workspace bootstrap", () => {
     expect(result.workspace.headSha).toBe("actual-head-sha");
     expect(result.binding.workspaceId).toBe(result.workspace.id);
     expect(result.binding.boundHeadSha).toBe("actual-head-sha");
-    expect(result.run.workflowId).toBe(workflow?.id);
     expect(result.run.status).toBe("running");
     expect(result.run.threadId).toBe(threadId);
     expect(persistedWorkspace?.id).toBe(result.workspace.id);

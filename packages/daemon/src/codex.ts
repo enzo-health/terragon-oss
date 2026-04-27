@@ -21,6 +21,7 @@ type CollabToolCallItem = {
 
 export type CodexParserState = {
   activeTaskToolUseIds: string[];
+  taskParentToolUseIdById: Map<string, string | null>;
   /**
    * Last emitted text per agent_message/reasoning item id. Used to dedupe
    * intermediate `item.updated` emissions so we only persist a new row when
@@ -53,6 +54,7 @@ export function createCodexParserState(
 ): CodexParserState {
   return {
     activeTaskToolUseIds: [],
+    taskParentToolUseIdById: new Map(),
     lastEmittedTextByItemId: new Map(),
     lastEmittedTodoHashByItemId: new Map(),
     threadId: null,
@@ -83,13 +85,16 @@ function getActiveTaskToolUseId(state: CodexParserState): string | null {
 function addActiveTaskToolUseId({
   state,
   toolUseId,
+  parentToolUseId,
 }: {
   state: CodexParserState;
   toolUseId: string;
+  parentToolUseId: string | null;
 }): void {
   if (!state.activeTaskToolUseIds.includes(toolUseId)) {
     state.activeTaskToolUseIds.push(toolUseId);
   }
+  state.taskParentToolUseIdById.set(toolUseId, parentToolUseId);
 }
 
 function removeActiveTaskToolUseId({
@@ -101,6 +106,58 @@ function removeActiveTaskToolUseId({
 }): void {
   state.activeTaskToolUseIds = state.activeTaskToolUseIds.filter(
     (activeToolUseId) => activeToolUseId !== toolUseId,
+  );
+}
+
+function getTaskParentToolUseId(
+  state: CodexParserState,
+  toolUseId: string,
+): string | null {
+  return state.taskParentToolUseIdById.get(toolUseId) ?? null;
+}
+
+function createTaskToolResultMessage({
+  toolUseId,
+  parentToolUseId,
+  content,
+  isError,
+}: {
+  toolUseId: string;
+  parentToolUseId: string | null;
+  content: string;
+  isError: boolean;
+}): ClaudeMessage {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content,
+          is_error: isError,
+        },
+      ],
+    },
+    parent_tool_use_id: parentToolUseId,
+    session_id: "",
+  };
+}
+
+function drainActiveTaskToolResults(
+  state: CodexParserState,
+  content: string,
+): ClaudeMessage[] {
+  const activeTaskToolUseIds = [...state.activeTaskToolUseIds].reverse();
+  state.activeTaskToolUseIds = [];
+  return activeTaskToolUseIds.map((toolUseId) =>
+    createTaskToolResultMessage({
+      toolUseId,
+      parentToolUseId: getTaskParentToolUseId(state, toolUseId),
+      content,
+      isError: false,
+    }),
   );
 }
 
@@ -148,6 +205,50 @@ function formatCollabToolCallResult(item: CollabToolCallItem): {
   };
 }
 
+function isTerminalCollabAgentStatus(status: string | undefined): boolean {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized === "completed" ||
+    normalized === "failed" ||
+    normalized === "errored" ||
+    normalized === "error" ||
+    normalized === "cancelled" ||
+    normalized === "canceled" ||
+    normalized === "stopped" ||
+    normalized === "timeout" ||
+    normalized === "timed_out" ||
+    normalized === "not_found"
+  );
+}
+
+function isTerminalCollabToolCall(item: CollabToolCallItem): boolean {
+  const normalizedStatus = (item.status ?? "").trim().toLowerCase();
+  if (
+    normalizedStatus !== "completed" &&
+    normalizedStatus !== "failed" &&
+    normalizedStatus !== "errored"
+  ) {
+    return false;
+  }
+
+  // "failed/errored" are terminal even without detailed child states.
+  if (normalizedStatus === "failed" || normalizedStatus === "errored") {
+    return true;
+  }
+
+  // For "completed", require all reported child agents to be terminal.
+  const agentStates = Object.values(item.agents_states ?? {});
+  if (agentStates.length === 0) {
+    return true;
+  }
+  return agentStates.every((state) =>
+    isTerminalCollabAgentStatus(state.status),
+  );
+}
+
 function transformCollabToolCall({
   codexMsg,
   runtime,
@@ -177,7 +278,11 @@ function transformCollabToolCall({
       (codexMsg.type === "item.updated" && status === "in_progress"));
 
   if (shouldEmitTaskStart) {
-    addActiveTaskToolUseId({ state, toolUseId });
+    addActiveTaskToolUseId({
+      state,
+      toolUseId,
+      parentToolUseId: activeParentToolUseId,
+    });
     return [
       {
         type: "assistant",
@@ -202,31 +307,17 @@ function transformCollabToolCall({
     ];
   }
 
-  if (
-    codexMsg.type === "item.completed" ||
-    status === "completed" ||
-    status === "failed"
-  ) {
+  if (isTerminalCollabToolCall(item)) {
+    const completionParentToolUseId = getTaskParentToolUseId(state, toolUseId);
     removeActiveTaskToolUseId({ state, toolUseId });
-    const completionParentToolUseId = getActiveTaskToolUseId(state);
     const { content, isError } = formatCollabToolCallResult(item);
     return [
-      {
-        type: "user",
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: toolUseId,
-              content,
-              is_error: isError,
-            },
-          ],
-        },
-        parent_tool_use_id: completionParentToolUseId,
-        session_id: "",
-      },
+      createTaskToolResultMessage({
+        toolUseId,
+        parentToolUseId: completionParentToolUseId,
+        content,
+        isError,
+      }),
     ];
   }
 
@@ -881,6 +972,7 @@ export function parseCodexLine({
   switch (msgType) {
     case "thread.started": {
       parserState.activeTaskToolUseIds = [];
+      parserState.taskParentToolUseIdById = new Map();
       parserState.threadId =
         (codexMsg as { thread_id?: string }).thread_id || null;
       parserState.lastEmittedTextByItemId = new Map();
@@ -943,6 +1035,12 @@ export function parseCodexLine({
         output_tokens: (codexMsg as { usage?: { output_tokens?: number } })
           .usage?.output_tokens,
       });
+      messages.push(
+        ...drainActiveTaskToolResults(
+          parserState,
+          "Delegated Codex sub-agent task completed",
+        ),
+      );
       return messages;
     }
     case "turn.failed": {
@@ -969,6 +1067,7 @@ export function parseCodexLine({
       }
 
       parserState.activeTaskToolUseIds = [];
+      parserState.taskParentToolUseIdById = new Map();
       messages.push({
         type: "result",
         subtype: "error_during_execution",

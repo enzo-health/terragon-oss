@@ -1,20 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 import {
   getGithubPR,
   getThreadForGithubPRAndUser,
   getThreadsForGithubPR,
 } from "@terragon/shared/model/github";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { maybeBatchThreads } from "@/lib/batch-threads";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
-import { getOctokitForApp } from "@/lib/github";
-import {
-  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
 import { getThread } from "@terragon/shared/model/threads";
+import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { maybeBatchThreads } from "@/lib/batch-threads";
+import { getOctokitForApp } from "@/lib/github";
+import { getNativeAgUiTranscriptForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
+import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 
 const { postHogCapture, signalInboxInsertReturning, dbInsert } = vi.hoisted(
   () => {
@@ -69,6 +66,10 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThread: vi.fn(),
 }));
 
+vi.mock("@/server-lib/ag-ui-side-effect-messages", () => ({
+  getNativeAgUiTranscriptForThreadChat: vi.fn(),
+}));
+
 vi.mock("@/lib/github", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/github")>("@/lib/github");
@@ -84,21 +85,16 @@ vi.mock("@/lib/posthog-server", () => ({
   }),
 }));
 
-vi.mock("@/server-lib/delivery-loop/enrollment", () => ({
-  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled: vi.fn(),
-  isDeliveryLoopEnrollmentAllowedForThread: vi.fn(() => true),
-}));
-
-vi.mock("@terragon/shared/delivery-loop/store/workflow-store", () => ({
-  getActiveWorkflowForThread: vi.fn().mockResolvedValue({ id: "wf-1" }),
-}));
-
 describe("routeGithubFeedbackOrSpawnThread", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getGithubPR).mockResolvedValue(undefined);
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue(null);
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: "",
+      messageCount: 0,
+    });
     vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue(undefined);
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
     vi.mocked(newThreadInternal).mockResolvedValue({
@@ -111,10 +107,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       threadChats: [{ id: "loop-chat-id" }],
     } as Awaited<ReturnType<typeof getThread>>);
     signalInboxInsertReturning.mockResolvedValue([{ id: "signal-inbox-1" }]);
-    vi.mocked(
-      ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-    ).mockResolvedValue(null);
-    vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(true);
     vi.mocked(maybeBatchThreads).mockImplementation(
       async ({ createNewThread }) => {
         const created = await createNewThread();
@@ -178,58 +170,20 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     expect(maybeBatchThreads).not.toHaveBeenCalled();
   });
 
-  it("skips SDLC enrollment for existing threads when enrollment is disallowed", async () => {
-    vi.mocked(getThreadsForGithubPR).mockResolvedValue([
-      { id: "thread-1", userId: "user-1", archived: false },
-    ]);
-    vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
-      id: "thread-1",
-      threadChats: [{ id: "chat-1" }],
-      sourceType: "www",
-      sourceMetadata: { type: "www", deliveryLoopOptIn: false },
-    } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
-    vi.mocked(isDeliveryLoopEnrollmentAllowedForThread).mockReturnValue(false);
-
-    const result = await routeGithubFeedbackOrSpawnThread({
-      repoFullName: "owner/repo",
-      prNumber: 42,
-      eventType: "pull_request_review.submitted",
-      reviewBody: "Please use the shared helper.",
-      baseBranchName: "main",
-      headBranchName: "feature/feedback",
-    });
-
-    expect(result).toEqual({
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-      mode: "reused_existing",
-      reason: "existing-unarchived-thread",
-    });
-    expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
-    expect(
-      ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("deduplicates non-enrolled delivery retries for existing threads", async () => {
+  it("deduplicates webhook delivery retries for existing threads", async () => {
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([
       { id: "thread-1", userId: "user-1", archived: false },
     ]);
     const marker = `<!-- terragon-github-feedback-delivery:delivery-dedup-1:777 -->`;
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: `user: prior routed feedback\n${marker}`,
+      messageCount: 1,
+    });
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
       threadChats: [
         {
           id: "chat-1",
-          messages: [
-            {
-              type: "user",
-              model: null,
-              parts: [
-                { type: "text", text: `prior routed feedback\n${marker}` },
-              ],
-            },
-          ],
           queuedMessages: [],
         },
       ],

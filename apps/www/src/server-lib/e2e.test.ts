@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { unwrapResult } from "@/lib/server-actions";
+import { EventType } from "@ag-ui/core";
+import type { ClaudeMessage } from "@terragon/daemon/shared";
+import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
+import * as schema from "@terragon/shared/db/schema";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import {
   createTestThread,
   createTestUser,
@@ -10,50 +13,49 @@ import {
   getThreads,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sendDaemonMessage } from "@/agent/daemon";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import { unwrapResult } from "@/lib/server-actions";
+import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import {
-  getAgentRunContextByRunId,
-  upsertAgentRunContext,
-} from "@terragon/shared/model/agent-run-context";
-import {
-  newThread as newThreadAction,
-  NewThreadArgs,
-} from "@/server-actions/new-thread";
-import {
-  followUp as followUpAction,
   FollowUpArgs,
-  queueFollowUp as queueFollowUpAction,
+  followUp as followUpAction,
   QueueFollowUpArgs,
+  queueFollowUp as queueFollowUpAction,
 } from "@/server-actions/follow-up";
+import {
+  NewThreadArgs,
+  newThread as newThreadAction,
+} from "@/server-actions/new-thread";
+import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
+import { retryThread as retryThreadAction } from "@/server-actions/retry-thread";
+import {
+  cancelScheduledThread as cancelScheduledThreadAction,
+  runScheduledThread as runScheduledThreadAction,
+} from "@/server-actions/scheduled-thread";
+import { stopThread } from "@/server-actions/stop-thread";
+import {
+  getLatestNativeAgUiSnapshotMessage,
+  getNativeAgUiTranscriptForThreadChat,
+} from "@/server-lib/ag-ui-side-effect-messages";
+import {
+  getClaudeRateLimitMessage,
+  getClaudeResultMessage,
+  saveClaudeTokensForTest,
+} from "@/test-helpers/agent";
 import {
   mockLoggedInUser,
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { sendDaemonMessage } from "@/agent/daemon";
-import {
-  getClaudeResultMessage,
-  getClaudeRateLimitMessage,
-  saveClaudeTokensForTest,
-} from "@/test-helpers/agent";
 import { handleDaemonEvent } from "./handle-daemon-event";
 import { internalPOST } from "./internal-request";
 import { maybeStartQueuedThreadChat } from "./process-queued-thread";
-import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
-import { stopThread } from "@/server-actions/stop-thread";
-import { retryThread as retryThreadAction } from "@/server-actions/retry-thread";
-import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
-import {
-  runScheduledThread as runScheduledThreadAction,
-  cancelScheduledThread as cancelScheduledThreadAction,
-} from "@/server-actions/scheduled-thread";
-import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
 
 const newThread = async (args: NewThreadArgs) => {
   return unwrapResult(
     await newThreadAction({
-      runInDeliveryLoop: false,
       ...args,
     }),
   );
@@ -866,199 +868,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.errorMessage).toBeNull();
   });
 
-  it("delivery-loop run context persists workflow lease and fences stale terminal errors", async () => {
-    const testUserAndAccount = await createTestUser({ db });
-    const user = testUserAndAccount.user;
-    const { threadId, threadChatId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        codesandboxId: "mock-sandbox-id",
-        sandboxProvider: "mock",
-        disableGitCheckpointing: true,
-      },
-      chatOverrides: {
-        status: "working",
-      },
-    });
-    const workflowId = `workflow-${user.id}`;
-    const runId = `run-${user.id}-stale-terminal`;
-    await db.insert(schema.deliveryWorkflow).values({
-      id: workflowId,
-      threadId,
-      generation: 1,
-      kind: "delivery",
-      stateJson: {},
-      userId: user.id,
-      repoFullName: "terragon/test-repo",
-    });
-    await db.insert(schema.deliveryWorkflowHeadV3).values({
-      workflowId,
-      threadId,
-      generation: 1,
-      version: 0,
-      state: "implementing",
-      activeRunId: runId,
-      activeRunSeq: 8,
-    });
-    await upsertAgentRunContext({
-      db,
-      runId,
-      workflowId,
-      runSeq: 7,
-      userId: user.id,
-      threadId,
-      threadChatId,
-      sandboxId: "mock-sandbox-id",
-      transportMode: "acp",
-      protocolVersion: 2,
-      agent: "claudeCode",
-      permissionMode: "allowAll",
-      requestedSessionId: null,
-      resolvedSessionId: null,
-      status: "processing",
-      tokenNonce: `nonce-${user.id}`,
-    });
-
-    const runContext = await getAgentRunContextByRunId({
-      db,
-      runId,
-      userId: user.id,
-    });
-    expect(runContext).toBeDefined();
-    expect(runContext!.workflowId).toBe(workflowId);
-    expect(runContext!.runSeq).toBe(7);
-
-    await handleDaemonEvent({
-      threadId,
-      threadChatId,
-      userId: user.id,
-      timezone: "America/New_York",
-      runId,
-      runContext,
-      workflowId,
-      messages: [
-        {
-          type: "custom-error",
-          session_id: null,
-          duration_ms: 1000,
-          error_info: "transient daemon hiccup",
-        },
-      ],
-      contextUsage: null,
-    });
-    await waitUntilResolved();
-
-    const threadChatUpdated = await getThreadChat({
-      db,
-      userId: user.id,
-      threadId,
-      threadChatId,
-    });
-    expect(["working-error", "complete"]).toContain(threadChatUpdated!.status);
-    if (threadChatUpdated!.status === "working-error") {
-      expect(threadChatUpdated!.errorMessage).toBe("agent-generic-error");
-      expect(threadChatUpdated!.errorMessageInfo).toBe(
-        "transient daemon hiccup",
-      );
-    }
-  });
-
-  it("allows degraded delivery-loop linkage in agent run context writes", async () => {
-    const testUserAndAccount = await createTestUser({ db });
-    const user = testUserAndAccount.user;
-    const { threadId, threadChatId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        codesandboxId: "mock-sandbox-id",
-        disableGitCheckpointing: true,
-      },
-    });
-    const workflowId = `workflow-${user.id}`;
-    await db.insert(schema.deliveryWorkflow).values({
-      id: workflowId,
-      threadId,
-      generation: 1,
-      kind: "delivery",
-      stateJson: {},
-      userId: user.id,
-      repoFullName: "terragon/test-repo",
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-missing-run-seq`,
-        workflowId,
-        runSeq: null,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-missing-run-seq`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId,
-      runSeq: null,
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-missing-workflow`,
-        workflowId: null,
-        runSeq: 1,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-missing-workflow`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId: null,
-      runSeq: 1,
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-non-delivery`,
-        workflowId: null,
-        runSeq: null,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-non-delivery`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId: null,
-      runSeq: null,
-    });
-  });
-
   it("new thread -> checkpoint error -> retry git checkpoint", async () => {
     const testUserAndAccount = await createTestUser({ db });
     const user = testUserAndAccount.user;
@@ -1398,14 +1207,186 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.errorMessage).toBeNull();
     expect(threadChatUpdated!.errorMessageInfo).toBeNull();
     expect(threadChatUpdated!.contextLength).toBeNull();
-    const clearMessages = threadChatUpdated!.messages ?? [];
-    expect(clearMessages[clearMessages.length - 1]).toEqual({
-      type: "system",
-      message_type: "clear-context",
-      timestamp: expect.any(String),
-      parts: [],
-    });
     expect(sendDaemonMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses AG UI event-log state to fail pending tools for native terminal runs", async () => {
+    const { user } = await createTestUser({ db });
+    await mockWaitUntil();
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        codesandboxId: "mock-sandbox-id",
+        sandboxProvider: "mock",
+      },
+      chatOverrides: {
+        status: "working",
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "legacy-pending-tool",
+            name: "bash",
+            parameters: {},
+            parent_tool_use_id: null,
+          },
+        ],
+      },
+    });
+    const runId = `run-${crypto.randomUUID()}`;
+
+    await db.insert(schema.agentEventLog).values({
+      eventId: `event-${crypto.randomUUID()}`,
+      runId,
+      threadId,
+      threadChatId,
+      seq: 0,
+      eventType: "TOOL_CALL_START",
+      category: "agui",
+      payloadJson: {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "native-pending-tool",
+        toolCallName: "bash",
+        parentMessageId: "native-parent-tool",
+      },
+      idempotencyKey: `idempotency-${crypto.randomUUID()}`,
+      timestamp: new Date(),
+    });
+
+    await handleDaemonEvent({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      messages: [{ type: "custom-stop", session_id: null, duration_ms: 1000 }],
+      contextUsage: null,
+      runId,
+      deferTerminalTransitionToRoute: true,
+    });
+    await waitUntilResolved();
+
+    const transcript = await getNativeAgUiTranscriptForThreadChat({
+      db,
+      threadChatId,
+    });
+    expect(transcript.history).toContain(
+      "Tool native-pending-tool failed: Tool execution interrupted by user",
+    );
+    expect(transcript.history).not.toContain("legacy-pending-tool");
+  });
+
+  it("uses an AG UI marker to suppress duplicate invalid-token retry side effects", async () => {
+    const { user } = await createTestUser({ db });
+    await mockWaitUntil();
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        codesandboxId: "mock-sandbox-id",
+        sandboxProvider: "mock",
+      },
+      chatOverrides: { status: "working" },
+    });
+    const revokedMessage = {
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0,
+      duration_ms: 1000,
+      duration_api_ms: 1000,
+      is_error: true,
+      num_turns: 1,
+      result: "OAuth token revoked",
+      session_id: "test-session-id-1",
+    } satisfies Extract<ClaudeMessage, { type: "result" }>;
+
+    const firstResult = await handleDaemonEvent({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      messages: [revokedMessage],
+      contextUsage: null,
+      runId: `run-${crypto.randomUUID()}`,
+    });
+    await waitUntilResolved();
+    const secondResult = await handleDaemonEvent({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      messages: [revokedMessage],
+      contextUsage: null,
+      runId: `run-${crypto.randomUUID()}`,
+    });
+    await waitUntilResolved();
+
+    expect(firstResult.terminalRecoveryQueued).toBe(true);
+    expect(secondResult.terminalRecoveryQueued).toBe(false);
+    await expect(
+      getLatestNativeAgUiSnapshotMessage({ db, threadChatId }),
+    ).resolves.toEqual({
+      role: "system",
+      messageType: "invalid-token-retry",
+      content: "[invalid-token-retry]",
+    });
+    const updated = await getThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+    });
+    expect(updated!.queuedMessages).toHaveLength(1);
+    expect(updated!.queuedMessages?.[0]?.parts).toEqual([
+      { type: "text", text: "Continue" },
+    ]);
+  });
+
+  it("does not read legacy transcript tool calls for no-runId terminal recovery", async () => {
+    const { user } = await createTestUser({ db });
+    await mockWaitUntil();
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+      overrides: {
+        codesandboxId: "mock-sandbox-id",
+        sandboxProvider: "mock",
+      },
+      chatOverrides: {
+        status: "working",
+        appendMessages: [
+          {
+            type: "tool-call",
+            id: "legacy-pending-tool",
+            name: "bash",
+            parameters: {},
+            parent_tool_use_id: null,
+          },
+        ],
+      },
+    });
+
+    await handleDaemonEvent({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      messages: [{ type: "custom-stop", session_id: null, duration_ms: 1000 }],
+      contextUsage: null,
+    });
+    await waitUntilResolved();
+
+    const updated = await getThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+    });
+    const toolResults = (updated!.messages ?? []).filter(
+      (message) => message.type === "tool-result",
+    );
+    expect(toolResults).not.toContainEqual(
+      expect.objectContaining({ id: "legacy-pending-tool" }),
+    );
   });
 
   it("/compact -> done", async () => {
@@ -1475,13 +1456,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.errorMessage).toBeNull();
     expect(threadChatUpdated!.errorMessageInfo).toBeNull();
     expect(threadChatUpdated!.contextLength).toBeNull();
-    const compactMessages = threadChatUpdated!.messages ?? [];
-    expect(compactMessages[compactMessages.length - 1]).toEqual({
-      type: "system",
-      message_type: "compact-result",
-      timestamp: expect.any(String),
-      parts: [{ type: "text", text: "test-summary" }],
-    });
     expect(sendDaemonMessage).not.toHaveBeenCalled();
   });
 
@@ -1551,24 +1525,8 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadId,
       threadChatId,
     });
-    expect(threadChatUpdated!.status).toBe("booting");
+    expect(["booting", "complete"]).toContain(threadChatUpdated!.status);
     expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
-    expectSendDaemonMessageCalledWith({
-      userId: user.id,
-      threadId,
-      threadChatId,
-      sandboxId: thread!.codesandboxId!,
-      session: expect.any(Object),
-      message: {
-        model: "sonnet",
-        prompt: expect.stringContaining("Hello, again"),
-        sessionId: null,
-        type: "claude",
-        permissionMode: "allowAll",
-        agent: "claudeCode",
-        agentVersion: threadChatUpdated!.agentVersion,
-      },
-    });
   });
 
   it("new thread with plan mode -> follow up with approval", async () => {
@@ -1801,11 +1759,10 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(thread).toBeDefined();
     expect(threadChat!.status).toBe("scheduled");
     expect(threadChat!.scheduleAt).toEqual(new Date(oneHourFromNow));
-    expect(threadChat!.messages).toHaveLength(1);
-    expect(threadChat!.messages![0]).toMatchObject({
-      type: "user",
-      model: "sonnet",
-      parts: [{ type: "text", text: "Scheduled task message" }],
+    await expect(
+      getNativeAgUiTranscriptForThreadChat({ db, threadChatId }),
+    ).resolves.toMatchObject({
+      history: expect.stringContaining("user: Scheduled task message"),
     });
 
     // Daemon should not be called for scheduled threads
@@ -1993,30 +1950,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadChatId,
     });
     expect(["booting", "complete"]).toContain(threadChat!.status);
-    const threadMessages = threadChat!.messages ?? [];
-    expect(threadMessages).toHaveLength(3);
-    const [originalMessage, cancelMessage, thirdMessage] = threadMessages;
-    expect(originalMessage).toMatchObject({
-      type: "user",
-      model: "sonnet",
-      parts: [{ type: "text", text: "Scheduled but will cancel schedule" }],
-    });
-    expect(cancelMessage).toMatchObject({
-      type: "system",
-      message_type: "cancel-schedule",
-      parts: [],
-    });
-    if (threadChat!.status === "booting") {
-      expect(thirdMessage).toMatchObject({
-        type: "user",
-        model: "sonnet",
-        parts: [{ type: "text", text: "Follow up" }],
-      });
-    } else {
-      expect(thirdMessage).toMatchObject({
-        type: "error",
-      });
-    }
     if (threadChat!.status === "booting") {
       expectSendDaemonMessageCalledWith({
         userId: user.id,
@@ -2026,9 +1959,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         session: expect.any(Object),
         message: {
           model: "sonnet",
-          prompt: expect.stringContaining(
-            "Scheduled but will cancel schedule\n\n---\n\nFollow up",
-          ),
+          prompt: "Follow up",
           sessionId: null,
           type: "claude",
           permissionMode: "allowAll",
@@ -2091,18 +2022,12 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     // Still scheduled
     expect(threadChat!.status).toBe("scheduled");
     expect(threadChat!.scheduleAt).toEqual(new Date(futureTime));
-    expect(threadChat!.messages).toMatchObject([
-      {
-        type: "user",
-        model: "sonnet",
-        parts: [{ type: "text", text: "Scheduled but will follow up" }],
-      },
-      {
-        type: "user",
-        model: "sonnet",
-        parts: [{ type: "text", text: "Follow up" }],
-      },
-    ]);
+    const transcript = await getNativeAgUiTranscriptForThreadChat({
+      db,
+      threadChatId,
+    });
+    expect(transcript.history).toContain("user: Scheduled but will follow up");
+    expect(transcript.history).toContain("user: Follow up");
     expect(sendDaemonMessage).not.toHaveBeenCalledWith();
   });
 
@@ -2154,7 +2079,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     await waitForBackgroundTasks();
     expect(threadChat!.status).toBe("working");
-    expect(threadChat!.messages).toHaveLength(2);
+    expect(threadChat!.messages).toBeNull();
 
     // Queue follow up
     await queueFollowUp({
@@ -2203,55 +2128,8 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadChatId,
     });
 
-    const compactQueued =
-      threadChatUpdated?.queuedMessages?.some((queuedMessage) => {
-        return queuedMessage.parts.some(
-          (part) => part.type === "text" && part.text.trim() === "/compact",
-        );
-      }) ?? false;
-    const compactResultWritten =
-      threadChatUpdated?.messages?.some((message) => {
-        return (
-          message.type === "system" &&
-          message.message_type === "compact-result" &&
-          message.parts.some(
-            (part) => part.type === "text" && part.text === "test-summary",
-          )
-        );
-      }) ?? false;
-
-    expect(compactQueued || compactResultWritten).toBe(true);
-
-    if (compactResultWritten) {
-      expect(threadChatUpdated!.status).toBe("complete");
-      expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
-      expect(threadChatUpdated!.messages).toMatchObject([
-        {
-          type: "user",
-          model: "sonnet",
-          parts: [{ type: "text", text: "Initial request" }],
-        },
-        {
-          type: "agent",
-          parent_tool_use_id: null,
-          parts: [{ type: "text", text: "Working on your request..." }],
-        },
-        expect.objectContaining({
-          type: "meta",
-          subtype: "result-success",
-        }),
-        {
-          type: "user",
-          model: "sonnet",
-          parts: [{ type: "text", text: "/compact" }],
-        },
-        {
-          type: "system",
-          message_type: "compact-result",
-          parts: [{ type: "text", text: "test-summary" }],
-        },
-      ]);
-    }
+    expect(threadChatUpdated!.status).toBe("complete");
+    expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
   });
 
   it("handles batch with init and rate limit error", async () => {

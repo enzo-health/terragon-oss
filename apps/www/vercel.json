@@ -24,10 +24,6 @@
     {
       "path": "/api/internal/cron/automations",
       "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/internal/cron/dispatch-ack-timeout",
-      "schedule": "*/10 * * * *"
     }
   ]
 }

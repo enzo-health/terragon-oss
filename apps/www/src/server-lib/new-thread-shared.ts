@@ -1,47 +1,43 @@
+import { modelToAgent } from "@terragon/agent/utils";
+import {
+  Automation,
+  DBThreadContextMessage,
+  DBUserMessage,
+  ThreadSource,
+  ThreadSourceMetadata,
+} from "@terragon/shared";
+import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
 import {
   createThread,
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
-import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
-import { db } from "@/lib/db";
-import { generateThreadName } from "@/server-lib/generate-thread-name";
-import {
-  Automation,
-  DBUserMessage,
-  ThreadSource,
-  ThreadSourceMetadata,
-} from "@terragon/shared";
-import { modelToAgent } from "@terragon/agent/utils";
-import { UserFacingError } from "@/lib/server-actions";
 import { getUserSettings } from "@terragon/shared/model/user";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getSandboxProvider } from "@/agent/sandbox";
 import { userMessageToPlainText } from "@/components/promptbox/tiptap-to-richtext";
-import { getPostHogServer } from "@/lib/posthog-server";
+import { db } from "@/lib/db";
 import {
   convertToPlainText,
   estimateMessageSize,
   imageCount,
 } from "@/lib/db-message-helpers";
 import {
-  updateGitHubPR,
   ensureBranchExists,
   findAndAssociatePR,
   getDefaultBranchForRepo,
+  updateGitHubPR,
 } from "@/lib/github";
+import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
+import { getPostHogServer } from "@/lib/posthog-server";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { checkShadowBanTaskCreationRateLimit } from "@/lib/rate-limit";
-import { getDefaultModel } from "./default-ai-model";
-import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
+import { UserFacingError } from "@/lib/server-actions";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
+import { generateThreadName } from "@/server-lib/generate-thread-name";
 import { getThreadChatHistory } from "./compact";
-import {
-  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-  ensureDeliveryLoopEnrollmentForThreadIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "./delivery-loop/enrollment";
+import { getDefaultModel } from "./default-ai-model";
 
 export interface CreateThreadOptions {
   userId: string;
@@ -59,7 +55,6 @@ export interface CreateThreadOptions {
   scheduleAt?: number | null;
   disableGitCheckpointing?: boolean;
   skipSetup?: boolean;
-  runInDeliveryLoop?: boolean;
   sourceType: ThreadSource;
   sourceMetadata?: ThreadSourceMetadata;
   delayMs?: number;
@@ -85,7 +80,6 @@ export async function createNewThread({
   scheduleAt = null,
   disableGitCheckpointing = false,
   skipSetup = false,
-  runInDeliveryLoop = false,
   sourceType,
   sourceMetadata,
   delayMs = 0,
@@ -218,51 +212,8 @@ export async function createNewThread({
     },
   });
 
-  const enrollmentAllowedForThread = isDeliveryLoopEnrollmentAllowedForThread({
-    sourceType,
-    sourceMetadata: sourceMetadata ?? null,
-  });
-  const shouldEnrollDeliveryLoop =
-    enrollmentAllowedForThread &&
-    (runInDeliveryLoop ||
-      sourceType === "automation" ||
-      sourceType === "github-mention" ||
-      sourceType === "cli" ||
-      (sourceMetadata?.type === "www" && sourceMetadata.deliveryLoopOptIn) ||
-      (sourceMetadata?.type === "linear-mention" &&
-        sourceMetadata.deliveryLoopOptIn));
-  const planApprovalPolicy =
-    sourceMetadata?.type === "www" || sourceMetadata?.type === "linear-mention"
-      ? (sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
-      : "auto";
-  const ensureThreadScopedDeliveryEnrollment = async () => {
-    if (!shouldEnrollDeliveryLoop) {
-      return;
-    }
-    await ensureDeliveryLoopEnrollmentForThreadIfEnabled({
-      userId,
-      repoFullName: githubRepoFullName,
-      threadId,
-      planApprovalPolicy,
-    });
-  };
   // If saving as draft, update the thread with the user message
   if (saveAsDraft) {
-    if (shouldEnrollDeliveryLoop) {
-      waitUntil(
-        ensureThreadScopedDeliveryEnrollment().catch((error) => {
-          console.warn(
-            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
-            {
-              userId,
-              threadId,
-              repoFullName: githubRepoFullName,
-              error,
-            },
-          );
-        }),
-      );
-    }
     await updateThread({
       db,
       userId,
@@ -275,32 +226,6 @@ export async function createNewThread({
   }
 
   const updateThreadMetadata = () => {
-    const maybeEnsureDeliveryLoopEnrollment = async (prNumber: number) => {
-      if (!shouldEnrollDeliveryLoop) {
-        return;
-      }
-      try {
-        await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
-          userId,
-          repoFullName: githubRepoFullName,
-          prNumber,
-          threadId,
-          planApprovalPolicy,
-        });
-      } catch (error) {
-        console.warn(
-          "[createNewThread] failed to ensure Delivery Loop enrollment for opted-in thread",
-          {
-            userId,
-            threadId,
-            repoFullName: githubRepoFullName,
-            prNumber,
-            error,
-          },
-        );
-      }
-    };
-
     if (shouldGenerateName) {
       waitUntil(
         generateAndUpdateThreadName({
@@ -318,22 +243,18 @@ export async function createNewThread({
             prNumber: githubPRNumber,
             createIfNotFound: true,
           });
-          await maybeEnsureDeliveryLoopEnrollment(githubPRNumber);
         })(),
       );
     } else if (headBranchName) {
       waitUntil(
         (async () => {
-          const associatedPrNumber = await findAndAssociatePR({
+          await findAndAssociatePR({
             userId,
             threadId,
             repoFullName: githubRepoFullName,
             headBranchName,
             baseBranchName,
           });
-          if (associatedPrNumber) {
-            await maybeEnsureDeliveryLoopEnrollment(associatedPrNumber);
-          }
         })(),
       );
     }
@@ -343,6 +264,10 @@ export async function createNewThread({
     if (scheduleAt < Date.now()) {
       throw new UserFacingError("Schedule time must be in the future");
     }
+    const uploadedMessage = await uploadUserMessageImages({
+      userId,
+      message: messageWithModel,
+    });
     await updateThreadChat({
       db,
       userId,
@@ -350,29 +275,9 @@ export async function createNewThread({
       threadChatId,
       updates: {
         scheduleAt: new Date(scheduleAt),
-        appendMessages: [
-          await uploadUserMessageImages({
-            userId,
-            message: messageWithModel,
-          }),
-        ],
+        appendMessages: [uploadedMessage],
       },
     });
-    if (shouldEnrollDeliveryLoop) {
-      waitUntil(
-        ensureThreadScopedDeliveryEnrollment().catch((error) => {
-          console.warn(
-            "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
-            {
-              userId,
-              threadId,
-              repoFullName: githubRepoFullName,
-              error,
-            },
-          );
-        }),
-      );
-    }
     updateThreadMetadata();
     return { threadId, threadChatId, model: messageWithModel.model };
   }
@@ -383,45 +288,19 @@ export async function createNewThread({
     effectiveCreateNewBranch = false;
   }
 
-  // If the thread is being forked, add the thread context message to the new thread
+  let threadContextMessage: DBThreadContextMessage | null = null;
   if (sourceMetadata?.type === "www-fork") {
-    await updateThreadChat({
-      db,
-      userId,
-      threadId,
-      threadChatId,
-      updates: {
-        appendMessages: [
-          {
-            type: "thread-context",
-            threadId: sourceMetadata.parentThreadId,
-            threadChatId: sourceMetadata.parentThreadChatId,
-            threadChatHistory: await getThreadChatHistory({
-              userId,
-              threadId: sourceMetadata.parentThreadId,
-              threadChatId: sourceMetadata.parentThreadChatId,
-            }),
-            taskDescription: convertToPlainText({ message: messageWithModel }),
-          },
-        ],
-      },
-    });
-  }
-
-  if (shouldEnrollDeliveryLoop) {
-    try {
-      await ensureThreadScopedDeliveryEnrollment();
-    } catch (error) {
-      console.warn(
-        "[createNewThread] failed to ensure thread-scoped Delivery Loop enrollment",
-        {
-          userId,
-          threadId,
-          repoFullName: githubRepoFullName,
-          error,
-        },
-      );
-    }
+    threadContextMessage = {
+      type: "thread-context",
+      threadId: sourceMetadata.parentThreadId,
+      threadChatId: sourceMetadata.parentThreadChatId,
+      threadChatHistory: await getThreadChatHistory({
+        userId,
+        threadId: sourceMetadata.parentThreadId,
+        threadChatId: sourceMetadata.parentThreadChatId,
+      }),
+      taskDescription: convertToPlainText({ message: messageWithModel }),
+    };
   }
 
   // Start processing the message
@@ -430,6 +309,7 @@ export async function createNewThread({
       db,
       userId,
       message: messageWithModel,
+      threadContextMessage,
       threadId,
       threadChatId,
       isNewThread: true,

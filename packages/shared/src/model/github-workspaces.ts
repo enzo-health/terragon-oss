@@ -22,7 +22,7 @@ type GithubPrWorkspaceUpsertFields = Partial<
 >;
 
 type GithubWorkspaceRunUpsertFields = Partial<
-  Pick<GithubWorkspaceRunInsert, "status" | "workflowId">
+  Pick<GithubWorkspaceRunInsert, "status">
 >;
 
 async function requireGithubPrWorkspaceById({
@@ -280,9 +280,6 @@ export async function upsertGithubWorkspaceRun({
       attempt,
       threadId,
       ...(fields?.status !== undefined ? { status: fields.status } : {}),
-      ...(fields?.workflowId !== undefined
-        ? { workflowId: fields.workflowId }
-        : {}),
     })
     .onConflictDoUpdate({
       target: [
@@ -293,9 +290,6 @@ export async function upsertGithubWorkspaceRun({
       ],
       set: {
         ...(fields?.status !== undefined ? { status: fields.status } : {}),
-        ...(fields?.workflowId !== undefined
-          ? { workflowId: fields.workflowId }
-          : {}),
         updatedAt: new Date(),
       },
       setWhere: eq(schema.githubWorkspaceRun.threadId, threadId),

@@ -1,3 +1,5 @@
+import { codexRuntimeAdapterContract } from "@terragon/daemon/runtime-contracts";
+import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import type {
   ImplementationAdapterInput,
   ImplementationDispatch,
@@ -5,7 +7,11 @@ import type {
 } from "./implementation-adapter";
 
 export const codexImplementationAdapter: ImplementationRuntimeAdapter = {
+  contract(): RuntimeAdapterContract {
+    return codexRuntimeAdapterContract;
+  },
   createDispatch(input: ImplementationAdapterInput): ImplementationDispatch {
+    const contract = this.contract(input);
     return {
       transportMode: "codex-app-server",
       protocolVersion: 1,
@@ -23,6 +29,7 @@ export const codexImplementationAdapter: ImplementationRuntimeAdapter = {
         runId: input.runId,
         transportMode: "codex-app-server",
         protocolVersion: 1,
+        runtimeAdapterContract: contract,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },
     };

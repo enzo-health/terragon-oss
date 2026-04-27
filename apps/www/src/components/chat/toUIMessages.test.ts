@@ -339,6 +339,36 @@ describe("toUIMessages", () => {
     ]);
   });
 
+  test("projects durable delegation messages as renderable agent parts", () => {
+    const dbMessages: DBMessage[] = [
+      {
+        type: "delegation",
+        model: null,
+        delegationId: "del-001",
+        tool: "spawn",
+        status: "running",
+        senderThreadId: "thread-1",
+        receiverThreadIds: ["agent-1"],
+        prompt: "Review the PR",
+        delegatedModel: "claude-sonnet",
+        agentsStates: { "agent-1": "running" },
+      },
+    ];
+
+    const result = toUIMessages({ dbMessages, agent: "claudeCode" });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "agent",
+      parts: [
+        {
+          type: "delegation",
+          delegationId: "del-001",
+          status: "running",
+        },
+      ],
+    });
+  });
+
   test("handles orphaned tool results gracefully", () => {
     const dbMessages: DBMessage[] = [
       {
@@ -2101,7 +2131,7 @@ describe("toUIMessages", () => {
             name: "Task",
             parameters: { description: "Complex task" },
             status: "completed",
-            result: "[Tool execution was interrupted]",
+            result: "[Tool execution was interrupted by error]",
             parts: [],
           },
         ],
@@ -2183,12 +2213,25 @@ describe("toUIMessages", () => {
             name: "Read",
             parameters: { file_path: "test.txt" },
             status: "completed",
-            result: "[Tool execution was interrupted]",
+            result: "[Tool completed without explicit result]",
             parts: [],
           },
         ],
       },
     ]);
+
+    const resultWithStoppedStatus = toUIMessages({
+      dbMessages,
+      agent: "claudeCode",
+      threadStatus: "stopped",
+    });
+    expect(resultWithStoppedStatus[1]?.parts).toContainEqual(
+      expect.objectContaining({
+        id: "tool-1",
+        status: "completed",
+        result: "[Tool execution was interrupted]",
+      }),
+    );
 
     // With working thread status, tool remains pending
     const resultWithWorkingStatus = toUIMessages({

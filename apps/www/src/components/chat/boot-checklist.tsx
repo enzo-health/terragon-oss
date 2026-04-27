@@ -1,10 +1,10 @@
 "use client";
 
+import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
+import { Check, Loader2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
-import { Loader2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { BootingSubstatus } from "@terragon/shared/delivery-loop/thread-meta-event";
-import { useThreadMetaEvents } from "./meta-chips/use-thread-meta-events";
+import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
 
 // ----- ordered step definitions -----
 
@@ -123,12 +123,12 @@ function InstallProgressBar({
           // Indeterminate: pulse the filled portion to signal ongoing activity
           <span>
             <span className="animate-pulse text-primary/70">{filledChars}</span>
-            <span className="text-muted-foreground/30">{emptyChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         ) : (
           <span>
             <span className="text-primary/70">{filledChars}</span>
-            <span className="text-muted-foreground/30">{emptyChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         )}{" "}
         {total !== undefined ? (
@@ -154,13 +154,12 @@ function InstallProgressBar({
 // ----- main component -----
 
 export interface BootChecklistProps {
-  /** Thread ID used to subscribe to meta events for real-time step updates. */
-  threadId: string;
   /**
    * Current substatus from the DB / parent component.
    * Used as a fallback when meta events haven't arrived yet.
    */
   currentSubstatus: BootingSubstatus | null;
+  metaSnapshot: ThreadMetaSnapshot;
 }
 
 /**
@@ -174,11 +173,10 @@ export interface BootChecklistProps {
  *   that step is in-progress.
  */
 export function BootChecklist({
-  threadId,
   currentSubstatus,
+  metaSnapshot,
 }: BootChecklistProps) {
-  const { snapshot } = useThreadMetaEvents(threadId);
-  const { bootSteps, installProgress } = snapshot;
+  const { bootSteps, installProgress } = metaSnapshot;
 
   // Determine which step is currently active using meta events when available,
   // falling back to the currentSubstatus prop.
@@ -246,14 +244,11 @@ export function BootChecklist({
 
               {/* Step label */}
               <span
-                className={cn(
-                  "flex-1 text-sm transition-colors duration-200",
-                  {
-                    "text-foreground font-medium": isActive,
-                    "text-muted-foreground": isCompleted,
-                    "text-muted-foreground opacity-40": isPending,
-                  },
-                )}
+                className={cn("flex-1 text-sm transition-colors duration-200", {
+                  "text-foreground font-medium": isActive,
+                  "text-muted-foreground": isCompleted,
+                  "text-muted-foreground opacity-40": isPending,
+                })}
               >
                 {step.label}
               </span>
@@ -261,7 +256,7 @@ export function BootChecklist({
               {/* Duration: static badge for completed steps, live timer for active */}
               {isCompleted && durationMs !== undefined && (
                 <span
-                  className="font-mono text-[11px] text-muted-foreground/60 flex-shrink-0 tabular-nums"
+                  className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}
@@ -273,7 +268,8 @@ export function BootChecklist({
             </div>
 
             {/* Install progress bar — only shown when this step is active */}
-            {step.substatus === "installing-agent" &&
+            {(step.substatus === "installing-agent" ||
+              step.substatus === "running-setup-script") &&
               isActive &&
               installProgress !== null && (
                 <InstallProgressBar

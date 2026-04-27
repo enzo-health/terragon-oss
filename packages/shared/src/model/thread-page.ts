@@ -14,6 +14,10 @@ import {
   ThreadStatus,
   ThreadVisibility,
 } from "../db/types";
+import {
+  getThreadReplayEntriesFromCanonicalEvents,
+  hasCanonicalReplayProjection,
+} from "./agent-event-log";
 import { getUser } from "./user";
 
 const activeThreadStatuses: ReadonlySet<ThreadStatus> = new Set([
@@ -255,7 +259,6 @@ function getThreadPageFullChatSelect() {
     agent: schema.threadChat.agent,
     agentVersion: schema.threadChat.agentVersion,
     status: schema.threadChat.status,
-    messages: schema.threadChat.messages,
     queuedMessages: schema.threadChat.queuedMessages,
     sessionId: schema.threadChat.sessionId,
     errorMessage: schema.threadChat.errorMessage,
@@ -528,14 +531,33 @@ export async function getThreadPageChatWithPermissions({
     return undefined;
   }
 
+  const isCanonicalProjection = await hasCanonicalReplayProjection({
+    db,
+    threadId,
+    threadChatId,
+  });
+
+  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [];
+  if (isCanonicalProjection) {
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
+      threadId,
+      threadChatId,
+      fromThreadChatMessageSeq: 0,
+    });
+    projectedMessages = replayEntries.flatMap((entry) => entry.messages);
+  }
+
   return {
     ...threadChat,
-    messageCount: threadChat.messages?.length ?? 0,
+    messageCount: projectedMessages.length,
     chatSequence:
       threadChat.messageSeq > 0
         ? threadChat.messageSeq
         : threadChat.updatedAt.getTime(),
     patchVersion: 0,
+    projectedMessages,
+    isCanonicalProjection,
   };
 }
 

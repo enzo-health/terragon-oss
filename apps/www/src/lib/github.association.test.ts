@@ -1,14 +1,12 @@
 import { env } from "@terragon/env/apps-www";
 import { createDb } from "@terragon/shared/db";
-import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";
-import * as schema from "@terragon/shared/db/schema";
-import { getGithubSurfaceBindingBySurface } from "@terragon/shared/model/github-surface-bindings";
-import { getGithubPrWorkspaceByCanonicalId } from "@terragon/shared/model/github-workspaces";
 import {
   upsertGithubInstallationProjection,
   upsertGithubPrProjection,
   upsertGithubRepoProjection,
 } from "@terragon/shared/model/github-projections";
+import { getGithubSurfaceBindingBySurface } from "@terragon/shared/model/github-surface-bindings";
+import { getGithubPrWorkspaceByCanonicalId } from "@terragon/shared/model/github-workspaces";
 import {
   createTestThread,
   createTestUser,
@@ -89,21 +87,10 @@ describe("associateThreadWithPullRequest", () => {
         githubRepoFullName: repoFullName,
       },
     });
-    const [workflow] = await db
-      .insert(schema.deliveryWorkflow)
-      .values({
-        threadId,
-        generation: 1,
-        kind: "github_shadow_write",
-        stateJson: {},
-        userId: user.id,
-      })
-      .returning();
     const bootstrapThreadGithubWorkspaceFn =
       createGitHubWorkspaceBootstrapClient({
         db,
         refreshPrProjection: vi.fn().mockResolvedValue(projections),
-        getActiveWorkflowForThread,
       }).bootstrapThreadGithubWorkspace;
 
     const associatedPrNumber = await associateThreadWithPullRequest({
@@ -143,7 +130,6 @@ describe("associateThreadWithPullRequest", () => {
     expect(binding?.boundHeadSha).toBe(liveHeadSha);
     expect(runs).toHaveLength(1);
     expect(runs[0]?.threadId).toBe(threadId);
-    expect(runs[0]?.workflowId).toBe(workflow?.id);
   });
 
   it("links an existing associated PR payload into the canonical workspace", async () => {
@@ -167,7 +153,6 @@ describe("associateThreadWithPullRequest", () => {
       createGitHubWorkspaceBootstrapClient({
         db,
         refreshPrProjection: vi.fn().mockResolvedValue(projections),
-        getActiveWorkflowForThread,
       }).bootstrapThreadGithubWorkspace;
 
     const associatedPrNumber = await associateThreadWithPullRequest({

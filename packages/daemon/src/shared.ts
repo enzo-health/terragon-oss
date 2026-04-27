@@ -1,6 +1,7 @@
-import * as z from "zod/v4";
 import { Anthropic } from "@anthropic-ai/sdk";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import { AIAgentSchema } from "@terragon/agent/types";
+import * as z from "zod/v4";
 import type { ThreadMetaEvent } from "./codex-app-server";
 
 export const defaultPipePath = "/tmp/terragon-daemon.pipe";
@@ -12,10 +13,6 @@ export const DAEMON_VERSION = "1";
 export const DAEMON_EVENT_VERSION_HEADER = "X-Daemon-Version";
 export const DAEMON_EVENT_CAPABILITIES_HEADER = "X-Daemon-Capabilities";
 export const DAEMON_CAPABILITY_EVENT_ENVELOPE_V2 = "daemon_event_envelope_v2";
-/** @deprecated Use DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH */
-export const DAEMON_CAPABILITY_SDLC_SELF_DISPATCH = "sdlc_self_dispatch";
-export const DAEMON_CAPABILITY_DELIVERY_LOOP_SELF_DISPATCH =
-  DAEMON_CAPABILITY_SDLC_SELF_DISPATCH;
 
 // TODO sawyer: we don't want to depend on shared so mirror the ones we need here.
 export type FeatureFlags = {
@@ -28,6 +25,60 @@ export const DaemonTransportModeSchema = z.enum([
   "codex-app-server",
 ]);
 export type DaemonTransportMode = z.infer<typeof DaemonTransportModeSchema>;
+
+export const RuntimeAdapterOperationSchema = z.enum([
+  "start",
+  "resume",
+  "stop",
+  "restart",
+  "retry",
+  "permission-response",
+  "event-normalization",
+  "compact-and-retry",
+  "human-intervention",
+]);
+export type RuntimeAdapterOperation = z.infer<
+  typeof RuntimeAdapterOperationSchema
+>;
+
+export const RuntimeAdapterOperationSupportSchema = z.discriminatedUnion(
+  "status",
+  [
+    z.object({ status: z.literal("supported") }),
+    z.object({
+      status: z.literal("unsupported"),
+      reason: z.string(),
+      recovery: z.enum([
+        "retry-new-run",
+        "manual-intervention",
+        "legacy-fallback",
+      ]),
+    }),
+  ],
+);
+export type RuntimeAdapterOperationSupport = z.infer<
+  typeof RuntimeAdapterOperationSupportSchema
+>;
+
+export const RuntimeAdapterContractSchema = z.object({
+  adapterId: z.enum(["codex-app-server", "claude-acp", "legacy"]),
+  transportMode: DaemonTransportModeSchema,
+  protocolVersion: z.union([z.literal(1), z.literal(2)]),
+  session: z.object({
+    requestedSessionField: z.enum(["sessionId", "acpSessionId"]).nullable(),
+    resolvedSessionField: z
+      .enum(["sessionId", "acpSessionId", "codexPreviousResponseId"])
+      .nullable(),
+    previousResponseField: z.literal("codexPreviousResponseId").nullable(),
+  }),
+  operations: z.record(
+    RuntimeAdapterOperationSchema,
+    RuntimeAdapterOperationSupportSchema,
+  ),
+});
+export type RuntimeAdapterContract = z.infer<
+  typeof RuntimeAdapterContractSchema
+>;
 
 export const DaemonMessageClaudeSchema = z
   .object({
@@ -51,6 +102,7 @@ export const DaemonMessageClaudeSchema = z
     acpServerId: z.string().nullable().optional(),
     acpSessionId: z.string().nullable().optional(),
     codexPreviousResponseId: z.string().nullable().optional(),
+    runtimeAdapterContract: RuntimeAdapterContractSchema.optional(),
   })
   .superRefine((value, ctx) => {
     const transportMode = value.transportMode ?? "legacy";
@@ -156,6 +208,11 @@ export type ClaudeMessage =
       session_id: null;
       duration_ms: number;
       error_info?: string;
+      runtimeRecovery?: {
+        operation: RuntimeAdapterOperation;
+        reason: string;
+        recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+      };
     }
 
   // Emitted as the last message
@@ -345,27 +402,6 @@ export type ClaudeMessage =
       status: "pending" | "applied" | "rejected";
     };
 
-export type DeliveryLoopSelfDispatchPayload = {
-  token: string;
-  prompt: string;
-  runId: string;
-  tokenNonce: string;
-  model: string;
-  agent: z.infer<typeof AIAgentSchema>;
-  agentVersion: number;
-  sessionId: string | null;
-  featureFlags: FeatureFlags;
-  permissionMode: "allowAll" | "plan";
-  transportMode: DaemonTransportMode;
-  protocolVersion: 1 | 2;
-  threadId: string;
-  threadChatId: string;
-  useCredits?: boolean;
-};
-
-/** @deprecated Use DeliveryLoopSelfDispatchPayload */
-export type SdlcSelfDispatchPayload = DeliveryLoopSelfDispatchPayload;
-
 export type DaemonDelta = {
   messageId: string;
   partIndex: number;
@@ -390,6 +426,8 @@ export type DaemonEventAPIBody = {
   seq?: number;
   /** Git HEAD sha captured after the agent turn completes, before sending terminal message. */
   headShaAtCompletion?: string | null;
+  /** Canonical runtime events persisted before legacy thread patch handling. */
+  canonicalEvents?: CanonicalEvent[];
   /** Token-level deltas for streaming text to clients. */
   deltas?: DaemonDelta[];
   /**

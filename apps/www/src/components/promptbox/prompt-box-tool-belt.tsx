@@ -1,5 +1,6 @@
 "use client";
 
+import { useAtom } from "jotai";
 import React, {
   useCallback,
   useEffect,
@@ -7,20 +8,18 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Button } from "@/components/ui/button";
-import { ArchiveIcon } from "@/components/icons/archive";
-import { CheckpointToggle } from "./checkpoint-toggle";
-import { SkipSetupToggle } from "./skip-setup-toggle";
-import { BranchToggle } from "./branch-toggle";
 import { toast } from "sonner";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { Repeat2 } from "lucide-react";
 import {
-  disableGitCheckpointingCookieAtom,
   createNewBranchCookieAtom,
+  disableGitCheckpointingCookieAtom,
   skipSetupCookieAtom,
 } from "@/atoms/user-cookies";
-import { useAtom } from "jotai";
+import { ArchiveIcon } from "@/components/icons/archive";
+import { Button } from "@/components/ui/button";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { BranchToggle } from "./branch-toggle";
+import { CheckpointToggle } from "./checkpoint-toggle";
+import { SkipSetupToggle } from "./skip-setup-toggle";
 
 interface PromptBoxToolBeltProps {
   /** Whether to show the skip archive button */
@@ -60,15 +59,6 @@ interface PromptBoxToolBeltProps {
   onCreateNewBranchChange?: (value: boolean) => void;
   /** Whether to disable create new branch button */
   createNewBranchDisabled?: boolean;
-
-  /** Whether to show Delivery Loop opt-in toggle */
-  showDeliveryLoopOptIn?: boolean;
-  /** Value for Delivery Loop opt-in toggle */
-  deliveryLoopOptInValue?: boolean;
-  /** Handler for Delivery Loop opt-in toggle */
-  onDeliveryLoopOptInChange?: (value: boolean) => void;
-  /** Whether to disable Delivery Loop opt-in toggle */
-  deliveryLoopOptInDisabled?: boolean;
 }
 
 export function PromptBoxToolBelt({
@@ -89,10 +79,6 @@ export function PromptBoxToolBelt({
   createNewBranchValue = true,
   onCreateNewBranchChange,
   createNewBranchDisabled = false,
-  showDeliveryLoopOptIn = false,
-  deliveryLoopOptInValue = false,
-  onDeliveryLoopOptInChange,
-  deliveryLoopOptInDisabled = false,
 }: PromptBoxToolBeltProps) {
   const isBranchToggleEnabled = useFeatureFlag("branchCreationToggle");
 
@@ -100,7 +86,6 @@ export function PromptBoxToolBelt({
     !showSkipArchive &&
     !showSkipSetup &&
     !showCheckpoint &&
-    !showDeliveryLoopOptIn &&
     (!showCreateNewBranchOption || !isBranchToggleEnabled)
   ) {
     return null;
@@ -148,46 +133,6 @@ export function PromptBoxToolBelt({
           onChange={onCheckpointChange!}
           showDialog={checkpointShowDialog}
         />
-      )}
-      {showDeliveryLoopOptIn && (
-        <Button
-          variant="ghost"
-          size="icon"
-          type="button"
-          className={
-            deliveryLoopOptInValue
-              ? "text-muted-foreground hover:text-muted-foreground"
-              : "opacity-50 hover:opacity-50"
-          }
-          aria-pressed={deliveryLoopOptInValue}
-          aria-label={
-            deliveryLoopOptInValue
-              ? "Run task in Delivery Loop"
-              : "Run task without Delivery Loop"
-          }
-          title={
-            deliveryLoopOptInValue
-              ? "Run task in Delivery Loop"
-              : "Run task without Delivery Loop"
-          }
-          disabled={deliveryLoopOptInDisabled}
-          onClick={() => {
-            if (deliveryLoopOptInDisabled) {
-              return;
-            }
-            const nextValue = !deliveryLoopOptInValue;
-            onDeliveryLoopOptInChange?.(nextValue);
-            toast.success(
-              nextValue
-                ? "Delivery Loop will run for this task"
-                : "Delivery Loop is off for this task",
-            );
-          }}
-        >
-          <Repeat2
-            className={`h-4 w-4 ${deliveryLoopOptInValue ? "" : "opacity-50"}`}
-          />
-        </Button>
       )}
     </div>
   );

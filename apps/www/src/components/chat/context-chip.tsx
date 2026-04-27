@@ -27,7 +27,7 @@ export function ContextChip({
 
   return (
     <div className="absolute -top-9 right-6">
-      <div className="text-xs text-muted-foreground bg-muted/50 backdrop-blur-sm px-3 py-1 rounded-full border border-border/50 flex items-center gap-1.5">
+      <div className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full border border-border/50 flex items-center gap-1.5">
         {showWarning && (
           <div title="Task will auto compact at 100% context">
             <AlertTriangle className="size-3" />

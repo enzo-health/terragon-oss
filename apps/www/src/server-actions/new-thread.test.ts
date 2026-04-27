@@ -1,4 +1,5 @@
-import { describe, it, vi, beforeEach, beforeAll, expect } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
 vi.mock("@/server-lib/new-threads-multi-model", async () => {
   const actual = await vi.importActual<
     typeof import("@/server-lib/new-threads-multi-model")
@@ -12,19 +13,19 @@ vi.mock("@/server-lib/new-threads-multi-model", async () => {
   };
 });
 
-import { newThread } from "./new-thread";
-import { db } from "@/lib/db";
+import { execSync } from "node:child_process";
+import { DBUserMessage, Session, User } from "@terragon/shared";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
-import { User, Session, DBUserMessage } from "@terragon/shared";
+import { getThread } from "@terragon/shared/model/threads";
+import { db } from "@/lib/db";
+import { unwrapResult } from "@/lib/server-actions";
+import { newThreadsMultiModel } from "@/server-lib/new-threads-multi-model";
 import {
   mockLoggedInUser,
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { getThread } from "@terragon/shared/model/threads";
-import { unwrapResult } from "@/lib/server-actions";
-import { execSync } from "node:child_process";
-import { newThreadsMultiModel } from "@/server-lib/new-threads-multi-model";
+import { newThread } from "./new-thread";
 
 const repoFullName = "terragon/test-repo";
 const mockMessage: DBUserMessage = {
@@ -116,7 +117,7 @@ describe("newThread", { timeout: 30_000 }, () => {
       expect(thread!.branchName).toBeNull();
     });
 
-    it("should default SDLC loop opt-in metadata to true for new dashboard tasks", async () => {
+    it("stores minimal source metadata for new dashboard tasks", async () => {
       await mockWaitUntil();
       await mockLoggedInUser(session);
 
@@ -133,29 +134,6 @@ describe("newThread", { timeout: 30_000 }, () => {
       expect(thread!.sourceType).toBe("www");
       expect(thread!.sourceMetadata).toEqual({
         type: "www",
-        deliveryLoopOptIn: true,
-      });
-    });
-
-    it("should persist SDLC loop opt-in metadata for new dashboard tasks", async () => {
-      await mockWaitUntil();
-      await mockLoggedInUser(session);
-
-      const result = await newThread({
-        message: mockMessage,
-        githubRepoFullName: repoFullName,
-        branchName: "main",
-        runInDeliveryLoop: true,
-      });
-      const { threadId } = unwrapResult(result);
-      await waitUntilResolvedBestEffort();
-
-      const thread = await getThread({ db, userId: user.id, threadId });
-      expect(thread).toBeDefined();
-      expect(thread!.sourceType).toBe("www");
-      expect(thread!.sourceMetadata).toEqual({
-        type: "www",
-        deliveryLoopOptIn: true,
       });
     });
 

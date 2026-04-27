@@ -1,4 +1,9 @@
-import type { DBMessage } from "@terragon/shared";
+import type {
+  AllToolParts,
+  DBMessage,
+  UIAgentMessage,
+  UIMessage,
+} from "@terragon/shared";
 
 // Aliases matching parse-plan-spec.ts
 const PLAN_TEXT_ALIASES = ["planText", "plan_text", "summary", "overview"];
@@ -80,45 +85,61 @@ export function findPlanFromWriteToolCall({
   messages,
   exitPlanModeToolId,
 }: {
-  messages: DBMessage[] | null;
+  messages: UIMessage[] | null;
   exitPlanModeToolId: string;
 }): string | null {
   if (!messages) return null;
 
-  // Find the index of this ExitPlanMode tool call
-  let exitPlanModeIndex = -1;
+  let exitPlanModeLocation: ToolPartLocation | null = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
-    if (
-      message?.type === "tool-call" &&
-      message.name === "ExitPlanMode" &&
-      message.id === exitPlanModeToolId
-    ) {
-      exitPlanModeIndex = i;
+    if (!message || message.role !== "agent") {
+      continue;
+    }
+    const partIndex = findToolPartIndex({
+      message,
+      name: "ExitPlanMode",
+      id: exitPlanModeToolId,
+    });
+    if (partIndex !== null) {
+      exitPlanModeLocation = { messageIndex: i, partIndex };
       break;
     }
   }
 
-  if (exitPlanModeIndex === -1) return null;
+  if (!exitPlanModeLocation) return null;
 
-  // Look backwards from the ExitPlanMode call for a Write tool call to plans/*.md
-  for (let i = exitPlanModeIndex - 1; i >= 0; i--) {
+  for (let i = exitPlanModeLocation.messageIndex; i >= 0; i--) {
     const message = messages[i];
     if (!message) continue;
 
-    // Stop if we hit a user message (different turn)
-    if (message.type === "user") {
+    if (message.role === "user") {
       break;
     }
 
-    // Check if this is a Write tool call to a plans/*.md file
-    if (message.type === "tool-call" && message.name === "Write") {
-      const filePath = message.parameters?.file_path;
-      if (typeof filePath === "string" && /plans\/[^/]+\.md$/.test(filePath)) {
-        const content = message.parameters?.content;
-        if (typeof content === "string" && content.trim()) {
-          return content;
-        }
+    if (message.role !== "agent") {
+      continue;
+    }
+
+    const startPartIndex =
+      i === exitPlanModeLocation.messageIndex
+        ? exitPlanModeLocation.partIndex - 1
+        : message.parts.length - 1;
+
+    for (let partIndex = startPartIndex; partIndex >= 0; partIndex--) {
+      const part = message.parts[partIndex];
+      if (!isToolPartNamed(part, "Write")) {
+        continue;
+      }
+      const filePath = getStringParam(part.parameters, "file_path");
+      const content = getStringParam(part.parameters, "content");
+      if (
+        filePath &&
+        /plans\/[^/]+\.md$/.test(filePath) &&
+        content &&
+        content.trim()
+      ) {
+        return content;
       }
     }
   }
@@ -137,7 +158,7 @@ export function resolvePlanText({
   exitPlanModeToolId,
 }: {
   planParam?: string;
-  messages: DBMessage[] | null;
+  messages: UIMessage[] | null;
   exitPlanModeToolId: string;
 }): string {
   let raw = "";
@@ -152,4 +173,114 @@ export function resolvePlanText({
       }) || "";
   }
   return formatPlanForDisplay(raw);
+}
+
+export function resolvePlanTextFromLegacyMessages({
+  planParam,
+  messages,
+  exitPlanModeToolId,
+}: {
+  planParam?: string;
+  messages: DBMessage[] | null;
+  exitPlanModeToolId: string;
+}): string {
+  let raw = "";
+  const trimmedPlan = planParam?.trim();
+  if (trimmedPlan) {
+    raw = trimmedPlan;
+  } else {
+    raw =
+      findPlanFromLegacyWriteToolCall({
+        messages,
+        exitPlanModeToolId,
+      }) || "";
+  }
+  return formatPlanForDisplay(raw);
+}
+
+type ToolPartLocation = {
+  messageIndex: number;
+  partIndex: number;
+};
+
+function findToolPartIndex({
+  message,
+  name,
+  id,
+}: {
+  message: UIAgentMessage;
+  name: string;
+  id: string;
+}): number | null {
+  for (let index = message.parts.length - 1; index >= 0; index--) {
+    const part = message.parts[index];
+    if (isToolPartNamed(part, name) && part.id === id) {
+      return index;
+    }
+  }
+  return null;
+}
+
+function isToolPartNamed(
+  part: UIAgentMessage["parts"][number] | undefined,
+  name: string,
+): part is AllToolParts {
+  return part?.type === "tool" && part.name === name;
+}
+
+function getStringParam(
+  params: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = params[key];
+  return typeof value === "string" ? value : null;
+}
+
+function findPlanFromLegacyWriteToolCall({
+  messages,
+  exitPlanModeToolId,
+}: {
+  messages: DBMessage[] | null;
+  exitPlanModeToolId: string;
+}): string | null {
+  if (!messages) return null;
+
+  let exitPlanModeIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (
+      message?.type === "tool-call" &&
+      message.name === "ExitPlanMode" &&
+      message.id === exitPlanModeToolId
+    ) {
+      exitPlanModeIndex = i;
+      break;
+    }
+  }
+
+  if (exitPlanModeIndex === -1) return null;
+
+  for (let i = exitPlanModeIndex - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message) continue;
+
+    if (message.type === "user") {
+      break;
+    }
+
+    if (message.type === "tool-call" && message.name === "Write") {
+      const filePath = message.parameters?.file_path;
+      const content = message.parameters?.content;
+      if (
+        typeof filePath === "string" &&
+        /plans\/[^/]+\.md$/.test(filePath) &&
+        typeof content === "string" &&
+        content.trim()
+      ) {
+        return content;
+      }
+    }
+  }
+
+  return null;
 }

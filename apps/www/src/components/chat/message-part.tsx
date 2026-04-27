@@ -29,6 +29,7 @@ import { AutoApprovalReviewCard } from "./auto-approval-review-card";
 import { PlanPartView } from "./plan-part";
 import { ServerToolUseView } from "./server-tool-use-view";
 import { WebSearchResultView } from "./web-search-result-view";
+import { DelegationItemCard } from "./delegation-item-card";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -209,6 +210,23 @@ export const MessagePart = memo(function MessagePart({
       return <ServerToolUseView part={extendedPart} />;
     case "web-search-result":
       return <WebSearchResultView part={extendedPart} />;
+    case "delegation":
+      if ("delegationId" in extendedPart) {
+        return <DelegationItemCard delegation={extendedPart} />;
+      }
+      return (
+        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+          <div className="font-medium">
+            Delegated to {extendedPart.agentName}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {extendedPart.status}
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm">
+            {extendedPart.message}
+          </p>
+        </div>
+      );
     default:
       // TypeScript exhaustiveness check — will error at compile time if a
       // UIPartExtended variant is added without a corresponding case above.
@@ -245,6 +263,7 @@ function areMessagePartPropsEqual(
   if (
     prevProps.toolProps.threadId !== nextProps.toolProps.threadId ||
     prevProps.toolProps.threadChatId !== nextProps.toolProps.threadChatId ||
+    prevProps.toolProps.messagesRef !== nextProps.toolProps.messagesRef ||
     prevProps.toolProps.isReadOnly !== nextProps.toolProps.isReadOnly ||
     prevProps.toolProps.promptBoxRef !== nextProps.toolProps.promptBoxRef ||
     prevProps.toolProps.childThreads !== nextProps.toolProps.childThreads ||
@@ -252,13 +271,13 @@ function areMessagePartPropsEqual(
       nextProps.toolProps.githubRepoFullName ||
     prevProps.toolProps.repoBaseBranchName !==
       nextProps.toolProps.repoBaseBranchName ||
-    prevProps.toolProps.branchName !== nextProps.toolProps.branchName
+    prevProps.toolProps.branchName !== nextProps.toolProps.branchName ||
+    prevProps.toolProps.onOptimisticPermissionModeUpdate !==
+      nextProps.toolProps.onOptimisticPermissionModeUpdate
   ) {
     return false;
   }
 
   const toolName = prevToolPart.name;
-  return toolName === "ExitPlanMode"
-    ? prevProps.toolProps.messages === nextProps.toolProps.messages
-    : true;
+  return toolName === "ExitPlanMode" ? true : true;
 }

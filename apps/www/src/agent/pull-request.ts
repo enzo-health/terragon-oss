@@ -24,10 +24,6 @@ import {
 } from "@/lib/github";
 import { Octokit } from "octokit";
 import { ISandboxSession } from "@terragon/sandbox/types";
-import {
-  ensureDeliveryLoopEnrollmentForGithubPRIfEnabled,
-  isDeliveryLoopEnrollmentAllowedForThread,
-} from "@/server-lib/delivery-loop/enrollment";
 
 export async function openPullRequestForThread({
   threadId,
@@ -69,44 +65,6 @@ export async function openPullRequestForThread({
     getCurrentBranchName(session),
     getGitDefaultBranch(session),
   ]);
-  const deliveryLoopOptIn = isDeliveryLoopEnrollmentAllowedForThread({
-    sourceType: thread.sourceType,
-    sourceMetadata: thread.sourceMetadata ?? null,
-  });
-  const maybeLinkThreadLoopToPr = async ({
-    prNumber,
-  }: {
-    prNumber: number;
-  }) => {
-    if (!deliveryLoopOptIn) {
-      return;
-    }
-    try {
-      const planApprovalPolicy =
-        thread.sourceMetadata?.type === "www" ||
-        thread.sourceMetadata?.type === "linear-mention"
-          ? (thread.sourceMetadata.deliveryPlanApprovalPolicy ?? "auto")
-          : "auto";
-      await ensureDeliveryLoopEnrollmentForGithubPRIfEnabled({
-        userId,
-        repoFullName: thread.githubRepoFullName,
-        threadId,
-        prNumber,
-        planApprovalPolicy,
-      });
-    } catch (error) {
-      console.warn(
-        "[openPullRequestForThread] failed to link thread loop to PR",
-        {
-          userId,
-          threadId,
-          repoFullName: thread.githubRepoFullName,
-          prNumber,
-          error,
-        },
-      );
-    }
-  };
   // Make sure we're not on the main branch
   if (currentBranch === defaultBranch) {
     throw new ThreadError(
@@ -170,9 +128,6 @@ export async function openPullRequestForThread({
       updates: {
         branchName: currentBranch,
       },
-    });
-    await maybeLinkThreadLoopToPr({
-      prNumber: existingPr.number,
     });
     await updatePullRequestForThread({
       threadId,
@@ -242,9 +197,6 @@ export async function openPullRequestForThread({
       },
     }),
   ]);
-  await maybeLinkThreadLoopToPr({
-    prNumber: pr.data.number,
-  });
 }
 
 async function updatePullRequestForThread({

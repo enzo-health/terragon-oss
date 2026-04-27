@@ -2,6 +2,7 @@ import {
   DBUserMessage,
   GitDiffStats,
   UIAgentMessage,
+  UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
 import { AIAgent, AIModel } from "@terragon/agent/types";
@@ -56,7 +57,7 @@ export const DEFAULT_MESSAGE_PART_PROPS: MessagePartRenderProps = {
   toolProps: {
     threadId: "",
     threadChatId: "",
-    messages: [],
+    messagesRef: { current: [] as UIMessage[] },
     isReadOnly: false,
     childThreads: [],
     githubRepoFullName: "",

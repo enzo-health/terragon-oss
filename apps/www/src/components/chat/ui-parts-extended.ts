@@ -14,11 +14,14 @@ import type {
   DBTerminalPart,
   DBDiffPart,
   DBAutoApprovalReviewPart,
-  DBPlanPart,
   DBServerToolUsePart,
   DBWebSearchResultPart,
+  DBDelegationMessage,
+  UIStructuredPlanPart,
 } from "@terragon/shared";
 import type { UIPart } from "@terragon/shared";
+
+export type { UIStructuredPlanPart } from "@terragon/shared";
 
 /** Audio part passthrough — shape mirrors DBAudioPart */
 export type UIAudioPart = DBAudioPart;
@@ -35,22 +38,21 @@ export type UIDiffPart = DBDiffPart;
 /** Auto-approval review part passthrough */
 export type UIAutoApprovalReviewPart = DBAutoApprovalReviewPart;
 
-/**
- * Structured plan part from DBPlanPart (full entries with priority/status).
- * Uses a distinct type discriminant `"plan-structured"` to avoid collision
- * with the existing `UIPlanPart` (type: "plan") which carries planText only
- * for the artifact workspace.
- */
-export type UIStructuredPlanPart = {
-  type: "plan-structured";
-  entries: DBPlanPart["entries"];
-};
-
 /** Server-executed tool call passthrough (e.g. Anthropic `web_search`). */
 export type UIServerToolUsePart = DBServerToolUsePart;
 
 /** Server-tool result passthrough (pairs with UIServerToolUsePart by id). */
 export type UIWebSearchResultPart = DBWebSearchResultPart;
+
+export type UIDelegationPart =
+  | DBDelegationMessage
+  | {
+      type: "delegation";
+      id: string;
+      agentName: string;
+      message: string;
+      status: "initiated" | "running" | "completed" | "failed" | string;
+    };
 
 /**
  * Extended UIPart union that includes all rich content types.
@@ -65,4 +67,5 @@ export type UIPartExtended =
   | UIAutoApprovalReviewPart
   | UIStructuredPlanPart
   | UIServerToolUsePart
-  | UIWebSearchResultPart;
+  | UIWebSearchResultPart
+  | UIDelegationPart;

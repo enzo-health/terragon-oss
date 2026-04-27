@@ -38,13 +38,19 @@ export const PRStatusPill = memo(function PRStatusPill({
       case "open":
         return (
           <GitPullRequestArrow
-            className={cn(iconClassName, "shrink-0 text-green-600/70")}
+            className={cn(
+              iconClassName,
+              "shrink-0 text-[var(--diff-added-fg)]/70",
+            )}
           />
         );
       case "closed":
         return (
           <GitPullRequestClosed
-            className={cn(iconClassName, "shrink-0 text-red-600/70")}
+            className={cn(
+              iconClassName,
+              "shrink-0 text-[var(--diff-removed-fg)]/70",
+            )}
           />
         );
       case "merged":
@@ -56,7 +62,7 @@ export const PRStatusPill = memo(function PRStatusPill({
       case "draft":
         return (
           <GitPullRequestDraft
-            className={cn(iconClassName, "shrink-0 text-muted-foreground/60")}
+            className={cn(iconClassName, "shrink-0 text-muted-foreground/70")}
           />
         );
     }
@@ -146,7 +152,7 @@ export const PRStatusPill = memo(function PRStatusPill({
         {getIcon()}
         {checkStatusIcon}
       </div>
-      <span className="text-[10px] font-sans font-bold text-muted-foreground/60 tracking-tight">
+      <span className="text-[10px] font-sans font-bold text-muted-foreground/70 tracking-tight">
         #{prNumber}
       </span>
     </div>

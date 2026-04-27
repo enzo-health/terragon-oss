@@ -34,13 +34,13 @@ export function resolvePublicAppUrl({
     return `https://${vercelPublicHost}`;
   }
   if (nodeEnv === "development") {
-    if (appUrl) {
-      return appUrl;
-    }
     // For local development, use the origin of the current window if available.
     // This is useful for local development when you're testing on your phone.
     if (windowOrigin) {
       return windowOrigin;
+    }
+    if (appUrl) {
+      return appUrl;
     }
     return devDefaultAppUrl;
   }

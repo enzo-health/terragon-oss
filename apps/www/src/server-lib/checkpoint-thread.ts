@@ -17,7 +17,6 @@ import { maybeSaveClaudeSessionToR2 } from "./claude-session";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { isDeliveryLoopEnrollmentAllowedForThread } from "./delivery-loop/enrollment";
 
 export async function checkpointThread({
   userId,
@@ -47,23 +46,13 @@ export async function checkpointThread({
         throw new ThreadError("sandbox-not-found", "", null);
       }
       try {
-        const [userSettings, thread] = await Promise.all([
-          getUserSettings({ db, userId }),
-          getThread({ db, threadId, userId }),
-        ]);
-        const shouldAutoCreatePrForDeliveryLoop =
-          !!thread &&
-          isDeliveryLoopEnrollmentAllowedForThread({
-            sourceType: thread.sourceType,
-            sourceMetadata: thread.sourceMetadata ?? null,
-          });
+        const userSettings = await getUserSettings({ db, userId });
         await checkpointThreadAndPush({
           userId,
           threadId,
           threadChatId,
           session,
-          createPR:
-            userSettings.autoCreatePRs || shouldAutoCreatePrForDeliveryLoop,
+          createPR: userSettings.autoCreatePRs,
           prType: userSettings.prType,
         });
       } catch (e) {

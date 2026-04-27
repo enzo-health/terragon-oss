@@ -1,7 +1,7 @@
 import { env } from "@terragon/env/apps-www";
 import { Redis } from "@upstash/redis";
 
-const LOCAL_REDIS_HTTP_MODE_PORTS = new Set(["8079"]);
+const LOCAL_REDIS_HTTP_MODE_PORTS = new Set(["8079", "18079"]);
 const LOCAL_REDIS_HTTP_TRANSPORT_PORTS = new Set(["8079", "18079"]);
 
 function isLocalRedisHttpUrl(redisUrl: string | undefined): boolean {
@@ -127,6 +127,77 @@ function isRetryableLocalRedisTransportError(error: unknown): boolean {
   );
 }
 
+const LOCAL_HTTP_COMMAND_TIMEOUT_MS = 3_000;
+const LOCAL_HTTP_BLOCKING_COMMAND_TIMEOUT_BUFFER_MS = 2_000;
+const LOCAL_HTTP_BLOCKING_COMMAND_TIMEOUT_CAP_MS = 30_000;
+
+function parseBlockTimeoutMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parseBlockTimeoutMsFromArgs(args: unknown[]): number | null {
+  const blockIndex = args.findIndex(
+    (arg) => typeof arg === "string" && arg.toUpperCase() === "BLOCK",
+  );
+  if (blockIndex >= 0 && blockIndex + 1 < args.length) {
+    return parseBlockTimeoutMs(args[blockIndex + 1]);
+  }
+
+  const optionsArg = args.at(-1);
+  if (
+    optionsArg !== null &&
+    typeof optionsArg === "object" &&
+    !Array.isArray(optionsArg)
+  ) {
+    const blockMs =
+      Reflect.get(optionsArg, "blockMS") ??
+      Reflect.get(optionsArg, "blockMs") ??
+      Reflect.get(optionsArg, "block");
+    return parseBlockTimeoutMs(blockMs);
+  }
+
+  return null;
+}
+
+export function getLocalHttpCommandTimeoutMs(
+  commandName: string,
+  args: unknown[],
+): number {
+  const normalizedCommandName = commandName.toLowerCase();
+  if (
+    normalizedCommandName !== "xread" &&
+    normalizedCommandName !== "xreadgroup"
+  ) {
+    return LOCAL_HTTP_COMMAND_TIMEOUT_MS;
+  }
+
+  const blockMs = parseBlockTimeoutMsFromArgs(args);
+  if (blockMs === null) {
+    return LOCAL_HTTP_COMMAND_TIMEOUT_MS;
+  }
+
+  if (blockMs === 0) {
+    return LOCAL_HTTP_BLOCKING_COMMAND_TIMEOUT_CAP_MS;
+  }
+
+  return Math.min(
+    Math.max(
+      LOCAL_HTTP_COMMAND_TIMEOUT_MS,
+      blockMs + LOCAL_HTTP_BLOCKING_COMMAND_TIMEOUT_BUFFER_MS,
+    ),
+    LOCAL_HTTP_BLOCKING_COMMAND_TIMEOUT_CAP_MS,
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -159,7 +230,6 @@ function withTimeout<T>(
 function createResilientRedisClient(client: Redis): Redis {
   const defaultMaxRetries = 3;
   const localHttpMaxRetries = 6;
-  const localHttpCommandTimeoutMs = 3_000;
   const retryDelayMs = 10;
 
   return new Proxy(client, {
@@ -175,14 +245,20 @@ function createResilientRedisClient(client: Redis): Redis {
         initialExecution,
         args,
         localHttpMode,
+        commandName,
       }: {
         initialExecution: Promise<unknown>;
         args: unknown[];
         localHttpMode: boolean;
+        commandName: string;
       }): Promise<unknown> => {
         const maxRetries = localHttpMode
           ? localHttpMaxRetries
           : defaultMaxRetries;
+        const localHttpCommandTimeoutMs = getLocalHttpCommandTimeoutMs(
+          commandName,
+          args,
+        );
         let attempt = 0;
         let execution: Promise<unknown> = initialExecution;
 
@@ -233,6 +309,7 @@ function createResilientRedisClient(client: Redis): Redis {
             initialExecution: execution,
             args,
             localHttpMode,
+            commandName,
           });
         if (!localHttpMode) {
           return task();

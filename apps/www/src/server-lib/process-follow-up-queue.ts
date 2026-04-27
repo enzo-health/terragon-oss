@@ -1,28 +1,26 @@
-import { db } from "@/lib/db";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
-import {
-  dispatchAgentMessage,
-  type StartAgentMessageParams,
-} from "@/agent/msg/startAgentMessage";
-import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
-import {
-  getThreadChat,
-  getThreadMinimal,
-} from "@terragon/shared/model/threads";
-import { isAgentWorking } from "@/agent/thread-status";
-import {
-  getAgentRunContextByRunId,
-  getLatestAgentRunContextForThreadChat,
-} from "@terragon/shared/model/agent-run-context";
-import { getLatestActiveDispatchIntentForThreadChat } from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
-import { scheduleFollowUpRetryJob } from "@/server-lib/delivery-loop/retry-jobs";
 import type {
   DBMessage,
   DBSystemMessage,
   DBUserMessage,
 } from "@terragon/shared";
+import {
+  getAgentRunContextByRunId,
+  getLatestAgentRunContextForThreadChat,
+} from "@terragon/shared/model/agent-run-context";
+import {
+  getThreadChat,
+  getThreadMinimal,
+} from "@terragon/shared/model/threads";
+import {
+  dispatchAgentMessage,
+  type StartAgentMessageParams,
+} from "@/agent/msg/startAgentMessage";
+import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
+import { isAgentWorking } from "@/agent/thread-status";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { db } from "@/lib/db";
+import { scheduleFollowUpRetryJob } from "@/server-lib/follow-up-retry-jobs";
 
 const ACTIVE_AGENT_RUN_STATUSES = new Set([
   "pending",
@@ -131,21 +129,6 @@ export type FollowUpQueueProcessingResult = {
   maxRetries?: number;
 };
 
-function isIntentOnlyDeliveryLoopDispatchActive(
-  intent:
-    | {
-        targetPhase?: string | null;
-      }
-    | null
-    | undefined,
-): boolean {
-  return (
-    intent?.targetPhase === "implementing" ||
-    intent?.targetPhase === "review_gate" ||
-    intent?.targetPhase === "ci_gate"
-  );
-}
-
 type FetchedThreadChat = Awaited<ReturnType<typeof getThreadChat>>;
 type ThreadChatRecord = NonNullable<FetchedThreadChat>;
 
@@ -241,115 +224,6 @@ async function launchSlashFollowUpDispatch(
     dispatchLaunched: result.dispatchLaunched,
     reason: plan.successReason,
   };
-}
-
-async function launchIntentOnlyFollowUpDispatch({
-  userId,
-  threadId,
-  threadChatId,
-  threadChat,
-  activeDispatchIntent,
-  bypassBusyCheck,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  threadChat: ThreadChatRecord;
-  activeDispatchIntent:
-    | {
-        loopId?: string | null;
-        targetPhase?: string | null;
-      }
-    | null
-    | undefined;
-  bypassBusyCheck: boolean;
-}): Promise<FollowUpQueueProcessingResult> {
-  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  const latestRetrySnapshot = await getLatestRetrySnapshot({
-    userId,
-    threadId,
-    threadChatId,
-    fallbackMessages: threadChat.messages ?? null,
-    fallbackQueuedMessages: [],
-  });
-  const latestDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-    },
-  );
-  const stillAllowIntentOnlyDispatch =
-    isIntentOnlyDeliveryLoopDispatchActive(latestDispatchIntent);
-  if (
-    latestRetrySnapshot.queuedMessagesForRetry.length === 0 &&
-    !stillAllowIntentOnlyDispatch
-  ) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  console.log("Processing delivery-loop follow-up without queued messages", {
-    threadId,
-    threadChatId,
-    targetPhase: latestDispatchIntent?.targetPhase ?? null,
-  });
-  const workflowIdForDispatch =
-    latestDispatchIntent?.loopId ?? activeDispatchIntent?.loopId ?? undefined;
-  try {
-    return await launchDeliveryLoopDispatchFromIntent({
-      userId,
-      threadId,
-      threadChatId,
-      workflowId: workflowIdForDispatch,
-      bypassBusyCheck,
-    });
-  } catch (error) {
-    console.error("Delivery-loop follow-up processing failed", {
-      threadId,
-      threadChatId,
-      workflowId: workflowIdForDispatch,
-      error,
-      targetPhase: latestDispatchIntent?.targetPhase ?? null,
-    });
-    const failure = await handleFollowUpFailure({
-      userId,
-      threadId,
-      threadChatId,
-      messages: latestRetrySnapshot.messages,
-      queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
-      error,
-    });
-    let failureReason: FollowUpQueueProcessingResult["reason"] =
-      "dispatch_retry_persistence_failed";
-    if (failure.exhausted) {
-      failureReason = "dispatch_retry_exhausted";
-    } else if (failure.retryPersisted) {
-      failureReason = "dispatch_retry_scheduled";
-    }
-    return ensureDispatchRetryPersistenceOwnership({
-      owner: "process-follow-up-queue",
-      userId,
-      threadId,
-      threadChatId,
-      result: {
-        processed: false,
-        dispatchLaunched: false,
-        reason: failureReason,
-        retryCount: failure.retriesUsed,
-        maxRetries: MAX_FOLLOW_UP_RETRIES,
-      },
-    });
-  }
 }
 
 type RetryPersistenceOwner =
@@ -452,11 +326,10 @@ async function getLatestRetrySnapshot(params: {
   userId: string;
   threadId: string;
   threadChatId: string;
-  fallbackMessages: DBMessage[] | null;
   fallbackQueuedMessages: DBUserMessage[];
 }): Promise<{
-  messages: DBMessage[] | null;
   queuedMessagesForRetry: DBUserMessage[];
+  followUpRetryCount: number;
 }> {
   try {
     const latestThreadChat = await getThreadChat({
@@ -466,10 +339,13 @@ async function getLatestRetrySnapshot(params: {
       threadChatId: params.threadChatId,
     });
     return {
-      messages: latestThreadChat?.messages ?? params.fallbackMessages,
       queuedMessagesForRetry: [
         ...(latestThreadChat?.queuedMessages ?? params.fallbackQueuedMessages),
       ],
+      followUpRetryCount: countPersistedSystemMessages(
+        latestThreadChat?.messages ?? [],
+        "follow-up-retry-failed",
+      ),
     };
   } catch (error) {
     console.warn("Failed to refresh retry snapshot from latest thread chat", {
@@ -478,25 +354,35 @@ async function getLatestRetrySnapshot(params: {
       error,
     });
     return {
-      messages: params.fallbackMessages,
       queuedMessagesForRetry: params.fallbackQueuedMessages,
+      followUpRetryCount: 0,
     };
   }
+}
+
+function countPersistedSystemMessages(
+  messages: readonly DBMessage[],
+  messageType: DBSystemMessage["message_type"],
+): number {
+  return messages.filter(
+    (message): message is DBSystemMessage =>
+      message.type === "system" && message.message_type === messageType,
+  ).length;
 }
 
 async function handleFollowUpFailure({
   userId,
   threadId,
   threadChatId,
-  messages,
   queuedMessagesForRetry,
+  existingRetries,
   error,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
-  messages: DBMessage[] | null;
   queuedMessagesForRetry: DBUserMessage[];
+  existingRetries: number;
   error: unknown;
 }): Promise<{
   retriesUsed: number;
@@ -511,10 +397,6 @@ async function handleFollowUpFailure({
     errorDetail: formattedError,
   });
 
-  const existingRetries = (messages ?? []).filter(
-    (m): m is DBSystemMessage =>
-      m.type === "system" && m.message_type === "follow-up-retry-failed",
-  ).length;
   const retriesUsed = existingRetries + 1;
   const exhausted = existingRetries >= MAX_FOLLOW_UP_RETRIES - 1;
   const retryDelayMs = FOLLOW_UP_RETRY_BASE_DELAY_MS * 2 ** existingRetries;
@@ -523,6 +405,17 @@ async function handleFollowUpFailure({
 
   try {
     if (existingRetries >= MAX_FOLLOW_UP_RETRIES - 1) {
+      const retryFailureMessage = {
+        type: "system",
+        message_type: "follow-up-retry-failed",
+        parts: [
+          {
+            type: "text",
+            text: "Follow-up processing failed. Queue cleared.",
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      } satisfies DBSystemMessage;
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -532,19 +425,7 @@ async function handleFollowUpFailure({
           replaceQueuedMessages: [],
           errorMessage: "agent-generic-error",
           errorMessageInfo: `Follow-up failed ${existingRetries + 1} times: ${formattedError}`,
-          appendMessages: [
-            {
-              type: "system",
-              message_type: "follow-up-retry-failed",
-              parts: [
-                {
-                  type: "text" as const,
-                  text: "Follow-up processing failed. Queue cleared.",
-                },
-              ],
-              timestamp: new Date().toISOString(),
-            },
-          ],
+          appendMessages: [retryFailureMessage],
         },
       });
     } else {
@@ -562,6 +443,17 @@ async function handleFollowUpFailure({
         runAt: retryAt,
       });
       retryPersisted = true;
+      const retryFailureMessage = {
+        type: "system",
+        message_type: "follow-up-retry-failed",
+        parts: [
+          {
+            type: "text",
+            text: `Follow-up attempt ${retriesUsed} of ${MAX_FOLLOW_UP_RETRIES} failed. Retrying in ~${Math.ceil(retryDelayMs / 1000)}s...`,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      } satisfies DBSystemMessage;
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -569,19 +461,7 @@ async function handleFollowUpFailure({
         eventType: "system.error",
         chatUpdates: {
           replaceQueuedMessages: queuedMessagesForRetry,
-          appendMessages: [
-            {
-              type: "system",
-              message_type: "follow-up-retry-failed",
-              parts: [
-                {
-                  type: "text" as const,
-                  text: `Follow-up attempt ${retriesUsed} of ${MAX_FOLLOW_UP_RETRIES} failed. Retrying in ~${Math.ceil(retryDelayMs / 1000)}s...`,
-                },
-              ],
-              timestamp: new Date().toISOString(),
-            },
-          ],
+          appendMessages: [retryFailureMessage],
         },
       });
     }
@@ -606,78 +486,6 @@ async function handleFollowUpFailure({
   }
 }
 
-export async function launchDeliveryLoopDispatchFromIntent({
-  userId,
-  threadId,
-  threadChatId,
-  workflowId,
-  bypassBusyCheck = true,
-}: {
-  userId: string;
-  threadId: string;
-  threadChatId: string;
-  workflowId?: string;
-  bypassBusyCheck?: boolean;
-}): Promise<FollowUpQueueProcessingResult> {
-  const threadChat = await getThreadChat({
-    db,
-    threadId,
-    threadChatId,
-    userId,
-  });
-  const runnableThreadChatCheck = getRunnableThreadChatResult(threadChat);
-  if ("result" in runnableThreadChatCheck) {
-    return runnableThreadChatCheck.result;
-  }
-
-  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-      loopId: workflowId,
-    },
-  );
-  if (!isIntentOnlyDeliveryLoopDispatchActive(activeDispatchIntent)) {
-    return {
-      processed: false,
-      dispatchLaunched: false,
-      reason: "no_queued_messages",
-    };
-  }
-
-  const { didUpdateStatus } = await updateThreadChatWithTransition({
-    userId,
-    threadId,
-    threadChatId,
-    eventType: "user.message",
-    requireStatusTransitionForChatUpdates: !bypassBusyCheck,
-  });
-  if (!didUpdateStatus && !bypassBusyCheck) {
-    const noopResult = await checkNoopBusy({
-      threadId,
-      threadChatId,
-      userId,
-    });
-    if (noopResult) {
-      return noopResult;
-    }
-  }
-
-  const thread = await getThreadMinimal({
-    db,
-    threadId,
-    userId,
-  });
-  const threadBranchName = thread?.branchName ?? undefined;
-  return launchFollowUpDispatch({
-    userId,
-    branchName: threadBranchName,
-    threadId,
-    threadChatId,
-    successReason: "dispatch_started_batch",
-  });
-}
-
 export async function maybeProcessFollowUpQueue({
   userId,
   threadId,
@@ -689,9 +497,9 @@ export async function maybeProcessFollowUpQueue({
   threadId: string;
   threadChatId: string;
   runId?: string | null;
-  /** When true, skip the stale-CAS busy guard so the delivery loop can
-   *  dispatch a new run even when the threadChat is still in an active status
-   *  from a prior run that has logically completed. */
+  /** When true, skip the stale-CAS busy guard so recovery can dispatch a new
+   *  run even when the threadChat is still in an active status from a prior
+   *  run that has logically completed. */
   bypassBusyCheck?: boolean;
 }): Promise<FollowUpQueueProcessingResult> {
   console.log("Checking if we have queued follow up messages", {
@@ -829,24 +637,15 @@ export async function maybeProcessFollowUpQueue({
     return runnableThreadChatCheck.result;
   }
   const runnableThreadChat = runnableThreadChatCheck.threadChat;
-  const activeDispatchIntent = await getLatestActiveDispatchIntentForThreadChat(
-    db,
-    {
-      threadChatId,
-    },
-  );
   if (
     !runnableThreadChat.queuedMessages ||
     runnableThreadChat.queuedMessages.length === 0
   ) {
-    return await launchIntentOnlyFollowUpDispatch({
-      userId,
-      threadId,
-      threadChatId,
-      threadChat: runnableThreadChat,
-      activeDispatchIntent,
-      bypassBusyCheck,
-    });
+    return {
+      processed: false,
+      dispatchLaunched: false,
+      reason: "no_queued_messages",
+    };
   }
   console.log("Processing queued follow up messages on thread", {
     threadId,
@@ -890,7 +689,6 @@ export async function maybeProcessFollowUpQueue({
       ...slashCommandMessage,
       model:
         slashCommandMessage.model ??
-        getLastUserMessageModel(runnableThreadChat.messages ?? []) ??
         getDefaultModelForAgent({
           agent: runnableThreadChat.agent,
           agentVersion: runnableThreadChat.agentVersion,
@@ -920,15 +718,14 @@ export async function maybeProcessFollowUpQueue({
         userId,
         threadId,
         threadChatId,
-        fallbackMessages: runnableThreadChat.messages ?? null,
         fallbackQueuedMessages: queuedMessagesSnapshot,
       });
       const failure = await handleFollowUpFailure({
         userId,
         threadId,
         threadChatId,
-        messages: latestRetrySnapshot.messages,
         queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
+        existingRetries: latestRetrySnapshot.followUpRetryCount,
         error,
       });
       let failureReason: FollowUpQueueProcessingResult["reason"] =
@@ -961,12 +758,18 @@ export async function maybeProcessFollowUpQueue({
     eventType: "user.message",
     chatUpdates: {
       appendAndResetQueuedMessages: true,
+      permissionMode:
+        queuedMessagesSnapshot.at(-1)?.permissionMode ??
+        runnableThreadChat.permissionMode ??
+        "allowAll",
     },
     requireStatusTransitionForChatUpdates: !bypassBusyCheck,
   });
   if (!didUpdateStatus && !bypassBusyCheck) {
     const noopResult = await checkNoopBusy({ threadId, threadChatId, userId });
     if (noopResult) return noopResult;
+  }
+  if (didUpdateStatus) {
   }
   console.log("Processing follow-up", {
     threadId,
@@ -991,15 +794,14 @@ export async function maybeProcessFollowUpQueue({
       userId,
       threadId,
       threadChatId,
-      fallbackMessages: runnableThreadChat.messages ?? null,
       fallbackQueuedMessages: queuedMessagesSnapshot,
     });
     const failure = await handleFollowUpFailure({
       userId,
       threadId,
       threadChatId,
-      messages: latestRetrySnapshot.messages,
       queuedMessagesForRetry: latestRetrySnapshot.queuedMessagesForRetry,
+      existingRetries: latestRetrySnapshot.followUpRetryCount,
       error,
     });
     let failureReason: FollowUpQueueProcessingResult["reason"] =

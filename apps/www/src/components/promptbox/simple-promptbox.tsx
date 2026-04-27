@@ -128,10 +128,19 @@ export function SimplePromptBox({
     <DragDropWrapper
       onFilesDropped={handleFilesAttached}
       className={cn(
-        "flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/60 bg-card p-2 shadow-xs transition-[border-color,box-shadow] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-border/80 hover:shadow-sm focus-within:border-border focus-within:shadow-sm focus-within:ring-1 focus-within:ring-ring/10",
+        "relative flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/60 bg-card p-2 shadow-xs transition-all duration-300 ease-out hover:border-border/80 hover:shadow-sm focus-within:border-border focus-within:shadow-sm focus-within:ring-1 focus-within:ring-ring/10",
+        isSubmitting && [
+          "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
+          "animate-pulse-subtle",
+        ],
         borderClassName,
       )}
     >
+      {isSubmitting && (
+        <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[calc(var(--radius)+0.2rem)]">
+          <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
+        </div>
+      )}
       <ScrollArea
         className="max-h-[min(60dvh,28rem)] overflow-auto"
         onClick={() => {
@@ -143,6 +152,7 @@ export function SimplePromptBox({
       >
         <EditorContent
           editor={editor}
+          aria-label="Describe a task for the AI"
           className={cn("min-h-[44px] px-3 pb-1.5 pt-2.5 md:px-4", className)}
         />
       </ScrollArea>

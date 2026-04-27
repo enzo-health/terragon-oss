@@ -2,7 +2,14 @@
 
 import dynamic from "next/dynamic";
 import { ThreadInfo } from "@terragon/shared";
-import { useCallback, useDeferredValue, useMemo, memo } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  memo,
+  useEffect,
+  useState,
+} from "react";
 import {
   LoaderCircle,
   ChevronDown,
@@ -63,6 +70,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
     <div
       className={cn(
         "px-4 flex items-center justify-between min-h-12 mb-1",
+        "animate-in fade-in duration-300",
         className,
       )}
     >
@@ -182,6 +190,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
     <h3
       className={cn(
         "group py-1.5 text-[11px] uppercase tracking-[0.6px] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
+        "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
       onClick={onToggle}
@@ -192,7 +201,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
         <ChevronDown className="size-3 opacity-50" />
       )}
       {title}
-      <span className="text-muted-foreground/50 font-sans text-[10px] font-medium">
+      <span className="text-muted-foreground/70 font-sans text-[10px] font-medium">
         {numThreads}
       </span>
     </h3>
@@ -207,6 +216,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname,
   isSidebar,
   groupBy,
+  relativeTimeTick,
 }: {
   title: string;
   threads: ThreadInfo[];
@@ -215,6 +225,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname: string;
   isSidebar: boolean;
   groupBy: ThreadListGroupBy;
+  relativeTimeTick: number;
 }) {
   const toggleCollapsedSection = useSetAtom(
     toggleThreadListCollapsedSectionAtom,
@@ -240,14 +251,32 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
         className={isSidebar ? "top-0 pr-3" : undefined}
       />
       {!isCollapsed && (
-        <div className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}>
-          {threads.map((thread) => (
+        <div
+          className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}
+          style={{
+            transitionBehavior: "allow-discrete",
+          }}
+        >
+          {threads.map((thread, index) => (
             <ThreadListItem
               key={thread.id}
               thread={thread}
               pathname={pathname}
-              className={!isSidebar ? "pl-1" : undefined}
+              relativeTimeTick={relativeTimeTick}
+              className={cn(
+                !isSidebar ? "pl-1" : undefined,
+                thread.id.startsWith("optimistic-") &&
+                  "animate-in fade-in slide-in-from-top-2 duration-300",
+              )}
               hideRepository={groupBy === "repository"}
+              style={
+                thread.id.startsWith("optimistic-")
+                  ? {
+                      animationDelay: `${index * 50}ms`,
+                      transitionBehavior: "allow-discrete",
+                    }
+                  : { transitionBehavior: "allow-discrete" }
+              }
             />
           ))}
         </div>
@@ -266,7 +295,7 @@ function EmptyThreadList({
       <div className="bg-muted/20 rounded-md p-8 flex flex-col items-center justify-center gap-2">
         <div className="flex items-center gap-2">
           <WorkflowIcon className="size-4 text-muted-foreground/70" />
-          <span className="text-sm text-muted-foreground/50">
+          <span className="text-sm text-muted-foreground/70">
             No tasks for this automation
           </span>
         </div>
@@ -281,7 +310,7 @@ function EmptyThreadList({
         ) : (
           <List className="size-4 text-muted-foreground/70" />
         )}
-        <span className="text-sm text-muted-foreground/50">
+        <span className="text-sm text-muted-foreground/70">
           {queryFilters.archived ? "No archived tasks" : "No tasks"}
         </span>
       </div>
@@ -408,7 +437,8 @@ function useThreadList({
     return !!(
       patch.chat?.status !== undefined ||
       patch.chat?.errorMessage !== undefined ||
-      patch.chat?.agent !== undefined
+      patch.chat?.agent !== undefined ||
+      patch.chat?.updatedAt !== undefined
     );
   }, []);
   const onThreadChange = useCallback(
@@ -444,6 +474,15 @@ export const ThreadListContents = memo(function ThreadListContents({
   const collapsedSections = useAtomValue(threadListCollapsedSectionsAtom);
   const groupBy = useAtomValue(threadListGroupByAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
+  const [relativeTimeTick, setRelativeTimeTick] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRelativeTimeTick((tick) => tick + 1);
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const { threadGroups, threads, isLoading, isError } = useThreadList({
     viewFilter,
     queryFilters,
@@ -480,6 +519,7 @@ export const ThreadListContents = memo(function ThreadListContents({
               pathname={pathname}
               isSidebar={isSidebar}
               groupBy={groupBy}
+              relativeTimeTick={relativeTimeTick}
             />
           ))}
         </div>
@@ -530,7 +570,7 @@ export const ThreadListMain = memo(function ThreadListMain({
     [searchParams, router, pathname],
   );
   return (
-    <div className="flex-1 pb-4 flex flex-col">
+    <div className="flex-1 pb-4 flex flex-col animate-in fade-in duration-500">
       <ThreadListHeader
         className="sticky top-0 bg-background z-20 px-0 "
         viewFilter={viewFilter}

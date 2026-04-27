@@ -3,12 +3,10 @@
   "version": "0.0.1",
   "description": "MCP server for suggesting follow-up tasks",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/bundled.js",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/bundled.js"
     },
     "./raw-txt": {
       "import": "./dist/raw.txt",
@@ -16,14 +14,14 @@
     }
   },
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/bundled.js --sourcemap && cp dist/bundled.js dist/raw.txt",
+    "build": "pnpm tsc-check && esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/bundled.js --sourcemap && cp dist/bundled.js dist/raw.txt",
     "build:all": "pnpm build",
     "dev": "nodemon --watch src --ext ts,js --exec 'pnpm build'",
     "tsc-watch": "tsc --watch --noEmit --preserveWatchOutput",
     "tsc-check": "tsc --noEmit",
     "format": "prettier --write . --ignore-path ../../.prettierignore --config ../../.prettierrc",
     "format-check": "prettier --check . --ignore-path ../../.prettierignore --config ../../.prettierrc",
-    "start": "node dist/index.js",
+    "start": "node dist/bundled.js",
     "inspect": "pnpx @modelcontextprotocol/inspector node dist/bundled.js"
   },
   "dependencies": {

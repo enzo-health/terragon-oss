@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadMetaSnapshot } from "./use-thread-meta-events";
-import type { ThreadMetaEvent } from "@terragon/shared/delivery-loop/thread-meta-event";
+import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
 
 // ---------------------------------------------------------------------------
 // Re-implement the reducer in isolation so tests don't need React / hooks.

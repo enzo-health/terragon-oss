@@ -1,4 +1,9 @@
 import type { AIAgent } from "@terragon/agent/types";
+import {
+  claudeAcpRuntimeAdapterContract,
+  legacyRuntimeAdapterContract,
+} from "@terragon/daemon/runtime-contracts";
+import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { claudeCodeImplementationAdapter } from "./claude-code-implementation-adapter";
 import { codexImplementationAdapter } from "./codex-implementation-adapter";
 
@@ -18,6 +23,7 @@ export type ImplementationDaemonMessage = {
   protocolVersion: 1 | 2;
   acpServerId?: string;
   acpSessionId?: string | null;
+  runtimeAdapterContract: RuntimeAdapterContract;
   useCredits?: true;
 };
 
@@ -43,11 +49,21 @@ export type ImplementationDispatch = {
 };
 
 export interface ImplementationRuntimeAdapter {
+  contract(input: ImplementationAdapterInput): RuntimeAdapterContract;
   createDispatch(input: ImplementationAdapterInput): ImplementationDispatch;
 }
 
 const genericImplementationAdapter: ImplementationRuntimeAdapter = {
+  contract(input) {
+    const supportsAcp =
+      input.agent !== "gemini" && input.enableAcpTransport !== false;
+    if (supportsAcp) {
+      return claudeAcpRuntimeAdapterContract;
+    }
+    return legacyRuntimeAdapterContract;
+  },
   createDispatch(input) {
+    const contract = this.contract(input);
     const supportsAcp =
       input.agent !== "gemini" && input.enableAcpTransport !== false;
 
@@ -71,6 +87,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
           protocolVersion: 2 as const,
           acpServerId: `terragon-${input.runId}`,
           acpSessionId: input.sessionId ?? null,
+          runtimeAdapterContract: contract,
           ...(input.shouldUseCredits ? { useCredits: true } : {}),
         },
       };
@@ -94,6 +111,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
         runId: input.runId,
         transportMode: "legacy" as const,
         protocolVersion: 1 as const,
+        runtimeAdapterContract: contract,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),
       },
     };
