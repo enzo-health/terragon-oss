@@ -13,7 +13,6 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import { waitUntil } from "@vercel/functions";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { trackUsageEvents } from "@/server-lib/usage-events";
-import { onThreadChatError } from "@/server-lib/thread-status-change";
 
 export async function withThreadChat<T>({
   userId,
@@ -86,7 +85,6 @@ export async function withThreadChat<T>({
         },
         markAsUnread: true,
       });
-      await onThreadChatError({ userId, threadId, threadChatId });
       await onError?.(error instanceof Error ? error : new Error(errorInfo));
     }
   } finally {

@@ -1,19 +1,9 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { getThinkingTitle, ThinkingPart } from "./thinking-part";
+import { ThinkingPart } from "./thinking-part";
 
 describe("ThinkingPart", () => {
-  it("extracts a bold reasoning title", () => {
-    expect(getThinkingTitle("**Planning approach** step one")).toBe(
-      "Planning approach",
-    );
-  });
-
-  it("falls back to default title when no bold prefix is present", () => {
-    expect(getThinkingTitle("No explicit heading")).toBe("Thinking");
-  });
-
   it("renders collapsed state by default for non-latest messages", () => {
     const html = renderToStaticMarkup(
       <ThinkingPart

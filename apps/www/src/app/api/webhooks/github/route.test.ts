@@ -879,7 +879,7 @@ describe("GitHub webhook route", () => {
       });
     });
 
-    it("fans out review feedback routing to each enrolled loop user on the PR", async () => {
+    it("fans out review feedback routing to each linked task user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
       const request = await createMockRequest(
         createValidPullRequestReviewBody({
@@ -1338,7 +1338,7 @@ describe("GitHub webhook route", () => {
       });
     });
 
-    it("fans out review-comment feedback routing to each enrolled loop user on the PR", async () => {
+    it("fans out review-comment feedback routing to each linked task user on the PR", async () => {
       const githubPR = await createTestGitHubPR({ db });
       const request = await createMockRequest(
         createValidPullRequestReviewCommentBody({

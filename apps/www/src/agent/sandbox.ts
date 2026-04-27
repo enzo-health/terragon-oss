@@ -878,8 +878,8 @@ async function getOrCreateSandboxForThread({
     // ID will never succeed — only creating a fresh sandbox can make
     // progress. Previously this recovery was gated behind `shouldFastResume`,
     // which left regular cold boots in a retry loop producing chat errors
-    // reading "Sandbox not found" while the delivery loop kept the thread
-    // in "active" indefinitely.
+    // reading "Sandbox not found" while the runtime status kept the thread
+    // active indefinitely.
     if (isRecoverableSandboxIdError(error)) {
       session = await getOrCreateSandboxWithTimeout(null, {
         ...bootstrapOptions,

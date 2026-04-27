@@ -2174,7 +2174,7 @@ describe("daemon-event route", () => {
     });
   });
 
-  it("does not force implementation transition when enrolled loop has already advanced state", async () => {
+  it("does not force implementation transition when runtime state has already advanced", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -3657,7 +3657,7 @@ describe("daemon-event route", () => {
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
-    // v1 bridged workflow test removed — sdlcLoop table no longer exists
+    // v1 bridged workflow test removed; the old workflow table no longer exists.
 
     // VAL-CROSS-002: Duplicate ingress across API and runtime remains idempotent
     it("ensures duplicate daemon ingress does not cause duplicate logical transitions (VAL-CROSS-002)", async () => {

@@ -2,7 +2,6 @@ import { sendDaemonMessage } from "@/agent/daemon";
 import { waitUntil } from "@vercel/functions";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { onThreadChatStopped } from "./thread-status-change";
 
 export async function stopThread({
   userId,
@@ -29,7 +28,6 @@ export async function stopThread({
             scheduleAt: null,
           },
         });
-        await onThreadChatStopped({ userId, threadId, threadChatId });
         return updatedStatus !== "complete";
       },
       execOrThrow: async ({ session }) => {

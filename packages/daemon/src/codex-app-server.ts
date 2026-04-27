@@ -517,7 +517,6 @@ function normalizeThreadItem(
         method: "item",
         itemType: rawItemType,
         reason: "unhandled itemType in normalizeThreadItemType",
-        payload: rawItem,
       });
     }
     return null;
@@ -1037,7 +1036,6 @@ function extractThreadEventFromMethod({
       transport: "codex",
       method,
       reason: "method absent from METHOD_TO_THREAD_EVENT_TYPE",
-      payload: params,
     });
     return null;
   }

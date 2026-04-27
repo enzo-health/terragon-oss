@@ -466,7 +466,6 @@ export class ClaudeCodeParser {
             method: "stream_event/content_block_delta",
             itemType: deltaType ?? "<missing>",
             reason: "unhandled content_block_delta kind",
-            payload: delta,
           });
         }
 
@@ -521,7 +520,6 @@ export class ClaudeCodeParser {
             method: "stream_event",
             itemType: eventType ?? "<missing>",
             reason: "unhandled stream_event kind",
-            payload: event,
           });
         }
 

@@ -38,23 +38,7 @@ export async function runScheduledTasksCron(): Promise<Response> {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    return Response.json(
-      {
-        success: true,
-        deliveryLoopDrainers: "quiesced",
-        v3OutboxWorkerProcessed: 0,
-        v3OutboxWorkerAcknowledged: 0,
-        v3OutboxWorkerDeadLettered: 0,
-        v3OutboxWorkerRetried: 0,
-        v3EffectsProcessed: 0,
-        v3OutboxProcessed: 0,
-        v3OutboxPublished: 0,
-        v3OutboxFailed: 0,
-        v3ZombieHeadsScanned: 0,
-        v3ZombieHeadsReconciled: 0,
-      },
-      { status: 200 },
-    );
+    return Response.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Scheduled tasks cron failed:", error);
     return Response.json(

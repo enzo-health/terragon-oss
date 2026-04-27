@@ -77,13 +77,13 @@ function getCreateSandboxOptions(
   overrides: Partial<CreateSandboxOptions> = {},
 ): CreateSandboxOptions {
   return {
-    threadName: "delivery-loop-test",
+    threadName: "daemon-lifecycle-test",
     userName: "test-user",
     userEmail: "test@example.com",
     githubAccessToken: process.env.GITHUB_ACCESS_TOKEN ?? "test-token",
     githubRepoFullName: "SawyerHood/test-project",
     repoBaseBranchName: "main",
-    userId: "user-delivery-loop-test",
+    userId: "user-daemon-lifecycle-test",
     sandboxProvider: "docker",
     createNewBranch: true,
     autoUpdateDaemon: false,
@@ -114,7 +114,7 @@ async function waitFor(
   throw new Error(`Condition not met within ${timeoutMs}ms`);
 }
 
-describe("delivery loop (codex + local auth)", () => {
+describe("daemon lifecycle (codex + local auth)", () => {
   vi.setConfig({ testTimeout: TIMEOUT_MS });
 
   let sandbox: ISandboxSession;
@@ -158,8 +158,8 @@ describe("delivery loop (codex + local auth)", () => {
       console.log("Skipping: ~/.codex/auth.json not found");
       return;
     }
-    const threadId = "delivery-loop-thread-id";
-    const threadChatId = "delivery-loop-chat-id";
+    const threadId = "daemon-lifecycle-thread-id";
+    const threadChatId = "daemon-lifecycle-chat-id";
 
     await sendMessage({
       session: sandbox,
@@ -169,7 +169,7 @@ describe("delivery loop (codex + local auth)", () => {
         agentVersion: 1,
         token: "test-token",
         prompt:
-          "Create a file called hello.txt with the content: delivery loop works",
+          "Create a file called hello.txt with the content: daemon lifecycle works",
         model: "gpt-5",
         sessionId: null,
         threadId,
@@ -200,6 +200,6 @@ describe("delivery loop (codex + local auth)", () => {
 
     // Verify the file was actually created
     const fileContents = await sandbox.readTextFile("/root/repo/hello.txt");
-    expect(fileContents).toContain("delivery loop works");
+    expect(fileContents).toContain("daemon lifecycle works");
   });
 });

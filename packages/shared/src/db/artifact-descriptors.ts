@@ -258,7 +258,7 @@ function collectArtifactDescriptorsFromParts({
   let toolArtifactOrdinal = 0;
 
   for (const part of parts) {
-    // Detect complete delivery-loop plans in agent text parts.
+    // Detect complete proposed-plan artifacts in agent text parts.
     // Only create an artifact once the closing </proposed_plan> tag is present
     // so the fingerprint (and therefore the artifact ID) is stable.
     if (part.type === "text" && messageRole === "agent") {

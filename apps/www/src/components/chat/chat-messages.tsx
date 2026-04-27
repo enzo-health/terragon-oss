@@ -338,7 +338,7 @@ export function WorkingMessage({
 
   // Passive-wait takes precedence: regardless of the underlying thread
   // status (which may still read "working" due to broadcast-before-
-  // persist timing) we show the accurate delivery-loop-derived message.
+  // persist timing) we show the accurate run-derived message.
   if (passiveWait) {
     return (
       <PassiveWaitFooter

@@ -11,7 +11,7 @@ vi.mock("@/components/ai-elements/markdown-renderer", () => ({
 }));
 
 describe("PlanArtifactRenderer", () => {
-  it("renders canonical ExitPlanMode artifacts without delivery-loop approval actions", () => {
+  it("renders canonical ExitPlanMode artifacts without approval actions", () => {
     const descriptor: PlanArtifactDescriptor = {
       id: "artifact:plan:exit-plan-1",
       kind: "plan",

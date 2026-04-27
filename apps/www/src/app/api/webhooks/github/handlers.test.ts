@@ -57,7 +57,7 @@ describe("buildCiSignalSnapshotFromCheckRuns", () => {
         });
       }
       checkRuns.push({
-        name: "Terragon Delivery Loop",
+        name: "Terragon Runtime",
         status: "in_progress",
         conclusion: null,
       });
@@ -67,7 +67,7 @@ describe("buildCiSignalSnapshotFromCheckRuns", () => {
       expect(snapshot?.complete).toBe(true);
       expect(snapshot?.failingChecks).toEqual([]);
       // The self-check must not appear in the reported check names either.
-      expect(snapshot?.checkNames).not.toContain("Terragon Delivery Loop");
+      expect(snapshot?.checkNames).not.toContain("Terragon Runtime");
       expect(snapshot?.checkNames).toHaveLength(20);
     });
 
@@ -75,10 +75,10 @@ describe("buildCiSignalSnapshotFromCheckRuns", () => {
       const snapshot = buildCiSignalSnapshotFromCheckRuns([
         { name: "build", status: "completed", conclusion: "success" },
         {
-          name: "Custom Delivery Loop Name",
+          name: "Custom Runtime Name",
           status: "in_progress",
           conclusion: null,
-          external_id: "terragon-sdlc-loop-check-run:workflow-abc-123",
+          external_id: "terragon-runtime-check-run:run-abc-123",
         },
       ]);
       expect(snapshot?.complete).toBe(true);
@@ -91,10 +91,10 @@ describe("buildCiSignalSnapshotFromCheckRuns", () => {
       // `complete=true`.
       const snapshot = buildCiSignalSnapshotFromCheckRuns([
         {
-          name: "Terragon Delivery Loop",
+          name: "Terragon Runtime",
           status: "in_progress",
           conclusion: null,
-          external_id: "terragon-sdlc-loop-check-run:xyz",
+          external_id: "terragon-runtime-check-run:xyz",
         },
       ]);
       expect(snapshot).toBeNull();

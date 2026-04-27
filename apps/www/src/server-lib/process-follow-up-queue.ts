@@ -492,9 +492,9 @@ export async function maybeProcessFollowUpQueue({
   threadId: string;
   threadChatId: string;
   runId?: string | null;
-  /** When true, skip the stale-CAS busy guard so the delivery loop can
-   *  dispatch a new run even when the threadChat is still in an active status
-   *  from a prior run that has logically completed. */
+  /** When true, skip the stale-CAS busy guard so recovery can dispatch a new
+   *  run even when the threadChat is still in an active status from a prior
+   *  run that has logically completed. */
   bypassBusyCheck?: boolean;
 }): Promise<FollowUpQueueProcessingResult> {
   console.log("Checking if we have queued follow up messages", {

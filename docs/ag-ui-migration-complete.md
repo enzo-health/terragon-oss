@@ -137,7 +137,7 @@ Key commits: `e92c80a`, `9ce33fd`, `95cc1aa`.
    │       - INSERT agent_event_log (payload_json)    │
    │       - XADD agui:thread:<threadId>              │
    │   • handleDaemonEvent(messages) for run-state    │
-   │     (status transitions, delivery loop, etc.)    │
+   │     (status transitions and terminal updates)    │
    └──────────────────────────────────────────────────┘
         │                                     │
         │ Postgres (durable replay)           │ Redis Stream
@@ -244,20 +244,6 @@ together with this branch. It:
   writing to `token_stream_event` will fail post-migration. Confirm no
   such code exists in this branch before deploying.
 
-### Coordinated drain
-
-Before applying, wait for active runs to complete:
-
-```sql
-SELECT id, state FROM delivery_workflow_head_v3
-WHERE state IN ('planning','implementing','gating_review','gating_ci');
-```
-
-Ideal: run this query during a low-traffic window and wait for 0 rows.
-Minimum: verify no row is stuck in `implementing` for > 10 minutes (that
-is the daemon inactivity ack window; anything longer means the sandbox
-is already abandoned and the deploy is safe).
-
 ### Rollback
 
 Whole-deploy rollback is required. The migration and the
@@ -330,9 +316,6 @@ Monitor for 24–48 hours after the production deploy.
     - `src/app/api/webhooks/github/handle-app-mention.test.ts` (27
       failures) — identical to main; `FAILED_TO_GET_A_VALID_ACCESS_TOKEN`
       mock setup issues pre-date this branch.
-    - `src/server-lib/delivery-loop/v3/enrollment.test.ts` (8 failures
-      under full-suite) — passes 9/9 in isolation; test pollution
-      between suites noted in MEMORY.md.
 - New integration tests: `apps/www/test/integration/ag-ui-replayer.test.ts`
   — 6/6 passing.
 

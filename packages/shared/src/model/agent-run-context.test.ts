@@ -67,7 +67,7 @@ describe("agent-run-context terminal CAS", () => {
     await db.delete(schema.agentRunContext);
   });
 
-  it("persists runtime session ownership without delivery workflow linkage", async () => {
+  it("persists runtime session ownership without workflow linkage", async () => {
     const fixture = await createRunFixture();
 
     const runContext = await createRun(fixture, {

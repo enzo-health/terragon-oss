@@ -49,7 +49,7 @@ export type DBSystemMessage = {
     | "invalid-token-retry"
     | "clear-context"
     | "compact-result"
-    | "sdlc-error-retry"
+    | "agent-error-retry"
     | "follow-up-retry-failed";
   parts: DBTextPart[];
   timestamp?: string;

@@ -153,7 +153,7 @@ async function requeueStaleBootingThreadChatsTask() {
   console.log(`Requeued ${requeuedCount} stale booting thread chats`);
 }
 
-// This is run every 5 minutes, see vercel.json.
+// This is run hourly, see vercel.json.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   if (

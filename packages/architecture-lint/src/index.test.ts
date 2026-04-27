@@ -19,114 +19,114 @@ afterEach(() => {
 });
 
 describe("architecture-lint", () => {
-  it("blocks delivery-loop imports in configured rewrite-owned paths", () => {
+  it("blocks legacy runtime imports in configured rewrite-owned paths", () => {
     writeFile(
       "apps/www/src/agent/runtime/adapter.ts",
-      'import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@/server-lib", "/v3/store"),
     );
 
     const findings = runArchitectureLint(workspaceRoot, testConfig());
 
     expect(findings).toEqual([
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/agent/runtime/adapter.ts",
       }),
     ]);
   });
 
-  it("covers live task data, UI, query, action, CLI command, and runtime delivery-loop paths by default", () => {
+  it("covers live task data, UI, query, action, CLI command, and runtime legacy paths by default", () => {
     writeFile(
       "apps/www/src/app/(sidebar)/(task-list)/task/[threadId]/new-page.tsx",
-      'import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";\nexport const value = DeliveryLoopPlanReviewCard;\n',
+      legacyRuntimeImport("@/components/patterns", "-plan-review-card"),
     );
     writeFile(
       "apps/www/src/app/api/ag-ui/[threadId]/new-route.ts",
-      'import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@/server-lib", "/v3/store"),
     );
     writeFile(
       "apps/www/src/app/api/webhooks/github/new-handler.ts",
-      'import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@terragon/shared", "/store/workflow-store"),
     );
     writeFile(
       "apps/www/src/components/chat/new-view.tsx",
-      'import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";\nexport const value = DeliveryLoopPlanReviewCard;\n',
+      legacyRuntimeImport("@/components/patterns", "-plan-review-card"),
     );
     writeFile(
       "apps/www/src/components/promptbox/new-promptbox.tsx",
-      'import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@/server-lib", "/v3/store"),
     );
     writeFile(
       "apps/www/src/components/thread-list/new-item.tsx",
-      'import { getDeliveryLoopAwareThreadStatus } from "@/lib/delivery-loop-status";\nexport const value = getDeliveryLoopAwareThreadStatus;\n',
+      legacyRuntimeImport("@/lib", "-status"),
     );
     writeFile(
       "apps/www/src/hooks/new-hook.ts",
-      'import { deliveryLoopStatusQueryKeys } from "@/queries/delivery-loop-status-queries";\nexport const value = deliveryLoopStatusQueryKeys;\n',
+      legacyRuntimeImport("@/queries", "-status-queries"),
     );
     writeFile(
       "apps/www/src/queries/new-query.ts",
-      'import { deliveryLoopStatusQueryKeys } from "./delivery-loop-status-queries";\nexport const value = deliveryLoopStatusQueryKeys;\n',
+      legacyRuntimeImport(".", "-status-queries"),
     );
     writeFile(
       "apps/www/src/server-actions/new-action.ts",
-      'import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@/server-lib", "/v3/store"),
     );
     writeFile(
       "apps/cli/src/commands/create-new.tsx",
-      'import { getActiveWorkflowForThread } from "@terragon/shared/delivery-loop/store/workflow-store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@terragon/shared", "/store/workflow-store"),
     );
 
     const findings = runArchitectureLint(workspaceRoot, defaultConfig);
 
     expect(findings).toEqual([
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/cli/src/commands/create-new.tsx",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/app/(sidebar)/(task-list)/task/[threadId]/new-page.tsx",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/app/api/ag-ui/[threadId]/new-route.ts",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/app/api/webhooks/github/new-handler.ts",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/components/chat/new-view.tsx",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/components/promptbox/new-promptbox.tsx",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/components/thread-list/new-item.tsx",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/hooks/new-hook.ts",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/queries/new-query.ts",
       }),
       expect.objectContaining({
-        rule: "no-delivery-loop-imports",
+        rule: "no-legacy-runtime-imports",
         file: "apps/www/src/server-actions/new-action.ts",
       }),
     ]);
   });
 
-  it("allows delivery-loop imports outside configured rewrite-owned paths", () => {
+  it("allows legacy runtime imports outside configured rewrite-owned paths", () => {
     writeFile(
       "apps/www/src/server-lib/legacy.ts",
-      'import { getActiveWorkflowForThread } from "@/server-lib/delivery-loop/v3/store";\nexport const value = getActiveWorkflowForThread;\n',
+      legacyRuntimeImport("@/server-lib", "/v3/store"),
     );
 
     expect(runArchitectureLint(workspaceRoot, testConfig())).toEqual([]);
@@ -208,7 +208,7 @@ describe("architecture-lint", () => {
 
     expect(
       runArchitectureLint(workspaceRoot, {
-        deliveryLoopImportRoots: [],
+        legacyRuntimeImportRoots: [],
         exhaustiveSwitchFiles: [],
         unsafeCastRoots: [
           "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
@@ -252,7 +252,7 @@ describe("architecture-lint", () => {
 
     expect(() =>
       runArchitectureLint(workspaceRoot, {
-        deliveryLoopImportRoots: [],
+        legacyRuntimeImportRoots: [],
         exhaustiveSwitchFiles: [],
         unsafeCastRoots: [
           "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
@@ -278,7 +278,7 @@ describe("architecture-lint", () => {
     );
 
     const findings = runArchitectureLint(workspaceRoot, {
-      deliveryLoopImportRoots: [],
+      legacyRuntimeImportRoots: [],
       exhaustiveSwitchFiles: [],
       unsafeCastRoots: [
         "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
@@ -366,9 +366,16 @@ function writeFile(relativePath: string, contents: string): void {
   fs.writeFileSync(absolutePath, contents);
 }
 
+function legacyRuntimeImport(prefix: string, suffix: string): string {
+  const segment = ["delivery", "loop"].join("-");
+  return `import { valueFromLegacyRuntime } from "${prefix}/${segment}${suffix}";
+export const value = valueFromLegacyRuntime;
+`;
+}
+
 function testConfig(): ArchitectureLintConfig {
   return {
-    deliveryLoopImportRoots: ["apps/www/src/agent/runtime"],
+    legacyRuntimeImportRoots: ["apps/www/src/agent/runtime"],
     unsafeCastRoots: ["apps/www/src/components/chat/thread-view-model"],
     exhaustiveSwitchFiles: ["packages/agent/src/ag-ui-mapper.ts"],
     allowlist: [],

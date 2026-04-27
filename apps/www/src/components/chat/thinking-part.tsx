@@ -1,17 +1,10 @@
 import { default as React, memo } from "react";
-import {
-  ReasoningBlock,
-  getReasoningTitle,
-} from "@/components/ai-elements/reasoning-block";
+import { ReasoningBlock } from "@/components/ai-elements/reasoning-block";
 
 interface ThinkingPartProps {
   thinking: string;
   isLatest?: boolean;
   isAgentWorking?: boolean;
-}
-
-export function getThinkingTitle(thinking: string): string {
-  return getReasoningTitle(thinking);
 }
 
 const ThinkingPart = memo(function ThinkingPart({

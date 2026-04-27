@@ -148,7 +148,7 @@ describe("terragon MCP server", () => {
     }
   });
 
-  test("lists product tools without delivery-loop task marking", async () => {
+  test("lists product tools without task marking", async () => {
     client = new McpTestClient();
     await client.initialize();
 

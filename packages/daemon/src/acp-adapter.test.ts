@@ -2,12 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   parseAcpLineToClaudeMessages,
   coalesceAssistantTextMessages,
-  UnknownAcpContentTypeError,
   AcpToolCallTracker,
   KNOWN_ACP_SESSION_UPDATE_TYPES,
   normalizeAcpPermissionRequest,
   parseAcpPermissionRequest,
-  parseSessionUpdateStrict,
 } from "./acp-adapter";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -414,74 +412,6 @@ describe("parseAcpLineToClaudeMessages", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 3.1: UnknownAcpContentTypeError — strict parser throws for unknowns
-// ---------------------------------------------------------------------------
-
-describe("Task 3.1 — UnknownAcpContentTypeError", () => {
-  it("throws UnknownAcpContentTypeError for unknown sessionUpdate discriminants", () => {
-    expect(() =>
-      parseSessionUpdateStrict(
-        {
-          sessionId: "sess1",
-          update: {
-            sessionUpdate: "totally_unknown_future_type",
-            content: "data",
-          },
-        },
-        "fallback",
-      ),
-    ).toThrow(UnknownAcpContentTypeError);
-  });
-
-  it("thrown error carries the unknown sessionUpdate string", () => {
-    try {
-      parseSessionUpdateStrict(
-        {
-          update: {
-            sessionUpdate: "mystery_type_xyz",
-          },
-        },
-        "fallback",
-      );
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnknownAcpContentTypeError);
-      if (err instanceof UnknownAcpContentTypeError) {
-        expect(err.sessionUpdate).toBe("mystery_type_xyz");
-      }
-    }
-  });
-
-  it("parseAcpLineToClaudeMessages gracefully surfaces unknown type with content as assistant text", () => {
-    // This is the backwards-compat behaviour for the existing test
-    const line = JSON.stringify({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "sess1",
-        update: { sessionUpdate: "some_new_type", content: "unknown data" },
-      },
-    });
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toHaveLength(1);
-    expect(result[0]!.type).toBe("assistant");
-  });
-
-  it("parseAcpLineToClaudeMessages returns empty for unknown type without content", () => {
-    const line = JSON.stringify({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "sess1",
-        update: { sessionUpdate: "some_new_type" },
-      },
-    });
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Task 3.2: tool_call + tool_call_update lifecycle → acp-tool-call messages
 // ---------------------------------------------------------------------------
 
@@ -776,89 +706,6 @@ describe("Task 3.7 — session/request_permission round-trip", () => {
 // ---------------------------------------------------------------------------
 
 describe("Task 3.8 — sessionUpdate exhaustiveness", () => {
-  const SESSION_ID = "test-session";
-
-  // Helper: build a minimal session/update params object
-  function makeParams(
-    sessionUpdate: string,
-    extra?: Record<string, unknown>,
-  ): Record<string, unknown> {
-    return {
-      sessionId: SESSION_ID,
-      update: {
-        sessionUpdate,
-        ...extra,
-      },
-    };
-  }
-
-  it("every known ACP sessionUpdate type has a handler (does not throw UnknownAcpContentTypeError)", () => {
-    const tracker = new AcpToolCallTracker();
-
-    // Provide minimal valid payloads for each known type
-    const validPayloads: Record<string, Record<string, unknown>> = {
-      agent_message_chunk: makeParams("agent_message_chunk", {
-        content: "hello",
-      }),
-      agent_message: makeParams("agent_message", { content: "hello" }),
-      agent_thought_chunk: makeParams("agent_thought_chunk", {
-        content: "thinking",
-      }),
-      agent_reasoning_chunk: makeParams("agent_reasoning_chunk", {
-        content: "reasoning",
-      }),
-      error: makeParams("error", { content: "oops" }),
-      agent_error: makeParams("agent_error", { content: "oops" }),
-      tool_call: makeParams("tool_call", {
-        toolCallId: "tc-exhaust-1",
-        title: "exhaust test",
-        kind: "read",
-        status: "pending",
-        locations: [],
-        rawInput: "test",
-      }),
-      tool_call_update: makeParams("tool_call_update", {
-        // tool_call_update without prior tool_call → tracker returns null → []
-        toolCallId: "tc-no-state",
-        status: "in_progress",
-        content: "progress",
-      }),
-      plan: makeParams("plan", {
-        entries: [{ content: "step 1", priority: "high", status: "pending" }],
-      }),
-    };
-
-    for (const type of KNOWN_ACP_SESSION_UPDATE_TYPES) {
-      const params = validPayloads[type];
-      if (!params) {
-        throw new Error(
-          `Test missing valid payload for known type: ${type}. Update the test.`,
-        );
-      }
-      expect(
-        () =>
-          parseSessionUpdateStrict(
-            params as Record<string, unknown>,
-            SESSION_ID,
-            tracker,
-          ),
-        `Expected type "${type}" to have a handler`,
-      ).not.toThrow(UnknownAcpContentTypeError);
-    }
-  });
-
-  it("an unknown type that is NOT in KNOWN_ACP_SESSION_UPDATE_TYPES throws UnknownAcpContentTypeError", () => {
-    const unknownType = "future_protocol_extension_v99";
-    expect(KNOWN_ACP_SESSION_UPDATE_TYPES).not.toContain(unknownType as never);
-
-    expect(() =>
-      parseSessionUpdateStrict(
-        makeParams(unknownType) as Record<string, unknown>,
-        SESSION_ID,
-      ),
-    ).toThrow(UnknownAcpContentTypeError);
-  });
-
   it("KNOWN_ACP_SESSION_UPDATE_TYPES contains exactly the expected discriminants from ACP spec", () => {
     const expected = new Set([
       "agent_message_chunk",

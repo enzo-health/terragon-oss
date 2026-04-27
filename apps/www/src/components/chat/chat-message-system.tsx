@@ -41,7 +41,7 @@ export function SystemMessage({
         return "Scheduled task cancelled.";
       case "fix-github-checks":
         return "Fixing GitHub Checks...";
-      case "sdlc-error-retry":
+      case "agent-error-retry":
         return "An error occurred. Automatically retrying...";
       case "follow-up-retry-failed":
         return "Follow-up processing failed.";
@@ -66,7 +66,7 @@ export function SystemMessage({
         return "bg-green-500";
       case "cancel-schedule":
         return "bg-muted-foreground";
-      case "sdlc-error-retry":
+      case "agent-error-retry":
         return "bg-red-500";
       case "follow-up-retry-failed":
         return "bg-red-500";

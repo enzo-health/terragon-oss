@@ -825,7 +825,6 @@ export function parseAcpLineToClaudeMessages(
         itemType: "stopReason",
         threadChatId: fallbackSessionId,
         reason: "ignored unvalidated terminal result envelope",
-        payload: envelope,
       });
       return [];
     }
@@ -867,7 +866,6 @@ export function parseAcpLineToClaudeMessages(
           reason: contentText
             ? "surfaced as text (no structured handler)"
             : "dropped (no content)",
-          payload: update,
         });
         if (contentText) {
           return [
@@ -895,24 +893,4 @@ export function parseAcpLineToClaudeMessages(
     return parseAgentExited(params);
   }
   return parseEnvelopeError(envelope);
-}
-
-// ---------------------------------------------------------------------------
-// Raw session-update parser (throws UnknownAcpContentTypeError — for tests)
-// ---------------------------------------------------------------------------
-
-/**
- * Parse a session/update envelope's inner update object, throwing
- * `UnknownAcpContentTypeError` for unrecognised discriminants.
- *
- * Used by the exhaustiveness test (Task 3.8) and by callers that want to
- * handle unknown-type errors themselves rather than relying on the catch in
- * `parseAcpLineToClaudeMessages`.
- */
-export function parseSessionUpdateStrict(
-  params: JsonObject,
-  fallbackSessionId: string,
-  toolCallTracker?: AcpToolCallTracker,
-): ClaudeMessage[] {
-  return parseSessionUpdate(params, fallbackSessionId, toolCallTracker);
 }

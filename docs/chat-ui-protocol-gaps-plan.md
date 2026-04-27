@@ -422,19 +422,13 @@ The fix is one unified `ThreadItem` schema evolution plus per-protocol adapters 
 - **Description:** Renders plan entry list with `priority` color coding and `status` icon. Handles incremental updates (entries added/updated, not replaced). TDD.
 - **Dependencies:** 3.3, 2.2
 
-### Task 5.4: `<ImagePartView>`, `<AudioPartView>`, `<ResourceLinkView>` components
-
-- **Location:** `apps/www/src/components/chat/*.tsx` (three files)
-- **Description:** Image inlines up to 512px, click-to-expand. Audio uses native `<audio controls>`. Resource link renders as clickable card with title/description/mime/size metadata. TDD + stories.
-- **Dependencies:** 1.2, 3.4
-
-### Task 5.5: `<TerminalPartView>` component
+### Task 5.4: `<TerminalPartView>` component
 
 - **Location:** `apps/www/src/components/chat/terminal-part.tsx`
 - **Description:** Renders `chunks[]` append-only with auto-scroll, distinct styling for stdout/stderr/interaction. If an existing `SandboxTerminalEmbedded` covers this, extend it; else new component. TDD.
 - **Dependencies:** 1.2, 3.5, 2.3 (command output also flows here)
 
-### Task 5.6: `<AutoApprovalReviewCard>` component
+### Task 5.5: `<AutoApprovalReviewCard>` component
 
 - **Location:** `apps/www/src/components/chat/auto-approval-review-card.tsx`
 - **Description:** Shows the target action, guardian risk level, decision (pending → approved/denied). TDD + story.

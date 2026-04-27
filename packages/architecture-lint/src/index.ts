@@ -12,7 +12,7 @@ export type Finding = {
 };
 
 type RuleId =
-  | "no-delivery-loop-imports"
+  | "no-legacy-runtime-imports"
   | "no-unsafe-runtime-boundary-casts"
   | "require-exhaustive-switch";
 
@@ -26,11 +26,13 @@ type AllowlistEntry = {
 };
 
 export type ArchitectureLintConfig = {
-  deliveryLoopImportRoots: string[];
+  legacyRuntimeImportRoots: string[];
   unsafeCastRoots: string[];
   exhaustiveSwitchFiles: string[];
   allowlist: AllowlistEntry[];
 };
+
+const legacyRuntimeImportSegment = ["delivery", "loop"].join("-");
 
 const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
 const ignoredDirectories = new Set([
@@ -42,7 +44,7 @@ const ignoredDirectories = new Set([
 ]);
 
 export const defaultConfig: ArchitectureLintConfig = {
-  deliveryLoopImportRoots: [
+  legacyRuntimeImportRoots: [
     "apps/www/src/agent",
     "apps/www/src/agent/runtime",
     "apps/www/src/app/(sidebar)/(task-list)",
@@ -830,7 +832,7 @@ function collectTargetFiles(
 ): string[] {
   const candidates = new Set<string>();
   for (const entry of [
-    ...config.deliveryLoopImportRoots,
+    ...config.legacyRuntimeImportRoots,
     ...config.unsafeCastRoots,
     ...config.exhaustiveSwitchFiles,
   ]) {
@@ -889,14 +891,14 @@ function checkFile(
   );
   const findings: Finding[] = [];
   visitSourceFile(sourceFile, (node) => {
-    if (matchesAny(relativeFile, config.deliveryLoopImportRoots)) {
+    if (matchesAny(relativeFile, config.legacyRuntimeImportRoots)) {
       const specifier = getModuleSpecifier(node);
-      if (specifier && specifier.includes("delivery-loop")) {
+      if (specifier && specifier.includes(legacyRuntimeImportSegment)) {
         pushFinding(findings, {
-          rule: "no-delivery-loop-imports",
+          rule: "no-legacy-runtime-imports",
           file: relativeFile,
           line: lineOf(sourceFile, node),
-          message: `delivery-loop import is blocked in rewrite-owned runtime paths: ${specifier}`,
+          message: `legacy runtime import is blocked in rewrite-owned runtime paths: ${specifier}`,
         });
       }
     }

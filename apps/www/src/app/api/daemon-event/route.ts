@@ -75,7 +75,6 @@ type TerminalAckBase = {
   status?: number;
   deduplicated?: true;
   reason?: string;
-  loopId?: string;
   runId?: string;
   acknowledgedEventId: string | null;
   acknowledgedSeq: number | null;
@@ -136,7 +135,6 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
       success: true,
       ...(state.deduplicated ? { deduplicated: true } : {}),
       ...(state.reason ? { reason: state.reason } : {}),
-      ...(state.loopId ? { loopId: state.loopId } : {}),
       ...(state.runId ? { runId: state.runId } : {}),
       acknowledgedEventId: state.acknowledgedEventId,
       acknowledgedSeq: state.acknowledgedSeq,
@@ -1278,8 +1276,8 @@ export async function POST(request: Request) {
     }
   }
 
-  // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
-  // run-context status transitions — just extend sandbox life + refresh updatedAt.
+  // Heartbeat shortcut: empty messages skip message/event persistence,
+  // envelope validation, and run-context status transitions.
   if (
     messages.length === 0 &&
     (!deltas || deltas.length === 0) &&
@@ -1581,7 +1579,7 @@ export async function POST(request: Request) {
     ) {
       // Invalid type — skip codex persistence but do NOT rollback claimed
       // signal. Rolling back after terminal side effects would permanently
-      // lose the daemon completion signal for enrolled loops.
+      // lose the daemon completion signal for runtime sessions.
       console.warn(
         "[daemon-event] invalid codexPreviousResponseId type, skipping persistence",
         {

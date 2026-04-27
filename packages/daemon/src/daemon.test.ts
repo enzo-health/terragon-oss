@@ -397,7 +397,7 @@ describe("daemon", () => {
     );
   });
 
-  it("includes v2 envelope on delta-only flush so enrolled loops accept it", async () => {
+  it("includes v2 envelope on delta-only flush so canonical consumers accept it", async () => {
     const pushDelta = (messageId: string, deltaSeq: number) =>
       (daemon as any).deltaBuffer.push({
         threadId: TEST_INPUT_MESSAGE.threadId,

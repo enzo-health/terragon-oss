@@ -40,9 +40,9 @@ export type PullRequestReviewEvent =
 export type CheckRunEvent = EmitterWebhookEvent<"check_run">["payload"];
 export type CheckSuiteEvent = EmitterWebhookEvent<"check_suite">["payload"];
 
-const TERRAGON_RUNTIME_CHECK_RUN_NAME = "Terragon Delivery Loop";
+const TERRAGON_RUNTIME_CHECK_RUN_NAME = "Terragon Runtime";
 const TERRAGON_RUNTIME_CHECK_RUN_EXTERNAL_ID_PREFIX =
-  "terragon-sdlc-loop-check-run:";
+  "terragon-runtime-check-run:";
 
 function isActionableCheckFailure(conclusion: string | null): boolean {
   if (!conclusion) {

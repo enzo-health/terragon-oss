@@ -3525,10 +3525,9 @@ export class TerragonDaemon {
   /**
    * Construct a v2 envelope for a delta-only daemon-event flush (no
    * associated messages). Each flush needs its own seq so the server can
-   * treat it as a distinct event; v3-enrolled loops reject payloads without
-   * the v2 envelope (`enrolled_loop_requires_v2_envelope`), which silently
-   * breaks streaming even though the subsequent full-message POST still
-   * succeeds.
+   * treat it as a distinct event; canonical daemon-event consumers reject
+   * payloads without the v2 envelope, which silently breaks streaming even
+   * though the subsequent full-message POST still succeeds.
    */
   private createDeltaOnlyDaemonEventEnvelope(
     threadChatId: string,
