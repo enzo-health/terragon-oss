@@ -42,6 +42,9 @@ const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
 const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
 
 const ENCODER = new TextEncoder();
+const AG_UI_EVENT_TYPES: ReadonlySet<unknown> = new Set(
+  Object.values(EventType),
+);
 
 type AgUiStreamEntry = {
   id: string;
@@ -124,6 +127,13 @@ function isTerminalRunEventType(type: BaseEvent["type"]): boolean {
   return type === EventType.RUN_FINISHED || type === EventType.RUN_ERROR;
 }
 
+function isAgUiBaseEvent(value: unknown): value is BaseEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  return AG_UI_EVENT_TYPES.has(Reflect.get(value, "type"));
+}
+
 function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
   // XREAD shape: [ [streamKey, [ [id, [field, value, ...]], ... ]] ] or null.
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -153,8 +163,8 @@ function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
       continue;
     }
     try {
-      const parsed = JSON.parse(serialized) as BaseEvent;
-      entries.push({ id, event: parsed });
+      const parsed: unknown = JSON.parse(serialized);
+      entries.push({ id, event: isAgUiBaseEvent(parsed) ? parsed : null });
     } catch (err) {
       console.warn("[ag-ui] malformed stream entry", { id, err });
       entries.push({ id, event: null });

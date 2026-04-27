@@ -13,9 +13,13 @@
 --      agent_event_log as AG-UI TEXT_MESSAGE_CONTENT / REASONING_MESSAGE_CONTENT
 --      events.
 --
--- Apply atomically with the Task 2C writer cutover commit. This migration
--- cannot be applied to a DB without the corresponding writer update without
--- causing seq-collision failures on subsequent runs.
+-- This rewrite intentionally drops old replay rows. Pre-cutover rows used
+-- per-run sequencing and can collide with the new per-thread-chat sequence
+-- constraint below; the big-bang runtime cutover treats the AG-UI writer as
+-- the fresh source of truth.
+
+DELETE FROM "agent_event_log";
+--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS "agent_event_log_thread_chat_seq_unique"
   ON "agent_event_log" USING btree ("thread_chat_id", "seq");

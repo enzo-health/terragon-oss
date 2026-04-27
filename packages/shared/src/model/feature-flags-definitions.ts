@@ -129,11 +129,6 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
-  skipDeliveryLoopGates: {
-    defaultValue: false,
-    description:
-      "Auto-bypass all delivery loop gates (review, CI, UI) so workflows skip directly to awaiting_pr or babysitting.",
-  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

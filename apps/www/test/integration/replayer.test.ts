@@ -65,9 +65,6 @@ const dbMocks = vi.hoisted(() => {
       delete: deleteFrom,
       update,
       insert,
-      query: {
-        sdlcLoopSignalInbox: { findFirst: vi.fn().mockResolvedValue(null) },
-      },
     },
   };
 });
@@ -94,7 +91,27 @@ vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
+  getDaemonEventDbPreflight: vi.fn().mockResolvedValue({
+    agentEventLogReady: true,
+    agentRunContextFailureColumnsReady: true,
+    missing: [],
+  }),
+}));
+
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  completeAgentRunContextTerminal: vi
+    .fn()
+    .mockImplementation(async (params) => ({
+      status: "committed",
+      runContext: {
+        runId: params.runId,
+        userId: params.userId,
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        status: params.terminalStatus,
+      },
+    })),
   getAgentRunContextByRunId: vi.fn().mockResolvedValue({
     runId: "run-replay",
     userId: "test-user-replay",

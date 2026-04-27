@@ -50,7 +50,6 @@ const dbMocks = vi.hoisted(() => {
   const updateWhere = vi.fn(() => ({ returning: updateReturning }));
   const updateSet = vi.fn(() => ({ where: updateWhere }));
   const update = vi.fn(() => ({ set: updateSet }));
-  const signalInboxFindFirst = vi.fn();
   type MockTransactionClient = {
     execute: typeof execute;
     select: typeof select;
@@ -86,7 +85,6 @@ const dbMocks = vi.hoisted(() => {
     updateWhere,
     updateSet,
     update,
-    signalInboxFindFirst,
     transaction,
     db: {
       execute,
@@ -94,11 +92,6 @@ const dbMocks = vi.hoisted(() => {
       select,
       delete: deleteFrom,
       update,
-      query: {
-        sdlcLoopSignalInbox: {
-          findFirst: signalInboxFindFirst,
-        },
-      },
     },
   };
 });
@@ -443,7 +436,6 @@ describe("daemon-event route", () => {
     dbMocks.insertReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.deleteReturning.mockResolvedValue([{ id: "signal-1" }]);
     dbMocks.updateReturning.mockResolvedValue([{ id: "signal-1" }]);
-    dbMocks.signalInboxFindFirst.mockResolvedValue(null);
     vi.mocked(getThreadMinimal).mockResolvedValue({
       id: "thread-1",
       userId: "user-1",
@@ -2408,31 +2400,6 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("treats commit as idempotent success when another worker already committed the signal", async () => {
-    dbMocks.updateReturning.mockResolvedValueOnce([]);
-    dbMocks.signalInboxFindFirst.mockResolvedValueOnce({
-      id: "signal-1",
-      committedAt: new Date("2026-01-01T00:01:00.000Z"),
-      processedAt: null,
-    });
-
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-committed-elsewhere",
-        runId: "run-1",
-        seq: 12,
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-  });
-
   it("routes out-of-order daemon envelopes through canonical handlers", async () => {
     const response = await POST(
       createDaemonRequest({
@@ -3252,25 +3219,6 @@ describe("daemon-event route", () => {
       });
       expect(persistAndPublishAgUiEvents).not.toHaveBeenCalled();
       expect(handleDaemonEvent).not.toHaveBeenCalled();
-    });
-
-    it("skips v1 signal inbox for canonical runs", async () => {
-      const response = await POST(
-        createDaemonRequest({
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
-          timezone: "UTC",
-          payloadVersion: 2,
-          eventId: "event-pure-v2-2",
-          runId: "run-1",
-          seq: 10,
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      // v1 signal inbox claim was NOT called (no insert into sdlcLoopSignalInbox)
-      expect(dbMocks.signalInboxFindFirst).not.toHaveBeenCalled();
     });
 
     it("acknowledges canonical-only event batches without legacy handling", async () => {

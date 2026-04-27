@@ -69,9 +69,6 @@ const dbMocks = vi.hoisted(() => {
       delete: deleteFrom,
       update,
       insert,
-      query: {
-        sdlcLoopSignalInbox: { findFirst: vi.fn().mockResolvedValue(null) },
-      },
     },
   };
 });
@@ -99,7 +96,27 @@ vi.mock("@/server-lib/follow-up", () => ({
   queueFollowUpInternal: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
+  getDaemonEventDbPreflight: vi.fn().mockResolvedValue({
+    agentEventLogReady: true,
+    agentRunContextFailureColumnsReady: true,
+    missing: [],
+  }),
+}));
+
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  completeAgentRunContextTerminal: vi
+    .fn()
+    .mockImplementation(async (params) => ({
+      status: "committed",
+      runContext: {
+        runId: params.runId,
+        userId: params.userId,
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        status: params.terminalStatus,
+      },
+    })),
   getAgentRunContextByRunId: vi.fn().mockResolvedValue({
     runId: "run-acp-canonical-001",
     userId: "test-user-replay",
@@ -125,10 +142,14 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThreadChat: vi.fn().mockResolvedValue(null),
   getThreadMinimal: vi.fn().mockResolvedValue(null),
   updateThreadChat: vi.fn().mockResolvedValue(null),
+  updateThreadChatTerminalMetadataIfTerminal: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/agent/update-status", () => ({
-  updateThreadChatWithTransition: vi.fn().mockResolvedValue(undefined),
+  updateThreadChatWithTransition: vi.fn().mockResolvedValue({
+    updatedStatus: null,
+    didUpdateStatus: false,
+  }),
 }));
 
 vi.mock("@terragon/shared/broadcast-server", () => ({
@@ -140,6 +161,7 @@ vi.mock("@/lib/redis", () => ({
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue("OK"),
     del: vi.fn().mockResolvedValue(1),
+    xadd: vi.fn().mockResolvedValue("1-0"),
     pipeline: vi.fn(() => ({
       set: vi.fn(),
       del: vi.fn(),
