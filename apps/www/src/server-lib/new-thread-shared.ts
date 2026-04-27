@@ -1,6 +1,7 @@
 import { modelToAgent } from "@terragon/agent/utils";
 import {
   Automation,
+  DBThreadContextMessage,
   DBUserMessage,
   ThreadSource,
   ThreadSourceMetadata,
@@ -263,6 +264,10 @@ export async function createNewThread({
     if (scheduleAt < Date.now()) {
       throw new UserFacingError("Schedule time must be in the future");
     }
+    const uploadedMessage = await uploadUserMessageImages({
+      userId,
+      message: messageWithModel,
+    });
     await updateThreadChat({
       db,
       userId,
@@ -270,12 +275,7 @@ export async function createNewThread({
       threadChatId,
       updates: {
         scheduleAt: new Date(scheduleAt),
-        appendMessages: [
-          await uploadUserMessageImages({
-            userId,
-            message: messageWithModel,
-          }),
-        ],
+        appendMessages: [uploadedMessage],
       },
     });
     updateThreadMetadata();
@@ -288,29 +288,19 @@ export async function createNewThread({
     effectiveCreateNewBranch = false;
   }
 
-  // If the thread is being forked, add the thread context message to the new thread
+  let threadContextMessage: DBThreadContextMessage | null = null;
   if (sourceMetadata?.type === "www-fork") {
-    await updateThreadChat({
-      db,
-      userId,
-      threadId,
-      threadChatId,
-      updates: {
-        appendMessages: [
-          {
-            type: "thread-context",
-            threadId: sourceMetadata.parentThreadId,
-            threadChatId: sourceMetadata.parentThreadChatId,
-            threadChatHistory: await getThreadChatHistory({
-              userId,
-              threadId: sourceMetadata.parentThreadId,
-              threadChatId: sourceMetadata.parentThreadChatId,
-            }),
-            taskDescription: convertToPlainText({ message: messageWithModel }),
-          },
-        ],
-      },
-    });
+    threadContextMessage = {
+      type: "thread-context",
+      threadId: sourceMetadata.parentThreadId,
+      threadChatId: sourceMetadata.parentThreadChatId,
+      threadChatHistory: await getThreadChatHistory({
+        userId,
+        threadId: sourceMetadata.parentThreadId,
+        threadChatId: sourceMetadata.parentThreadChatId,
+      }),
+      taskDescription: convertToPlainText({ message: messageWithModel }),
+    };
   }
 
   // Start processing the message
@@ -319,6 +309,7 @@ export async function createNewThread({
       db,
       userId,
       message: messageWithModel,
+      threadContextMessage,
       threadId,
       threadChatId,
       isNewThread: true,

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { DBMessage, ThreadInfoFull, UIPart } from "@terragon/shared";
+import type { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { PromptBoxRef } from "../thread-context";
 import type {
@@ -32,7 +32,7 @@ export type TerragonThreadContext = {
   toolProps: {
     threadId: string;
     threadChatId: string;
-    messages: DBMessage[];
+    messages: UIMessage[];
     isReadOnly: boolean;
     promptBoxRef?: React.RefObject<PromptBoxRef | null>;
     childThreads: { id: string; parentToolId: string | null }[];

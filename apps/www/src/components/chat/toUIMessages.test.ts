@@ -2131,7 +2131,7 @@ describe("toUIMessages", () => {
             name: "Task",
             parameters: { description: "Complex task" },
             status: "completed",
-            result: "[Tool execution was interrupted]",
+            result: "[Tool execution was interrupted by error]",
             parts: [],
           },
         ],
@@ -2213,12 +2213,25 @@ describe("toUIMessages", () => {
             name: "Read",
             parameters: { file_path: "test.txt" },
             status: "completed",
-            result: "[Tool execution was interrupted]",
+            result: "[Tool completed without explicit result]",
             parts: [],
           },
         ],
       },
     ]);
+
+    const resultWithStoppedStatus = toUIMessages({
+      dbMessages,
+      agent: "claudeCode",
+      threadStatus: "stopped",
+    });
+    expect(resultWithStoppedStatus[1]?.parts).toContainEqual(
+      expect.objectContaining({
+        id: "tool-1",
+        status: "completed",
+        result: "[Tool execution was interrupted]",
+      }),
+    );
 
     // With working thread status, tool remains pending
     const resultWithWorkingStatus = toUIMessages({

@@ -34,15 +34,6 @@ const baseEnvelope = {
   timestamp: "2026-04-17T12:00:00.000Z",
 } as const;
 
-const baseIdentity = {
-  eventId: "event-1",
-  runId: "run-1",
-  threadId: "thread-1",
-  threadChatId: "thread-chat-1",
-  seq: 0,
-  timestamp: "2026-04-17T12:00:00.000Z",
-} as const;
-
 describe("mapCanonicalEventToAgui", () => {
   describe("run-started", () => {
     it("maps to RUN_STARTED preserving threadId and runId", () => {
@@ -291,7 +282,6 @@ describe("mapCanonicalEventToAgui", () => {
         type: EventType.CUSTOM,
         name: "permission-request",
         value: {
-          ...baseIdentity,
           permissionRequestId: "permission-1",
           toolCallId: "tc-1",
           title: "Run command?",
@@ -316,7 +306,6 @@ describe("mapCanonicalEventToAgui", () => {
         type: EventType.CUSTOM,
         name: "permission-response",
         value: {
-          ...baseIdentity,
           permissionRequestId: "permission-1",
           response: "approved",
         },
@@ -341,7 +330,6 @@ describe("mapCanonicalEventToAgui", () => {
         type: EventType.CUSTOM,
         name: "artifact-reference",
         value: {
-          ...baseIdentity,
           artifactId: "artifact-1",
           artifactType: "diff",
           title: "Patch",
@@ -366,7 +354,6 @@ describe("mapCanonicalEventToAgui", () => {
         type: EventType.CUSTOM,
         name: "model-reroute",
         value: {
-          ...baseIdentity,
           from: "sonnet",
           to: "gpt-5.4",
         },
@@ -375,7 +362,7 @@ describe("mapCanonicalEventToAgui", () => {
   });
 
   describe("unknown-provider-event", () => {
-    it("does not render quarantined provider payloads by default", () => {
+    it("maps quarantined provider payloads to replayable custom diagnostics", () => {
       const event: UnknownProviderEvent = {
         ...baseEnvelope,
         category: "quarantine",
@@ -385,7 +372,19 @@ describe("mapCanonicalEventToAgui", () => {
         redactedPayload: { token: "[REDACTED]" },
       };
 
-      expect(mapCanonicalEventToAgui(event)).toEqual([]);
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "terragon.quarantine.unknown-provider-event",
+        value: {
+          provider: "acp",
+          reason: "unsupported event kind",
+          rawEventType: null,
+          redactedPayload: { token: "[REDACTED]" },
+        },
+      });
     });
   });
 });

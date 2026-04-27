@@ -1,6 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import {
-  DBMessage,
   DBUserMessage,
   GitDiffStats,
   ThreadInfoFull,
@@ -52,7 +51,7 @@ export const ChatMessages = memo(function ChatMessages({
   toolProps?: {
     threadId: string;
     threadChatId: string;
-    messages: DBMessage[];
+    messages: UIMessage[];
     isReadOnly: boolean;
     promptBoxRef?: React.RefObject<PromptBoxRef | null>;
     childThreads: { id: string; parentToolId: string | null }[];

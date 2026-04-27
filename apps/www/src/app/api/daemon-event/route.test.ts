@@ -27,8 +27,6 @@ import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { POST } from "./route";
 
-const LEGACY_THREAD_CHAT_ID = "legacy-thread-chat-id";
-
 const dbMocks = vi.hoisted(() => {
   const execute = vi.fn();
   const selectWhere = vi.fn();
@@ -119,6 +117,13 @@ const agUiPublisherMocks = vi.hoisted(() => ({
   daemonDeltasToAgUiRows: vi.fn(() => []),
   dbAgentMessagePartsToAgUiRows: vi.fn(() => []),
   metaEventsToAgUiEvents: vi.fn(() => []),
+  buildDeltaRunEndRows: vi.fn(() => [
+    {
+      event: { type: "TEXT_MESSAGE_END", messageId: "msg-open" },
+      eventId: "delta-end:run-1:msg-open:text",
+      timestamp: new Date("2026-04-27T00:00:00.000Z"),
+    },
+  ]),
   buildRunTerminalAgUi: vi.fn(() => ({ type: "RUN_FINISHED" })),
   buildAgUiEventId: vi.fn(
     (canonicalEventId: string, agUiType: string, index: number) =>
@@ -453,12 +458,14 @@ describe("daemon-event route", () => {
       inserted: 0,
       skipped: 0,
       insertedEventIds: [],
+      persistedEnvelopes: [],
     });
     agUiPublisherMocks.persistAgUiEvents.mockResolvedValue({
       inserted: 0,
       skipped: 0,
       insertedEventIds: [],
       persistedEvents: [],
+      persistedEnvelopes: [],
     });
     agUiPublisherMocks.publishPersistedAgUiEvents.mockResolvedValue(undefined);
     agUiPublisherMocks.broadcastAgUiEventEphemeral.mockResolvedValue(undefined);
@@ -770,6 +777,292 @@ describe("daemon-event route", () => {
     );
   });
 
+  describe("runtime DB-message write shutdown characterization", () => {
+    it("persists a Codex token stream as AG-UI deltas without projecting runtime transcript messages", async () => {
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-characterize-token-stream",
+          runId: "run-1",
+          seq: 20,
+          messages: [],
+          deltas: [
+            {
+              messageId: "codex-message-1",
+              partIndex: 0,
+              deltaSeq: 1,
+              kind: "text",
+              text: "Hel",
+            },
+            {
+              messageId: "codex-message-1",
+              partIndex: 0,
+              deltaSeq: 2,
+              kind: "text",
+              text: "lo",
+            },
+          ],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(agUiPublisherMocks.daemonDeltasToAgUiRows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          deltas: expect.arrayContaining([
+            expect.objectContaining({
+              messageId: "codex-message-1",
+              deltaSeq: 1,
+              text: "Hel",
+            }),
+            expect.objectContaining({
+              messageId: "codex-message-1",
+              deltaSeq: 2,
+              text: "lo",
+            }),
+          ]),
+        }),
+      );
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [],
+          skipThreadChatPersistence: true,
+        }),
+      );
+    });
+
+    it("skips legacy thread chat message persistence for canonical tool-call streams with legacy assistant messages", async () => {
+      const toolCallEvent = {
+        payloadVersion: 2,
+        eventId: "canonical-tool-call-start",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        seq: 21,
+        timestamp: "2026-04-19T20:00:00.000Z",
+        category: "tool_lifecycle",
+        type: "tool-call-start",
+        toolCallId: "tool-call-1",
+        name: "shell",
+        parameters: { command: "echo hi" },
+        parentToolUseId: null,
+      };
+      const assistantToolUseMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-call-1",
+              name: "shell",
+              input: { command: "echo hi" },
+            },
+          ],
+        },
+        session_id: "session-1",
+        parent_tool_use_id: null,
+      };
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-characterize-tool-call",
+          runId: "run-1",
+          seq: 21,
+          messages: [assistantToolUseMessage],
+          canonicalEvents: [toolCallEvent],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      const handleArgs = vi.mocked(handleDaemonEvent).mock.calls[0]?.[0];
+      expect(handleArgs).toEqual(
+        expect.objectContaining({
+          messages: [assistantToolUseMessage],
+          skipThreadChatPersistence: true,
+        }),
+      );
+      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
+      expect(publishBroadcastUserMessage).not.toHaveBeenCalled();
+      expect(
+        assignThreadChatMessageSeqToCanonicalEvents,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("skips legacy thread chat message persistence for delta streams with legacy assistant messages", async () => {
+      const assistantTextMessage = {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Hello" }],
+        },
+        session_id: "session-1",
+        parent_tool_use_id: null,
+      };
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-characterize-delta-with-legacy-message",
+          runId: "run-1",
+          seq: 24,
+          messages: [assistantTextMessage],
+          deltas: [
+            {
+              messageId: "codex-message-2",
+              partIndex: 0,
+              deltaSeq: 1,
+              kind: "text",
+              text: "Hello",
+            },
+          ],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [assistantTextMessage],
+          skipThreadChatPersistence: true,
+        }),
+      );
+      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
+      expect(publishBroadcastUserMessage).not.toHaveBeenCalled();
+      expect(
+        assignThreadChatMessageSeqToCanonicalEvents,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("persists a tool-progress stream as canonical AG-UI only and skips legacy runtime transcript projection", async () => {
+      const toolProgressEvent = {
+        payloadVersion: 2,
+        eventId: "canonical-tool-progress",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        seq: 22,
+        timestamp: "2026-04-19T20:00:00.500Z",
+        category: "tool_lifecycle",
+        type: "tool-call-progress",
+        toolCallId: "tool-call-1",
+        delta: "installing dependencies",
+        progressKind: "stdout",
+      };
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-characterize-tool-progress",
+          runId: "run-1",
+          seq: 22,
+          messages: [],
+          canonicalEvents: [toolProgressEvent],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        canonicalEventsPersisted: 0,
+        canonicalEventsDeduplicated: 0,
+      });
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      expect(handleDaemonEvent).not.toHaveBeenCalled();
+    });
+
+    it("still routes a failed run with legacy error messages through the DB-message projection seam after persisting RUN_ERROR", async () => {
+      const runErrorEvent = createCanonicalRunTerminalEvent({
+        eventId: "canonical-run-error",
+        seq: 23,
+        status: "failed",
+        errorMessage: "Codex failed",
+        errorCode: "daemon_result_error",
+      });
+      const errorMessage = {
+        type: "custom-error",
+        duration_ms: 10,
+        error_info: "Codex failed",
+      };
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-characterize-failed-run",
+          runId: "run-1",
+          seq: 23,
+          messages: [errorMessage],
+          canonicalEvents: [runErrorEvent],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(agUiPublisherMocks.persistAgUiEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      const handleArgs = vi.mocked(handleDaemonEvent).mock.calls[0]?.[0];
+      expect(handleArgs).toEqual(
+        expect.objectContaining({
+          messages: [errorMessage],
+          deferTerminalTransitionToRoute: true,
+          skipThreadChatPersistence: false,
+        }),
+      );
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_error",
+          requireStatusTransitionForChatUpdates: true,
+        }),
+      );
+    });
+  });
+
   it("drops canonical assistant-message replay rows when deltas are present", async () => {
     const timestamp = new Date().toISOString();
     const response = await POST(
@@ -1037,7 +1330,7 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects legacy daemon payloads with the legacy threadChat sentinel", async () => {
+  it("requires threadChatId for daemon payloads", async () => {
     vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
       userId: "user-1",
       keyId: "api-key-1",
@@ -1045,11 +1338,11 @@ describe("daemon-event route", () => {
         kind: "daemon-run",
         runId: "run-1",
         threadId: "thread-1",
-        threadChatId: LEGACY_THREAD_CHAT_ID,
+        threadChatId: "chat-1",
         sandboxId: "sandbox-1",
         agent: "claudeCode",
-        transportMode: "legacy",
-        protocolVersion: 1,
+        transportMode: "acp",
+        protocolVersion: 2,
         providers: ["anthropic"],
         nonce: "nonce-1",
         issuedAt: Date.now(),
@@ -1060,10 +1353,10 @@ describe("daemon-event route", () => {
       runId: "run-1",
       userId: "user-1",
       threadId: "thread-1",
-      threadChatId: LEGACY_THREAD_CHAT_ID,
+      threadChatId: "chat-1",
       sandboxId: "sandbox-1",
-      transportMode: "legacy",
-      protocolVersion: 1,
+      transportMode: "acp",
+      protocolVersion: 2,
       agent: "claudeCode",
       permissionMode: "allowAll",
       requestedSessionId: null,
@@ -1078,7 +1371,6 @@ describe("daemon-event route", () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
-        threadChatId: LEGACY_THREAD_CHAT_ID,
         messages: [
           {
             type: "system",
@@ -1089,10 +1381,8 @@ describe("daemon-event route", () => {
           },
         ],
         timezone: "UTC",
-        transportMode: "legacy",
-        protocolVersion: 1,
         payloadVersion: 2,
-        eventId: "event-legacy",
+        eventId: "event-missing-thread-chat",
         runId: "run-1",
         seq: 0,
       }),
@@ -1100,7 +1390,7 @@ describe("daemon-event route", () => {
     const data = await response.json();
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
+    expect(data.error).toBe("daemon_event_requires_thread_chat_id");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
@@ -1121,15 +1411,15 @@ describe("daemon-event route", () => {
     const data = await response.json();
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
+    expect(data.error).toBe("daemon_event_requires_thread_chat_id");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("requires a real threadChatId for codex app-server payloads", async () => {
+  it("routes non-empty placeholder threadChatIds into downstream run-context validation", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
-        threadChatId: LEGACY_THREAD_CHAT_ID,
+        threadChatId: "legacy-thread-chat-id",
         messages: [],
         timezone: "UTC",
         transportMode: "codex-app-server",
@@ -1142,12 +1432,12 @@ describe("daemon-event route", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("daemon_event_non_legacy_requires_thread_chat_id");
+    expect(response.status).toBe(409);
+    expect(data.error).toBe("daemon_event_run_context_mismatch");
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects non-v2 terminal messages before legacy terminal side effects", async () => {
+  it("rejects non-v2 terminal messages before terminal side effects", async () => {
     const response = await POST(
       createDaemonRequest(
         {
@@ -1664,7 +1954,7 @@ describe("daemon-event route", () => {
       deduplicated: true,
     });
     // Duplicate terminal acknowledgements still run transcript projection, but
-    // skip legacy terminal side effects.
+    // skip terminal recovery side effects.
 
     // Second request (out-of-order replay) - also deduplicated
     const secondResponse = await POST(
@@ -2060,6 +2350,11 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(handleDaemonEvent).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        skipThreadChatPersistence: false,
+      }),
+    );
   });
 
   // VAL-CROSS-002: Duplicate ingress across API and runtime remains idempotent
@@ -2980,6 +3275,126 @@ describe("daemon-event route", () => {
       expect(updateAgentRunContext).toHaveBeenCalledWith(
         expect.objectContaining({
           updates: expect.objectContaining({ status: "completed" }),
+        }),
+      );
+    });
+
+    it("publishes synthetic delta END rows before terminal canonical events", async () => {
+      canonicalEventLogMocks.findOpenAgUiMessagesForRun.mockResolvedValueOnce([
+        { messageId: "msg-open", kind: "text" },
+      ]);
+      agUiPublisherMocks.persistAgUiEvents
+        .mockResolvedValueOnce({
+          inserted: 1,
+          skipped: 0,
+          insertedEventIds: ["canonical-start:RUN_STARTED:0"],
+          persistedEvents: [{ type: "RUN_STARTED" }],
+          persistedEnvelopes: [
+            {
+              eventId: "canonical-start:RUN_STARTED:0",
+              seq: 0,
+              runId: "run-1",
+              threadId: "thread-1",
+              threadChatId: "chat-1",
+              timestamp: "2026-04-27T00:00:00.000Z",
+              idempotencyKey: "run-1:canonical-start:RUN_STARTED:0",
+              payload: { type: "RUN_STARTED" },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          inserted: 1,
+          skipped: 0,
+          insertedEventIds: ["canonical-terminal:RUN_FINISHED:0"],
+          persistedEvents: [{ type: "RUN_FINISHED" }],
+          persistedEnvelopes: [
+            {
+              eventId: "canonical-terminal:RUN_FINISHED:0",
+              seq: 2,
+              runId: "run-1",
+              threadId: "thread-1",
+              threadChatId: "chat-1",
+              timestamp: "2026-04-27T00:00:02.000Z",
+              idempotencyKey: "run-1:canonical-terminal:RUN_FINISHED:0",
+              payload: { type: "RUN_FINISHED" },
+            },
+          ],
+        });
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
+        inserted: 1,
+        skipped: 0,
+        insertedEventIds: ["delta-end:run-1:msg-open:text"],
+        persistedEnvelopes: [
+          {
+            eventId: "delta-end:run-1:msg-open:text",
+            seq: 1,
+            runId: "run-1",
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            timestamp: "2026-04-27T00:00:01.000Z",
+            idempotencyKey: "run-1:delta-end:run-1:msg-open:text",
+            payload: { type: "TEXT_MESSAGE_END", messageId: "msg-open" },
+          },
+        ],
+      });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [],
+          canonicalEvents: [
+            createCanonicalRunStartedEvent({ eventId: "canonical-start" }),
+            createCanonicalRunTerminalEvent({
+              eventId: "canonical-terminal",
+              status: "completed",
+            }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-canonical-only-terminal-order",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(
+        agUiPublisherMocks.persistAndPublishAgUiEvents,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rows: expect.arrayContaining([
+            expect.objectContaining({
+              eventId: "delta-end:run-1:msg-open:text",
+            }),
+          ]),
+        }),
+      );
+      expect(
+        agUiPublisherMocks.persistAndPublishAgUiEvents.mock
+          .invocationCallOrder[0] ?? 0,
+      ).toBeLessThan(
+        agUiPublisherMocks.persistAgUiEvents.mock.invocationCallOrder[1] ??
+          Infinity,
+      );
+      expect(
+        agUiPublisherMocks.publishPersistedAgUiEvents,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          persistedEvents: [{ type: "RUN_FINISHED" }],
+          persistedEnvelopes: [
+            expect.objectContaining({
+              eventId: "canonical-terminal:RUN_FINISHED:0",
+              seq: 2,
+            }),
+          ],
+        }),
+      );
+      expect(
+        agUiPublisherMocks.broadcastAgUiEventEphemeral,
+      ).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: expect.objectContaining({ type: "RUN_FINISHED" }),
         }),
       );
     });

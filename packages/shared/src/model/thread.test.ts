@@ -1,45 +1,45 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  createTestUser,
-  createTestThread,
-  createTestAutomation,
-} from "./test-helpers";
+import { tz } from "@date-fns/tz";
 import { env } from "@terragon/env/pkg-shared";
+import { set as setDateValues, subDays } from "date-fns";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as broadcastServer from "../broadcast-server";
 import { createDb } from "../db";
-import { ThreadInsert, ThreadChatInsert, User } from "../db/types";
 import { DBMessage, DBUserMessage } from "../db/db-message";
-import {
-  createThread,
-  updateThread,
-  getThreads,
-  getThreadsForAdmin,
-  getThread,
-  deleteThreadById,
-  getStalledThreads,
-  stopStalledThreads,
-  atomicDequeueThreadChats,
-  getActiveThreadCount,
-  getUserIdsWithThreadsStuckInQueue,
-  getThreadWithPermissions,
-  getUserIdsWithThreadsReadyToProcess,
-  updateThreadChatStatusAtomic,
-  getEligibleQueuedThreadChats,
-  getThreadsAndPRsStats,
-  updateThreadChat,
-  getThreadChat,
-  getThreadMinimal,
-} from "./threads";
+import * as schema from "../db/schema";
+import { ThreadChatInsert, ThreadInsert, User } from "../db/types";
 import { upsertGithubPR } from "./github";
 import {
-  markThreadChatAsUnread,
+  createTestAutomation,
+  createTestThread,
+  createTestUser,
+} from "./test-helpers";
+import {
   markThreadChatAsRead,
+  markThreadChatAsUnread,
 } from "./thread-read-status";
 import { updateThreadVisibility } from "./thread-visibility";
-import * as schema from "../db/schema";
-import { eq } from "drizzle-orm";
-import { tz } from "@date-fns/tz";
-import { set as setDateValues, subDays } from "date-fns";
-import * as broadcastServer from "../broadcast-server";
+import {
+  atomicDequeueThreadChats,
+  createThread,
+  deleteThreadById,
+  getActiveThreadCount,
+  getEligibleQueuedThreadChats,
+  getStalledThreads,
+  getThread,
+  getThreadChat,
+  getThreadMinimal,
+  getThreads,
+  getThreadsAndPRsStats,
+  getThreadsForAdmin,
+  getThreadWithPermissions,
+  getUserIdsWithThreadsReadyToProcess,
+  getUserIdsWithThreadsStuckInQueue,
+  stopStalledThreads,
+  updateThread,
+  updateThreadChat,
+  updateThreadChatStatusAtomic,
+} from "./threads";
 
 const db = createDb(env.DATABASE_URL!);
 const NON_EXISTENT_THREAD_CHAT_ID = "non-existent-thread-chat-id";
@@ -301,8 +301,8 @@ describe("thread", () => {
         userId: user.id,
       });
       expect(threadChat).toBeDefined();
-      expect(threadChat!.messages).toHaveLength(1);
-      expect(threadChat!.messages?.[0]).toEqual(message);
+      expect(threadChat!.messages).toBeNull();
+      expect(threadChat!.messageSeq).toBe(1);
       expect(threadChat!.queuedMessages).toHaveLength(1);
       expect(threadChat!.queuedMessages?.[0]).toEqual(queuedMessage);
     });
@@ -424,7 +424,7 @@ describe("thread", () => {
 
   describe("updateThreadChat", () => {
     describe("appendMessages", () => {
-      it("should append messages to empty thread", async () => {
+      it("advances messageSeq without writing legacy messages", async () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
@@ -457,11 +457,11 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]).toEqual(newMessage);
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
-      it("should append messages to existing messages", async () => {
+      it("advances messageSeq for each append batch", async () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
@@ -512,13 +512,11 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(3);
-        expect(updatedThreadChat!.messages?.[0]).toEqual(firstMessage);
-        expect(updatedThreadChat!.messages?.[1]).toEqual(secondMessage);
-        expect(updatedThreadChat!.messages?.[2]).toEqual(thirdMessage);
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(2);
       });
 
-      it("should not modify messages when appendMessages is empty array", async () => {
+      it("does not advance messageSeq when appendMessages is empty", async () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
@@ -557,8 +555,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]).toEqual(existingMessage);
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
       it("should update other fields while appending messages", async () => {
@@ -589,11 +587,11 @@ describe("thread", () => {
           userId: user.id,
         });
         expect(updatedThreadChat!.errorMessage).toBe("unknown-error");
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]).toEqual(message);
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
-      it("publishes append thread patches with expected message counts", async () => {
+      it("publishes append thread patches without legacy message counts", async () => {
         const { threadId, threadChatId } = await createTestThread({
           db,
           userId: user.id,
@@ -645,11 +643,57 @@ describe("thread", () => {
                   op: "upsert",
                   chatSequence: expect.any(Number),
                   appendMessages: [appendedMessage],
-                  expectedMessageCount: 1,
+                  messageSeq: 2,
                   chat: expect.objectContaining({
                     errorMessage: "unknown-error",
                     updatedAt: expect.any(String),
                   }),
+                }),
+              ],
+            },
+          }),
+        );
+      });
+
+      it("publishes append patches while leaving legacy messages empty", async () => {
+        const { threadId, threadChatId } = await createTestThread({
+          db,
+          userId: user.id,
+        });
+        const publishSpy = vi
+          .spyOn(broadcastServer, "publishBroadcastUserMessage")
+          .mockResolvedValue(undefined);
+        const message: DBMessage = {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "AG UI persisted this" }],
+        };
+
+        const result = await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendMessages: [message],
+          },
+        });
+
+        const updatedThreadChat = await getThreadChat({
+          db,
+          threadId,
+          threadChatId,
+          userId: user.id,
+        });
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(result.chatSequence).toBe(1);
+        expect(publishSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: {
+              threadPatches: [
+                expect.objectContaining({
+                  appendMessages: [message],
+                  messageSeq: 1,
                 }),
               ],
             },
@@ -696,26 +740,8 @@ describe("thread", () => {
 
         expect(finalChat).not.toBeNull();
 
-        // All 5 messages should be appended
-        expect(finalChat!.messages).toHaveLength(5);
-
-        // Messages should contain all 5 texts (order may vary due to concurrency)
-        const messageTexts = finalChat!.messages
-          ?.map((m) => {
-            if (m.type === "user" && m.parts[0]?.type === "text") {
-              return m.parts[0].text;
-            }
-            return "";
-          })
-          .sort();
-
-        expect(messageTexts).toEqual([
-          "Message 0",
-          "Message 1",
-          "Message 2",
-          "Message 3",
-          "Message 4",
-        ]);
+        expect(finalChat!.messages).toBeNull();
+        expect(finalChat!.messageSeq).toBe(5);
       });
 
       it("should handle appending to non-existent thread gracefully", async () => {
@@ -771,8 +797,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]).toEqual(message);
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
     });
 
@@ -802,15 +828,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]?.type).toBe("user");
-        const firstMessage = updatedThreadChat!.messages?.[0];
-        if (firstMessage?.type === "user") {
-          expect(firstMessage.parts[0]).toEqual({
-            type: "text",
-            text: "HelloWorld", // Null byte removed
-          });
-        }
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
       it("should sanitize control characters in appendMessages while keeping valid ones", async () => {
@@ -843,14 +862,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        const firstMessage = updatedThreadChat!.messages?.[0];
-        if (firstMessage?.type === "user") {
-          expect(firstMessage.parts[0]).toEqual({
-            type: "text",
-            text: "Valid:\t\n\rInvalid:", // Control chars removed, tab/newline/CR kept
-          });
-        }
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
       it("should sanitize nested structures in appendMessages", async () => {
@@ -880,12 +893,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        const savedMessage = updatedThreadChat!.messages?.[0];
-        expect(savedMessage?.type).toBe("tool-result");
-        if (savedMessage?.type === "tool-result") {
-          expect(savedMessage.result).toBe("Command outputwith nullbyte");
-        }
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
       it("should sanitize multiple messages in appendMessages", async () => {
@@ -925,28 +934,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(3);
-        const msg0 = updatedThreadChat!.messages?.[0];
-        if (msg0?.type === "user") {
-          expect(msg0.parts[0]).toEqual({
-            type: "text",
-            text: "Firstmessage",
-          });
-        }
-        const msg1 = updatedThreadChat!.messages?.[1];
-        if (msg1?.type === "agent") {
-          expect(msg1.parts[0]).toEqual({
-            type: "text",
-            text: "Secondmessagehere",
-          });
-        }
-        const msg2 = updatedThreadChat!.messages?.[2];
-        if (msg2?.type === "user") {
-          expect(msg2.parts[0]).toEqual({
-            type: "text",
-            text: "Thirdmessage",
-          });
-        }
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
       });
 
       it("should sanitize null bytes in queuedMessages", async () => {
@@ -1074,7 +1063,6 @@ describe("thread", () => {
 
         await Promise.all(promises);
 
-        // Check final state - all messages should be sanitized
         const finalChat = await getThreadChat({
           db,
           threadId,
@@ -1083,16 +1071,8 @@ describe("thread", () => {
         });
 
         expect(finalChat).not.toBeNull();
-        expect(finalChat!.messages).toHaveLength(5);
-        finalChat!.messages?.forEach((msg) => {
-          if (msg.type === "user") {
-            const text = msg.parts[0]?.type === "text" ? msg.parts[0].text : "";
-            // Should not contain null bytes or control characters
-            expect(text).not.toContain("\x00");
-            expect(text).not.toContain("\x01");
-            expect(text).toMatch(/^Message \d+withnull$/);
-          }
-        });
+        expect(finalChat!.messages).toBeNull();
+        expect(finalChat!.messageSeq).toBe(5);
       });
 
       it("should sanitize both appendMessages and queuedMessages in same update", async () => {
@@ -1130,14 +1110,8 @@ describe("thread", () => {
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        const appendedMsg = updatedThreadChat!.messages?.[0];
-        if (appendedMsg?.type === "user") {
-          expect(appendedMsg.parts[0]).toEqual({
-            type: "text",
-            text: "Appendmessage",
-          });
-        }
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
 
         expect(updatedThreadChat!.queuedMessages).toHaveLength(1);
         const queuedMsg = updatedThreadChat!.queuedMessages?.[0];
@@ -1396,41 +1370,14 @@ describe("thread", () => {
           },
         });
 
-        // Check that messages now contains all messages
         const updatedThreadChat = await getThreadChat({
           db,
           threadId,
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(3);
-        expect(updatedThreadChat!.messages?.[0]?.type).toBe("user");
-
-        const msg0 = updatedThreadChat!.messages?.[0];
-        if (msg0?.type === "user") {
-          expect(msg0.parts[0]).toEqual({
-            type: "text",
-            text: "Existing message",
-          });
-        }
-
-        const msg1 = updatedThreadChat!.messages?.[1];
-        if (msg1?.type === "user") {
-          expect(msg1.parts[0]).toEqual({
-            type: "text",
-            text: "Queued message 1",
-          });
-        }
-
-        const msg2 = updatedThreadChat!.messages?.[2];
-        if (msg2?.type === "user") {
-          expect(msg2.parts[0]).toEqual({
-            type: "text",
-            text: "Queued message 2",
-          });
-        }
-
-        // Check that queued messages are now empty
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(2);
         expect(updatedThreadChat!.queuedMessages).toHaveLength(0);
       });
 
@@ -1467,25 +1414,14 @@ describe("thread", () => {
           },
         });
 
-        // Messages should remain unchanged (COALESCE handles null queuedMessages)
         const updatedThreadChat = await getThreadChat({
           db,
           threadId,
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        expect(updatedThreadChat!.messages?.[0]?.type).toBe("user");
-
-        const msg = updatedThreadChat!.messages?.[0];
-        if (msg?.type === "user") {
-          expect(msg.parts[0]).toEqual({
-            type: "text",
-            text: "Existing message",
-          });
-        }
-
-        // Queued messages should be empty array
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(2);
         expect(updatedThreadChat!.queuedMessages).toEqual([]);
       });
 
@@ -1524,23 +1460,14 @@ describe("thread", () => {
           },
         });
 
-        // Messages should now contain the queued message
         const updatedThreadChat = await getThreadChat({
           db,
           threadId,
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        const msg = updatedThreadChat!.messages?.[0];
-        if (msg?.type === "user") {
-          expect(msg.parts[0]).toEqual({
-            type: "text",
-            text: "Queued message",
-          });
-        }
-
-        // Queued messages should be empty
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
         expect(updatedThreadChat!.queuedMessages).toHaveLength(0);
       });
     });
@@ -1688,23 +1615,14 @@ describe("thread", () => {
           },
         });
 
-        // Messages should contain the initial queued message
         const updatedThreadChat = await getThreadChat({
           db,
           threadId,
           threadChatId,
           userId: user.id,
         });
-        expect(updatedThreadChat!.messages).toHaveLength(1);
-        const msg = updatedThreadChat!.messages?.[0];
-        if (msg?.type === "user") {
-          expect(msg.parts[0]).toEqual({
-            type: "text",
-            text: "Initial queued",
-          });
-        }
-
-        // Queued messages should be empty (not replaced)
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(1);
         expect(updatedThreadChat!.queuedMessages).toHaveLength(0);
       });
 
@@ -1763,6 +1681,62 @@ describe("thread", () => {
             },
           }),
         );
+      });
+
+      it("can clear queued messages without copying them into legacy messages", async () => {
+        const { threadId, threadChatId } = await createTestThread({
+          db,
+          userId: user.id,
+        });
+        const existingMessage: DBMessage = {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "Legacy compatibility message" }],
+        };
+        const queuedMessage: DBUserMessage = {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "AG UI native queued follow-up" }],
+        };
+
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendMessages: [existingMessage],
+          },
+        });
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendQueuedMessages: [queuedMessage],
+          },
+        });
+
+        await updateThreadChat({
+          db,
+          userId: user.id,
+          threadId,
+          threadChatId,
+          updates: {
+            appendAndResetQueuedMessages: true,
+          },
+        });
+
+        const updatedThreadChat = await getThreadChat({
+          db,
+          threadId,
+          threadChatId,
+          userId: user.id,
+        });
+        expect(updatedThreadChat!.messages).toBeNull();
+        expect(updatedThreadChat!.messageSeq).toBe(2);
+        expect(updatedThreadChat!.queuedMessages).toEqual([]);
       });
     });
   });
@@ -4716,6 +4690,25 @@ describe("thread", () => {
       });
       // Verify it was cleared
       expect(updatedThreadChat!.reattemptQueueAt).toBeNull();
+      const [updatedThread] = await db
+        .select({ status: schema.thread.status })
+        .from(schema.thread)
+        .where(eq(schema.thread.id, threadId));
+      expect(updatedThread!.status).toBe("queued");
+
+      await updateThreadChatStatusAtomic({
+        db,
+        userId: user.id,
+        threadId,
+        threadChatId,
+        fromStatus: "queued",
+        toStatus: "working-done",
+      });
+      const [completedThread] = await db
+        .select({ status: schema.thread.status })
+        .from(schema.thread)
+        .where(eq(schema.thread.id, threadId));
+      expect(completedThread!.status).toBe("working-done");
     });
 
     it("should handle agent rate limit status in getUserIdsWithThreadsReadyToProcess", async () => {
@@ -5699,15 +5692,8 @@ describe("thread", () => {
         userId: user.id,
       });
       expect(updatedThreadChat!.errorMessage).toBe("erroroccurred");
-      // Messages should also be sanitized (existing functionality)
-      expect(updatedThreadChat!.messages).toHaveLength(1);
-      const message = updatedThreadChat!.messages?.[0];
-      if (message?.type === "user") {
-        expect(message.parts[0]).toEqual({
-          type: "text",
-          text: "Message withnull byte",
-        });
-      }
+      expect(updatedThreadChat!.messages).toBeNull();
+      expect(updatedThreadChat!.messageSeq).toBe(1);
 
       expect(updatedThreadChat!.queuedMessages).toHaveLength(1);
       const queuedMessage = updatedThreadChat!.queuedMessages?.[0];

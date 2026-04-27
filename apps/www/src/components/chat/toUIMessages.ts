@@ -105,11 +105,25 @@ export function toUIMessages({
   // Map to store tool parts by their ID for efficient lookup
   const toolPartsById: Record<string, InternalToolPart> = {};
 
-  function markPendingToolsAsCompleted() {
+  function getPendingToolResultMessage(
+    reason: "completed" | "interrupted" | "error",
+  ): string {
+    if (reason === "completed") {
+      return "[Tool completed without explicit result]";
+    }
+    if (reason === "error") {
+      return "[Tool execution was interrupted by error]";
+    }
+    return "[Tool execution was interrupted]";
+  }
+
+  function markPendingToolsAsCompleted(
+    reason: "completed" | "interrupted" | "error" = "interrupted",
+  ) {
     for (const toolPart of Object.values(toolPartsById)) {
       if (toolPart.status === "pending") {
         (toolPart as any).status = "completed";
-        (toolPart as any).result = "[Tool execution was interrupted]";
+        (toolPart as any).result = getPendingToolResultMessage(reason);
       }
     }
   }
@@ -183,6 +197,7 @@ export function toUIMessages({
 
   for (const [dbIndex, dbMessage] of dbMessages.entries()) {
     if (dbMessage.type === "meta" && dbMessage.subtype === "result-success") {
+      markPendingToolsAsCompleted("completed");
       if (currentAgentMessage && dbMessage.duration_ms > 0) {
         currentAgentMessage.meta = {
           cost_usd: dbMessage.cost_usd,
@@ -332,7 +347,7 @@ export function toUIMessages({
       dbMessage.type === "meta" &&
       dbMessage.subtype === "result-error-max-turns"
     ) {
-      markPendingToolsAsCompleted();
+      markPendingToolsAsCompleted("error");
       // Meta messages are ignored in UI
     }
   }
@@ -340,10 +355,25 @@ export function toUIMessages({
   clearCurrentAgentMessage();
 
   if (threadStatus && !isThreadWorking(threadStatus)) {
-    markPendingToolsAsCompleted();
+    markPendingToolsAsCompleted(getPendingToolCompletionReason(threadStatus));
   }
 
   return uiMessages;
+}
+
+function getPendingToolCompletionReason(
+  status: ThreadStatus,
+): "completed" | "interrupted" | "error" {
+  switch (status) {
+    case "complete":
+    case "working-done":
+      return "completed";
+    case "error":
+    case "working-error":
+      return "error";
+    default:
+      return "interrupted";
+  }
 }
 
 function isThreadWorking(status: ThreadStatus): boolean {

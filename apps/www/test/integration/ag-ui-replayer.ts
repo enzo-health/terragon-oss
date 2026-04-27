@@ -22,8 +22,13 @@ import type { UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { act, createElement, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/legacy-db-message-adapter";
-import type { ThreadViewLifecycle } from "../../src/components/chat/thread-view-model/types";
+import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/snapshot-adapter";
+import type {
+  ThreadViewLifecycle,
+  ThreadViewQuarantineEntry,
+  ThreadViewRuntimeActivities,
+  ThreadViewRuntimeState,
+} from "../../src/components/chat/thread-view-model/types";
 import { useThreadViewModel } from "../../src/components/chat/use-ag-ui-messages";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +87,12 @@ export type ReplayAgUiResult = {
   artifactDescriptors: ArtifactDescriptor[];
   /** Final lifecycle state projected by ThreadViewModel. */
   lifecycle: ThreadViewLifecycle;
+  /** Native AG UI runtime state restored from STATE_* events. */
+  runtimeState: ThreadViewRuntimeState;
+  /** Native AG UI activity records restored from ACTIVITY_* events. */
+  runtimeActivities: ThreadViewRuntimeActivities;
+  /** Explicit diagnostics for AG UI events the active renderer cannot handle yet. */
+  quarantine: ThreadViewQuarantineEntry[];
   /** Snapshots of UIMessage[] after each event, for step-by-step assertions. */
   snapshots: UIMessage[][];
   /** Artifact descriptor references after each event, for stability assertions. */
@@ -110,6 +121,9 @@ export async function replayAgUi(
   const artifactSnapshots: ArtifactDescriptor[][] = [];
   let current: UIMessage[] = [];
   let currentArtifacts: ArtifactDescriptor[] = [];
+  let currentQuarantine: ThreadViewQuarantineEntry[] = [];
+  let currentRuntimeState: ThreadViewRuntimeState = {};
+  let currentRuntimeActivities: ThreadViewRuntimeActivities = {};
   let currentLifecycle: ThreadViewLifecycle = createEmptyThreadViewSnapshot({
     agent: agentKind,
     initialMessages,
@@ -119,11 +133,24 @@ export async function replayAgUi(
     messages: UIMessage[];
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
+    runtimeState: ThreadViewRuntimeState;
+    runtimeActivities: ThreadViewRuntimeActivities;
+    quarantine: ThreadViewQuarantineEntry[];
   }): void {
-    const { messages: msgs, artifactDescriptors, lifecycle } = params;
+    const {
+      messages: msgs,
+      artifactDescriptors,
+      lifecycle,
+      runtimeState,
+      runtimeActivities,
+      quarantine,
+    } = params;
     current = msgs;
     currentArtifacts = artifactDescriptors;
     currentLifecycle = lifecycle;
+    currentRuntimeState = runtimeState;
+    currentRuntimeActivities = runtimeActivities;
+    currentQuarantine = quarantine;
   }
 
   // Headless mount
@@ -160,6 +187,9 @@ export async function replayAgUi(
       messages: current,
       artifactDescriptors: currentArtifacts,
       lifecycle: currentLifecycle,
+      runtimeState: currentRuntimeState,
+      runtimeActivities: currentRuntimeActivities,
+      quarantine: currentQuarantine,
       snapshots,
       artifactSnapshots,
     };
@@ -188,6 +218,9 @@ function Harness({
     messages: UIMessage[];
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
+    runtimeState: ThreadViewRuntimeState;
+    runtimeActivities: ThreadViewRuntimeActivities;
+    quarantine: ThreadViewQuarantineEntry[];
   }) => void;
 }): null {
   const snapshot = useMemo(
@@ -206,6 +239,9 @@ function Harness({
     messages: viewModel.messages,
     artifactDescriptors: viewModel.artifacts.descriptors,
     lifecycle: viewModel.lifecycle,
+    runtimeState: viewModel.runtimeState,
+    runtimeActivities: viewModel.runtimeActivities,
+    quarantine: viewModel.quarantine,
   });
   return null;
 }
@@ -267,6 +303,21 @@ export function toolCallArgs(
     timestamp,
     toolCallId,
     delta,
+  } as BaseEvent;
+}
+
+export function toolCallChunk(
+  toolCallId: string,
+  delta: string,
+  timestamp = 0,
+  eventId?: string,
+): BaseEvent {
+  return {
+    type: EventType.TOOL_CALL_CHUNK,
+    timestamp,
+    toolCallId,
+    delta,
+    ...(eventId ? { eventId } : {}),
   } as BaseEvent;
 }
 

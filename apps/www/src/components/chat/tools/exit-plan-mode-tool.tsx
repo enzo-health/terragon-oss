@@ -1,4 +1,4 @@
-import type { DBMessage } from "@terragon/shared";
+import type { UIMessage } from "@terragon/shared";
 import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { Check, Copy, ExternalLink } from "lucide-react";
@@ -28,7 +28,7 @@ export function ExitPlanModeTool({
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
   threadId: string;
   threadChatId: string;
-  messages: DBMessage[];
+  messages: UIMessage[];
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;

@@ -1,13 +1,14 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
 import {
   createThreadViewSnapshot,
   selectThreadViewDbMessages,
-} from "./legacy-db-message-adapter";
+} from "./snapshot-adapter";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,
@@ -16,7 +17,7 @@ import {
 import type { ThreadViewModelState, ThreadViewSnapshot } from "./types";
 
 describe("ThreadViewModel reducer", () => {
-  it("keeps the legacy DB snapshot adapter at toUIMessages/dbMessagesToAgUi parity", () => {
+  it("hydrates non-canonical DB snapshots through AG-UI replay only", () => {
     const dbMessages: DBMessage[] = [
       userMessage("hi"),
       {
@@ -35,6 +36,7 @@ describe("ThreadViewModel reducer", () => {
       githubSummary: githubSummary(),
     });
 
+    expect(snapshot.transcriptSource).toBe("ag-ui-replay");
     expect(snapshot.uiMessages).toEqual(
       toUIMessages({
         dbMessages,
@@ -47,7 +49,7 @@ describe("ThreadViewModel reducer", () => {
     );
   });
 
-  it("keeps legacy user turns when canonical projection is assistant-only", () => {
+  it("uses canonical projected messages without legacy user-turn scaffolding", () => {
     const legacyUser = userMessage("please fix this");
     const projectedAgent: DBMessage = {
       type: "agent",
@@ -61,14 +63,14 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(selectThreadViewDbMessages(chat).dbMessages).toEqual([
-      legacyUser,
       projectedAgent,
     ]);
   });
 
-  it("keeps missing legacy user turns in transcript order with canonical projections", () => {
+  it("keeps canonical projected message order independent of legacy message order", () => {
     const legacyUser1 = userMessage("first");
     const legacyUser2 = userMessage("second");
+    const projectedUser2 = userMessage("canonical second");
     const projectedAgent1: DBMessage = {
       type: "agent",
       parent_tool_use_id: null,
@@ -81,16 +83,30 @@ describe("ThreadViewModel reducer", () => {
     };
     const chat = threadPageChat({
       messages: [legacyUser1, projectedAgent1, legacyUser2, projectedAgent2],
-      projectedMessages: [projectedAgent1, projectedAgent2],
+      projectedMessages: [projectedAgent1, projectedUser2, projectedAgent2],
       isCanonicalProjection: true,
     });
 
     expect(selectThreadViewDbMessages(chat).dbMessages).toEqual([
-      legacyUser1,
       projectedAgent1,
-      legacyUser2,
+      projectedUser2,
       projectedAgent2,
     ]);
+  });
+
+  it("does not fall back to legacy messages for canonical snapshots with no projection", () => {
+    const legacyUser = userMessage(
+      "legacy should not scaffold canonical replay",
+    );
+    const chat = threadPageChat({
+      messages: [legacyUser],
+      projectedMessages: [],
+      isCanonicalProjection: true,
+    });
+
+    const selected = selectThreadViewDbMessages(chat);
+    expect(selected.dbMessages).toEqual([]);
+    expect(selected.hasCanonicalProjectionSeed).toBe(false);
   });
 
   it("treats canonical-only projected snapshots as canonical seeds", () => {
@@ -118,6 +134,45 @@ describe("ThreadViewModel reducer", () => {
     });
     expect(snapshot.uiMessages).toHaveLength(0);
     expect(snapshot.agUiInitialMessages).toEqual([]);
+  });
+
+  it("keeps native AG UI replay as the active transcript source", () => {
+    const legacyUser = userMessage("legacy should not render");
+    const snapshot = createThreadViewSnapshot({
+      threadChat: threadPageChat({
+        messages: [legacyUser],
+        projectedMessages: [],
+        isCanonicalProjection: true,
+      }),
+      agent: "claudeCode",
+      source: "collection",
+      artifactThread: artifactThread(),
+      githubSummary: githubSummary(),
+    });
+
+    expect(snapshot.transcriptSource).toBe("ag-ui-replay");
+    expect(snapshot.uiMessages).toEqual([]);
+    expect(snapshot.agUiInitialMessages).toEqual([]);
+    expect(snapshot.dbMessages).toEqual([]);
+
+    let state = createInitialThreadViewModelState(snapshot);
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "native-msg-1",
+    });
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "native-msg-1",
+      delta: "rendered from replay",
+    });
+
+    expect(projectThreadViewModel(state).messages).toEqual([
+      expect.objectContaining({
+        id: "native-msg-1",
+        role: "agent",
+        parts: [{ type: "text", text: "rendered from replay" }],
+      }),
+    ]);
   });
 
   it("hydrates DB snapshot and suppresses duplicate replay assistant bubbles", () => {
@@ -166,9 +221,19 @@ describe("ThreadViewModel reducer", () => {
     expect(viewModel.threadStatus).toBe("booting");
     expect(viewModel.messages).toHaveLength(2);
     expect(viewModel.messages[1]).toMatchObject({
+      id: "user-optimistic-chat-1-1",
       role: "user",
       parts: [{ type: "text", text: "next" }],
     });
+  });
+
+  it("keeps optimistic user submit off the legacy toUIMessages adapter", () => {
+    const reducerSource = readFileSync(
+      new URL("./reducer.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(reducerSource).not.toContain("../toUIMessages");
   });
 
   it("replaces stale optimistic transcript and status on server refetch reconciliation", () => {
@@ -457,6 +522,60 @@ describe("ThreadViewModel reducer", () => {
         },
       ],
     });
+  });
+
+  it("projects native side-effect message snapshots instead of quarantining them", () => {
+    const state = applyAgUiEvent(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "side-effect-user-0-abc123abc123",
+            role: "user",
+            content: "Continue",
+          },
+        ],
+      } as BaseEvent,
+    );
+
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.quarantine).toEqual([]);
+    expect(viewModel.messages).toEqual([
+      {
+        id: "side-effect-user-0-abc123abc123",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        model: null,
+      },
+    ]);
+  });
+
+  it("projects lifecycle system notices into lifecycleMessages", () => {
+    const state = createInitialThreadViewModelState(
+      snapshotWithMessages([
+        userMessage("hi"),
+        {
+          type: "system",
+          message_type: "generic-retry",
+          parts: [{ type: "text", text: "Retrying..." }],
+        },
+      ]),
+    );
+
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+      }),
+    ]);
+    expect(viewModel.lifecycleMessages).toEqual([
+      expect.objectContaining({
+        role: "system",
+        message_type: "generic-retry",
+      }),
+    ]);
   });
 
   it("clears live transcript precedence after durable reconciliation", () => {
@@ -796,7 +915,6 @@ function threadPageChat({
     agent: "claudeCode",
     agentVersion: 1,
     status: "complete",
-    messages,
     projectedMessages,
     isCanonicalProjection,
     queuedMessages: null,

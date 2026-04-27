@@ -89,6 +89,59 @@ describe("agUiMessagesReducer", () => {
     });
   });
 
+  describe("MESSAGES_SNAPSHOT events", () => {
+    it("appends native user and system side-effect messages once", () => {
+      const snapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "side-effect-user-0-abc123abc123",
+            role: "user",
+            content: "Continue",
+          },
+          {
+            id: "side-effect-system:invalid-token-retry-1-def456def456",
+            role: "system",
+            content: "[invalid-token-retry]",
+          },
+        ],
+      } as BaseEvent;
+
+      const once = agUiMessagesReducer(mkState(), snapshotEvent);
+      const twice = agUiMessagesReducer(once, snapshotEvent);
+
+      expect(twice.messages).toEqual([
+        {
+          id: "side-effect-user-0-abc123abc123",
+          role: "user",
+          parts: [{ type: "text", text: "Continue" }],
+          model: null,
+        },
+        {
+          id: "side-effect-system:invalid-token-retry-1-def456def456",
+          role: "system",
+          message_type: "invalid-token-retry",
+          parts: [{ type: "text", text: "[invalid-token-retry]" }],
+        },
+      ]);
+    });
+
+    it("ignores unsupported system snapshot message ids", () => {
+      const next = agUiMessagesReducer(mkState(), {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "side-effect-system:follow-up-retry-failed-0-abc123abc123",
+            role: "system",
+            content: "Retry failed",
+          },
+        ],
+      } as BaseEvent);
+
+      expect(next.messages).toEqual([]);
+    });
+  });
+
   describe("REASONING (thinking) events", () => {
     it("REASONING_MESSAGE_START creates an assistant message with a thinking part", () => {
       const next = apply(mkState(), [
@@ -242,6 +295,53 @@ describe("agUiMessagesReducer", () => {
         next.messages[0] as { parts: Array<{ parameters: unknown }> }
       ).parts;
       expect(parts[0]!.parameters).toEqual({ pattern: "foo" });
+    });
+
+    it("TOOL_CALL_CHUNK appends visible progress to the pending tool part", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Read",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_CHUNK,
+          toolCallId: "t1",
+          delta: "Reading package.json",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_CHUNK,
+          toolCallId: "t1",
+          delta: "Reading pnpm-workspace.yaml",
+        } as BaseEvent,
+      ]);
+      const parts = (
+        next.messages[0] as {
+          parts: Array<{
+            progressChunks?: Array<{ seq: number; text: string }>;
+            toolStatus?: string;
+          }>;
+        }
+      ).parts;
+      expect(parts[0]).toMatchObject({
+        status: "pending",
+        toolStatus: "in_progress",
+        progressChunks: [
+          { seq: 0, text: "Reading package.json" },
+          { seq: 1, text: "Reading pnpm-workspace.yaml" },
+        ],
+      });
+    });
+
+    it("TOOL_CALL_CHUNK without a known tool call is ignored", () => {
+      const state = mkState();
+      const next = agUiMessagesReducer(state, {
+        type: EventType.TOOL_CALL_CHUNK,
+        toolCallId: "missing",
+        delta: "lost",
+      } as BaseEvent);
+      expect(next).toBe(state);
     });
 
     it("tool call without a preceding text message still renders on a synthetic assistant message", () => {

@@ -30,6 +30,7 @@ export function createEmptyThreadViewSnapshot({
   };
   return {
     source: "react-query",
+    transcriptSource: "ag-ui-replay",
     threadId: artifactThread.id,
     threadChatId: "thread-view-model-compat-chat",
     dbMessages: [],
@@ -75,83 +76,13 @@ export function selectThreadViewDbMessages(threadChat: ThreadPageChat): {
   hasCanonicalProjectionSeed: boolean;
 } {
   const projected = threadChat.projectedMessages as DBMessage[] | null;
-  const legacy = threadChat.messages as DBMessage[] | null;
-  const dbMessages =
-    projected && projected.length > 0
-      ? mergeLegacyUserTurnsIntoCanonicalProjection({ projected, legacy })
-      : legacy && legacy.length > 0
-        ? legacy
-        : (projected ?? legacy ?? []);
+  const isCanonicalProjection = Boolean(threadChat.isCanonicalProjection);
+  const dbMessages = projected ?? [];
 
   return {
     dbMessages,
-    hasCanonicalProjectionSeed:
-      Boolean(threadChat.isCanonicalProjection) &&
-      Boolean(projected && projected.length > 0),
+    hasCanonicalProjectionSeed: isCanonicalProjection && dbMessages.length > 0,
   };
-}
-
-function mergeLegacyUserTurnsIntoCanonicalProjection({
-  projected,
-  legacy,
-}: {
-  projected: DBMessage[];
-  legacy: DBMessage[] | null;
-}): DBMessage[] {
-  if (!legacy || legacy.length === 0) {
-    return projected;
-  }
-
-  const projectedUserKeys = new Set(
-    projected
-      .filter((message) => message.type === "user")
-      .map((message) => stableUserMessageKey(message)),
-  );
-  const missingUsersByLegacyIndex = new Map<number, DBMessage>();
-  legacy.forEach((message, index) => {
-    if (message.type !== "user") {
-      return;
-    }
-    if (projectedUserKeys.has(stableUserMessageKey(message))) {
-      return;
-    }
-    missingUsersByLegacyIndex.set(index, message);
-  });
-
-  if (missingUsersByLegacyIndex.size === 0) {
-    return projected;
-  }
-
-  const merged: DBMessage[] = [];
-  let projectedIndex = 0;
-  for (const [legacyIndex, legacyMessage] of legacy.entries()) {
-    const missingUser = missingUsersByLegacyIndex.get(legacyIndex);
-    if (missingUser) {
-      merged.push(missingUser);
-      continue;
-    }
-    if (legacyMessage.type === "user") {
-      continue;
-    }
-    if (projectedIndex < projected.length) {
-      merged.push(projected[projectedIndex]!);
-      projectedIndex += 1;
-    }
-  }
-  if (projectedIndex < projected.length) {
-    merged.push(...projected.slice(projectedIndex));
-  }
-
-  return merged;
-}
-
-function stableUserMessageKey(message: Extract<DBMessage, { type: "user" }>) {
-  return JSON.stringify({
-    timestamp: message.timestamp ?? null,
-    model: message.model ?? null,
-    parts: message.parts,
-    permissionMode: message.permissionMode ?? null,
-  });
 }
 
 export function createThreadViewSnapshot({
@@ -190,16 +121,18 @@ export function createThreadViewSnapshot({
     threadStatus,
     skipSeededAssistantText: hasCanonicalProjectionSeed,
   });
+  const agUiInitialMessages = dbMessagesToAgUiMessages(dbMessages, {
+    includeAssistantHistory: !hasCanonicalProjectionSeed,
+  });
 
   return {
     source,
+    transcriptSource: "ag-ui-replay",
     threadId: threadChat.threadId,
     threadChatId: threadChat.id,
     dbMessages,
     uiMessages,
-    agUiInitialMessages: dbMessagesToAgUiMessages(dbMessages, {
-      includeAssistantHistory: !hasCanonicalProjectionSeed,
-    }),
+    agUiInitialMessages,
     agent,
     threadStatus,
     queuedMessages: normalizeQueuedMessages(threadChat.queuedMessages),

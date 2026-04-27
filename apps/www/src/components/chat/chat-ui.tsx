@@ -79,7 +79,7 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
-import { createThreadViewSnapshot } from "./thread-view-model/legacy-db-message-adapter";
+import { createThreadViewSnapshot } from "./thread-view-model/snapshot-adapter";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
@@ -483,7 +483,7 @@ function ChatUIContent({
     () => ({
       threadId,
       threadChatId: threadViewModel.threadChatId,
-      messages: threadViewModel.dbMessages,
+      messages,
       isReadOnly,
       promptBoxRef,
       childThreads: shell.childThreads ?? [],
@@ -502,10 +502,10 @@ function ChatUIContent({
       thread.branchName,
       thread.githubRepoFullName,
       thread.repoBaseBranchName,
-      threadViewModel.dbMessages,
       threadViewModel.dispatchThreadViewEvent,
       threadViewModel.threadChatId,
       threadId,
+      messages,
     ],
   );
   const reconcileActiveChatFromServer = useCallback(async () => {
@@ -736,6 +736,7 @@ function ChatUIContent({
                   <TerragonThread
                     agent={agent}
                     messages={messages}
+                    lifecycleMessages={threadViewModel.lifecycleMessages}
                     threadStatus={effectiveThreadStatus}
                     thread={threadWithViewModelStatus}
                     latestGitDiffTimestamp={

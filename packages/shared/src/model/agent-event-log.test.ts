@@ -2,11 +2,11 @@ import { EventType } from "@ag-ui/core";
 import type {
   AssistantMessageEvent,
   CanonicalEvent,
-  UnknownProviderEvent,
   OperationalRunStartedEvent,
   ToolCallProgressEvent,
   ToolCallResultEvent,
   ToolCallStartEvent,
+  UnknownProviderEvent,
 } from "@terragon/agent/canonical-events";
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
 import { env } from "@terragon/env/pkg-shared";
@@ -20,7 +20,9 @@ import {
   appendCanonicalEvent,
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
+  findOpenAgUiToolCallsForRun,
   getAgUiEventEnvelopesForRun,
+  getAgUiEventEnvelopesForThreadChat,
   getAgUiEventsForRun,
   getLatestRunIdForThreadChat,
   getRunEvents,
@@ -174,8 +176,10 @@ function createToolCallResultEvent({
   threadId,
   threadChatId,
   seq,
+  toolCallId = newId("tool"),
 }: RunFixture & {
   seq: number;
+  toolCallId?: string;
 }): ToolCallResultEvent {
   return {
     payloadVersion: EVENT_ENVELOPE_VERSION,
@@ -187,7 +191,7 @@ function createToolCallResultEvent({
     timestamp: new Date().toISOString(),
     category: "tool_lifecycle",
     type: "tool-call-result",
-    toolCallId: newId("tool"),
+    toolCallId,
     result: "done",
     isError: false,
     completedAt: new Date().toISOString(),
@@ -407,7 +411,7 @@ describe("agent-event-log", () => {
     ]);
   });
 
-  it("stores quarantined unknown provider events without default AG-UI replay", async () => {
+  it("stores quarantined unknown provider events with replayable AG-UI diagnostics", async () => {
     const fixture = await createRunFixture();
     const runStarted = createRunStartedEvent({ ...fixture, seq: 0 });
     const quarantine = createUnknownProviderEvent({ ...fixture, seq: 1 });
@@ -434,13 +438,27 @@ describe("agent-event-log", () => {
     if (!quarantinedRow) {
       throw new Error("expected quarantined event row");
     }
-    expect(readAllAgUiEnvelopes(quarantinedRow)).toEqual([]);
+    expect(readAllAgUiEnvelopes(quarantinedRow)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          type: EventType.CUSTOM,
+          name: "terragon.quarantine.unknown-provider-event",
+          value: expect.objectContaining({
+            provider: "codex-app-server",
+            reason: "unsupported provider payload",
+            rawEventType: "provider.experimental",
+            redactedPayload: { preview: "[redacted]" },
+          }),
+        }),
+      }),
+    ]);
     const agUiEvents = await getAgUiEventsForRun({
       db,
       runId: fixture.runId,
     });
     expect(agUiEvents.map((event) => event.type)).toEqual([
       EventType.RUN_STARTED,
+      EventType.CUSTOM,
     ]);
   });
 
@@ -639,6 +657,187 @@ describe("agent-event-log", () => {
     ]);
   });
 
+  it("includes AG UI side-effect user turns in canonical replay sequence order", async () => {
+    const fixture = await createRunFixture();
+    const firstUserMessage = {
+      type: "user" as const,
+      model: null,
+      parts: [{ type: "text" as const, text: "first user prompt" }],
+    };
+    const secondUserMessage = {
+      type: "user" as const,
+      model: null,
+      parts: [{ type: "text" as const, text: "second user prompt" }],
+    };
+
+    const firstRunEvents = [
+      createRunStartedEvent({ ...fixture, seq: 0 }),
+      createAssistantMessageEvent({
+        ...fixture,
+        seq: 1,
+        eventId: newId("event"),
+      }),
+    ];
+    const secondRunEvents = [
+      createAssistantMessageEvent({
+        ...fixture,
+        seq: 2,
+        eventId: newId("event"),
+      }),
+    ];
+
+    await appendCanonicalEventsBatch({
+      db,
+      events: [...firstRunEvents, ...secondRunEvents],
+    });
+    await db.insert(schema.agentEventLog).values([
+      {
+        eventId: newId("side-effect"),
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 100,
+        eventType: EventType.MESSAGES_SNAPSHOT,
+        category: EventType.MESSAGES_SNAPSHOT,
+        payloadJson: {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            { id: "user-1", role: "user", content: "first user prompt" },
+          ],
+        },
+        idempotencyKey: newId("side-effect-key"),
+        timestamp: new Date(),
+        threadChatMessageSeq: 1,
+      },
+      {
+        eventId: newId("side-effect"),
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 101,
+        eventType: EventType.MESSAGES_SNAPSHOT,
+        category: EventType.MESSAGES_SNAPSHOT,
+        payloadJson: {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            { id: "user-2", role: "user", content: "second user prompt" },
+          ],
+        },
+        idempotencyKey: newId("side-effect-key"),
+        timestamp: new Date(),
+        threadChatMessageSeq: 3,
+      },
+    ]);
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: firstRunEvents.map((event) => event.eventId),
+      threadChatMessageSeq: 2,
+    });
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: secondRunEvents.map((event) => event.eventId),
+      threadChatMessageSeq: 4,
+    });
+
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      fromThreadChatMessageSeq: 0,
+    });
+
+    expect(replayEntries).toEqual([
+      {
+        seq: 1,
+        messages: [firstUserMessage],
+      },
+      {
+        seq: 2,
+        messages: [
+          expect.objectContaining({
+            type: "agent",
+            parts: [{ type: "text", text: "hello" }],
+          }),
+        ],
+      },
+      {
+        seq: 3,
+        messages: [secondUserMessage],
+      },
+      {
+        seq: 4,
+        messages: [
+          expect.objectContaining({
+            type: "agent",
+            parts: [{ type: "text", text: "hello" }],
+          }),
+        ],
+      },
+    ]);
+  });
+
+  it("places same-sequence user turns before canonical agent events", async () => {
+    const fixture = await createRunFixture();
+    const userMessage = {
+      type: "user" as const,
+      model: null,
+      parts: [{ type: "text" as const, text: "same sequence prompt" }],
+    };
+
+    const events = [
+      createRunStartedEvent({ ...fixture, seq: 0 }),
+      createAssistantMessageEvent({ ...fixture, seq: 1 }),
+    ];
+    await appendCanonicalEventsBatch({ db, events });
+    await db.insert(schema.agentEventLog).values({
+      eventId: newId("side-effect"),
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      seq: 100,
+      eventType: EventType.MESSAGES_SNAPSHOT,
+      category: EventType.MESSAGES_SNAPSHOT,
+      payloadJson: {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "same-seq-user",
+            role: "user",
+            content: "same sequence prompt",
+          },
+        ],
+      },
+      idempotencyKey: newId("side-effect-key"),
+      timestamp: new Date(),
+      threadChatMessageSeq: 1,
+    });
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: events.map((event) => event.eventId),
+      threadChatMessageSeq: 1,
+    });
+
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      fromThreadChatMessageSeq: 0,
+    });
+
+    expect(replayEntries).toEqual([
+      {
+        seq: 1,
+        messages: [
+          userMessage,
+          expect.objectContaining({
+            type: "agent",
+            parts: [{ type: "text", text: "hello" }],
+          }),
+        ],
+      },
+    ]);
+  });
+
   it("treats a missing agent_event_log relation as no canonical replay projection", async () => {
     const fixture = await createRunFixture();
     const findFirstSpy = vi
@@ -765,6 +964,7 @@ describe("agent-event-log", () => {
     });
 
     it("returns an AG-UI envelope with deterministic seq/run/thread-chat fields", () => {
+      const timestamp = new Date("2026-04-27T12:00:00.000Z");
       const agUiEvent: Record<string, unknown> = {
         type: EventType.RUN_STARTED,
         timestamp: 1_700_000_000_000,
@@ -772,17 +972,25 @@ describe("agent-event-log", () => {
         runId: "run-1",
       };
       const row = makeRow(agUiEvent, {
+        eventId: "event-1",
         eventType: "RUN_STARTED",
         runId: "run-1",
+        threadId: "thread-1",
         threadChatId: "chat-1",
         seq: 42,
+        idempotencyKey: "run-1:event-1",
+        timestamp,
       });
 
       const result = readAgUiEnvelope(row);
       expect(result).toEqual({
+        eventId: "event-1",
         seq: 42,
         runId: "run-1",
+        threadId: "thread-1",
         threadChatId: "chat-1",
+        timestamp: timestamp.toISOString(),
+        idempotencyKey: "run-1:event-1",
         payload: agUiEvent,
       });
     });
@@ -1226,6 +1434,127 @@ describe("agent-event-log", () => {
       ).toBe(true);
     });
 
+    it("returns thread-chat replay across multiple runs in seq order", async () => {
+      const fixture = await createRunFixture();
+      const secondRunId = newId("run");
+
+      await insertAgUiRow({
+        fixture,
+        seq: 0,
+        eventType: "RUN_STARTED",
+        payload: {
+          type: EventType.RUN_STARTED,
+          timestamp: 0,
+          threadId: fixture.threadId,
+          runId: fixture.runId,
+        },
+      });
+      await insertAgUiRow({
+        fixture,
+        seq: 1,
+        eventType: "RUN_FINISHED",
+        payload: {
+          type: EventType.RUN_FINISHED,
+          timestamp: 1,
+          threadId: fixture.threadId,
+          runId: fixture.runId,
+        },
+      });
+      await db.insert(schema.agentEventLog).values({
+        eventId: newId("event"),
+        runId: secondRunId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 2,
+        eventType: "RUN_STARTED",
+        category: "agui",
+        payloadJson: {
+          type: EventType.RUN_STARTED,
+          timestamp: 2,
+          threadId: fixture.threadId,
+          runId: secondRunId,
+        },
+        idempotencyKey: newId("idempotency"),
+        timestamp: new Date(),
+      });
+
+      const envelopes = await getAgUiEventEnvelopesForThreadChat({
+        db,
+        threadChatId: fixture.threadChatId,
+      });
+
+      expect(
+        envelopes.map(
+          (entry) => `${entry.seq}:${entry.runId}:${entry.payload.type}`,
+        ),
+      ).toEqual([
+        `0:${fixture.runId}:RUN_STARTED`,
+        `1:${fixture.runId}:RUN_FINISHED`,
+        `2:${secondRunId}:RUN_STARTED`,
+      ]);
+    });
+
+    it("applies a thread-chat seq cursor across run boundaries", async () => {
+      const fixture = await createRunFixture();
+      const secondRunId = newId("run");
+
+      await insertAgUiRow({
+        fixture,
+        seq: 0,
+        eventType: "RUN_STARTED",
+        payload: {
+          type: EventType.RUN_STARTED,
+          timestamp: 0,
+          threadId: fixture.threadId,
+          runId: fixture.runId,
+        },
+      });
+      await insertAgUiRow({
+        fixture,
+        seq: 1,
+        eventType: "RUN_FINISHED",
+        payload: {
+          type: EventType.RUN_FINISHED,
+          timestamp: 1,
+          threadId: fixture.threadId,
+          runId: fixture.runId,
+        },
+      });
+      await db.insert(schema.agentEventLog).values({
+        eventId: newId("event"),
+        runId: secondRunId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 2,
+        eventType: "RUN_STARTED",
+        category: "agui",
+        payloadJson: {
+          type: EventType.RUN_STARTED,
+          timestamp: 2,
+          threadId: fixture.threadId,
+          runId: secondRunId,
+        },
+        idempotencyKey: newId("idempotency"),
+        timestamp: new Date(),
+      });
+
+      const envelopes = await getAgUiEventEnvelopesForThreadChat({
+        db,
+        threadChatId: fixture.threadChatId,
+        afterSeq: 1,
+      });
+
+      expect(envelopes).toHaveLength(1);
+      expect(envelopes[0]).toMatchObject({
+        seq: 2,
+        runId: secondRunId,
+        payload: {
+          type: EventType.RUN_STARTED,
+          runId: secondRunId,
+        },
+      });
+    });
+
     it("scopes run replay to the requested thread chat when provided", async () => {
       const fixture = await createRunFixture();
       const otherThreadFixture = {
@@ -1506,6 +1835,108 @@ describe("agent-event-log", () => {
           threadChatId: fixture.threadChatId,
         }),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe("findOpenAgUiToolCallsForRun", () => {
+    it("keeps AG UI tool calls open until a TOOL_CALL_RESULT arrives", async () => {
+      const fixture = await createRunFixture();
+
+      await db.insert(schema.agentEventLog).values([
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 0,
+          eventType: "TOOL_CALL_START",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TOOL_CALL_START,
+            toolCallId: "tool-open",
+            toolCallName: "bash",
+            parentMessageId: "parent-tool",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 1,
+          eventType: "TOOL_CALL_END",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TOOL_CALL_END,
+            toolCallId: "tool-open",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 2,
+          eventType: "TOOL_CALL_START",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TOOL_CALL_START,
+            toolCallId: "tool-closed",
+            toolCallName: "read",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 3,
+          eventType: "TOOL_CALL_RESULT",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TOOL_CALL_RESULT,
+            messageId: "tool-closed",
+            toolCallId: "tool-closed",
+            content: "ok",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+      ]);
+
+      await expect(
+        findOpenAgUiToolCallsForRun({ db, runId: fixture.runId }),
+      ).resolves.toEqual([
+        { toolCallId: "tool-open", parentToolUseId: "parent-tool" },
+      ]);
+    });
+
+    it("reads canonical tool lifecycle rows through their AG UI projection", async () => {
+      const fixture = await createRunFixture();
+      const openTool = createToolCallStartEvent({ ...fixture, seq: 0 });
+      const closedTool = createToolCallStartEvent({ ...fixture, seq: 1 });
+      const result = createToolCallResultEvent({
+        ...fixture,
+        seq: 2,
+        toolCallId: closedTool.toolCallId,
+      });
+
+      await appendCanonicalEventsBatch({
+        db,
+        events: [openTool, closedTool, result],
+      });
+
+      await expect(
+        findOpenAgUiToolCallsForRun({ db, runId: fixture.runId }),
+      ).resolves.toEqual([
+        { toolCallId: openTool.toolCallId, parentToolUseId: null },
+      ]);
     });
   });
 

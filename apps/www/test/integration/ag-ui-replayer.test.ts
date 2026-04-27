@@ -20,6 +20,7 @@ import {
   textEnd,
   textStart,
   toolCallArgs,
+  toolCallChunk,
   toolCallEnd,
   toolCallResult,
   toolCallStart,
@@ -53,6 +54,7 @@ describe("AG-UI replayer integration", () => {
       textEnd("msg-1"),
       toolCallStart("tool-1", "bash"),
       toolCallArgs("tool-1", JSON.stringify({ command: "ls -la" })),
+      toolCallChunk("tool-1", "starting shell"),
       toolCallEnd("tool-1"),
       toolCallResult("tool-1", "total 0\n"),
     ];
@@ -71,7 +73,179 @@ describe("AG-UI replayer integration", () => {
       status: "completed",
       result: "total 0\n",
       parameters: { command: "ls -la" },
+      progressChunks: [{ seq: 0, text: "starting shell" }],
     });
+  });
+
+  it("does not double-append tool progress when reconnect replays the same event id", async () => {
+    const repeatedChunk = toolCallChunk("tool-1", "reading files", 0, "evt-1");
+    const { messages } = await replayAgUi([
+      textStart("msg-1"),
+      toolCallStart("tool-1", "Read"),
+      repeatedChunk,
+      repeatedChunk,
+    ]);
+
+    const m = messages[0]!;
+    if (m.role !== "agent") throw new Error("type narrow");
+    expect(m.parts[0]).toMatchObject({
+      type: "tool",
+      progressChunks: [{ seq: 0, text: "reading files" }],
+    });
+  });
+
+  it("restores native AG UI runtime state and activity after replay", async () => {
+    const { messages, quarantine, runtimeState, runtimeActivities } =
+      await replayAgUi([
+        {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: { plan: { status: "running" }, bootStep: "install" },
+        } as BaseEvent,
+        {
+          type: EventType.STATE_DELTA,
+          delta: [
+            { op: "replace", path: "/plan/status", value: "complete" },
+            { op: "add", path: "/currentTool", value: "pnpm test" },
+          ],
+        } as BaseEvent,
+        {
+          type: EventType.ACTIVITY_SNAPSHOT,
+          messageId: "msg-activity",
+          activityType: "boot",
+          content: { text: "Installing dependencies", status: "running" },
+        } as BaseEvent,
+        {
+          type: EventType.ACTIVITY_DELTA,
+          messageId: "msg-activity",
+          activityType: "boot",
+          patch: [
+            { op: "replace", path: "/status", value: "complete" },
+            { op: "add", path: "/exitCode", value: 0 },
+          ],
+        } as BaseEvent,
+      ]);
+
+    expect(messages).toEqual([]);
+    expect(quarantine).toEqual([]);
+    expect(runtimeState).toEqual({
+      plan: { status: "complete" },
+      bootStep: "install",
+      currentTool: "pnpm test",
+    });
+    expect(runtimeActivities).toEqual({
+      "msg-activity:boot": {
+        messageId: "msg-activity",
+        activityType: "boot",
+        content: {
+          text: "Installing dependencies",
+          status: "complete",
+          exitCode: 0,
+        },
+      },
+    });
+  });
+
+  it("keeps unsupported native families quarantined explicitly", async () => {
+    const { messages, quarantine, runtimeState, runtimeActivities } =
+      await replayAgUi([
+        {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [],
+        } as BaseEvent,
+        {
+          type: EventType.RAW,
+          event: { type: "provider.internal" },
+        } as BaseEvent,
+      ]);
+
+    expect(messages).toEqual([]);
+    expect(runtimeState).toEqual({});
+    expect(runtimeActivities).toEqual({});
+    expect(quarantine).toEqual([
+      {
+        reason: "unsupported-ag-ui-event",
+        eventType: EventType.MESSAGES_SNAPSHOT,
+      },
+      {
+        reason: "unsupported-ag-ui-event",
+        eventType: EventType.RAW,
+      },
+    ]);
+  });
+
+  it("quarantines malformed native runtime events", async () => {
+    const { messages, quarantine, runtimeState, runtimeActivities } =
+      await replayAgUi([
+        {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: null,
+        } as BaseEvent,
+        {
+          type: EventType.ACTIVITY_DELTA,
+          messageId: "msg-activity",
+          activityType: "boot",
+          patch: [{ op: "replace", path: "/missing/value", value: "nope" }],
+        } as BaseEvent,
+      ]);
+
+    expect(messages).toEqual([]);
+    expect(runtimeState).toEqual({});
+    expect(runtimeActivities).toEqual({});
+    expect(quarantine).toEqual([
+      {
+        reason: "malformed-native-runtime-event",
+        eventType: EventType.STATE_SNAPSHOT,
+      },
+      {
+        reason: "malformed-native-runtime-event",
+        eventType: EventType.ACTIVITY_DELTA,
+      },
+    ]);
+  });
+
+  it("quarantines state/activity patches that target prototype fields", async () => {
+    const { quarantine, runtimeState, runtimeActivities } = await replayAgUi([
+      {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: { plan: { status: "running" } },
+      } as BaseEvent,
+      {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "add", path: "/__proto__/polluted", value: true }],
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "msg-activity",
+        activityType: "boot",
+        content: { status: "running" },
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "msg-activity",
+        activityType: "boot",
+        patch: [{ op: "add", path: "/constructor/polluted", value: true }],
+      } as BaseEvent,
+    ]);
+
+    expect(runtimeState).toEqual({ plan: { status: "running" } });
+    expect(runtimeActivities).toEqual({
+      "msg-activity:boot": {
+        messageId: "msg-activity",
+        activityType: "boot",
+        content: { status: "running" },
+      },
+    });
+    expect(quarantine).toEqual([
+      {
+        reason: "malformed-native-runtime-event",
+        eventType: EventType.STATE_DELTA,
+      },
+      {
+        reason: "malformed-native-runtime-event",
+        eventType: EventType.ACTIVITY_DELTA,
+      },
+    ]);
+    expect(Reflect.get(Object.prototype, "polluted")).toBeUndefined();
   });
 
   it("marks tool-call as error when TOOL_CALL_RESULT signals failure", async () => {

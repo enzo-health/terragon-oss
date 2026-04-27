@@ -21,7 +21,6 @@ import {
 import type {
   AssistantMessageEvent,
   ArtifactReferenceEvent,
-  BaseEventEnvelope,
   CanonicalEvent,
   MetaEvent as CanonicalMetaEvent,
   OperationalRunStartedEvent,
@@ -32,6 +31,7 @@ import type {
   ToolCallResultEvent as CanonicalToolCallResultEvent,
   ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   ToolCallStartEvent as CanonicalToolCallStartEvent,
+  UnknownProviderEvent,
 } from "./canonical-events";
 
 /**
@@ -73,7 +73,7 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
     case "meta":
       return [mapCanonicalMeta(event, timestamp)];
     case "unknown-provider-event":
-      return [];
+      return [mapUnknownProviderEvent(event, timestamp)];
     default: {
       const _exhaustiveCheck: never = event;
       return _exhaustiveCheck;
@@ -252,7 +252,6 @@ function mapPermissionRequest(
     timestamp,
     name: "permission-request",
     value: {
-      ...canonicalIdentity(event),
       permissionRequestId: event.permissionRequestId,
       toolCallId: event.toolCallId ?? null,
       title: event.title,
@@ -271,7 +270,6 @@ function mapPermissionResponse(
     timestamp,
     name: "permission-response",
     value: {
-      ...canonicalIdentity(event),
       permissionRequestId: event.permissionRequestId,
       response: event.response,
     },
@@ -287,7 +285,6 @@ function mapArtifactReference(
     timestamp,
     name: "artifact-reference",
     value: {
-      ...canonicalIdentity(event),
       artifactId: event.artifactId,
       artifactType: event.artifactType,
       title: event.title,
@@ -307,24 +304,24 @@ function mapCanonicalMeta(
     name: event.name,
     value: {
       ...event.value,
-      ...canonicalIdentity(event),
     },
   };
 }
 
-type CanonicalIdentity = Pick<
-  BaseEventEnvelope,
-  "eventId" | "seq" | "runId" | "threadId" | "threadChatId" | "timestamp"
->;
-
-function canonicalIdentity(event: BaseEventEnvelope): CanonicalIdentity {
+function mapUnknownProviderEvent(
+  event: UnknownProviderEvent,
+  timestamp: number,
+): CustomEvent {
   return {
-    eventId: event.eventId,
-    seq: event.seq,
-    runId: event.runId,
-    threadId: event.threadId,
-    threadChatId: event.threadChatId,
-    timestamp: event.timestamp,
+    type: EventType.CUSTOM,
+    timestamp,
+    name: "terragon.quarantine.unknown-provider-event",
+    value: {
+      provider: event.provider,
+      reason: event.reason,
+      rawEventType: event.rawEventType ?? null,
+      redactedPayload: event.redactedPayload,
+    },
   };
 }
 

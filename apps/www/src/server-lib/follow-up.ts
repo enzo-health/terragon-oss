@@ -3,11 +3,7 @@ import { DBUserMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
-import {
-  estimateMessageSize,
-  getLastUserMessageModel,
-  imageCount,
-} from "@/lib/db-message-helpers";
+import { estimateMessageSize, imageCount } from "@/lib/db-message-helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   getThreadChat,
@@ -72,13 +68,14 @@ export async function followUpInternal({
     throw new Error("Failed to update thread");
   }
   if (updatedStatus === "scheduled") {
+    const uploadedMessage = await uploadUserMessageImages({ userId, message });
     await updateThreadChat({
       db,
       userId,
       threadId,
       threadChatId: threadChat.id,
       updates: {
-        appendMessages: [await uploadUserMessageImages({ userId, message })],
+        appendMessages: [uploadedMessage],
       },
     });
     return;
@@ -87,7 +84,6 @@ export async function followUpInternal({
     ...message,
     model:
       message.model ||
-      getLastUserMessageModel(threadChat.messages ?? []) ||
       getDefaultModelForAgent({
         agent: threadChat.agent,
         agentVersion: threadChat.agentVersion,

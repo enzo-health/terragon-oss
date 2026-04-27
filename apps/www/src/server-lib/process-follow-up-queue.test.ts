@@ -40,6 +40,7 @@ async function loadSubject(options: {
   const updateThreadChatWithTransition = vi.fn().mockResolvedValue({
     didUpdateStatus: options.didUpdateStatus ?? true,
     updatedStatus: undefined,
+    chatSequence: 12,
   });
   const startAgentMessage =
     options.startAgentMessageError === undefined ||
@@ -58,7 +59,6 @@ async function loadSubject(options: {
   const getSlashCommandOrNull = vi
     .fn()
     .mockReturnValue(options.slashCommand ?? null);
-
   vi.resetModules();
   vi.doMock("@/lib/db", () => ({
     db: {},
@@ -87,13 +87,9 @@ async function loadSubject(options: {
       .fn()
       .mockResolvedValue(options.latestRunContextForThreadChat ?? null),
   }));
-  vi.doMock("@/lib/db-message-helpers", () => ({
-    getLastUserMessageModel: vi.fn(() => null),
-  }));
   vi.doMock("@terragon/agent/utils", () => ({
     getDefaultModelForAgent: vi.fn(() => "sonnet"),
   }));
-
   const subject = await import("./process-follow-up-queue");
   return {
     maybeProcessFollowUpQueue: subject.maybeProcessFollowUpQueue,
@@ -425,6 +421,58 @@ describe("maybeProcessFollowUpQueue", () => {
         dispatchAttempt: 1,
         deferCount: 0,
         runAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it("exhausts retries from persisted thread lifecycle retry messages", async () => {
+    const {
+      maybeProcessFollowUpQueue,
+      scheduleFollowUpRetryJob,
+      updateThreadChatWithTransition,
+    } = await loadSubject({
+      initialThreadChat: {
+        id: "chat-1",
+        status: "complete",
+        agent: "claudeCode",
+        agentVersion: 0,
+        queuedMessages: [TEST_USER_MESSAGE],
+        messages: [
+          {
+            type: "system",
+            message_type: "follow-up-retry-failed",
+            parts: [{ type: "text", text: "Attempt 1 failed" }],
+          },
+          {
+            type: "system",
+            message_type: "follow-up-retry-failed",
+            parts: [{ type: "text", text: "Attempt 2 failed" }],
+          },
+        ],
+      },
+      startAgentMessageError: new Error("boom"),
+    });
+
+    const result = await maybeProcessFollowUpQueue({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+    });
+
+    expect(result).toEqual({
+      processed: false,
+      dispatchLaunched: false,
+      reason: "dispatch_retry_exhausted",
+      retryCount: 3,
+      maxRetries: 3,
+    });
+    expect(scheduleFollowUpRetryJob).not.toHaveBeenCalled();
+    expect(updateThreadChatWithTransition).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatUpdates: expect.objectContaining({
+          replaceQueuedMessages: [],
+          errorMessage: "agent-generic-error",
+        }),
       }),
     );
   });

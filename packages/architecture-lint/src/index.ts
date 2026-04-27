@@ -441,16 +441,16 @@ export const defaultConfig: ArchitectureLintConfig = {
         line: 104,
       },
       {
-        file: "apps/www/src/components/chat/thread-view-model/legacy-db-message-adapter.ts",
-        line: 77,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/legacy-db-message-adapter.ts",
+        file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
         line: 78,
       },
       {
-        file: "apps/www/src/components/chat/thread-view-model/legacy-db-message-adapter.ts",
-        line: 240,
+        file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
+        line: 79,
+      },
+      {
+        file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
+        line: 181,
       },
       {
         file: "apps/www/src/components/chat/thread-view-model/reducer.ts",

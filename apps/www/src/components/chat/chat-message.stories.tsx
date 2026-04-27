@@ -3,7 +3,7 @@ import { ChatMessage } from "./chat-message";
 import { WorkingMessage } from "./chat-messages";
 import { BootChecklist } from "./boot-checklist";
 import { UIMessage } from "@terragon/shared";
-import { createInitialThreadMetaSnapshot } from "./thread-view-model/legacy-db-message-adapter";
+import { createInitialThreadMetaSnapshot } from "./thread-view-model/snapshot-adapter";
 
 export default {
   title: "Chat/Chat Message",

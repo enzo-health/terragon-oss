@@ -27,8 +27,7 @@ import {
 } from "@terragon/shared/model/threads";
 import { createGitDiffCheckpoint } from "@terragon/shared/utils/git-diff";
 import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
-import * as schema from "@terragon/shared/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { queueFollowUpInternal } from "./follow-up";
 import { generateCommitMessage } from "./generate-commit-message";
 import { sendSystemMessage } from "./send-system-message";
@@ -493,26 +492,14 @@ async function maybeAutoFixGitCommitAndPushError({
   });
   const threadChat = await getThreadChat({
     db,
-    threadId,
     userId,
+    threadId,
     threadChatId,
   });
-  if (!threadChat || !threadChat.messages) {
-    return false;
-  }
-  // Lets make sure that the most recent user/system message is not a retry message
-  const getLastSystemOrUserMessage = (
-    messages: DBMessage[],
-  ): DBMessage | null => {
-    for (const message of [...messages].reverse()) {
-      if (message.type === "system" || message.type === "user") {
-        return message;
-      }
-    }
-    return null;
-  };
-  let lastSystemOrUserMessage = getLastSystemOrUserMessage(threadChat.messages);
-  if (!lastSystemOrUserMessage) {
+  const latestMessageType = latestPersistedSystemMessageType(
+    threadChat?.messages ?? [],
+  );
+  if (!latestMessageType) {
     console.error("No system or user message found", {
       userId,
       threadId,
@@ -520,10 +507,7 @@ async function maybeAutoFixGitCommitAndPushError({
     });
     return false;
   }
-  if (
-    lastSystemOrUserMessage.type === "system" &&
-    lastSystemOrUserMessage.message_type === "retry-git-commit-and-push"
-  ) {
+  if (latestMessageType === "retry-git-commit-and-push") {
     console.log("Last system or user message is a retry message, ignoring.");
     return false;
   }
@@ -553,22 +537,21 @@ async function maybeAutoFixGitCommitAndPushError({
       sql`select pg_advisory_xact_lock(hashtext(${retryLockKey}), 0)`,
     );
 
-    const lockedThreadChat = await tx.query.threadChat.findFirst({
-      where: and(
-        eq(schema.threadChat.id, threadChatId),
-        eq(schema.threadChat.threadId, threadId),
-      ),
+    const latestLockedThreadChat = await tx.query.threadChat.findFirst({
+      where: (threadChat, { and, eq }) =>
+        and(
+          eq(threadChat.id, threadChatId),
+          eq(threadChat.threadId, threadId),
+          eq(threadChat.userId, userId),
+        ),
       columns: {
         messages: true,
       },
     });
-    const latestSystemOrUserMessage = lockedThreadChat?.messages
-      ? getLastSystemOrUserMessage(lockedThreadChat.messages as DBMessage[])
-      : null;
-    if (
-      latestSystemOrUserMessage?.type === "system" &&
-      latestSystemOrUserMessage.message_type === "retry-git-commit-and-push"
-    ) {
+    const latestLockedMessageType = latestPersistedSystemMessageType(
+      latestLockedThreadChat?.messages ?? [],
+    );
+    if (latestLockedMessageType === "retry-git-commit-and-push") {
       console.log("Retry message already queued by another worker, skipping.");
       return;
     }
@@ -581,4 +564,13 @@ async function maybeAutoFixGitCommitAndPushError({
     });
   });
   return true;
+}
+
+function latestPersistedSystemMessageType(
+  messages: readonly DBMessage[],
+): DBSystemMessage["message_type"] | null {
+  const latestSystemMessage = [...messages]
+    .reverse()
+    .find((message): message is DBSystemMessage => message.type === "system");
+  return latestSystemMessage?.message_type ?? null;
 }

@@ -2,10 +2,10 @@ import React, { memo } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
 import {
   AllToolParts,
-  DBMessage,
   type UIImagePart,
   type UIPdfPart,
   type UIRichTextPart,
+  type UIMessage,
   type UITextFilePart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -40,7 +40,7 @@ export type ToolPartProps = {
   toolPart: AllToolParts;
   threadId: string;
   threadChatId: string;
-  messages: DBMessage[];
+  messages: UIMessage[];
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   childThreads: ChildThreadInfo[];

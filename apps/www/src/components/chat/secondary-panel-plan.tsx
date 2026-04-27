@@ -10,7 +10,7 @@ import {
 import React, { useMemo } from "react";
 import { TextPart } from "./text-part";
 import type { PromptBoxRef } from "./thread-context";
-import { resolvePlanText } from "./tools/plan-utils";
+import { resolvePlanTextFromLegacyMessages } from "./tools/plan-utils";
 
 export function PlanArtifactRenderer({
   descriptor,
@@ -27,7 +27,7 @@ export function PlanArtifactRenderer({
   const planText = useMemo(() => {
     if (descriptor.origin.type === "plan-tool") {
       const toolPart = descriptor.part as ExitPlanModeToolPart;
-      return resolvePlanText({
+      return resolvePlanTextFromLegacyMessages({
         planParam: toolPart.parameters?.plan,
         messages,
         exitPlanModeToolId: toolPart.id,

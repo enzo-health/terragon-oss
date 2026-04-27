@@ -8,6 +8,7 @@ import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { maybeBatchThreads } from "@/lib/batch-threads";
 import { getOctokitForApp } from "@/lib/github";
+import { getNativeAgUiTranscriptForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
@@ -65,6 +66,10 @@ vi.mock("@terragon/shared/model/threads", () => ({
   getThread: vi.fn(),
 }));
 
+vi.mock("@/server-lib/ag-ui-side-effect-messages", () => ({
+  getNativeAgUiTranscriptForThreadChat: vi.fn(),
+}));
+
 vi.mock("@/lib/github", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/github")>("@/lib/github");
@@ -86,6 +91,10 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     vi.mocked(getGithubPR).mockResolvedValue(undefined);
     vi.mocked(getThreadsForGithubPR).mockResolvedValue([]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue(null);
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: "",
+      messageCount: 0,
+    });
     vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue(undefined);
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
     vi.mocked(newThreadInternal).mockResolvedValue({
@@ -166,20 +175,15 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       { id: "thread-1", userId: "user-1", archived: false },
     ]);
     const marker = `<!-- terragon-github-feedback-delivery:delivery-dedup-1:777 -->`;
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: `user: prior routed feedback\n${marker}`,
+      messageCount: 1,
+    });
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
       threadChats: [
         {
           id: "chat-1",
-          messages: [
-            {
-              type: "user",
-              model: null,
-              parts: [
-                { type: "text", text: `prior routed feedback\n${marker}` },
-              ],
-            },
-          ],
           queuedMessages: [],
         },
       ],

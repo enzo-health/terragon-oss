@@ -1,13 +1,17 @@
 import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
-import type { ThreadStatus, UIMessage } from "@terragon/shared";
+import type {
+  DBSystemMessage,
+  DBUserMessage,
+  ThreadStatus,
+  UIMessage,
+  UISystemMessage,
+} from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
 } from "../ag-ui-messages-reducer";
-import { toUIMessages } from "../toUIMessages";
-import { getArtifactDescriptorsForMessages } from "./legacy-db-message-adapter";
 import {
   getAgUiEventDedupeKey,
   isCanonicalEventMessageId,
@@ -15,12 +19,15 @@ import {
   isHydrationAgentMessageId,
   trackSeenAgUiEventKey,
 } from "./ag-ui-adapter";
+import { getArtifactDescriptorsForMessages } from "./snapshot-adapter";
 import type {
   ThreadViewEvent,
   ThreadViewModel,
   ThreadViewModelState,
-  ThreadViewSnapshot,
   ThreadViewQuarantineEntry,
+  ThreadViewRuntimeActivities,
+  ThreadViewRuntimeState,
+  ThreadViewSnapshot,
 } from "./types";
 
 export function createInitialThreadViewModelState(
@@ -33,6 +40,8 @@ export function createInitialThreadViewModelState(
       snapshot.agent,
       snapshot.uiMessages,
     ),
+    runtimeState: {},
+    runtimeActivities: {},
     dbMessages: snapshot.dbMessages,
     queuedMessages: snapshot.queuedMessages,
     threadStatus: snapshot.threadStatus,
@@ -92,10 +101,16 @@ export function threadViewModelReducer(
 export function projectThreadViewModel(
   state: ThreadViewModelState,
 ): ThreadViewModel {
+  const splitMessages = splitThreadLifecycleMessages(
+    collapseHydrationReplayTextDuplicates(state.transcript.messages),
+  );
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
-    messages: collapseHydrationReplayTextDuplicates(state.transcript.messages),
+    messages: splitMessages.transcriptMessages,
+    lifecycleMessages: splitMessages.lifecycleMessages,
+    runtimeState: state.runtimeState,
+    runtimeActivities: state.runtimeActivities,
     dbMessages: state.dbMessages,
     queuedMessages: state.queuedMessages,
     threadStatus: state.threadStatus,
@@ -110,6 +125,41 @@ export function projectThreadViewModel(
     lifecycle: state.lifecycle,
     quarantine: state.quarantine,
   };
+}
+
+const THREAD_LIFECYCLE_MESSAGE_TYPES = new Set<DBSystemMessage["message_type"]>(
+  [
+    "retry-git-commit-and-push",
+    "fix-github-checks",
+    "generic-retry",
+    "invalid-token-retry",
+    "cancel-schedule",
+    "agent-error-retry",
+    "follow-up-retry-failed",
+  ],
+);
+
+function splitThreadLifecycleMessages(messages: UIMessage[]): {
+  transcriptMessages: UIMessage[];
+  lifecycleMessages: UISystemMessage[];
+} {
+  const transcriptMessages: UIMessage[] = [];
+  const lifecycleMessages: UISystemMessage[] = [];
+
+  for (const message of messages) {
+    if (
+      message.role === "system" &&
+      message.message_type !== "stop" &&
+      message.message_type !== "git-diff" &&
+      THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
+    ) {
+      lifecycleMessages.push(message);
+      continue;
+    }
+    transcriptMessages.push(message);
+  }
+
+  return { transcriptMessages, lifecycleMessages };
 }
 
 export function collapseHydrationReplayTextDuplicates(
@@ -272,6 +322,19 @@ function applyAgUiEvent(
     });
   }
 
+  const nativeRuntimeProjection = applyNativeRuntimeEvent(state, event);
+  if (nativeRuntimeProjection?.quarantineEntry) {
+    return {
+      ...state,
+      seenEventKeys,
+      seenEventOrder,
+      quarantine: [
+        ...state.quarantine,
+        nativeRuntimeProjection.quarantineEntry,
+      ],
+    };
+  }
+
   const quarantineEntry = getQuarantineEntry(event);
   if (quarantineEntry) {
     return {
@@ -285,6 +348,10 @@ function applyAgUiEvent(
   const meta = applyMetaEvent(state.meta, event);
   const lifecycle = applyLifecycleEvent(state.lifecycle, event);
   const transcript = agUiMessagesReducer(state.transcript, event);
+  const runtimeState =
+    nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
+  const runtimeActivities =
+    nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
   const artifacts =
     transcript === state.transcript
@@ -307,6 +374,8 @@ function applyAgUiEvent(
     artifacts === state.artifacts &&
     meta === state.meta &&
     lifecycle === state.lifecycle &&
+    runtimeState === state.runtimeState &&
+    runtimeActivities === state.runtimeActivities &&
     seenEventKeys === state.seenEventKeys &&
     seenEventOrder === state.seenEventOrder
   ) {
@@ -319,6 +388,8 @@ function applyAgUiEvent(
     artifacts,
     meta,
     lifecycle,
+    runtimeState,
+    runtimeActivities,
     threadStatus: lifecycle.threadStatus,
     seenEventKeys,
     seenEventOrder,
@@ -333,14 +404,10 @@ function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
 ): ThreadViewModelState {
-  const [uiMessage] = toUIMessages({
-    dbMessages: [event.message],
-    agent: state.transcript.agent,
-    threadStatus: event.optimisticStatus,
+  const uiMessage = dbUserMessageToUiMessage({
+    message: event.message,
+    id: `user-optimistic-${state.threadChatId}-${state.dbMessages.length}`,
   });
-  if (!uiMessage) {
-    return { ...state, threadStatus: event.optimisticStatus };
-  }
 
   const duplicate = state.transcript.messages.some((message) =>
     isSameUserMessage(message, uiMessage),
@@ -367,6 +434,22 @@ function applyOptimisticUserSubmit(
       runStarted: event.optimisticStatus !== "complete",
     },
     hasOptimisticTranscriptEvents: true,
+  };
+}
+
+function dbUserMessageToUiMessage({
+  message,
+  id,
+}: {
+  message: DBUserMessage;
+  id: string;
+}): Extract<UIMessage, { role: "user" }> {
+  return {
+    id,
+    role: "user",
+    parts: message.parts,
+    timestamp: message.timestamp,
+    model: message.model,
   };
 }
 
@@ -667,6 +750,13 @@ function mergeMetaSnapshot(
 function getQuarantineEntry(
   event: BaseEvent,
 ): ThreadViewQuarantineEntry | null {
+  if (isUnsupportedNativeRuntimeEvent(event)) {
+    return {
+      reason: "unsupported-ag-ui-event",
+      eventType: String(event.type),
+    };
+  }
+
   if (event.type !== EventType.CUSTOM) {
     return null;
   }
@@ -687,6 +777,320 @@ function getQuarantineEntry(
     messageId,
     partType,
   };
+}
+
+function isUnsupportedNativeRuntimeEvent(event: BaseEvent): boolean {
+  switch (event.type) {
+    case EventType.RAW:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function applyNativeRuntimeEvent(
+  state: ThreadViewModelState,
+  event: BaseEvent,
+):
+  | {
+      runtimeState: ThreadViewRuntimeState;
+      runtimeActivities: ThreadViewRuntimeActivities;
+      quarantineEntry?: undefined;
+    }
+  | {
+      quarantineEntry: ThreadViewQuarantineEntry;
+    }
+  | null {
+  switch (event.type) {
+    case EventType.STATE_SNAPSHOT: {
+      const snapshot = getObjectField(event, "snapshot");
+      if (!snapshot) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      return {
+        runtimeState: { ...snapshot },
+        runtimeActivities: state.runtimeActivities,
+      };
+    }
+    case EventType.STATE_DELTA: {
+      const delta = getArrayField(event, "delta");
+      if (!delta) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      const runtimeState = applyJsonPatchOperations(state.runtimeState, delta);
+      if (!runtimeState) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      return {
+        runtimeState,
+        runtimeActivities: state.runtimeActivities,
+      };
+    }
+    case EventType.ACTIVITY_SNAPSHOT: {
+      const messageId = getStringField(event, "messageId");
+      const activityType = getStringField(event, "activityType");
+      const content = getObjectField(event, "content");
+      if (!messageId || !activityType || !content) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      const key = getRuntimeActivityKey(messageId, activityType);
+      const replace = getBooleanField(event, "replace") ?? true;
+      const previousContent = state.runtimeActivities[key]?.content;
+      return {
+        runtimeState: state.runtimeState,
+        runtimeActivities: {
+          ...state.runtimeActivities,
+          [key]: {
+            messageId,
+            activityType,
+            content:
+              replace || !previousContent
+                ? { ...content }
+                : { ...previousContent, ...content },
+          },
+        },
+      };
+    }
+    case EventType.ACTIVITY_DELTA: {
+      const messageId = getStringField(event, "messageId");
+      const activityType = getStringField(event, "activityType");
+      const patch = getArrayField(event, "patch");
+      if (!messageId || !activityType || !patch) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      const key = getRuntimeActivityKey(messageId, activityType);
+      const previous = state.runtimeActivities[key];
+      const content = applyJsonPatchOperations(previous?.content ?? {}, patch);
+      if (!content) {
+        return malformedNativeRuntimeEvent(event);
+      }
+      return {
+        runtimeState: state.runtimeState,
+        runtimeActivities: {
+          ...state.runtimeActivities,
+          [key]: { messageId, activityType, content },
+        },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function malformedNativeRuntimeEvent(event: BaseEvent): {
+  quarantineEntry: ThreadViewQuarantineEntry;
+} {
+  return {
+    quarantineEntry: {
+      reason: "malformed-native-runtime-event",
+      eventType: String(event.type),
+    },
+  };
+}
+
+function getRuntimeActivityKey(
+  messageId: string,
+  activityType: string,
+): string {
+  return `${encodeURIComponent(messageId)}:${encodeURIComponent(activityType)}`;
+}
+
+type JsonPatchOperation =
+  | {
+      op: "add" | "replace";
+      path: string;
+      value: unknown;
+    }
+  | {
+      op: "remove";
+      path: string;
+    };
+
+function applyJsonPatchOperations(
+  root: Record<string, unknown>,
+  operations: unknown[],
+): Record<string, unknown> | null {
+  let next: unknown = { ...root };
+  for (const operation of operations) {
+    const patchOperation = parseJsonPatchOperation(operation);
+    if (!patchOperation) {
+      return null;
+    }
+    next = applyJsonPatchOperation(next, patchOperation);
+    if (!next || typeof next !== "object" || Array.isArray(next)) {
+      return null;
+    }
+  }
+  return next as Record<string, unknown>;
+}
+
+function parseJsonPatchOperation(value: unknown): JsonPatchOperation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const op = getStringField(value, "op");
+  const path = getJsonPointerPathField(value);
+  if (!op || path === null) {
+    return null;
+  }
+  if (op === "remove") {
+    return { op, path };
+  }
+  if (op === "add" || op === "replace") {
+    return { op, path, value: Reflect.get(value, "value") };
+  }
+  return null;
+}
+
+function applyJsonPatchOperation(
+  root: unknown,
+  operation: JsonPatchOperation,
+): unknown | null {
+  if (operation.path === "") {
+    if (operation.op === "remove") {
+      return {};
+    }
+    return getRecordValue(operation.value);
+  }
+
+  const tokens = parseJsonPointer(operation.path);
+  if (!tokens || tokens.length === 0) {
+    return null;
+  }
+  const clone = cloneContainer(root);
+  if (!clone) {
+    return null;
+  }
+  let cursor: unknown = clone;
+  for (const token of tokens.slice(0, -1)) {
+    const child = getContainerChild(cursor, token);
+    const clonedChild = cloneContainer(child);
+    if (!clonedChild || !setContainerChild(cursor, token, clonedChild)) {
+      return null;
+    }
+    cursor = clonedChild;
+  }
+  const finalToken = tokens[tokens.length - 1]!;
+  if (operation.op === "remove") {
+    return removeContainerChild(cursor, finalToken) ? clone : null;
+  }
+  return setContainerChild(cursor, finalToken, operation.value, operation.op)
+    ? clone
+    : null;
+}
+
+function parseJsonPointer(path: string): string[] | null {
+  if (!path.startsWith("/")) {
+    return null;
+  }
+  const tokens = path
+    .slice(1)
+    .split("/")
+    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+  return tokens.every(isSafeJsonPointerToken) ? tokens : null;
+}
+
+function isSafeJsonPointerToken(token: string): boolean {
+  return (
+    token !== "__proto__" && token !== "constructor" && token !== "prototype"
+  );
+}
+
+function cloneContainer(
+  value: unknown,
+): Record<string, unknown> | unknown[] | null {
+  if (Array.isArray(value)) {
+    return value.slice();
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value));
+  }
+  return null;
+}
+
+function getContainerChild(container: unknown, token: string): unknown {
+  if (Array.isArray(container)) {
+    const index = parseArrayIndex(token, container.length, false);
+    return index === null ? undefined : container[index];
+  }
+  if (container && typeof container === "object") {
+    return Object.hasOwn(container, token)
+      ? Reflect.get(container, token)
+      : undefined;
+  }
+  return undefined;
+}
+
+function setContainerChild(
+  container: unknown,
+  token: string,
+  value: unknown,
+  op: "add" | "replace" = "replace",
+): boolean {
+  if (Array.isArray(container)) {
+    const index = parseArrayIndex(token, container.length, op === "add");
+    if (index === null) {
+      return false;
+    }
+    if (op === "add") {
+      container.splice(index, 0, value);
+      return true;
+    }
+    if (index >= container.length) {
+      return false;
+    }
+    container[index] = value;
+    return true;
+  }
+  if (container && typeof container === "object") {
+    if (op === "replace" && !Object.hasOwn(container, token)) {
+      return false;
+    }
+    return Reflect.set(container, token, value);
+  }
+  return false;
+}
+
+function removeContainerChild(container: unknown, token: string): boolean {
+  if (Array.isArray(container)) {
+    const index = parseArrayIndex(token, container.length, false);
+    if (index === null || index >= container.length) {
+      return false;
+    }
+    container.splice(index, 1);
+    return true;
+  }
+  if (container && typeof container === "object") {
+    if (!Object.hasOwn(container, token)) {
+      return false;
+    }
+    return Reflect.deleteProperty(container, token);
+  }
+  return false;
+}
+
+function parseArrayIndex(
+  token: string,
+  length: number,
+  allowAppend: boolean,
+): number | null {
+  if (allowAppend && token === "-") {
+    return length;
+  }
+  if (!/^(0|[1-9]\d*)$/.test(token)) {
+    return null;
+  }
+  const index = Number(token);
+  if (!Number.isSafeInteger(index) || index < 0 || index > length) {
+    return null;
+  }
+  return index;
+}
+
+function getRecordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : null;
 }
 
 function getTextOnlyAgentMessageContent(message: UIMessage): string | null {
@@ -728,8 +1132,8 @@ function stableSerialize(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
   }
-  const entries = Object.entries(value as Record<string, unknown>).sort(
-    ([left], [right]) => left.localeCompare(right),
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right),
   );
   return `{${entries
     .map(
@@ -748,7 +1152,7 @@ function getObjectField(
   }
   const candidate = Reflect.get(value, field);
   return candidate && typeof candidate === "object" && !Array.isArray(candidate)
-    ? (candidate as Record<string, unknown>)
+    ? Object.fromEntries(Object.entries(candidate))
     : null;
 }
 
@@ -760,6 +1164,30 @@ function getStringField(value: unknown, field: string): string | null {
   return typeof candidate === "string" && candidate.length > 0
     ? candidate
     : null;
+}
+
+function getJsonPointerPathField(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = Reflect.get(value, "path");
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function getArrayField(value: unknown, field: string): unknown[] | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = Reflect.get(value, field);
+  return Array.isArray(candidate) ? candidate : null;
+}
+
+function getBooleanField(value: unknown, field: string): boolean | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = Reflect.get(value, field);
+  return typeof candidate === "boolean" ? candidate : null;
 }
 
 function getNumberField(value: unknown, field: string): number | null {
@@ -856,6 +1284,8 @@ function isRenderablePartShape(value: Record<string, unknown>): boolean {
         (value.errorCode === undefined || typeof value.errorCode === "string")
       );
     default:
+      const _exhaustiveCheck = type satisfies string | null;
+      void _exhaustiveCheck;
       return false;
   }
 }
@@ -864,14 +1294,13 @@ function isRenderableTerminalChunk(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const record = value as Record<string, unknown>;
   return (
-    typeof record.streamSeq === "number" &&
-    Number.isInteger(record.streamSeq) &&
-    (record.kind === "stdout" ||
-      record.kind === "stderr" ||
-      record.kind === "interaction") &&
-    typeof record.text === "string"
+    typeof Reflect.get(value, "streamSeq") === "number" &&
+    Number.isInteger(Reflect.get(value, "streamSeq")) &&
+    (Reflect.get(value, "kind") === "stdout" ||
+      Reflect.get(value, "kind") === "stderr" ||
+      Reflect.get(value, "kind") === "interaction") &&
+    typeof Reflect.get(value, "text") === "string"
   );
 }
 
@@ -891,16 +1320,15 @@ function isRenderablePlanEntry(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const record = value as Record<string, unknown>;
+  const priority = Reflect.get(value, "priority");
+  const status = Reflect.get(value, "status");
   return (
-    typeof record.content === "string" &&
-    (record.priority === "high" ||
-      record.priority === "medium" ||
-      record.priority === "low") &&
-    (record.status === "pending" ||
-      record.status === "in_progress" ||
-      record.status === "completed" ||
-      record.status === "failed")
+    typeof Reflect.get(value, "content") === "string" &&
+    (priority === "high" || priority === "medium" || priority === "low") &&
+    (status === "pending" ||
+      status === "in_progress" ||
+      status === "completed" ||
+      status === "failed")
   );
 }
 
@@ -908,13 +1336,13 @@ function isRenderableWebSearchResult(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const record = value as Record<string, unknown>;
   return (
-    typeof record.url === "string" &&
-    typeof record.title === "string" &&
-    (record.pageAge === undefined || typeof record.pageAge === "string") &&
-    (record.encryptedContent === undefined ||
-      typeof record.encryptedContent === "string")
+    typeof Reflect.get(value, "url") === "string" &&
+    typeof Reflect.get(value, "title") === "string" &&
+    (Reflect.get(value, "pageAge") === undefined ||
+      typeof Reflect.get(value, "pageAge") === "string") &&
+    (Reflect.get(value, "encryptedContent") === undefined ||
+      typeof Reflect.get(value, "encryptedContent") === "string")
   );
 }
 
@@ -939,6 +1367,8 @@ function isThreadStatus(value: string | null): value is ThreadStatus {
     case "error":
       return true;
     default:
+      const _exhaustiveCheck = value satisfies string | null;
+      void _exhaustiveCheck;
       return false;
   }
 }

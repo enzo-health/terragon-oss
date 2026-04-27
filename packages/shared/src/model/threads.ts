@@ -1,53 +1,53 @@
-import { DB } from "../db";
-import * as schema from "../db/schema";
+import { AIAgent } from "@terragon/agent/types";
+import { AGENT_VERSION } from "@terragon/agent/versions";
+import { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import {
-  eq,
   and,
-  desc,
   asc,
-  inArray,
-  lte,
-  gte,
   count,
+  desc,
+  eq,
   getTableColumns,
-  or,
-  isNull,
-  sql,
-  ne,
+  gte,
+  inArray,
   isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
-  publishBroadcastUserMessage,
   getNextPatchVersion,
+  publishBroadcastUserMessage,
 } from "../broadcast-server";
-import { AGENT_VERSION } from "@terragon/agent/versions";
+import { DB } from "../db";
+import * as schema from "../db/schema";
 import {
+  LinearMentionThreadInsert,
   Thread,
+  ThreadChat,
+  ThreadChatInfoFull,
+  ThreadChatInsert,
+  ThreadChatInsertRaw,
+  ThreadInfo,
+  ThreadInfoFull,
   ThreadInsert,
   ThreadInsertRaw,
-  ThreadChat,
-  ThreadChatInsert,
-  ThreadChatInfoFull,
+  ThreadSource,
   ThreadStatus,
   ThreadVisibility,
-  ThreadSource,
-  ThreadInfoFull,
-  ThreadInfo,
-  ThreadChatInsertRaw,
-  LinearMentionThreadInsert,
 } from "../db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { sanitizeForJson } from "../utils/sanitize-json";
 import { toUTC, validateTimezone } from "../utils/timezone";
-import { getUser } from "./user";
-import { AIAgent } from "@terragon/agent/types";
 import {
   getThreadPageChatWithPermissions,
   getThreadPageShellWithPermissions,
   toBroadcastActiveChatRealtimeFields,
   toBroadcastThreadShellRealtimeFields,
 } from "./thread-page";
+import { getUser } from "./user";
 
 type GetThreadsArgs = {
   db: DB;
@@ -832,7 +832,6 @@ export async function updateThreadChat({
   let patchVersion: number | undefined;
   let chatForPatch: BroadcastThreadPatch["chat"] | undefined;
   let appendMessagesForPatch: unknown[] | undefined;
-  let expectedMessageCount: number | undefined;
   let shouldRefetchChat = false;
   await db.transaction(async (tx) => {
     const {
@@ -850,9 +849,6 @@ export async function updateThreadChat({
       ...updatesWithoutAppends,
     };
     if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
-      // Sanitize messages to remove null bytes and other invalid JSON characters
-      // @ts-expect-error
-      updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || ${JSON.stringify(sanitizedAppendMessages)}::jsonb`;
       // Atomically increment messageSeq for monotonic chat sequence
       // @ts-expect-error
       updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
@@ -860,7 +856,7 @@ export async function updateThreadChat({
     if (appendAndResetQueuedMessages) {
       updateObject.queuedMessages = [];
       // @ts-expect-error
-      updateObject.messages = sql`COALESCE(${schema.threadChat.messages}, '[]'::jsonb) || COALESCE(${schema.threadChat.queuedMessages}, '[]'::jsonb)`;
+      updateObject.messageSeq = sql`COALESCE(${schema.threadChat.messageSeq}, 0) + 1`;
     } else if (replaceQueuedMessages) {
       const sanitizedQueuedMessages = sanitizeForJson(replaceQueuedMessages);
       // @ts-expect-error
@@ -935,9 +931,6 @@ export async function updateThreadChat({
     };
     if (sanitizedAppendMessages && sanitizedAppendMessages.length > 0) {
       appendMessagesForPatch = sanitizedAppendMessages;
-      expectedMessageCount =
-        (updatedThreadChat.messages?.length ?? sanitizedAppendMessages.length) -
-        sanitizedAppendMessages.length;
     }
     if (appendAndResetQueuedMessages) {
       shouldRefetchChat = true;
@@ -962,7 +955,6 @@ export async function updateThreadChat({
             ? {}
             : {
                 appendMessages: appendMessagesForPatch,
-                expectedMessageCount,
               }),
           refetch: shouldRefetchChat ? ["chat"] : undefined,
         },
@@ -973,11 +965,15 @@ export async function updateThreadChat({
   if (!skipBroadcast) {
     await publishBroadcastUserMessage(broadcastData);
     return {
-      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+      ...(appendMessagesForPatch !== undefined || shouldRefetchChat
+        ? { chatSequence }
+        : {}),
     };
   } else {
     return {
-      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+      ...(appendMessagesForPatch !== undefined || shouldRefetchChat
+        ? { chatSequence }
+        : {}),
       broadcastData,
     };
   }
@@ -1131,6 +1127,12 @@ export async function updateThreadChatStatusAtomic({
   if (updateResult.length > 0) {
     didUpdateStatus = true;
     updatedAtIsoString = updateResult[0]!.updatedAt.toISOString();
+    await db
+      .update(schema.thread)
+      .set({ status: toStatus })
+      .where(
+        and(eq(schema.thread.id, threadId), eq(schema.thread.userId, userId)),
+      );
   }
 
   if (didUpdateStatus) {

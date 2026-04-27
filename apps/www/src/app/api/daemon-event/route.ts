@@ -48,7 +48,6 @@ import {
   type AssistantMessagePartsInput,
   broadcastAgUiEventEphemeral,
   buildDeltaRunEndRows,
-  buildRunTerminalAgUi,
   canonicalEventsToAgUiRows,
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
@@ -95,9 +94,12 @@ type CanonicalPersistenceSummary = {
    * producer and consumer.
    */
   insertedEventIds: string[];
-  persistedEvents: Parameters<
-    typeof publishPersistedAgUiEvents
-  >[0]["persistedEvents"];
+  persistedEvents: Awaited<
+    ReturnType<typeof persistAgUiEvents>
+  >["persistedEvents"];
+  persistedEnvelopes: Awaited<
+    ReturnType<typeof persistAgUiEvents>
+  >["persistedEnvelopes"];
 };
 
 type CanonicalEventsPayload = NonNullable<
@@ -249,6 +251,7 @@ async function persistCanonicalEventsOrResponse(params: {
         deduplicated: 0,
         insertedEventIds: [],
         persistedEvents: [],
+        persistedEnvelopes: [],
       },
     };
   }
@@ -302,6 +305,7 @@ async function persistCanonicalEventsOrResponse(params: {
           deduplicated: result.skipped,
           insertedEventIds: result.insertedEventIds,
           persistedEvents: [],
+          persistedEnvelopes: [],
         },
       };
     }
@@ -320,6 +324,7 @@ async function persistCanonicalEventsOrResponse(params: {
         deduplicated: result.skipped,
         insertedEventIds: result.insertedEventIds,
         persistedEvents: result.persistedEvents,
+        persistedEnvelopes: result.persistedEnvelopes,
       },
     };
   } catch (error) {
@@ -596,11 +601,7 @@ function parseDaemonCapabilitiesHeader(
 }
 
 function hasValidThreadChatId(threadChatId: unknown): threadChatId is string {
-  return (
-    typeof threadChatId === "string" &&
-    threadChatId.length > 0 &&
-    threadChatId !== "legacy-thread-chat-id"
-  );
+  return typeof threadChatId === "string" && threadChatId.length > 0;
 }
 
 function logDaemonAuthReject(params: {
@@ -670,10 +671,10 @@ export async function POST(request: Request) {
   const {
     messages,
     threadId,
-    // Old clients don't send the timezone, so we fallback to UTC
+    // Daemons may omit timezone, so we fallback to UTC.
     timezone = "UTC",
-    transportMode = "legacy",
-    protocolVersion = 1,
+    transportMode = "acp",
+    protocolVersion = 2,
   } = json;
   const daemonHeadShaAtCompletion =
     typeof json.headShaAtCompletion === "string" &&
@@ -685,7 +686,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         success: false,
-        error: "daemon_event_non_legacy_requires_thread_chat_id",
+        error: "daemon_event_requires_thread_chat_id",
       },
       { status: 400 },
     );
@@ -1177,8 +1178,15 @@ export async function POST(request: Request) {
     }
   }
 
+  const terminalCanonicalEvents =
+    canonicalEvents?.filter((event) => event.type === "run-terminal") ?? [];
   let canonicalEventsForPersistence: CanonicalEventsPayload | null =
-    canonicalEvents;
+    canonicalEvents?.filter((event) => event.type !== "run-terminal") ?? null;
+  if (canonicalEventsForPersistence?.length === 0) {
+    canonicalEventsForPersistence = null;
+  }
+  let terminalCanonicalEventsForPersistence: CanonicalEventsPayload | null =
+    terminalCanonicalEvents.length > 0 ? terminalCanonicalEvents : null;
   if (
     daemonRunStatusFromMessages !== "processing" &&
     envelopeV2 &&
@@ -1193,9 +1201,7 @@ export async function POST(request: Request) {
       errorCode: daemonTerminalErrorInfo.errorCategory,
       headShaAtCompletion: effectiveHeadShaAtCompletion,
     });
-    canonicalEventsForPersistence = canonicalEventsForPersistence
-      ? [...canonicalEventsForPersistence, synthesizedTerminal]
-      : [synthesizedTerminal];
+    terminalCanonicalEventsForPersistence = [synthesizedTerminal];
   }
 
   const canonicalPersistence = await persistCanonicalEventsOrResponse({
@@ -1209,6 +1215,10 @@ export async function POST(request: Request) {
   if (canonicalPersistence.response) {
     return canonicalPersistence.response;
   }
+  let terminalCanonicalPersistence:
+    | { summary: CanonicalPersistenceSummary; response?: undefined }
+    | { summary?: undefined; response: Response }
+    | null = null;
 
   publishMetaEvents({ metaEvents, threadId, threadChatId });
 
@@ -1273,6 +1283,62 @@ export async function POST(request: Request) {
         },
         { status: 500 },
       );
+    }
+  }
+
+  // Before the terminal marker, close any (messageId, kind) lifecycles that
+  // the delta ingestion path opened for this run but never closed. Without
+  // the synthetic ENDs the AG-UI event log is not protocol-compliant and the
+  // SSE reader can close on RUN_FINISHED before clients see the END rows.
+  if (
+    canPersistCanonicalEvents &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    try {
+      const openMessages = await findOpenAgUiMessagesForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      if (openMessages.length > 0) {
+        const endRows = buildDeltaRunEndRows({
+          runId: authoritativeRunId,
+          openMessages,
+        });
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: endRows,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        "[daemon-event] AG-UI run-terminal END synthesis failed, continuing",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
+    }
+  }
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    terminalCanonicalEventsForPersistence
+  ) {
+    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
+      canonicalEvents: terminalCanonicalEventsForPersistence,
+      canPersistCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+      publishLive: false,
+    });
+    if (terminalCanonicalPersistence.response) {
+      return terminalCanonicalPersistence.response;
     }
   }
 
@@ -1410,6 +1476,14 @@ export async function POST(request: Request) {
       canonicalTerminal != null &&
       messages.length === 0 &&
       (!deltas || deltas.length === 0);
+    const hasNativeRuntimeEvents =
+      (canonicalEvents != null && canonicalEvents.length > 0) ||
+      (deltas != null && deltas.length > 0);
+    const skipLegacyRuntimeTranscriptPersistence =
+      canPersistCanonicalEvents &&
+      envelopeV2 != null &&
+      canonicalTerminal == null &&
+      hasNativeRuntimeEvents;
     result = isCanonicalOnlyTerminalBatch
       ? {
           success: true,
@@ -1426,6 +1500,7 @@ export async function POST(request: Request) {
           runId: authoritativeRunId,
           runContext,
           deferTerminalTransitionToRoute: fenceTerminalTransition,
+          skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
         });
   } catch (error) {
     console.error(
@@ -1800,81 +1875,23 @@ export async function POST(request: Request) {
 
   if (
     daemonRunStatusFromMessages !== "processing" &&
-    canonicalPersistence.summary.persistedEvents.length > 0
+    (canonicalPersistence.summary.persistedEvents.length > 0 ||
+      (terminalCanonicalPersistence?.summary?.persistedEvents.length ?? 0) > 0)
   ) {
-    await publishPersistedAgUiEvents({
-      threadChatId,
-      persistedEvents: canonicalPersistence.summary.persistedEvents,
-      insertedEventIds: canonicalPersistence.summary.insertedEventIds,
-    });
-  }
-
-  // Before the terminal marker, close any (messageId, kind) lifecycles that
-  // the delta ingestion path opened for this run but never closed. Without
-  // the synthetic ENDs the AG-UI event log is not protocol-compliant and the
-  // client rejects follow-up CONTENT/END events on replay. Scoped to the
-  // current run so we only touch rows this run wrote.
-  if (
-    canPersistCanonicalEvents &&
-    daemonRunStatusFromMessages !== "processing"
-  ) {
-    try {
-      const openMessages = await findOpenAgUiMessagesForRun({
-        db,
-        runId: authoritativeRunId,
-      });
-      if (openMessages.length > 0) {
-        const endRows = buildDeltaRunEndRows({
-          runId: authoritativeRunId,
-          openMessages,
-        });
-        await persistAndPublishAgUiEvents({
-          db,
-          runId: authoritativeRunId,
-          threadId,
-          threadChatId,
-          rows: endRows,
-        });
+    for (const summary of [
+      canonicalPersistence.summary,
+      terminalCanonicalPersistence?.summary,
+    ]) {
+      if (!summary || summary.persistedEvents.length === 0) {
+        continue;
       }
-    } catch (error) {
-      // Best-effort: END synthesis is a consistency guarantee, but the
-      // surrounding terminal path (status persistence, run finish marker)
-      // must not be blocked by a read/write failure here. The AG-UI replay
-      // synthesis in the SSE route serves as a secondary safety net for any
-      // rows that slip through.
-      console.warn(
-        "[daemon-event] AG-UI run-terminal END synthesis failed, continuing",
-        {
-          threadId,
-          threadChatId,
-          runId: authoritativeRunId,
-          error,
-        },
-      );
-    }
-  }
-
-  // Emit a terminal AG-UI marker (RUN_FINISHED or RUN_ERROR) on the thread
-  // chat stream. Ephemeral: not persisted to agent_event_log — the status
-  // of the run is already in agentRunContext.status.
-  if (daemonRunStatusFromMessages !== "processing") {
-    broadcastAgUiEventEphemeral({
-      threadChatId,
-      event: buildRunTerminalAgUi({
-        threadId,
-        runId: authoritativeRunId,
-        daemonRunStatus: daemonRunStatusFromMessages,
-        errorMessage: daemonTerminalErrorInfo.errorMessage,
-        errorCode: daemonTerminalErrorInfo.errorCategory,
-      }),
-    }).catch((error) => {
-      console.warn("[daemon-event] run-terminal AG-UI broadcast failed", {
-        threadId,
+      await publishPersistedAgUiEvents({
         threadChatId,
-        runId: authoritativeRunId,
-        error,
+        persistedEvents: summary.persistedEvents,
+        insertedEventIds: summary.insertedEventIds,
+        persistedEnvelopes: summary.persistedEnvelopes,
       });
-    });
+    }
   }
 
   return jsonTerminalAckResponse({

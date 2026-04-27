@@ -157,11 +157,7 @@ export function useOptimisticUpdateThreadChat({
             ? updatesOrUpdater(currentChat)
             : updatesOrUpdater;
         const nextProjectedMessages =
-          updates.projectedMessages ??
-          updates.messages ??
-          currentChat.projectedMessages ??
-          currentChat.messages ??
-          [];
+          updates.projectedMessages ?? currentChat.projectedMessages ?? [];
         return {
           ...currentChat,
           ...updates,

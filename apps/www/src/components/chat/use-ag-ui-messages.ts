@@ -11,7 +11,7 @@ import {
   projectThreadViewModel,
   threadViewModelReducer,
 } from "./thread-view-model/reducer";
-import { createEmptyThreadViewSnapshot } from "./thread-view-model/legacy-db-message-adapter";
+import { createEmptyThreadViewSnapshot } from "./thread-view-model/snapshot-adapter";
 import type {
   ThreadViewEvent,
   ThreadViewModel,

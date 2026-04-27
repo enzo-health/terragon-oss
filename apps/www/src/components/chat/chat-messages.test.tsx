@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { WorkingMessage } from "./chat-messages";
-import { createInitialThreadMetaSnapshot } from "./thread-view-model/legacy-db-message-adapter";
+import { createInitialThreadMetaSnapshot } from "./thread-view-model/snapshot-adapter";
 
 const metaSnapshot = createInitialThreadMetaSnapshot();
 

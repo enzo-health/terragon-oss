@@ -11,6 +11,7 @@ import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
+import { getNativeAgUiTranscriptForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
 
 export type FeedbackRoutingMode =
   | "reused_existing"
@@ -129,17 +130,16 @@ function getTextPartsFromMessageLike(messageLike: unknown): string[] {
   return textParts;
 }
 
-function threadChatContainsFeedbackDeliveryMarker({
+async function threadChatContainsFeedbackDeliveryMarker({
+  db,
   threadChat,
   deliveryMarker,
 }: {
-  threadChat: { messages?: unknown; queuedMessages?: unknown };
+  db: Parameters<typeof getNativeAgUiTranscriptForThreadChat>[0]["db"];
+  threadChat: { id: string; queuedMessages?: unknown };
   deliveryMarker: string;
-}): boolean {
+}): Promise<boolean> {
   const allMessages: unknown[] = [];
-  if (Array.isArray(threadChat.messages)) {
-    allMessages.push(...threadChat.messages);
-  }
   if (Array.isArray(threadChat.queuedMessages)) {
     allMessages.push(...threadChat.queuedMessages);
   }
@@ -150,7 +150,12 @@ function threadChatContainsFeedbackDeliveryMarker({
       return true;
     }
   }
-  return false;
+
+  const nativeTranscript = await getNativeAgUiTranscriptForThreadChat({
+    db,
+    threadChatId: threadChat.id,
+  });
+  return nativeTranscript.history.includes(deliveryMarker);
 }
 
 function buildFeedbackMessage(input: GithubFeedbackInput): DBUserMessage {
@@ -612,10 +617,11 @@ export async function routeGithubFeedbackOrSpawnThread(
       const threadChat = getPrimaryThreadChat(existingThread);
       if (
         feedbackDeliveryMarker &&
-        threadChatContainsFeedbackDeliveryMarker({
+        (await threadChatContainsFeedbackDeliveryMarker({
+          db,
           threadChat,
           deliveryMarker: feedbackDeliveryMarker,
-        })
+        }))
       ) {
         captureFeedbackRouting({
           userId,

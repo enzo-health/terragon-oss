@@ -14,6 +14,7 @@ import {
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
+import { findOpenAgUiToolCallsForRun } from "@terragon/shared/model/agent-event-log";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   getThreadChat,
@@ -49,9 +50,13 @@ import {
 import { isQueuedStatus } from "@/agent/thread-status";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { db } from "@/lib/db";
-import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { redis } from "@/lib/redis";
+import {
+  hasInvalidTokenRetrySideEffectMarker,
+  persistInvalidTokenRetrySideEffectMarker,
+  persistSideEffectAgUiMessages,
+} from "@/server-lib/ag-ui-side-effect-messages";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import {
   internalPOST,
@@ -69,6 +74,27 @@ import { trackUsageEvents } from "./usage-events";
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+
+function buildInterruptedToolResultMessages({
+  openToolCalls,
+  interruptionReason,
+}: {
+  openToolCalls: { toolCallId: string; parentToolUseId: string | null }[];
+  interruptionReason: "user" | "error";
+}): DBMessage[] {
+  const interruptionMessage =
+    interruptionReason === "error"
+      ? "Tool execution interrupted by error"
+      : "Tool execution interrupted by user";
+
+  return openToolCalls.map((toolCall) => ({
+    type: "tool-result",
+    id: toolCall.toolCallId,
+    is_error: true,
+    parent_tool_use_id: toolCall.parentToolUseId,
+    result: interruptionMessage,
+  }));
+}
 
 function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
   const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
@@ -329,7 +355,6 @@ export async function handleDaemonEvent({
   if (!threadChat || !thread) {
     return { success: false, error: "Thread chat not found", status: 404 };
   }
-  const effectiveRunId = runId ?? `legacy:${threadChat.id}`;
   console.log("Thread chat status: ", threadChat.status);
 
   if (messages.length > 0 && messages.some((m) => m.type === "assistant")) {
@@ -341,16 +366,18 @@ export async function handleDaemonEvent({
       assistantCount: messages.filter((m) => m.type === "assistant").length,
     });
   }
-  waitUntil(
-    maybeTrackFirstAssistantLatency({
-      runId: effectiveRunId,
-      userId,
-      threadId,
-      threadChatId,
-      hasAssistantMessage: messages.some((m) => m.type === "assistant"),
-      runContext,
-    }),
-  );
+  if (runId) {
+    waitUntil(
+      maybeTrackFirstAssistantLatency({
+        runId,
+        userId,
+        threadId,
+        threadChatId,
+        hasAssistantMessage: messages.some((m) => m.type === "assistant"),
+        runContext,
+      }),
+    );
+  }
 
   let isStop = false;
   let isDone = false;
@@ -569,14 +596,16 @@ export async function handleDaemonEvent({
     }
   }
 
-  // If it's a stop or error message, we need to append messages that update pending
-  // tool calls to the error state.
+  // If it's a stop or error message, append synthetic results for unresolved
+  // tool calls by querying the canonical AG-UI event log for this run.
   const messagesToAppend =
     isStop || isError
-      ? getPendingToolCallErrorMessages({
-          messages: [...(threadChat.messages ?? []), ...dbMessages],
-          interruptionReason: isError ? "error" : "user",
-        })
+      ? runId
+        ? buildInterruptedToolResultMessages({
+            openToolCalls: await findOpenAgUiToolCallsForRun({ db, runId }),
+            interruptionReason: isError ? "error" : "user",
+          })
+        : []
       : [];
 
   const threadChatUpdates: ThreadChatInsert = {
@@ -586,6 +615,7 @@ export async function handleDaemonEvent({
     errorMessageInfo: null,
     contextLength: contextUsage ?? undefined,
   };
+  let invalidTokenRetryQueued = false;
   if (
     runId &&
     (threadChat.queuedMessages?.length ?? 0) > 0 &&
@@ -710,33 +740,18 @@ export async function handleDaemonEvent({
       threadChatId: threadChat.id,
     });
 
-    // Check if the previous non-agent message is already an invalid-token-retry system message
-    const allMessages = [...(threadChat.messages ?? []), ...dbMessages];
-    let shouldRetry = true;
-    // Look backwards through messages see if we've already retried.
-    for (let i = allMessages.length - 1; i >= 0; i--) {
-      const msg = allMessages[i];
-      if (msg?.type === "user") {
-        const msgBefore = allMessages[i - 1];
-        const isRetryAndContinue =
-          msg.parts.length === 1 &&
-          msg.parts[0]?.type === "text" &&
-          msg.parts[0]?.text.toLowerCase().includes("continue") &&
-          msgBefore?.type === "system" &&
-          msgBefore?.message_type === "invalid-token-retry";
-        if (isRetryAndContinue) {
-          shouldRetry = false;
-          console.log(
-            "Skipping retry because previous message is already an invalid-token-retry",
-            {
-              threadId,
-              threadChatId: threadChat.id,
-            },
-          );
-          break;
-        }
-        break;
-      }
+    const shouldRetry = !(await hasInvalidTokenRetrySideEffectMarker({
+      db,
+      threadChatId: threadChat.id,
+    }));
+    if (!shouldRetry) {
+      console.log(
+        "Skipping retry because invalid-token-retry marker already exists",
+        {
+          threadId,
+          threadChatId: threadChat.id,
+        },
+      );
     }
     if (shouldRetry) {
       console.log("Adding invalid-token-retry and queueing retry");
@@ -773,6 +788,7 @@ export async function handleDaemonEvent({
       isError = false;
       isOAuthTokenRevoked = false;
       isDone = true; // Mark as done so the thread completes normally
+      invalidTokenRetryQueued = true;
 
       getPostHogServer().capture({
         distinctId: userId,
@@ -957,6 +973,25 @@ export async function handleDaemonEvent({
     throw dbError;
   }
 
+  await persistSideEffectAgUiMessages({
+    db,
+    threadId,
+    threadChatId: threadChat.id,
+    messages: threadChatUpdates.appendMessages ?? [],
+    source: "daemon-side-effect",
+    chatSequence: threadChatMessageSeq ?? undefined,
+    runId,
+  });
+  if (invalidTokenRetryQueued) {
+    await persistInvalidTokenRetrySideEffectMarker({
+      db,
+      threadId,
+      threadChatId: threadChat.id,
+      runId,
+      chatSequence: threadChatMessageSeq ?? undefined,
+    });
+  }
+
   // Async broadcast for faster response (~30ms improvement)
   if (broadcastData) {
     waitUntil(
@@ -982,7 +1017,7 @@ export async function handleDaemonEvent({
         shouldSkipCheckpoint,
         sourceType: thread.sourceType ?? null,
         sourceMetadata: thread.sourceMetadata ?? null,
-        runId: effectiveRunId,
+        runId: runId ?? threadChat.id,
         followUpRunId: runId ?? null,
       }),
     );

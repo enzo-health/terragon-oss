@@ -3,7 +3,7 @@ import {
   projectThreadViewModel,
   threadViewModelReducer,
 } from "@/components/chat/thread-view-model/reducer";
-import { createEmptyThreadViewSnapshot } from "@/components/chat/thread-view-model/legacy-db-message-adapter";
+import { createEmptyThreadViewSnapshot } from "@/components/chat/thread-view-model/snapshot-adapter";
 import type { ThreadViewModelState } from "@/components/chat/thread-view-model/types";
 import type { BaseEvent } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";

@@ -83,8 +83,7 @@ function createThreadChat(
       parts: [{ type: "text" as const, text: "Initial prompt" }],
     },
   ];
-  const transcriptMessages =
-    overrides.projectedMessages ?? overrides.messages ?? fallbackMessages;
+  const transcriptMessages = overrides.projectedMessages ?? fallbackMessages;
   return {
     id: "chat-1",
     userId: "user-1",
@@ -105,7 +104,6 @@ function createThreadChat(
     codexPreviousResponseId: null,
     isUnread: false,
     messageSeq: 0,
-    messages: transcriptMessages,
     projectedMessages: transcriptMessages,
     queuedMessages: [],
     messageCount: transcriptMessages.length,
@@ -201,7 +199,6 @@ describe("applyThreadPatchToListQueries", () => {
         threadChatId: "chat-1",
         op: "upsert",
         chatSequence: NEXT_CHAT_SEQUENCE,
-        expectedMessageCount: 1,
         appendMessages: [
           {
             type: "agent",
@@ -233,7 +230,6 @@ describe("applyThreadPatchToListQueries", () => {
         threadChatId: "chat-1",
         op: "upsert",
         chatSequence: NEXT_CHAT_SEQUENCE,
-        expectedMessageCount: 1,
         appendMessages: [
           {
             type: "agent",

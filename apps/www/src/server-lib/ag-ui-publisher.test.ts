@@ -20,6 +20,8 @@ vi.mock("@/lib/redis", () => ({
   redis: redisMocks,
 }));
 
+vi.resetModules();
+
 // Import AFTER vi.mock so the publisher picks up the mocked redis.
 const {
   persistAndPublishAgUiEvents,
@@ -31,6 +33,7 @@ const {
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
   metaEventsToAgUiEvents,
+  serializeAgUiTransportEnvelope,
 } = await import("./ag-ui-publisher");
 
 const db = createDb(env.DATABASE_URL);
@@ -139,6 +142,27 @@ describe("ag-ui-publisher", () => {
     expect(result.inserted).toBe(3);
     expect(result.skipped).toBe(0);
     expect(result.insertedEventIds).toEqual(rows.map((r) => r.eventId));
+    expect(
+      result.persistedEnvelopes.map((envelope) => ({
+        eventId: envelope.eventId,
+        seq: envelope.seq,
+        runId: envelope.runId,
+        threadId: envelope.threadId,
+        threadChatId: envelope.threadChatId,
+        idempotencyKey: envelope.idempotencyKey,
+        payloadType: envelope.payload.type,
+      })),
+    ).toEqual(
+      rows.map((row, seq) => ({
+        eventId: row.eventId,
+        seq,
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        idempotencyKey: `${fixture.runId}:${row.eventId}`,
+        payloadType: row.event.type,
+      })),
+    );
 
     const persisted = await fetchRowsForThreadChat(fixture.threadChatId);
     expect(persisted.map((r) => r.seq)).toEqual([0, 1, 2]);
@@ -150,8 +174,19 @@ describe("ag-ui-publisher", () => {
       const call = redisMocks.xadd.mock.calls[i]!;
       expect(call[0]).toBe(streamKey);
       expect(call[1]).toBe("*");
-      const parsed = JSON.parse((call[2] as { event: string }).event);
+      const data = call[2] as { event: string; envelope: string };
+      const parsed = JSON.parse(data.event);
       expect(parsed.type).toBe(rows[i]!.event.type);
+      const envelope = JSON.parse(data.envelope);
+      expect(envelope).toMatchObject({
+        eventId: rows[i]!.eventId,
+        seq: i,
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        idempotencyKey: `${fixture.runId}:${rows[i]!.eventId}`,
+        payload: { type: rows[i]!.event.type },
+      });
     }
   });
 
@@ -207,13 +242,37 @@ describe("ag-ui-publisher", () => {
     expect(second.inserted).toBe(1);
     expect(second.skipped).toBe(3);
     expect(second.insertedEventIds).toEqual(["ce-2:TEXT_MESSAGE_CONTENT:0"]);
+    expect(second.persistedEnvelopes).toHaveLength(1);
+    expect(second.persistedEnvelopes[0]).toMatchObject({
+      eventId: "ce-2:TEXT_MESSAGE_CONTENT:0",
+      seq: 6,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      idempotencyKey: `${fixture.runId}:ce-2:TEXT_MESSAGE_CONTENT:0`,
+      payload: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        delta: "extra",
+      },
+    });
 
     // XADD only called for the fresh insert.
     expect(redisMocks.xadd).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(
-      (redisMocks.xadd.mock.calls[0]![2] as { event: string }).event,
-    );
+    const xaddData = redisMocks.xadd.mock.calls[0]![2] as {
+      event: string;
+      envelope: string;
+    };
+    const payload = JSON.parse(xaddData.event);
     expect(payload.delta).toBe("extra");
+    const liveEnvelope = JSON.parse(xaddData.envelope);
+    expect(liveEnvelope).toMatchObject({
+      eventId: "ce-2:TEXT_MESSAGE_CONTENT:0",
+      seq: 6,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      payload: { delta: "extra" },
+    });
   });
 
   it("full duplicate: entire batch already persisted → zero XADDs", async () => {
@@ -254,7 +313,106 @@ describe("ag-ui-publisher", () => {
     expect(second.inserted).toBe(0);
     expect(second.skipped).toBe(rows.length);
     expect(second.insertedEventIds).toEqual([]);
+    expect(second.persistedEnvelopes).toEqual([]);
     expect(redisMocks.xadd).not.toHaveBeenCalled();
+  });
+
+  it("serializes a transport envelope without moving identity into the BaseEvent payload", () => {
+    const event = makeTextContentEvent("msg-envelope", "stable");
+    const serialized = serializeAgUiTransportEnvelope({
+      eventId: "event-envelope-1",
+      seq: 12,
+      runId: "run-envelope-1",
+      threadId: "thread-envelope-1",
+      threadChatId: "chat-envelope-1",
+      timestamp: "2026-04-27T12:00:00.000Z",
+      idempotencyKey: "run-envelope-1:event-envelope-1",
+      payload: event,
+    });
+
+    const parsed = JSON.parse(serialized);
+    expect(parsed).toMatchObject({
+      eventId: "event-envelope-1",
+      seq: 12,
+      runId: "run-envelope-1",
+      threadId: "thread-envelope-1",
+      threadChatId: "chat-envelope-1",
+      timestamp: "2026-04-27T12:00:00.000Z",
+      idempotencyKey: "run-envelope-1:event-envelope-1",
+      payload: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-envelope",
+        delta: "stable",
+      },
+    });
+    expect(parsed.payload.eventId).toBeUndefined();
+    expect(parsed.payload.seq).toBeUndefined();
+    expect(parsed.payload.threadChatId).toBeUndefined();
+  });
+
+  it("publishes quarantined provider payloads only through the redacted AG-UI payload inside the envelope", async () => {
+    const fixture = await createRunFixture();
+    const rows = canonicalEventsToAgUiRows([
+      {
+        payloadVersion: 2,
+        eventId: "ce-quarantine-1",
+        runId: fixture.runId,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+        seq: 0,
+        timestamp: new Date("2026-04-27T12:00:00.000Z").toISOString(),
+        category: "quarantine",
+        type: "unknown-provider-event",
+        provider: "codex-app-server",
+        rawEventType: "provider.experimental",
+        reason: "unsupported provider payload",
+        redactedPayload: {
+          preview: "[redacted]",
+          token: "[redacted]",
+        },
+      },
+    ]);
+
+    const result = await persistAndPublishAgUiEvents({
+      db,
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      rows,
+    });
+
+    expect(result.persistedEnvelopes).toHaveLength(1);
+    expect(result.persistedEnvelopes[0]).toMatchObject({
+      eventId: "ce-quarantine-1:CUSTOM:0",
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      payload: {
+        type: EventType.CUSTOM,
+        name: "terragon.quarantine.unknown-provider-event",
+        value: {
+          provider: "codex-app-server",
+          rawEventType: "provider.experimental",
+          reason: "unsupported provider payload",
+          redactedPayload: {
+            preview: "[redacted]",
+            token: "[redacted]",
+          },
+        },
+      },
+    });
+
+    const data = redisMocks.xadd.mock.calls[0]![2] as {
+      event: string;
+      envelope: string;
+    };
+    expect(data.event).not.toContain("secret");
+    expect(data.envelope).not.toContain("secret");
+    const envelope = JSON.parse(data.envelope);
+    expect(envelope.payload.value.redactedPayload).toEqual({
+      preview: "[redacted]",
+      token: "[redacted]",
+    });
   });
 
   it("XADD failure halts further publishes and logs at error severity (C2 policy)", async () => {
@@ -827,6 +985,7 @@ describe("ag-ui-publisher", () => {
       inserted: 0,
       skipped: 0,
       insertedEventIds: [],
+      persistedEnvelopes: [],
     });
     expect(redisMocks.xadd).not.toHaveBeenCalled();
   });

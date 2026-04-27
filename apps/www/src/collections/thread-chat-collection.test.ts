@@ -102,7 +102,6 @@ function makeChat(overrides: Partial<ThreadPageChat> = {}): ThreadPageChat {
     agent: "claudeCode",
     agentVersion: 1,
     status: "complete",
-    messages,
     projectedMessages: messages,
     isCanonicalProjection: false,
     queuedMessages: null,

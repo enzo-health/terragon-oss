@@ -66,6 +66,12 @@ export async function withThreadChat<T>({
       },
     });
     if (threadChatId) {
+      const errorMessage = {
+        type: "error" as const,
+        error_type: errorType,
+        error_info: errorInfo,
+        timestamp: new Date().toISOString(),
+      };
       await updateThreadChatWithTransition({
         userId,
         threadId,
@@ -74,14 +80,7 @@ export async function withThreadChat<T>({
         chatUpdates: {
           errorMessage: errorType,
           errorMessageInfo: errorInfo,
-          appendMessages: [
-            {
-              type: "error",
-              error_type: errorType,
-              error_info: errorInfo,
-              timestamp: new Date().toISOString(),
-            },
-          ],
+          appendMessages: [errorMessage],
         },
         markAsUnread: true,
       });

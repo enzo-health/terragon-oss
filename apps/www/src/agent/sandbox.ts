@@ -46,7 +46,6 @@ import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
 import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { ensureAgent } from "@terragon/agent/utils";
-import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import type { UserSettings } from "@terragon/shared";
 import { redis } from "@/lib/redis";
 
@@ -586,7 +585,6 @@ async function getOrCreateSandboxForThread({
       });
       if (threadChat) {
         agentOrNull = ensureAgent(threadChat.agent);
-        modelOrNull = getLastUserMessageModel(threadChat.messages ?? []);
       }
     }
     const [

@@ -20,6 +20,7 @@ import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
   agUiStreamKey,
+  type AgUiEventEnvelope,
   appendAgUiEventRow,
   peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
@@ -40,6 +41,7 @@ export type AgUiPublishRow = {
   event: BaseEvent;
   eventId: string;
   timestamp: Date;
+  threadChatMessageSeq?: number;
 };
 
 export type PersistAndPublishResult = {
@@ -52,11 +54,50 @@ export type PersistAndPublishResult = {
    * never drifts from the mapper output.
    */
   insertedEventIds: string[];
+  persistedEnvelopes: TerragonAgUiTransportEnvelope[];
 };
 
 export type PersistAgUiEventsResult = PersistAndPublishResult & {
   persistedEvents: BaseEvent[];
 };
+
+export type TerragonAgUiTransportEnvelope<
+  TEvent extends BaseEvent = BaseEvent,
+> = AgUiEventEnvelope<TEvent, "full">;
+
+export function serializeAgUiTransportEnvelope(
+  envelope: TerragonAgUiTransportEnvelope,
+): string {
+  return JSON.stringify(envelope);
+}
+
+export type PublishPersistedAgUiEventsParams = {
+  threadChatId: string;
+  persistedEvents: readonly BaseEvent[];
+  insertedEventIds: readonly string[];
+  persistedEnvelopes?: readonly TerragonAgUiTransportEnvelope[];
+};
+
+function buildTransportEnvelope(params: {
+  event: BaseEvent;
+  eventId: string;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  seq: number;
+  timestamp: Date;
+}): TerragonAgUiTransportEnvelope {
+  return {
+    eventId: params.eventId,
+    seq: params.seq,
+    runId: params.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+    timestamp: params.timestamp.toISOString(),
+    idempotencyKey: `${params.runId}:${params.eventId}`,
+    payload: params.event,
+  };
+}
 
 /**
  * Persist each AG-UI row to `agent_event_log` in the order provided.
@@ -81,6 +122,7 @@ export async function persistAgUiEvents(params: {
       inserted: 0,
       skipped: 0,
       insertedEventIds: [],
+      persistedEnvelopes: [],
       persistedEvents: [],
     };
   }
@@ -88,6 +130,7 @@ export async function persistAgUiEvents(params: {
   let inserted = 0;
   let skipped = 0;
   const insertedEventIds: string[] = [];
+  const persistedEnvelopes: TerragonAgUiTransportEnvelope[] = [];
   const persistedEvents: BaseEvent[] = [];
 
   await db.transaction(async (tx) => {
@@ -104,22 +147,39 @@ export async function persistAgUiEvents(params: {
         tx,
         row: {
           eventId: row.eventId,
-          runId,
           threadId,
-          threadChatId,
-          seq,
           eventType: String(row.event.type),
           // AG-UI BaseEvent has no explicit category; reuse event type as a
           // stable proxy. Readers project via readAgUiPayload anyway.
           category: String(row.event.type),
-          payload: row.event,
           idempotencyKey: `${runId}:${row.eventId}`,
           timestamp: row.timestamp,
+          threadChatMessageSeq: row.threadChatMessageSeq,
+          envelope: buildTransportEnvelope({
+            event: row.event,
+            eventId: row.eventId,
+            runId,
+            threadId,
+            threadChatId,
+            seq,
+            timestamp: row.timestamp,
+          }),
         },
       });
       if (result.inserted) {
         inserted += 1;
         insertedEventIds.push(row.eventId);
+        persistedEnvelopes.push(
+          buildTransportEnvelope({
+            event: row.event,
+            eventId: row.eventId,
+            runId,
+            threadId,
+            threadChatId,
+            seq,
+            timestamp: row.timestamp,
+          }),
+        );
         persistedEvents.push(row.event);
       } else {
         skipped += 1;
@@ -127,7 +187,13 @@ export async function persistAgUiEvents(params: {
     }
   });
 
-  return { inserted, skipped, insertedEventIds, persistedEvents };
+  return {
+    inserted,
+    skipped,
+    insertedEventIds,
+    persistedEnvelopes,
+    persistedEvents,
+  };
 }
 
 /**
@@ -141,12 +207,14 @@ export async function persistAgUiEvents(params: {
  * entries. Clients recover the gap via replay-from-seq on reconnect using
  * the DB as source of truth.
  */
-export async function publishPersistedAgUiEvents(params: {
-  threadChatId: string;
-  persistedEvents: BaseEvent[];
-  insertedEventIds: readonly string[];
-}): Promise<void> {
-  const { threadChatId, persistedEvents, insertedEventIds } = params;
+export async function publishPersistedAgUiEvents(
+  params: PublishPersistedAgUiEventsParams,
+): Promise<void> {
+  const { threadChatId } = params;
+  const persistedEnvelopes = params.persistedEnvelopes ?? [];
+  const persistedEvents = params.persistedEvents;
+  const insertedEventIds = params.insertedEventIds;
+
   if (persistedEvents.length === 0) {
     return;
   }
@@ -154,10 +222,16 @@ export async function publishPersistedAgUiEvents(params: {
   const streamKey = agUiStreamKey(threadChatId);
   for (let i = 0; i < persistedEvents.length; i++) {
     const event = persistedEvents[i]!;
+    const envelope = persistedEnvelopes[i];
     try {
-      await redis.xadd(streamKey, "*", {
-        event: serializeAgUiEvent(event),
-      });
+      const data =
+        envelope === undefined
+          ? { event: serializeAgUiEvent(event) }
+          : {
+              event: serializeAgUiEvent(event),
+              envelope: serializeAgUiTransportEnvelope(envelope),
+            };
+      await redis.xadd(streamKey, "*", data);
     } catch (err) {
       console.error(
         "[ag-ui-publisher] XADD failed — halting live-tail publish for this batch; clients will recover via SSE replay-from-seq",
@@ -198,11 +272,13 @@ export async function persistAndPublishAgUiEvents(params: {
     threadChatId: params.threadChatId,
     persistedEvents: result.persistedEvents,
     insertedEventIds: result.insertedEventIds,
+    persistedEnvelopes: result.persistedEnvelopes,
   });
   return {
     inserted: result.inserted,
     skipped: result.skipped,
     insertedEventIds: result.insertedEventIds,
+    persistedEnvelopes: result.persistedEnvelopes,
   };
 }
 

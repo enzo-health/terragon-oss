@@ -15,14 +15,15 @@ import {
 } from "@terragon/sandbox/types";
 import {
   DBMessage,
+  DBThreadContextMessage,
   DBUserMessage,
   DBUserMessageWithModel,
-  Thread,
 } from "@terragon/shared";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { DB } from "@terragon/shared/db";
 import type { AgentRuntimeProvider } from "@terragon/shared/db/types";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
+import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   activeThreadStatuses,
@@ -49,7 +50,6 @@ import { withThreadChat } from "@/agent/thread-resource";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   convertToPrompt,
-  getLastUserMessageModel,
   getUserMessageToSend,
 } from "@/lib/db-message-helpers";
 import { getPostHogServer } from "@/lib/posthog-server";
@@ -57,16 +57,13 @@ import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
-import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
 import { compactThreadChat, tryAutoCompactThread } from "@/server-lib/compact";
+import { getLatestNativeAgUiSnapshotMessage } from "@/server-lib/ag-ui-side-effect-messages";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "@/server-lib/process-follow-up-queue";
-import {
-  generateThreadContextResult,
-  getThreadContextMessageToGenerate,
-} from "@/server-lib/thread-context";
+import { generateThreadContextResult } from "@/server-lib/thread-context";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
@@ -186,6 +183,19 @@ function runtimeProviderForDispatch({
   }
 }
 
+function replayMessagesForDispatch(messages: DBMessage[]): DBMessage[] {
+  const latest = messages.at(-1);
+  if (
+    latest?.type === "system" &&
+    latest.message_type !== "compact-result" &&
+    latest.message_type !== "clear-context" &&
+    latest.message_type !== "cancel-schedule"
+  ) {
+    return [latest];
+  }
+  return messages;
+}
+
 export type StartAgentMessageParams = {
   db: DB;
   userId: string;
@@ -193,6 +203,7 @@ export type StartAgentMessageParams = {
   // For example, when retrying a thread, we don't want to upload the message again.
   // See also: getUserMessageToSend.
   message?: DBUserMessageWithModel | null;
+  threadContextMessage?: DBThreadContextMessage | null;
   threadId: string;
   threadChatId: string;
   isNewThread: boolean;
@@ -211,6 +222,7 @@ export async function startAgentMessage({
   db,
   userId,
   message,
+  threadContextMessage,
   threadId,
   threadChatId,
   isNewThread,
@@ -274,6 +286,21 @@ export async function startAgentMessage({
         ? await uploadUserMessageImages({ userId, message })
         : null;
 
+      let threadContextPromise: Promise<void> | null = null;
+      const getThreadContextPromise = (): Promise<void> | null => {
+        if (!threadContextMessage) {
+          return null;
+        }
+        threadContextPromise ??= generateThreadContextResult({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          threadContextMessage,
+        });
+        return threadContextPromise;
+      };
+
       // Only check rate limits if the thread doesn't have any active thread chats.
       const thread = await getThread({ db, threadId, userId });
       if (!thread) {
@@ -320,6 +347,10 @@ export async function startAgentMessage({
               ...queuedThreadCounts,
             },
           });
+          const contextPromise = getThreadContextPromise();
+          if (contextPromise) {
+            await contextPromise;
+          }
           await updateThreadChatWithTransition({
             userId,
             threadId,
@@ -356,6 +387,10 @@ export async function startAgentMessage({
               ...queuedThreadCounts,
             },
           });
+          const contextPromise = getThreadContextPromise();
+          if (contextPromise) {
+            await contextPromise;
+          }
           await updateThreadChatWithTransition({
             userId,
             threadId,
@@ -372,20 +407,7 @@ export async function startAgentMessage({
         }
       }
 
-      // If there's a thread-context message without a thread-context-result message, we need to generate it
-      let threadContextPromise: Promise<void> | null = null;
-      const threadContextMessage = getThreadContextMessageToGenerate({
-        threadChat,
-      });
-      if (threadContextMessage) {
-        threadContextPromise = generateThreadContextResult({
-          db,
-          userId,
-          threadId,
-          threadChatId,
-          threadContextMessage,
-        });
-      }
+      getThreadContextPromise();
 
       await updateThreadChatWithTransition({
         userId,
@@ -560,10 +582,12 @@ export async function startAgentMessage({
           }
 
           // Pick up any queued messages that were added while we were waiting for the sandbox to boot.
+          let promotedQueuedMessageToSend: DBUserMessage | null = null;
           if (
             threadChat.queuedMessages &&
             threadChat.queuedMessages.length > 0
           ) {
+            const queuedMessagesSnapshot = [...threadChat.queuedMessages];
             await updateThreadChat({
               db,
               userId,
@@ -579,11 +603,73 @@ export async function startAgentMessage({
               threadChatId,
               userId,
             }))!;
+            if (!message) {
+              promotedQueuedMessageToSend =
+                queuedMessagesSnapshot.length === 1
+                  ? queuedMessagesSnapshot[0]!
+                  : {
+                      type: "user",
+                      model:
+                        queuedMessagesSnapshot.at(-1)?.model ??
+                        getDefaultModelForAgent({
+                          agent: threadChat.agent,
+                          agentVersion: threadChat.agentVersion,
+                        }),
+                      permissionMode:
+                        queuedMessagesSnapshot.at(-1)?.permissionMode ??
+                        threadChat.permissionMode ??
+                        "allowAll",
+                      parts: queuedMessagesSnapshot.flatMap(
+                        (queuedMessage, index) =>
+                          index === 0
+                            ? queuedMessage.parts
+                            : [
+                                {
+                                  type: "text" as const,
+                                  text: "\n\n---\n\n",
+                                },
+                                ...queuedMessage.parts,
+                              ],
+                      ),
+                      timestamp: queuedMessagesSnapshot.at(-1)?.timestamp,
+                    };
+            }
           }
+          const replayMessages = (
+            await getThreadReplayEntriesFromCanonicalEvents({
+              db,
+              threadId,
+              threadChatId,
+              fromThreadChatMessageSeq: 0,
+            })
+          ).flatMap((entry) => entry.messages);
           let userMessageToSend = getUserMessageToSend({
-            messages: threadChat.messages ?? [],
-            currentMessage: message ?? null,
+            messages:
+              replayMessages.length > 0
+                ? replayMessagesForDispatch(replayMessages)
+                : [],
+            currentMessage: message ?? promotedQueuedMessageToSend,
           });
+          if (!userMessageToSend) {
+            const latestNativeMessage =
+              await getLatestNativeAgUiSnapshotMessage({
+                db,
+                threadChatId,
+              });
+            if (latestNativeMessage) {
+              userMessageToSend = {
+                type: "user",
+                model: null,
+                permissionMode: threadChat.permissionMode ?? "allowAll",
+                parts: [
+                  {
+                    type: "text",
+                    text: latestNativeMessage.content,
+                  },
+                ],
+              };
+            }
+          }
           // Update permission mode if it's different from the thread's permission mode
           const newPermissionMode =
             userMessageToSend?.permissionMode ??
@@ -647,7 +733,6 @@ export async function startAgentMessage({
           // Prepare prompt based on model
           const model =
             userMessageToSend?.model ??
-            getLastUserMessageModel(threadChat.messages ?? []) ??
             getDefaultModelForAgent({
               agent: threadChat.agent,
               agentVersion: threadChat.agentVersion,
@@ -675,9 +760,7 @@ export async function startAgentMessage({
                 await preparePromptForModel({
                   model,
                   agent: threadChat.agent,
-                  agentVersion: threadChat.agentVersion,
                   userMessageToSend,
-                  threadMessages: threadChat.messages ?? [],
                   session,
                 })
               ).prompt
@@ -887,16 +970,12 @@ function estimateTurnStartRequestSizeChars(prompt: string): number {
 async function preparePromptForModel({
   model,
   agent,
-  agentVersion,
   userMessageToSend,
-  threadMessages,
   session,
 }: {
   model: AIModel;
   agent: AIAgent;
-  agentVersion: number;
   userMessageToSend: DBUserMessage;
-  threadMessages: Thread["messages"];
   session: ISandboxSession;
 }): Promise<{
   prompt: string;
@@ -918,22 +997,10 @@ async function preparePromptForModel({
     return convertToPrompt(userMessageToSend, formatMessageOptions);
   };
 
-  const promptWithFullHistory = async () => {
-    if (threadMessages && threadMessages.length > 0) {
-      return await formatThreadToMsg(threadMessages, formatMessageOptions);
-    }
-    // No thread history, just format the current message
-    return promptWithMessageToSendOnly();
-  };
-
   let prompt: string;
   switch (agent) {
     case "codex": {
-      if (agentVersion < 1) {
-        prompt = await promptWithFullHistory();
-      } else {
-        prompt = await promptWithMessageToSendOnly();
-      }
+      prompt = await promptWithMessageToSendOnly();
       break;
     }
     case "amp":

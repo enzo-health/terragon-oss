@@ -23,6 +23,7 @@
  * - `TOOL_CALL_END { toolCallId }`                → parse accumulated args
  * - `TOOL_CALL_RESULT { toolCallId, content }`    → completed/error
  * - `CUSTOM { name: "terragon.part.<type>", value: { messageId, partIndex, part } }`
+ * - `MESSAGES_SNAPSHOT { messages }`              → append daemon-owned snapshot messages
  *
  * Other events (RUN_STARTED, RUN_FINISHED, etc.) are ignored — they affect
  * run-state tracking which lives outside the UIMessage projection.
@@ -43,9 +44,14 @@
  * render).
  */
 
-import { EventType, type BaseEvent } from "@ag-ui/core";
+import { type BaseEvent, EventType } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
-import type { UIAgentMessage, UIMessage, UIPart } from "@terragon/shared";
+import type {
+  DBSystemMessage,
+  UIAgentMessage,
+  UIMessage,
+  UIPart,
+} from "@terragon/shared";
 import type { UIPartExtended } from "./ui-parts-extended";
 
 export type AgUiMessagesState = {
@@ -82,6 +88,14 @@ export type AgUiMessagesState = {
 
 const CUSTOM_PART_PREFIX = "terragon.part.";
 const REASONING_MARKER = ":thinking:";
+type ToolProgressChunk = { seq: number; text: string };
+type ToolStatus = "started" | "in_progress" | "completed" | "failed";
+type ToolPartWithProgress = UIPart & {
+  type: "tool";
+  id: string;
+  progressChunks?: ToolProgressChunk[];
+  toolStatus?: ToolStatus;
+};
 
 export function createInitialAgUiMessagesState(
   agent: AIAgent,
@@ -222,6 +236,18 @@ export function agUiMessagesReducer(
       };
     }
 
+    case EventType.TOOL_CALL_CHUNK: {
+      const toolCallId = getField<string>(event, "toolCallId");
+      const delta = getField<string>(event, "delta");
+      if (!toolCallId || !delta) return state;
+      const { messages, changed } = appendToolProgressChunk(
+        state.messages,
+        toolCallId,
+        delta,
+      );
+      return changed ? { ...state, messages } : state;
+    }
+
     case EventType.TOOL_CALL_END: {
       const toolCallId = getField<string>(event, "toolCallId");
       if (!toolCallId) return state;
@@ -277,16 +303,28 @@ export function agUiMessagesReducer(
       return changed ? { ...state, messages } : state;
     }
 
+    case EventType.MESSAGES_SNAPSHOT: {
+      const snapshotMessages = getField<unknown>(event, "messages");
+      if (!Array.isArray(snapshotMessages)) return state;
+      const projectedMessages = snapshotMessages
+        .map((message) => agUiSnapshotMessageToUiMessage(message, state.agent))
+        .filter((message): message is UIMessage => message !== null);
+      if (projectedMessages.length === 0) return state;
+      const { messages, changed } = appendSnapshotMessages(
+        state.messages,
+        projectedMessages,
+      );
+      return changed ? { ...state, messages } : state;
+    }
+
     case EventType.TEXT_MESSAGE_CHUNK:
     case EventType.THINKING_TEXT_MESSAGE_START:
     case EventType.THINKING_TEXT_MESSAGE_CONTENT:
     case EventType.THINKING_TEXT_MESSAGE_END:
-    case EventType.TOOL_CALL_CHUNK:
     case EventType.THINKING_START:
     case EventType.THINKING_END:
     case EventType.STATE_SNAPSHOT:
     case EventType.STATE_DELTA:
-    case EventType.MESSAGES_SNAPSHOT:
     case EventType.ACTIVITY_SNAPSHOT:
     case EventType.ACTIVITY_DELTA:
     case EventType.RAW:
@@ -476,6 +514,35 @@ function updateToolPartParameters(
   return { messages: next, changed };
 }
 
+function appendToolProgressChunk(
+  messages: UIMessage[],
+  toolCallId: string,
+  text: string,
+): { messages: UIMessage[]; changed: boolean } {
+  let changed = false;
+  const next = messages.map((m) => {
+    if (m.role !== "agent") return m;
+    const idx = m.parts.findIndex(
+      (p) => p.type === "tool" && p.id === toolCallId,
+    );
+    if (idx < 0) return m;
+    const part = m.parts[idx]!;
+    if (part.type !== "tool") return m;
+    const progressPart = part as ToolPartWithProgress;
+    const existing = progressPart.progressChunks ?? [];
+    const previousSeq = existing.at(-1)?.seq ?? -1;
+    const nextParts = m.parts.slice();
+    nextParts[idx] = {
+      ...progressPart,
+      progressChunks: [...existing, { seq: previousSeq + 1, text }],
+      toolStatus: "in_progress",
+    } as unknown as UIPart;
+    changed = true;
+    return { ...m, parts: nextParts };
+  });
+  return { messages: next, changed };
+}
+
 function completeToolPart(
   messages: UIMessage[],
   toolCallId: string,
@@ -491,10 +558,17 @@ function completeToolPart(
     if (idx < 0) return m;
     const part = m.parts[idx]!;
     if (part.type !== "tool") return m;
+    const progressPart = part as ToolPartWithProgress;
+    const shouldCarryToolStatus =
+      Boolean(progressPart.toolStatus) ||
+      Boolean(progressPart.progressChunks?.length);
     const nextParts = m.parts.slice();
     nextParts[idx] = {
       ...part,
       status: isError ? "error" : "completed",
+      ...(shouldCarryToolStatus
+        ? { toolStatus: isError ? "failed" : "completed" }
+        : {}),
       result,
     } as UIPart;
     changed = true;
@@ -539,6 +613,90 @@ function insertRichPart(
     };
   });
   return { messages: next, changed };
+}
+
+function appendSnapshotMessages(
+  current: UIMessage[],
+  incoming: UIMessage[],
+): { messages: UIMessage[]; changed: boolean } {
+  const existingIds = new Set(current.map((message) => message.id));
+  const missing = incoming.filter((message) => !existingIds.has(message.id));
+  if (missing.length === 0) {
+    return { messages: current, changed: false };
+  }
+  return { messages: [...current, ...missing], changed: true };
+}
+
+function agUiSnapshotMessageToUiMessage(
+  value: unknown,
+  agent: AIAgent,
+): UIMessage | null {
+  const id = getField<string>(value, "id");
+  const role = getField<string>(value, "role");
+  if (!id || !role) {
+    return null;
+  }
+  const text = snapshotContentToText(getField<unknown>(value, "content"));
+  switch (role) {
+    case "user":
+      return {
+        id,
+        role: "user",
+        parts: [{ type: "text", text }],
+        model: null,
+      };
+    case "assistant":
+      return {
+        id,
+        role: "agent",
+        agent,
+        parts: text ? [{ type: "text", text }] : [],
+      };
+    case "system": {
+      const messageType = sideEffectSystemMessageTypeFromId(id);
+      if (!messageType) {
+        return null;
+      }
+      return {
+        id,
+        role: "system",
+        message_type: messageType,
+        parts: [{ type: "text", text }],
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function snapshotContentToText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (content === undefined || content === null) {
+    return "";
+  }
+  return safeStringify(content);
+}
+
+const SIDE_EFFECT_SYSTEM_MESSAGE_TYPES = new Set<
+  DBSystemMessage["message_type"]
+>(["invalid-token-retry", "compact-result"]);
+
+function sideEffectSystemMessageTypeFromId(
+  id: string,
+): DBSystemMessage["message_type"] | null {
+  const match = /^side-effect-system:(.+)-\d+-[a-f0-9]{12}$/.exec(id);
+  const messageType = match?.[1];
+  if (
+    messageType &&
+    SIDE_EFFECT_SYSTEM_MESSAGE_TYPES.has(
+      messageType as DBSystemMessage["message_type"],
+    )
+  ) {
+    return messageType as DBSystemMessage["message_type"];
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -643,6 +801,8 @@ function isRenderablePart(value: unknown): value is UIPartExtended {
     case "web-search-result":
       return true;
     default:
+      const _exhaustiveCheck = type satisfies string | undefined;
+      void _exhaustiveCheck;
       return false;
   }
 }

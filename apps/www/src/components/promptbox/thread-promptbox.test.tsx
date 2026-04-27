@@ -6,7 +6,7 @@ import type { JSONContent } from "@tiptap/react";
 import { act, createElement, useReducer } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createEmptyThreadViewSnapshot } from "../chat/thread-view-model/legacy-db-message-adapter";
+import { createEmptyThreadViewSnapshot } from "../chat/thread-view-model/snapshot-adapter";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,

@@ -8,6 +8,7 @@ import type {
   GithubPRStatus,
   ThreadStatus,
   UIMessage,
+  UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
@@ -19,19 +20,20 @@ import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
  * - Event order is snapshot hydration, then optimistic local intent, then
  *   canonical/live AG-UI events; server refetch may reconcile the snapshot.
  * - Source precedence is canonical/live event > optimistic local intent >
- *   collection snapshot > React Query snapshot > legacy DB message fallback.
- * - `legacy-db-message-adapter` and `ag-ui-adapter` are read-only historical
- *   adapters. New runs must write canonical runtime events, not new DBMessage
- *   transcript variants or assistant-ui internal message state.
- * - Adapter deletion criteria: remove the DB adapter when all thread snapshots
- *   hydrate from canonical event replay; remove the AG-UI adapter when runtime
- *   events are consumed directly by this reducer.
+ *   canonical projectedMessages > collection snapshot > React Query snapshot.
+ * - `snapshot-adapter` is the thread snapshot boundary. Canonical snapshots
+ *   must be self-contained in `projectedMessages`.
+ * - Thread lifecycle notices such as retry/schedule/error system messages are
+ *   projected into `lifecycleMessages`, not merged back into AG-UI replay.
+ * - `ag-ui-adapter` remains the read-only historical event adapter. New runs
+ *   must write canonical runtime events, not assistant-ui internal state.
  */
 
 export type ThreadViewSnapshotSource = "collection" | "react-query";
 
 export type ThreadViewSnapshot = {
   source: ThreadViewSnapshotSource;
+  transcriptSource: "ag-ui-replay";
   threadId: string;
   threadChatId: string;
   dbMessages: DBMessage[];
@@ -62,6 +64,9 @@ export type ThreadViewModel = {
   threadId: string;
   threadChatId: string;
   messages: UIMessage[];
+  lifecycleMessages: UISystemMessage[];
+  runtimeState: ThreadViewRuntimeState;
+  runtimeActivities: ThreadViewRuntimeActivities;
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
   threadStatus: ThreadStatus | null;
@@ -117,6 +122,8 @@ export type ThreadViewModelState = {
   threadId: string;
   threadChatId: string;
   transcript: AgUiMessagesState;
+  runtimeState: ThreadViewRuntimeState;
+  runtimeActivities: ThreadViewRuntimeActivities;
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
   threadStatus: ThreadStatus | null;
@@ -158,8 +165,25 @@ export type ThreadViewLifecycle = {
   threadChatUpdatedAt: Date | string | null;
 };
 
+export type ThreadViewRuntimeState = Record<string, unknown>;
+
+export type ThreadViewRuntimeActivity = {
+  messageId: string;
+  activityType: string;
+  content: Record<string, unknown>;
+};
+
+export type ThreadViewRuntimeActivities = Record<
+  string,
+  ThreadViewRuntimeActivity
+>;
+
 export type ThreadViewQuarantineEntry = {
-  reason: "malformed-rich-part" | "reducer-error";
+  reason:
+    | "malformed-rich-part"
+    | "malformed-native-runtime-event"
+    | "reducer-error"
+    | "unsupported-ag-ui-event";
   eventType: string;
   messageId?: string;
   partType?: string;

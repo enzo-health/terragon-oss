@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { env } from "@terragon/env/pkg-shared";
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
+import { env } from "@terragon/env/pkg-shared";
+import { eq } from "drizzle-orm";
+import { describe, expect, it, vi } from "vitest";
 import { createDb } from "../db";
 import * as schema from "../db/schema";
-import { eq } from "drizzle-orm";
 import {
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
@@ -18,7 +18,7 @@ function newId(prefix: string): string {
 }
 
 describe("getThreadPageChatWithPermissions", () => {
-  it("falls back to legacy thread chat messages when no canonical projection exists", async () => {
+  it("returns an empty projection when no canonical replay exists", async () => {
     const { user } = await createTestUser({ db });
     const { threadId, threadChatId } = await createTestThread({
       db,
@@ -44,14 +44,8 @@ describe("getThreadPageChatWithPermissions", () => {
       userId: user.id,
     });
 
-    expect(threadChat?.messages).toEqual([
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "legacy prompt" }],
-      },
-    ]);
-    expect(threadChat?.projectedMessages).toEqual(threadChat?.messages);
+    expect(threadChat).not.toHaveProperty("messages");
+    expect(threadChat?.projectedMessages).toEqual([]);
   });
 
   it("hydrates projectedMessages from canonical replay when replay rows exist", async () => {
@@ -128,18 +122,7 @@ describe("getThreadPageChatWithPermissions", () => {
       userId: user.id,
     });
 
-    expect(threadChat?.messages).toEqual([
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "legacy user prompt" }],
-      },
-      {
-        type: "agent",
-        parent_tool_use_id: null,
-        parts: [{ type: "text", text: "legacy assistant reply" }],
-      },
-    ]);
+    expect(threadChat).not.toHaveProperty("messages");
     expect(threadChat?.projectedMessages).toEqual([
       {
         type: "agent",
@@ -147,9 +130,10 @@ describe("getThreadPageChatWithPermissions", () => {
         parts: [{ type: "text", text: "canonical assistant reply" }],
       },
     ]);
+    expect(threadChat?.messageCount).toBe(1);
   });
 
-  it("falls back to legacy thread chat messages when canonical replay schema is unavailable", async () => {
+  it("returns an empty projection when canonical replay schema is unavailable", async () => {
     const { user } = await createTestUser({ db });
     const { threadId, threadChatId } = await createTestThread({
       db,
@@ -184,14 +168,8 @@ describe("getThreadPageChatWithPermissions", () => {
         userId: user.id,
       });
 
-      expect(threadChat?.messages).toEqual([
-        {
-          type: "user",
-          model: null,
-          parts: [{ type: "text", text: "legacy prompt" }],
-        },
-      ]);
-      expect(threadChat?.projectedMessages).toEqual(threadChat?.messages);
+      expect(threadChat).not.toHaveProperty("messages");
+      expect(threadChat?.projectedMessages).toEqual([]);
     } finally {
       findFirstSpy.mockRestore();
     }

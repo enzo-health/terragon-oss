@@ -8,7 +8,7 @@ import {
   ThreadPageChat,
   ThreadSourceMetadata,
 } from "@terragon/shared/db/types";
-import { DBMessage, DBUserMessage, ThreadStatus } from "@terragon/shared";
+import { DBMessage, DBUserMessage } from "@terragon/shared";
 import {
   BroadcastThreadPatch,
   BroadcastThreadShellRealtimeFields,
@@ -65,7 +65,7 @@ function isMonotonicSequence(seq: number | null | undefined): boolean {
 }
 
 function getTranscriptMessages(chat: ThreadPageChat): DBMessage[] {
-  return chat.projectedMessages ?? chat.messages ?? [];
+  return chat.projectedMessages ?? [];
 }
 
 export function applyChatSummaryPatchFields(
@@ -221,60 +221,6 @@ export type ChatPatchResult = {
   nextChat?: ThreadPageChat;
 };
 
-export type ChatPatchBatchResult = {
-  nextChat: ThreadPageChat;
-  latestPatchedStatus: ThreadStatus | null;
-  hasMaterializedMessages: boolean;
-};
-
-function patchHasMaterializedAgentMessage(
-  patch: BroadcastThreadPatch,
-): boolean {
-  return Boolean(
-    patch.appendMessages?.some(
-      (message) =>
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        (message as { type?: unknown }).type === "agent",
-    ),
-  );
-}
-
-export function reduceThreadPatchesForChat(
-  chat: ThreadPageChat,
-  patches: BroadcastThreadPatch[],
-): ChatPatchBatchResult {
-  let nextChat = chat;
-  let latestPatchedStatus: ThreadStatus | null = null;
-  let hasMaterializedMessages = false;
-
-  for (const patch of patches) {
-    if (patch.op === "delta") {
-      continue;
-    }
-
-    if (patch.chat?.status) {
-      latestPatchedStatus = patch.chat.status;
-    }
-
-    if (patchHasMaterializedAgentMessage(patch)) {
-      hasMaterializedMessages = true;
-    }
-
-    const result = validateChatPatch(nextChat, patch);
-    if (result.action === "apply" && result.nextChat) {
-      nextChat = result.nextChat;
-    }
-  }
-
-  return {
-    nextChat,
-    latestPatchedStatus,
-    hasMaterializedMessages,
-  };
-}
-
 export function validateChatPatch(
   chat: ThreadPageChat,
   patch: BroadcastThreadPatch,
@@ -284,7 +230,6 @@ export function validateChatPatch(
       action: !(patch.refetch ?? []).includes("chat") ? "invalidate" : "ignore",
     };
   }
-  if (patch.op === "delta") return { action: "ignore" };
 
   const incomingMessageSeq = patch.messageSeq;
   const incomingPatchVersion = patch.patchVersion;
@@ -476,7 +421,6 @@ function buildChatObject(
       ? { updatedAt: new Date(patch.chat.updatedAt) }
       : {}),
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
-    messages: nextMessages,
     projectedMessages: nextMessages,
     messageCount: nextMessages.length,
     chatSequence,

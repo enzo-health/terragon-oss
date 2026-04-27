@@ -259,7 +259,6 @@ function getThreadPageFullChatSelect() {
     agent: schema.threadChat.agent,
     agentVersion: schema.threadChat.agentVersion,
     status: schema.threadChat.status,
-    messages: schema.threadChat.messages,
     queuedMessages: schema.threadChat.queuedMessages,
     sessionId: schema.threadChat.sessionId,
     errorMessage: schema.threadChat.errorMessage,
@@ -538,7 +537,7 @@ export async function getThreadPageChatWithPermissions({
     threadChatId,
   });
 
-  let projectedMessages = threadChat.messages;
+  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [];
   if (isCanonicalProjection) {
     const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
       db,
@@ -551,7 +550,7 @@ export async function getThreadPageChatWithPermissions({
 
   return {
     ...threadChat,
-    messageCount: projectedMessages?.length ?? 0,
+    messageCount: projectedMessages.length,
     chatSequence:
       threadChat.messageSeq > 0
         ? threadChat.messageSeq

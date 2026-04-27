@@ -1,4 +1,4 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
 import { mapCanonicalEventToAgui } from "@terragon/agent/ag-ui-mapper";
 import type {
   BaseEventEnvelope,
@@ -11,6 +11,7 @@ import {
   BaseEventEnvelopeSchema,
   CanonicalEventSchema,
 } from "@terragon/agent/canonical-events";
+import { AIModelSchema } from "@terragon/agent/types";
 import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { DB } from "../db";
 import type { DBMessage } from "../db/db-message";
@@ -66,7 +67,19 @@ export type ThreadReplayEntry = {
   messages: DBMessage[];
 };
 
-export type AgUiEventEnvelope<TEvent extends BaseEvent = BaseEvent> = {
+type AgUiEventEnvelopeIdentity = {
+  eventId: string;
+  threadId: string;
+  timestamp: string;
+  idempotencyKey: string;
+};
+
+export type AgUiEventEnvelope<
+  TEvent extends BaseEvent = BaseEvent,
+  TIdentity extends "legacy" | "full" = "legacy",
+> = (TIdentity extends "full"
+  ? AgUiEventEnvelopeIdentity
+  : Partial<AgUiEventEnvelopeIdentity>) & {
   seq: number;
   runId: string;
   threadChatId: string;
@@ -75,7 +88,15 @@ export type AgUiEventEnvelope<TEvent extends BaseEvent = BaseEvent> = {
 
 type AgUiReadableRow = Pick<
   AgentEventLogRow,
-  "eventId" | "runId" | "eventType" | "payloadJson"
+  | "eventId"
+  | "runId"
+  | "threadId"
+  | "threadChatId"
+  | "seq"
+  | "eventType"
+  | "payloadJson"
+  | "idempotencyKey"
+  | "timestamp"
 >;
 
 const ENVELOPE_FIELDS = [
@@ -238,21 +259,33 @@ function toAgUiEventEnvelope({
   row,
   payload,
 }: {
-  row: Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId">;
+  row: Pick<
+    AgentEventLogRow,
+    | "eventId"
+    | "seq"
+    | "runId"
+    | "threadId"
+    | "threadChatId"
+    | "idempotencyKey"
+    | "timestamp"
+  >;
   payload: BaseEvent;
-}): AgUiEventEnvelope {
+}): AgUiEventEnvelope<BaseEvent, "full"> {
   return {
+    eventId: row.eventId,
     seq: row.seq,
     runId: row.runId,
+    threadId: row.threadId,
     threadChatId: row.threadChatId,
+    timestamp: row.timestamp.toISOString(),
+    idempotencyKey: row.idempotencyKey,
     payload,
   };
 }
 
 export function readAgUiEnvelope(
-  row: AgUiReadableRow &
-    Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId">,
-): AgUiEventEnvelope | null {
+  row: AgUiReadableRow,
+): AgUiEventEnvelope<BaseEvent, "full"> | null {
   const payload = readAgUiPayload(row);
   if (payload === null) {
     return null;
@@ -291,8 +324,18 @@ export function readAllAgUiPayloads(
 }
 
 export function readAllAgUiEnvelopes(
-  row: Pick<AgentEventLogRow, "seq" | "runId" | "threadChatId" | "payloadJson">,
-): AgUiEventEnvelope[] {
+  row: Pick<
+    AgentEventLogRow,
+    | "eventId"
+    | "seq"
+    | "runId"
+    | "threadId"
+    | "threadChatId"
+    | "idempotencyKey"
+    | "timestamp"
+    | "payloadJson"
+  >,
+): Array<AgUiEventEnvelope<BaseEvent, "full">> {
   const payloads = readAllAgUiPayloads(row);
   return payloads.map((payload) => toAgUiEventEnvelope({ row, payload }));
 }
@@ -607,6 +650,137 @@ function canonicalEventToReplayMessage(
   }
 }
 
+function messageContentToReplayText(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      if (
+        part !== null &&
+        typeof part === "object" &&
+        "text" in part &&
+        typeof part.text === "string"
+      ) {
+        return part.text;
+      }
+      return "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function systemMessageTypeFromAgUiId(
+  messageIdValue: string,
+): Extract<DBMessage, { type: "system" }>["message_type"] | null {
+  const prefix = "side-effect-system:";
+  if (!messageIdValue.startsWith(prefix)) {
+    return null;
+  }
+  const withoutPrefix = messageIdValue.slice(prefix.length);
+  const match = /^(?<messageType>.+)-\d+-[a-f0-9]{12}$/.exec(withoutPrefix);
+  const messageType = match?.groups?.messageType;
+  switch (messageType) {
+    case "cancel-schedule":
+    case "fix-github-checks":
+    case "retry-git-commit-and-push":
+    case "generic-retry":
+    case "invalid-token-retry":
+    case "clear-context":
+    case "compact-result":
+    case "agent-error-retry":
+    case "follow-up-retry-failed":
+      return messageType;
+    default:
+      const _exhaustiveCheck = messageType satisfies string | undefined;
+      void _exhaustiveCheck;
+      return null;
+  }
+}
+
+function userMetadataFromAgUiName(
+  name: string | undefined,
+): Pick<Extract<DBMessage, { type: "user" }>, "model" | "permissionMode"> {
+  if (!name?.startsWith("terragon-user:")) {
+    return { model: null, permissionMode: undefined };
+  }
+  const metadata = new URLSearchParams(name.slice("terragon-user:".length));
+  const modelResult = AIModelSchema.safeParse(metadata.get("model"));
+  const permissionMode = metadata.get("permissionMode");
+  return {
+    model: modelResult.success ? modelResult.data : null,
+    permissionMode:
+      permissionMode === "allowAll" || permissionMode === "plan"
+        ? permissionMode
+        : undefined,
+  };
+}
+
+function agUiMessageToReplayMessage(message: Message): DBMessage | null {
+  const content = messageContentToReplayText(message.content);
+  if (message.role === "user" && content.length > 0) {
+    const metadata = userMetadataFromAgUiName(message.name);
+    return {
+      type: "user",
+      model: metadata.model,
+      ...(metadata.permissionMode
+        ? { permissionMode: metadata.permissionMode }
+        : {}),
+      parts: [{ type: "text", text: content }],
+    };
+  }
+  if (message.role !== "system") {
+    return null;
+  }
+  const messageType = systemMessageTypeFromAgUiId(message.id);
+  if (!messageType) {
+    return null;
+  }
+  return {
+    type: "system",
+    message_type: messageType,
+    parts: content.length > 0 ? [{ type: "text", text: content }] : [],
+  };
+}
+
+function isAgUiMessage(value: unknown): value is Message {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const role = Reflect.get(value, "role");
+  const id = Reflect.get(value, "id");
+  const content = Reflect.get(value, "content");
+  return (
+    (role === "user" || role === "system" || role === "assistant") &&
+    typeof id === "string" &&
+    (content === null || typeof content === "string" || Array.isArray(content))
+  );
+}
+
+function agUiSnapshotToReplayMessages(payload: unknown): DBMessage[] {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    payload.type !== EventType.MESSAGES_SNAPSHOT ||
+    !("messages" in payload) ||
+    !Array.isArray(payload.messages)
+  ) {
+    return [];
+  }
+  return payload.messages.flatMap((message) => {
+    if (!isAgUiMessage(message)) {
+      return [];
+    }
+    const replayMessage = agUiMessageToReplayMessage(message);
+    return replayMessage ? [replayMessage] : [];
+  });
+}
+
 export async function getThreadReplayEntriesFromCanonicalEvents({
   db,
   threadId,
@@ -669,20 +843,43 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
 
     const payload = row.payloadJson;
     const parsedEvent = CanonicalEventSchema.safeParse(payload);
-    if (!parsedEvent.success) {
+    if (parsedEvent.success) {
+      const replayMessage = canonicalEventToReplayMessage(parsedEvent.data);
+      if (replayMessage) {
+        activeMessages.push(replayMessage);
+      }
       continue;
     }
-    const replayMessage = canonicalEventToReplayMessage(parsedEvent.data);
-    if (replayMessage) {
-      activeMessages.push(replayMessage);
-    }
+    activeMessages.push(...agUiSnapshotToReplayMessages(payload));
   }
 
   if (activeSeq !== null && activeMessages.length > 0) {
     entries.push({ seq: activeSeq, messages: activeMessages });
   }
 
-  return entries;
+  return entries
+    .sort((left, right) => left.seq - right.seq)
+    .reduce<ThreadReplayEntry[]>((merged, entry) => {
+      const previous = merged.at(-1);
+      if (previous && previous.seq === entry.seq) {
+        previous.messages.push(...entry.messages);
+        return merged;
+      }
+      merged.push({ seq: entry.seq, messages: [...entry.messages] });
+      return merged;
+    }, [])
+    .map((entry) => ({
+      ...entry,
+      messages: [...entry.messages].sort((left, right) => {
+        if (left.type === "user" && right.type !== "user") {
+          return -1;
+        }
+        if (left.type !== "user" && right.type === "user") {
+          return 1;
+        }
+        return 0;
+      }),
+    }));
 }
 
 /**
@@ -729,6 +926,42 @@ export async function getAgUiEventEnvelopesForRun({
     // Canonical rows expand to multiple events (START + CONTENT + END); use
     // the full-expansion helper so callers get a faithful event sequence,
     // not just the head of each row.
+    for (const envelope of readAllAgUiEnvelopes(row)) {
+      events.push(envelope);
+    }
+  }
+  return events;
+}
+
+export async function getAgUiEventEnvelopesForThreadChat({
+  db,
+  threadChatId,
+  afterSeq,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+  afterSeq?: number;
+}): Promise<AgUiEventEnvelope[]> {
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: and(
+        eq(schema.agentEventLog.threadChatId, threadChatId),
+        ...(afterSeq === undefined
+          ? []
+          : [gt(schema.agentEventLog.seq, afterSeq)]),
+      ),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  const events: AgUiEventEnvelope[] = [];
+  for (const row of rows) {
     for (const envelope of readAllAgUiEnvelopes(row)) {
       events.push(envelope);
     }
@@ -838,11 +1071,32 @@ export type OpenAgUiMessage = {
   kind: "text" | "thinking";
 };
 
+export type OpenAgUiToolCall = {
+  toolCallId: string;
+  parentToolUseId: string | null;
+};
+
 function getAgUiMessageId(event: BaseEvent): string | null {
   if (!("messageId" in event)) {
     return null;
   }
   return typeof event.messageId === "string" ? event.messageId : null;
+}
+
+function getAgUiToolCallId(event: BaseEvent): string | null {
+  if (!("toolCallId" in event)) {
+    return null;
+  }
+  return typeof event.toolCallId === "string" ? event.toolCallId : null;
+}
+
+function getAgUiParentToolUseId(event: BaseEvent): string | null {
+  if (!("parentMessageId" in event)) {
+    return null;
+  }
+  return typeof event.parentMessageId === "string"
+    ? event.parentMessageId
+    : null;
 }
 
 /**
@@ -960,6 +1214,95 @@ export async function findOpenAgUiMessagesForRun({
   return open;
 }
 
+export async function findOpenAgUiToolCallsForRun({
+  db,
+  runId,
+}: {
+  db: Pick<DB, "query">;
+  runId: RunId;
+}): Promise<OpenAgUiToolCall[]> {
+  let rows: AgentEventLogRow[];
+  try {
+    rows = await db.query.agentEventLog.findMany({
+      where: eq(schema.agentEventLog.runId, runId),
+      orderBy: [asc(schema.agentEventLog.seq)],
+    });
+  } catch (error) {
+    if (isMissingAgentEventLogSchemaError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  const openToolCalls = new Map<string, { parentToolUseId: string | null }>();
+  for (const row of rows) {
+    const events = readAllAgUiPayloads(row);
+    for (const event of events) {
+      const eventType = event.type;
+
+      switch (eventType) {
+        case EventType.TOOL_CALL_START: {
+          const toolCallId = getAgUiToolCallId(event);
+          if (toolCallId !== null) {
+            openToolCalls.set(toolCallId, {
+              parentToolUseId: getAgUiParentToolUseId(event),
+            });
+          }
+          break;
+        }
+        case EventType.TOOL_CALL_RESULT: {
+          const toolCallId = getAgUiToolCallId(event);
+          if (toolCallId !== null) {
+            openToolCalls.delete(toolCallId);
+          }
+          break;
+        }
+        case EventType.TEXT_MESSAGE_START:
+        case EventType.TEXT_MESSAGE_CONTENT:
+        case EventType.TEXT_MESSAGE_CHUNK:
+        case EventType.TEXT_MESSAGE_END:
+        case EventType.TOOL_CALL_ARGS:
+        case EventType.TOOL_CALL_END:
+        case EventType.TOOL_CALL_CHUNK:
+        case EventType.THINKING_START:
+        case EventType.THINKING_END:
+        case EventType.THINKING_TEXT_MESSAGE_START:
+        case EventType.THINKING_TEXT_MESSAGE_CONTENT:
+        case EventType.THINKING_TEXT_MESSAGE_END:
+        case EventType.STATE_SNAPSHOT:
+        case EventType.STATE_DELTA:
+        case EventType.MESSAGES_SNAPSHOT:
+        case EventType.ACTIVITY_SNAPSHOT:
+        case EventType.ACTIVITY_DELTA:
+        case EventType.RAW:
+        case EventType.CUSTOM:
+        case EventType.RUN_STARTED:
+        case EventType.RUN_FINISHED:
+        case EventType.RUN_ERROR:
+        case EventType.STEP_STARTED:
+        case EventType.STEP_FINISHED:
+        case EventType.REASONING_START:
+        case EventType.REASONING_MESSAGE_START:
+        case EventType.REASONING_MESSAGE_CONTENT:
+        case EventType.REASONING_MESSAGE_CHUNK:
+        case EventType.REASONING_MESSAGE_END:
+        case EventType.REASONING_END:
+        case EventType.REASONING_ENCRYPTED_VALUE:
+          break;
+        default:
+          const _exhaustiveCheck: never = eventType;
+          void _exhaustiveCheck;
+          break;
+      }
+    }
+  }
+
+  return [...openToolCalls.entries()].map(([toolCallId, value]) => ({
+    toolCallId,
+    parentToolUseId: value.parentToolUseId,
+  }));
+}
+
 export async function getRunEvents({
   db,
   runId,
@@ -1073,13 +1416,17 @@ type AppendAgUiEventRowLegacy = {
   payload: BaseEvent;
   idempotencyKey: string;
   timestamp: Date;
+  threadChatMessageSeq?: number;
 };
 
 type AppendAgUiEventRowWithEnvelope = Omit<
   AppendAgUiEventRowLegacy,
   "runId" | "threadChatId" | "seq" | "payload"
 > & {
-  envelope: AgUiEventEnvelope;
+  envelope: Pick<
+    AgUiEventEnvelope,
+    "runId" | "threadChatId" | "seq" | "payload"
+  >;
 };
 
 type AppendAgUiEventRow =
@@ -1101,6 +1448,7 @@ function normalizeAppendAgUiEventRow(
       payload: row.envelope.payload,
       idempotencyKey: row.idempotencyKey,
       timestamp: row.timestamp,
+      threadChatMessageSeq: row.threadChatMessageSeq,
     };
   }
   return row;
@@ -1148,6 +1496,7 @@ export async function appendAgUiEventRow({
       payloadJson: toPayloadJson(normalizedRow.payload),
       idempotencyKey: normalizedRow.idempotencyKey,
       timestamp: normalizedRow.timestamp,
+      threadChatMessageSeq: normalizedRow.threadChatMessageSeq,
     })
     .onConflictDoNothing({
       target: [schema.agentEventLog.runId, schema.agentEventLog.eventId],

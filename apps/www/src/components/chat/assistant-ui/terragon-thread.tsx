@@ -4,7 +4,12 @@ import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
-import type { ThreadInfoFull, ThreadStatus, UIMessage } from "@terragon/shared";
+import type {
+  ThreadInfoFull,
+  ThreadStatus,
+  UIMessage,
+  UISystemMessage,
+} from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { useEffect, useMemo, useState } from "react";
 import { isQueuedStatus } from "@/agent/thread-status";
@@ -85,6 +90,7 @@ type TerragonThreadProps = {
    * authority.
    */
   messages: UIMessage[];
+  lifecycleMessages: UISystemMessage[];
   threadStatus: ThreadStatus | null;
   thread: ThreadInfoFull;
   latestGitDiffTimestamp: string | null;
@@ -121,6 +127,7 @@ type TerragonThreadProps = {
 export function TerragonThread({
   agent,
   messages,
+  lifecycleMessages,
   threadStatus,
   thread,
   latestGitDiffTimestamp,
@@ -310,6 +317,18 @@ export function TerragonThread({
     <AssistantRuntimeProvider runtime={runtime}>
       <TerragonThreadProvider value={ctx}>
         <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-6 mt-12 mb-4">
+          {lifecycleMessages.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {lifecycleMessages.map((message, index) => (
+                <TerragonSystemMessage
+                  key={`lifecycle-${message.id}`}
+                  message={message}
+                  messageIndex={index}
+                  isLatestMessage={index === lifecycleMessages.length - 1}
+                />
+              ))}
+            </div>
+          ) : null}
           {messages.map((message, index) => {
             const isLatestMessage = index === lastIndex;
             switch (message.role) {

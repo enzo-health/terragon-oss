@@ -6,7 +6,7 @@ import {
 import { MAX_CONTEXT_TOKENS, DBMessage } from "@terragon/shared";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { generateSessionSummary } from "./generate-session-summary";
-import { formatThreadToMsg } from "@/lib/thread-to-msg-formatter";
+import { getNativeAgUiTranscriptForThreadChat } from "./ag-ui-side-effect-messages";
 
 /**
  * Gets the messages to process for compaction by finding the last
@@ -59,9 +59,11 @@ export async function getThreadChatHistory({
   if (!threadChat) {
     return "";
   }
-  const messages = threadChat.messages ?? [];
-  const messagesToProcess = getMessagesToProcess(messages);
-  return formatThreadToMsg(messagesToProcess);
+  const nativeTranscript = await getNativeAgUiTranscriptForThreadChat({
+    db,
+    threadChatId,
+  });
+  return nativeTranscript.history;
 }
 
 export async function compactThreadChat({
@@ -115,7 +117,11 @@ export async function tryAutoCompactThread({
   // Message count fallback handles agents (e.g. Codex) that don't report token usage,
   // leaving contextLength NULL even when the context window is exhausted.
   const MAX_MESSAGE_COUNT_FALLBACK = 800;
-  const messageCount = threadChat.messages?.length ?? 0;
+  const nativeTranscript = await getNativeAgUiTranscriptForThreadChat({
+    db,
+    threadChatId,
+  });
+  const messageCount = nativeTranscript.messageCount;
   const shouldCompact =
     (threadChat.contextLength != null &&
       threadChat.contextLength > MAX_CONTEXT_TOKENS) ||

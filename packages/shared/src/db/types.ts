@@ -415,7 +415,7 @@ export type ThreadPageShell = Omit<
   primaryThreadChat: ThreadPageChatSummary;
 };
 
-export type ThreadPageChat = ThreadChatInfoFull & {
+export type ThreadPageChat = Omit<ThreadChatInfoFull, "messages"> & {
   messageCount: number;
   chatSequence: number | null;
   patchVersion: number | null;
