@@ -227,7 +227,7 @@ describe("github workspace helpers", () => {
     );
   });
 
-  it("upserts workspace runs with durable thread and workflow ownership", async () => {
+  it("upserts workspace runs with durable thread ownership", async () => {
     const { installationId, repoId, prNodeId } = await createProjectionChain();
     const workspace = await upsertGithubPrWorkspace({
       db,
@@ -242,17 +242,6 @@ describe("github workspace helpers", () => {
       userId: user.id,
     });
 
-    const [workflow] = await db
-      .insert(schema.deliveryWorkflow)
-      .values({
-        threadId,
-        generation: 1,
-        kind: "github_shadow_write",
-        stateJson: {},
-        userId: user.id,
-      })
-      .returning();
-
     const run = await upsertGithubWorkspaceRun({
       db,
       workspaceId: workspace.id,
@@ -260,14 +249,10 @@ describe("github workspace helpers", () => {
       headSha: "abc123",
       attempt: 1,
       threadId,
-      fields: {
-        workflowId: workflow?.id,
-      },
     });
 
     expect(run.status).toBe("pending");
     expect(run.threadId).toBe(threadId);
-    expect(run.workflowId).toBe(workflow?.id ?? null);
 
     const updatedRun = await upsertGithubWorkspaceRun({
       db,
@@ -278,7 +263,6 @@ describe("github workspace helpers", () => {
       threadId,
       fields: {
         status: "running",
-        workflowId: workflow?.id,
       },
     });
 
@@ -361,7 +345,7 @@ describe("github workspace helpers", () => {
     expect(persistedRun?.status).toBe("running");
   });
 
-  it("enforces workspace and run uniqueness plus workflow-thread consistency", async () => {
+  it("enforces workspace and run uniqueness", async () => {
     const {
       installationId,
       repoId,
@@ -396,21 +380,6 @@ describe("github workspace helpers", () => {
       db,
       userId: user.id,
     });
-    const secondThread = await createTestThread({
-      db,
-      userId: user.id,
-    });
-
-    const [workflow] = await db
-      .insert(schema.deliveryWorkflow)
-      .values({
-        threadId: firstThread.threadId,
-        generation: 1,
-        kind: "github_shadow_write",
-        stateJson: {},
-        userId: user.id,
-      })
-      .returning();
 
     await upsertGithubWorkspaceRun({
       db,
@@ -419,9 +388,6 @@ describe("github workspace helpers", () => {
       headSha: "abc123",
       attempt: 1,
       threadId: firstThread.threadId,
-      fields: {
-        workflowId: workflow?.id,
-      },
     });
 
     await expect(
@@ -433,16 +399,5 @@ describe("github workspace helpers", () => {
         threadId: firstThread.threadId,
       }),
     ).rejects.toThrow("duplicate key value violates unique constraint");
-
-    await expect(
-      db.insert(schema.githubWorkspaceRun).values({
-        workspaceId: workspace.id,
-        lane: "ci_repair",
-        headSha: "abc123",
-        attempt: 1,
-        threadId: secondThread.threadId,
-        workflowId: workflow?.id,
-      }),
-    ).rejects.toThrow("github_workspace_run_workflow_id_thread_id_fk");
   });
 });

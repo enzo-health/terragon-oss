@@ -1,0 +1,212 @@
+import * as z from "zod/v4";
+import { AIAgentSchema, AIModelSchema } from "./types";
+
+export const EVENT_ENVELOPE_VERSION = 2;
+
+export const EventIdSchema = z.string().min(1);
+export type EventId = z.infer<typeof EventIdSchema>;
+
+export const RunIdSchema = z.string().min(1);
+export type RunId = z.infer<typeof RunIdSchema>;
+
+export const ThreadIdSchema = z.string().min(1);
+export type ThreadId = z.infer<typeof ThreadIdSchema>;
+
+export const ThreadChatIdSchema = z.string().min(1);
+export type ThreadChatId = z.infer<typeof ThreadChatIdSchema>;
+
+export const MessageIdSchema = z.string().min(1);
+export type MessageId = z.infer<typeof MessageIdSchema>;
+
+export const ToolCallIdSchema = z.string().min(1);
+export type ToolCallId = z.infer<typeof ToolCallIdSchema>;
+
+export const SeqSchema = z.number().int().nonnegative();
+export type Seq = z.infer<typeof SeqSchema>;
+
+export const TimestampSchema = z.string().datetime();
+export type Timestamp = z.infer<typeof TimestampSchema>;
+
+export const EventCategorySchema = z.enum([
+  "operational",
+  "transcript",
+  "tool_lifecycle",
+  "reasoning",
+  "artifact",
+  "permission",
+  "meta",
+  "quarantine",
+]);
+export type EventCategory = z.infer<typeof EventCategorySchema>;
+
+const TransportModeSchema = z.enum(["legacy", "acp", "codex-app-server"]);
+export type TransportMode = z.infer<typeof TransportModeSchema>;
+
+export const BaseEventEnvelopeSchema = z
+  .object({
+    payloadVersion: z.literal(EVENT_ENVELOPE_VERSION),
+    eventId: EventIdSchema,
+    runId: RunIdSchema,
+    threadId: ThreadIdSchema,
+    threadChatId: ThreadChatIdSchema,
+    seq: SeqSchema,
+    timestamp: TimestampSchema,
+    idempotencyKey: z.string().min(1).optional(),
+  })
+  .strict();
+export type BaseEventEnvelope = z.infer<typeof BaseEventEnvelopeSchema>;
+
+export const OperationalRunStartedEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("operational"),
+  type: z.literal("run-started"),
+  agent: AIAgentSchema,
+  model: AIModelSchema.optional(),
+  parentRunId: RunIdSchema.nullable().optional(),
+  transportMode: TransportModeSchema,
+  protocolVersion: z.number().int().positive(),
+});
+export type OperationalRunStartedEvent = z.infer<
+  typeof OperationalRunStartedEventSchema
+>;
+
+export const OperationalRunTerminalEventSchema = BaseEventEnvelopeSchema.extend(
+  {
+    category: z.literal("operational"),
+    type: z.literal("run-terminal"),
+    status: z.enum(["completed", "failed", "stopped"]),
+    errorMessage: z.string().nullable().optional(),
+    errorCode: z.string().min(1).nullable().optional(),
+    headShaAtCompletion: z.string().min(1).nullable().optional(),
+  },
+);
+export type OperationalRunTerminalEvent = z.infer<
+  typeof OperationalRunTerminalEventSchema
+>;
+
+export const AssistantMessageEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("transcript"),
+  type: z.literal("assistant-message"),
+  messageId: MessageIdSchema,
+  content: z.string(),
+  model: AIModelSchema.optional(),
+  parentToolUseId: z.string().min(1).nullable().optional(),
+});
+export type AssistantMessageEvent = z.infer<typeof AssistantMessageEventSchema>;
+
+export const ToolCallStartEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("tool_lifecycle"),
+  type: z.literal("tool-call-start"),
+  toolCallId: ToolCallIdSchema,
+  name: z.string().min(1),
+  parameters: z.record(z.string(), z.unknown()),
+  parentToolUseId: z.string().min(1).nullable().optional(),
+});
+export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
+
+export const ToolCallResultEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("tool_lifecycle"),
+  type: z.literal("tool-call-result"),
+  toolCallId: ToolCallIdSchema,
+  result: z.string(),
+  isError: z.boolean(),
+  completedAt: TimestampSchema,
+});
+export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
+
+export const ToolCallProgressEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("tool_lifecycle"),
+  type: z.literal("tool-call-progress"),
+  toolCallId: ToolCallIdSchema,
+  delta: z.string(),
+  progressKind: z
+    .enum(["args", "stdout", "stderr", "status", "artifact"])
+    .optional(),
+});
+export type ToolCallProgressEvent = z.infer<typeof ToolCallProgressEventSchema>;
+
+export const ReasoningMessageEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("reasoning"),
+  type: z.literal("reasoning-message"),
+  messageId: MessageIdSchema,
+  content: z.string(),
+  model: AIModelSchema.optional(),
+});
+export type ReasoningMessageEvent = z.infer<typeof ReasoningMessageEventSchema>;
+
+export const PermissionRequestEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("permission"),
+  type: z.literal("permission-request"),
+  permissionRequestId: z.string().min(1),
+  toolCallId: ToolCallIdSchema.nullable().optional(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  options: z.array(z.enum(["approve", "deny"])).min(1),
+});
+export type PermissionRequestEvent = z.infer<
+  typeof PermissionRequestEventSchema
+>;
+
+export const PermissionResponseEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("permission"),
+  type: z.literal("permission-response"),
+  permissionRequestId: z.string().min(1),
+  response: z.enum(["approved", "denied"]),
+});
+export type PermissionResponseEvent = z.infer<
+  typeof PermissionResponseEventSchema
+>;
+
+export const ArtifactReferenceEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("artifact"),
+  type: z.literal("artifact-reference"),
+  artifactId: z.string().min(1),
+  artifactType: z.enum([
+    "diff",
+    "terminal",
+    "image",
+    "audio",
+    "resource-link",
+    "plan",
+    "log",
+  ]),
+  title: z.string().min(1),
+  uri: z.string().min(1).optional(),
+  status: z.enum(["pending", "ready", "failed"]),
+});
+export type ArtifactReferenceEvent = z.infer<
+  typeof ArtifactReferenceEventSchema
+>;
+
+export const MetaEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("meta"),
+  type: z.literal("meta"),
+  name: z.string().min(1),
+  value: z.record(z.string(), z.unknown()),
+});
+export type MetaEvent = z.infer<typeof MetaEventSchema>;
+
+export const UnknownProviderEventSchema = BaseEventEnvelopeSchema.extend({
+  category: z.literal("quarantine"),
+  type: z.literal("unknown-provider-event"),
+  provider: TransportModeSchema,
+  reason: z.string().min(1),
+  rawEventType: z.string().min(1).optional(),
+  redactedPayload: z.record(z.string(), z.unknown()),
+});
+export type UnknownProviderEvent = z.infer<typeof UnknownProviderEventSchema>;
+
+export const CanonicalEventSchema = z.union([
+  OperationalRunStartedEventSchema,
+  OperationalRunTerminalEventSchema,
+  AssistantMessageEventSchema,
+  ToolCallStartEventSchema,
+  ToolCallProgressEventSchema,
+  ToolCallResultEventSchema,
+  ReasoningMessageEventSchema,
+  PermissionRequestEventSchema,
+  PermissionResponseEventSchema,
+  ArtifactReferenceEventSchema,
+  MetaEventSchema,
+  UnknownProviderEventSchema,
+]);
+export type CanonicalEvent = z.infer<typeof CanonicalEventSchema>;

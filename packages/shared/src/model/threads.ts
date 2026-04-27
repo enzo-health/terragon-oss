@@ -141,7 +141,7 @@ async function getThreadsInner({
           'agent', ${schema.threadChat.agent},
           'status', ${schema.threadChat.status},
           'errorMessage', ${schema.threadChat.errorMessage}
-        ))
+        ) ORDER BY ${schema.threadChat.createdAt} DESC, ${schema.threadChat.id} DESC)
       `.as("threadChats"),
     })
     .from(schema.threadChat)
@@ -814,6 +814,7 @@ export async function updateThreadChat({
   threadChatId,
   updates,
   skipAppendMessagesInBroadcast = false,
+  skipBroadcast = false,
 }: {
   db: DB;
   userId: string;
@@ -821,7 +822,11 @@ export async function updateThreadChat({
   threadChatId: string;
   updates: Omit<ThreadChatInsert, "threadChatId" | "status">;
   skipAppendMessagesInBroadcast?: boolean;
-}) {
+  skipBroadcast?: boolean;
+}): Promise<{
+  chatSequence?: number;
+  broadcastData?: Parameters<typeof publishBroadcastUserMessage>[0];
+}> {
   let updatedAtIsoString: string | undefined;
   let chatSequence: number | undefined;
   let patchVersion: number | undefined;
@@ -939,7 +944,8 @@ export async function updateThreadChat({
     }
   });
   patchVersion = await getNextPatchVersion(threadChatId);
-  await publishBroadcastUserMessage({
+
+  const broadcastData: Parameters<typeof publishBroadcastUserMessage>[0] = {
     type: "user",
     id: userId,
     data: {
@@ -962,8 +968,19 @@ export async function updateThreadChat({
         },
       ],
     },
-  });
-  return null;
+  };
+
+  if (!skipBroadcast) {
+    await publishBroadcastUserMessage(broadcastData);
+    return {
+      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+    };
+  } else {
+    return {
+      ...(appendMessagesForPatch !== undefined ? { chatSequence } : {}),
+      broadcastData,
+    };
+  }
 }
 
 export async function updateThread({
@@ -1143,6 +1160,46 @@ export async function updateThreadChatStatusAtomic({
     });
   }
   return { didUpdateStatus };
+}
+
+/**
+ * Update terminal metadata fields only when the thread chat is already in a
+ * terminal status. This prevents freshness signals (updatedAt, patches) from
+ * being applied while the status surface is still non-terminal.
+ */
+export async function updateThreadChatTerminalMetadataIfTerminal({
+  db,
+  userId,
+  threadId,
+  threadChatId,
+  updates,
+}: {
+  db: DB;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  updates: Pick<
+    Omit<ThreadChatInsert, "threadChatId" | "status">,
+    "errorMessage" | "errorMessageInfo"
+  >;
+}): Promise<{ didUpdate: boolean }> {
+  const updateResult = await db
+    .update(schema.threadChat)
+    .set(updates)
+    .where(
+      and(
+        eq(schema.threadChat.id, threadChatId),
+        eq(schema.threadChat.threadId, threadId),
+        eq(schema.threadChat.userId, userId),
+        inArray(schema.threadChat.status, [
+          "working-done",
+          "working-error",
+          "complete",
+        ]),
+      ),
+    )
+    .returning({ id: schema.threadChat.id });
+  return { didUpdate: updateResult.length > 0 };
 }
 
 export async function deleteThreadById({

@@ -277,7 +277,7 @@ export async function restartDaemonIfNotRunning({
   console.log("Killing existing daemon");
   await sendKillMessage({ session });
   // Force-kill any remaining daemon processes to prevent accumulation across
-  // delivery-loop retries (graceful kill may silently fail when daemon is stuck)
+  // task retries (graceful kill may silently fail when daemon is stuck)
   await forceKillAllDaemonProcesses({ session });
   console.log("Starting daemon");
   await startDaemon({
@@ -382,7 +382,7 @@ async function sendKillMessage({ session }: { session: ISandboxSession }) {
 /**
  * Force-kill ALL terragon-daemon.mjs processes running in the sandbox using
  * pkill. This is a safety net that runs after the graceful `sendKillMessage`
- * attempt to prevent daemon process accumulation across delivery-loop retries.
+ * attempt to prevent daemon process accumulation across task retries.
  *
  * We use `|| true` so the command exits 0 even when pkill finds no processes
  * (exit code 1 would cause session.runCommand to throw in some providers).

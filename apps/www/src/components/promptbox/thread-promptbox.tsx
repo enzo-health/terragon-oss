@@ -1,23 +1,29 @@
 "use client";
 
+import { AIAgent, AIModel } from "@terragon/agent/types";
+import { ensureAgent } from "@terragon/agent/utils";
+import type { BootingSubstatus } from "@terragon/sandbox/types";
+import {
+  DBUserMessage,
+  GithubCheckStatus,
+  GithubPRStatus,
+  ThreadStatus,
+} from "@terragon/shared";
 import dynamic from "next/dynamic";
-import React, { useMemo, useState, useImperativeHandle } from "react";
-import { usePromptBox, HandleSubmit, HandleStop } from "./use-promptbox";
-import { useRepositoryCache } from "./typeahead/repository-cache";
+import React, {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import {
   isAgentStoppable,
   isAgentWorking,
   isPreSandboxStatus,
 } from "@/agent/thread-status";
-import {
-  ThreadStatus,
-  DBUserMessage,
-  GithubPRStatus,
-  GithubCheckStatus,
-} from "@terragon/shared";
-import { AIAgent, AIModel } from "@terragon/agent/types";
 import { SimplePromptBox } from "./simple-promptbox";
-import { ensureAgent } from "@terragon/agent/utils";
+import { useRepositoryCache } from "./typeahead/repository-cache";
+import { HandleStop, HandleSubmit, usePromptBox } from "./use-promptbox";
 
 const QueuedMessages = dynamic(
   () => import("./queued-messages").then((mod) => mod.QueuedMessages),
@@ -41,6 +47,8 @@ interface ThreadPromptBoxProps {
   threadId: string;
   threadChatId: string;
   sandboxId: string | null;
+  runStarted?: boolean;
+  bootingSubstatus?: BootingSubstatus | null;
   status: ThreadStatus | null;
   repoFullName: string;
   branchName: string;
@@ -51,11 +59,83 @@ interface ThreadPromptBoxProps {
   agentVersion: number;
   lastUsedModel: AIModel | null;
   permissionMode?: "allowAll" | "plan";
+  onPermissionModeChange?: (mode: "allowAll" | "plan") => void;
   handleStop: HandleStop;
   handleSubmit: HandleSubmit;
   queuedMessages: DBUserMessage[] | null;
   handleQueueMessage: HandleSubmit;
   onUpdateQueuedMessage: (messages: DBUserMessage[]) => void;
+}
+
+export const WORKING_QUEUE_PLACEHOLDER =
+  "Queue a message to send when agent is done";
+
+export function getBootingPlaceholder(
+  bootingSubstatus: BootingSubstatus | null | undefined,
+  status: ThreadStatus | null,
+): string {
+  switch (bootingSubstatus) {
+    case "provisioning":
+    case "provisioning-done":
+      return "Provisioning machine...";
+    case "cloning-repo":
+      return "Cloning repository...";
+    case "installing-agent":
+      return "Installing agent...";
+    case "running-setup-script":
+      return "Configuring environment...";
+    case "booting-done":
+      return "Waiting for assistant to start...";
+    default:
+      if (status === "booting") {
+        return "Waiting for assistant to start...";
+      }
+      if (
+        status === "queued" ||
+        status === "queued-blocked" ||
+        status === "queued-sandbox-creation-rate-limit" ||
+        status === "queued-tasks-concurrency" ||
+        status === "queued-agent-rate-limit"
+      ) {
+        return "Waiting in queue...";
+      }
+      return "Sandbox is provisioning...";
+  }
+}
+
+export function shouldShowPreSandboxPlaceholder(params: {
+  status: ThreadStatus | null;
+  sandboxId: string | null;
+  runStarted: boolean;
+}): boolean {
+  const { status, sandboxId, runStarted } = params;
+  return (
+    status !== null &&
+    isPreSandboxStatus(status) &&
+    sandboxId === null &&
+    !runStarted
+  );
+}
+
+export function getThreadPromptPlaceholder(params: {
+  placeholder?: string;
+  bootingSubstatus: BootingSubstatus | null | undefined;
+  status: ThreadStatus | null;
+  sandboxId: string | null;
+  runStarted: boolean;
+}): string {
+  const { placeholder, bootingSubstatus, status, sandboxId, runStarted } =
+    params;
+  if (placeholder != null) {
+    return placeholder;
+  }
+  if (shouldShowPreSandboxPlaceholder({ status, sandboxId, runStarted })) {
+    return getBootingPlaceholder(bootingSubstatus, status);
+  }
+  if (status !== null && isAgentWorking(status)) {
+    return WORKING_QUEUE_PLACEHOLDER;
+  }
+  return "Type your message here...";
 }
 
 export const ThreadPromptBox = React.forwardRef<
@@ -70,20 +150,20 @@ export const ThreadPromptBox = React.forwardRef<
   });
   const forcedAgent = ensureAgent(props.agent);
   const placeholderText = useMemo(() => {
-    if (props.placeholder != null) {
-      return props.placeholder;
-    }
-    // "Provisioning" should only appear before the sandbox boots. After that,
-    // the server knows a sandbox exists even if the client prop hasn't been
-    // updated yet (e.g. broadcast race, stale props).
-    if (props.status !== null && isPreSandboxStatus(props.status)) {
-      return "Sandbox is provisioning...";
-    }
-    if (props.status !== null && isAgentWorking(props.status)) {
-      return "Queue a message to send when agent is done";
-    }
-    return "Type your message here...";
-  }, [props.placeholder, props.status]);
+    return getThreadPromptPlaceholder({
+      placeholder: props.placeholder,
+      bootingSubstatus: props.bootingSubstatus,
+      status: props.status,
+      sandboxId: props.sandboxId,
+      runStarted: !!props.runStarted,
+    });
+  }, [
+    props.bootingSubstatus,
+    props.placeholder,
+    props.runStarted,
+    props.sandboxId,
+    props.status,
+  ]);
 
   const shouldQueue = !!props.status && isAgentWorking(props.status);
   const {
@@ -119,6 +199,13 @@ export const ThreadPromptBox = React.forwardRef<
   });
 
   const finalIsSubmitDisabled = isSubmitDisabled;
+  const handlePermissionModeChange = useCallback(
+    (mode: "allowAll" | "plan") => {
+      setPermissionMode(mode);
+      props.onPermissionModeChange?.(mode);
+    },
+    [props.onPermissionModeChange, setPermissionMode],
+  );
 
   const showStopButton =
     props.threadId &&
@@ -134,10 +221,10 @@ export const ThreadPromptBox = React.forwardRef<
         editor?.commands.focus();
       },
       setPermissionMode: (mode: "allowAll" | "plan") => {
-        setPermissionMode(mode);
+        handlePermissionModeChange(mode);
       },
     }),
-    [editor, setPermissionMode],
+    [editor, handlePermissionModeChange],
   );
 
   return (
@@ -185,7 +272,7 @@ export const ThreadPromptBox = React.forwardRef<
         forcedAgentVersion={props.agentVersion}
         typeahead={repositoryCache}
         permissionMode={permissionMode}
-        onPermissionModeChange={setPermissionMode}
+        onPermissionModeChange={handlePermissionModeChange}
       />
     </div>
   );

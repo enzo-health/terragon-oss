@@ -1,8 +1,6 @@
-import { toDBMessage } from "@/agent/msg/toDBMessage";
-import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
-import { db } from "@/lib/db";
 import { ClaudeMessage } from "@terragon/daemon/shared";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import { publicAppUrl } from "@terragon/env/next-public";
+import { extendSandboxLife } from "@terragon/sandbox";
 import {
   DBMessage,
   DBSystemMessage,
@@ -10,69 +8,53 @@ import {
   ThreadChatInsert,
   ThreadStatus,
 } from "@terragon/shared";
-import { isQueuedStatus } from "@/agent/thread-status";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
+  updateThread,
+  updateThreadChat,
 } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
+import {
+  parseClaudeOAuthTokenRevokedMessage,
+  parseClaudeOverloadedMessage,
+  parseClaudePromptTooLongMessage,
+  parseClaudeRateLimitMessage,
+  parseClaudeRateLimitMessageStr,
+  parseCodexErrorMessage,
+  parseCodexRateLimitMessage,
+  parseContextWindowExhausted,
+} from "@/agent/msg/helpers";
+import { toDBMessage } from "@/agent/msg/toDBMessage";
 import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import { extendSandboxLife } from "@terragon/sandbox";
+import { isQueuedStatus } from "@/agent/thread-status";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { db } from "@/lib/db";
+import { getPendingToolCallErrorMessages } from "@/lib/db-message-helpers";
+import { getPostHogServer } from "@/lib/posthog-server";
+import { redis } from "@/lib/redis";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import {
   internalPOST,
   isAnthropicDownPOST,
 } from "@/server-lib/internal-request";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import {
-  parseClaudeOverloadedMessage,
-  parseClaudePromptTooLongMessage,
-  parseContextWindowExhausted,
-  parseClaudeRateLimitMessage,
-  parseClaudeRateLimitMessageStr,
-  parseCodexErrorMessage,
-  parseCodexRateLimitMessage,
-  parseClaudeOAuthTokenRevokedMessage,
-} from "@/agent/msg/helpers";
-import { getEligibleQueuedThreadChats } from "./process-queued-thread";
-import { trackUsageEvents } from "./usage-events";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { compactThreadChat } from "./compact";
 import {
   emitLinearActivitiesForDaemonEvent,
   updateAgentSession,
 } from "./linear-agent-activity";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { refreshLinearTokenIfNeeded } from "./linear-oauth";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
-import type { DeliveryLoopFailureCategory } from "@terragon/shared/delivery-loop/domain/failure";
-import { publicAppUrl } from "@terragon/env/next-public";
-import { redis } from "@/lib/redis";
-import {
-  evaluateRetryDecision,
-  resetRetryCounter,
-} from "@/server-lib/delivery-loop/retry-policy";
-import { classifyDaemonEventError } from "@/server-lib/delivery-loop/adapters/shared";
-import { hashFailureMessage } from "@terragon/shared/delivery-loop/domain/failure-signature";
-import { DELIVERY_LOOP_FAILURE_ACTION_TABLE } from "@terragon/shared/delivery-loop/domain/failure";
-import * as schema from "@terragon/shared/db/schema";
-import { and, eq } from "drizzle-orm";
-
-/** Workflow states eligible for auto-retry on generic agent error (v2 + v3). */
-const SDLC_AUTO_RETRY_PHASES: ReadonlySet<string> = new Set([
-  "implementing",
-  "gating",
-  "babysitting",
-  // v3 state names
-  "gating_review",
-  "gating_ci",
-]);
+import { getEligibleQueuedThreadChats } from "./process-queued-thread";
+import { trackUsageEvents } from "./usage-events";
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
@@ -158,57 +140,6 @@ async function maybeTrackFirstAssistantLatency({
   }
 }
 
-function isFailureRetryable(
-  failureCategory: DeliveryLoopFailureCategory,
-): boolean {
-  const retryAction =
-    DELIVERY_LOOP_FAILURE_ACTION_TABLE[
-      failureCategory as keyof typeof DELIVERY_LOOP_FAILURE_ACTION_TABLE
-    ];
-  return retryAction !== "blocked";
-}
-
-function buildFailureMetadata({
-  isError,
-  terminalReason,
-  failureCategory,
-  failureSource,
-  failureSignatureSource,
-}: {
-  isError: boolean;
-  terminalReason: string | null;
-  failureCategory: DeliveryLoopFailureCategory | null;
-  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
-  failureSignatureSource: string | null;
-}): {
-  failureCategory: DeliveryLoopFailureCategory | null;
-  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
-  failureRetryable: boolean | null;
-  failureSignatureHash: number | null;
-  failureTerminalReason: string | null;
-} {
-  if (!isError) {
-    return {
-      failureCategory: null,
-      failureSource: null,
-      failureRetryable: null,
-      failureSignatureHash: null,
-      failureTerminalReason: null,
-    };
-  }
-  return {
-    failureCategory,
-    failureSource,
-    failureRetryable:
-      failureCategory != null ? isFailureRetryable(failureCategory) : null,
-    failureSignatureHash:
-      failureSignatureSource != null
-        ? hashFailureMessage(failureSignatureSource)
-        : null,
-    failureTerminalReason: terminalReason,
-  };
-}
-
 export async function handleDaemonEvent({
   messages,
   threadId,
@@ -218,7 +149,9 @@ export async function handleDaemonEvent({
   contextUsage,
   runId,
   runContext = null,
-  workflowId = null,
+  deferTerminalTransitionToRoute = false,
+  suppressTerminalRecoverySideEffects = false,
+  skipThreadChatPersistence = false,
 }: {
   messages: ClaudeMessage[];
   threadId: string;
@@ -228,7 +161,27 @@ export async function handleDaemonEvent({
   contextUsage: number | null;
   runId?: string;
   runContext?: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null;
-  workflowId?: string | null;
+  /**
+   * When true, terminal batches persist transcript messages but do NOT commit
+   * any terminal status/metadata updates to thread_chat. The daemon-event route
+   * finalizes terminal status across thread_chat + agent_run_context in a
+   * fail-closed fenced transition.
+   */
+  deferTerminalTransitionToRoute?: boolean;
+  /**
+   * When true, terminal batches remain transcript projections only: no
+   * auto-compact, retry-system-message, or queued Continue side effects. The
+   * daemon-event route uses this with
+   * `deferTerminalTransitionToRoute` after run-context CAS wins.
+   */
+  suppressTerminalRecoverySideEffects?: boolean;
+  /**
+   * When true, do not mutate thread_chat or thread status (messages, updatedAt,
+   * status transitions). Used by the daemon-event route for terminal-only
+   * payloads where we need a fenced, retry-safe terminal transition contract
+   * across thread_chat + agent_run_context.
+   */
+  skipThreadChatPersistence?: boolean;
 }) {
   console.log(
     "Daemon event",
@@ -264,7 +217,11 @@ export async function handleDaemonEvent({
       );
     }
     await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
-    return { success: true };
+    return {
+      success: true,
+      threadChatMessageSeq: null,
+      terminalRecoveryQueued: false,
+    };
   }
 
   const [threadChat, thread] = await Promise.all([
@@ -313,12 +270,6 @@ export async function handleDaemonEvent({
   let isPromptTooLong = false;
   let customErrorMessage: string | null = null;
   let isOAuthTokenRevoked = false;
-  let terminalFailureSource:
-    | "custom-error"
-    | "result"
-    | "custom-stop"
-    | "unknown"
-    | null = null;
   for (const message of messages) {
     if (message.type === "custom-stop") {
       isStop = true;
@@ -328,7 +279,6 @@ export async function handleDaemonEvent({
       isError = true;
       customErrorMessage = message.error_info ?? null;
       durationMs = message.duration_ms ?? 0;
-      terminalFailureSource = "custom-error";
     }
     if (message.type === "result") {
       isDone = true;
@@ -337,7 +287,6 @@ export async function handleDaemonEvent({
       if (message.is_error) {
         isError = true;
         customErrorMessage = "error" in message ? message.error : null;
-        terminalFailureSource = "result";
       }
       if (threadChat.agent === "claudeCode") {
         const rateLimitResult = parseClaudeRateLimitMessage({
@@ -357,7 +306,6 @@ export async function handleDaemonEvent({
         if (promptTooLongResult) {
           isPromptTooLong = true;
           isError = true;
-          terminalFailureSource = "result";
         }
 
         const oauthTokenRevokedResult =
@@ -365,7 +313,6 @@ export async function handleDaemonEvent({
         if (oauthTokenRevokedResult) {
           isOAuthTokenRevoked = true;
           isError = true;
-          terminalFailureSource = "result";
         }
       }
       if (threadChat.agent === "codex") {
@@ -380,7 +327,6 @@ export async function handleDaemonEvent({
         if (maybeCodexErrorMessage) {
           isError = true;
           customErrorMessage = maybeCodexErrorMessage;
-          terminalFailureSource = "result";
         }
       }
       // Agent-agnostic context window exhaustion check (catches Codex
@@ -388,7 +334,6 @@ export async function handleDaemonEvent({
       if (!isPromptTooLong && parseContextWindowExhausted(message)) {
         isPromptTooLong = true;
         isError = true;
-        terminalFailureSource = "result";
       }
     }
     // Also check custom-error messages for context window exhaustion
@@ -397,7 +342,6 @@ export async function handleDaemonEvent({
       parseContextWindowExhausted(message)
     ) {
       isPromptTooLong = true;
-      terminalFailureSource = "custom-error";
     }
     if (message.type === "assistant") {
       if (threadChat.agent === "claudeCode") {
@@ -555,13 +499,14 @@ export async function handleDaemonEvent({
       properties: {
         threadId,
         errorType: threadChatUpdates.errorMessage,
-        failureCategory: classifyDaemonEventError(customErrorMessage),
       },
     });
   }
 
   // Check if we should auto-compact when we get a prompt-too-long error
-  if (isPromptTooLong) {
+  const allowTerminalRecoverySideEffects = !suppressTerminalRecoverySideEffects;
+
+  if (isPromptTooLong && allowTerminalRecoverySideEffects) {
     const shouldAutoCompact = await getFeatureFlagForUser({
       db,
       userId,
@@ -647,7 +592,7 @@ export async function handleDaemonEvent({
   }
 
   // Handle OAuth token revoked error with automatic retry
-  if (isOAuthTokenRevoked) {
+  if (isOAuthTokenRevoked && allowTerminalRecoverySideEffects) {
     console.log(`OAuth token revoked error detected, checking for retry`, {
       threadId,
       threadChatId: threadChat.id,
@@ -727,169 +672,19 @@ export async function handleDaemonEvent({
     }
   }
 
-  // Handle SDLC-aware error recovery: auto-retry generic errors during active SDLC phases.
-  if (isError && !isRateLimited && !isPromptTooLong && !isOAuthTokenRevoked) {
-    try {
-      let sdlcPhase: string | null = null;
-      const effectiveWorkflowId = runContext?.workflowId ?? workflowId;
-      if (effectiveWorkflowId) {
-        const { getWorkflowHead } = await import(
-          "@/server-lib/delivery-loop/v3/store"
-        );
-        const v3Head = await getWorkflowHead({
-          db,
-          workflowId: effectiveWorkflowId,
-        });
-        if (!v3Head) {
-          throw new Error(`No v3 head for workflow ${effectiveWorkflowId}`);
-        }
-        const persistedRunSeq = runContext?.runSeq ?? null;
-        if (
-          persistedRunSeq != null &&
-          v3Head.activeRunSeq !== persistedRunSeq
-        ) {
-          console.log(
-            "[handle-daemon-event] skipping SDLC auto-retry for stale terminal event",
-            {
-              threadId,
-              threadChatId: threadChat.id,
-              runId,
-              workflowId: effectiveWorkflowId,
-              persistedRunSeq,
-              activeRunSeq: v3Head.activeRunSeq,
-            },
-          );
-        } else {
-          sdlcPhase = v3Head.state;
-        }
-      }
-
-      const failureCategory = classifyDaemonEventError(customErrorMessage);
-
-      if (sdlcPhase && SDLC_AUTO_RETRY_PHASES.has(sdlcPhase)) {
-        console.log(
-          `SDLC error recovery: active loop in phase "${sdlcPhase}", failureCategory="${failureCategory}", checking for retry`,
-          { threadId, threadChatId: threadChat.id, failureCategory },
-        );
-
-        const retryDecision = await evaluateRetryDecision({
-          threadChatId: threadChat.id,
-          failureCategory,
-        });
-
-        if (!retryDecision.shouldRetry) {
-          console.log(
-            `SDLC error retry denied: ${retryDecision.reason}, action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}`,
-            { threadId, threadChatId: threadChat.id, failureCategory },
-          );
-        } else {
-          console.log(
-            `SDLC error retry approved: action="${retryDecision.action}", attempt=${retryDecision.attempt}/${retryDecision.maxAttempts}, backoffMs=${retryDecision.backoffMs}`,
-            { threadId, threadChatId: threadChat.id, failureCategory },
-          );
-
-          // Add a system message about the retry
-          const sdlcErrorRetryMessage: DBSystemMessage = {
-            type: "system",
-            message_type: "sdlc-error-retry",
-            parts: [],
-            timestamp: new Date().toISOString(),
-          };
-
-          if (!threadChatUpdates.appendMessages) {
-            threadChatUpdates.appendMessages = [];
-          }
-          threadChatUpdates.appendMessages.push(sdlcErrorRetryMessage);
-
-          // Queue a "Continue" message to restart the agent
-          const continueMessage: DBUserMessage = {
-            type: "user",
-            model: null,
-            parts: [{ type: "text", text: "Continue" }],
-            timestamp: new Date().toISOString(),
-          };
-          threadChatUpdates.appendQueuedMessages = [continueMessage];
-
-          // Clear the error since we've handled it with retry
-          threadChatUpdates.errorMessage = null;
-          threadChatUpdates.errorMessageInfo = null;
-
-          // Force a fresh session to avoid stale session issues
-          threadChatUpdates.sessionId = null;
-
-          // Mark that we've recovered from the error and the thread is done
-          isError = false;
-          isDone = true;
-
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "sdlc_error_retry",
-            properties: {
-              threadId,
-              sdlcPhase: sdlcPhase,
-              failureCategory,
-              retryAction: retryDecision.action,
-              attempt: retryDecision.attempt,
-              maxAttempts: retryDecision.maxAttempts,
-            },
-          });
-        }
-      }
-    } catch (sdlcLookupError) {
-      console.error(
-        "Delivery Loop error recovery lookup failed, falling through to normal error path",
-        { threadId, error: sdlcLookupError },
-      );
-    }
-  }
-
-  const failureMetadata = buildFailureMetadata({
-    isError,
-    terminalReason: threadChatUpdates.errorMessage ?? null,
-    failureCategory: isError
-      ? classifyDaemonEventError(customErrorMessage)
-      : null,
-    failureSource: isError ? terminalFailureSource : null,
-    failureSignatureSource:
-      isError && customErrorMessage ? customErrorMessage : null,
-  });
-  if (runId) {
-    waitUntil(
-      db
-        .update(schema.agentRunContext)
-        .set({
-          failureCategory: failureMetadata.failureCategory,
-          failureSource: failureMetadata.failureSource,
-          failureRetryable: failureMetadata.failureRetryable,
-          failureSignatureHash: failureMetadata.failureSignatureHash,
-          failureTerminalReason: failureMetadata.failureTerminalReason,
-        })
-        .where(
-          and(
-            eq(schema.agentRunContext.runId, runId),
-            eq(schema.agentRunContext.userId, userId),
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[handle-daemon-event] failed to persist run failure metadata",
-            {
-              threadId,
-              threadChatId: threadChat.id,
-              runId,
-              error,
-            },
-          );
-        }),
-    );
-  }
+  // NOTE: agent_run_context terminal/failure metadata is persisted by the
+  // /api/daemon-event route as part of the fenced terminal transition.
 
   // Emit Linear agent activities for linear-sourced threads (fn-2+).
   // NOTE: Placed after all auto-recovery blocks (auto-compact, OAuth retry) so that
   // isDone/isError reflect the post-recovery state.
   // Terminal activities are suppressed when the recovery path queued a "Continue"
   // (appendQueuedMessages) — in that case the session is continuing, not finishing.
-  if (thread.sourceType === "linear-mention" && thread.sourceMetadata != null) {
+  if (
+    !suppressTerminalRecoverySideEffects &&
+    thread.sourceType === "linear-mention" &&
+    thread.sourceMetadata != null
+  ) {
     const linearMeta = thread.sourceMetadata as Extract<
       ThreadSourceMetadata,
       { type: "linear-mention" }
@@ -919,20 +714,19 @@ export async function handleDaemonEvent({
     }
   }
 
+  if (skipThreadChatPersistence) {
+    return {
+      success: true,
+      threadChatMessageSeq: null,
+      terminalRecoveryQueued: false,
+    };
+  }
+
   // Check if we should skip checkpoint when done
   let shouldSkipCheckpoint = false;
   if (isDone && !isError) {
     // Source of truth is the thread setting
     shouldSkipCheckpoint = isStop || !!thread.disableGitCheckpointing;
-
-    // Reset retry counter on successful completion so the next error cycle
-    // starts fresh.
-    resetRetryCounter(threadChat.id).catch((err) =>
-      console.warn("Failed to reset retry counter", {
-        threadChatId: threadChat.id,
-        error: err,
-      }),
-    );
   }
 
   // Pre-broadcast: send messages to clients immediately before DB write.
@@ -962,30 +756,68 @@ export async function handleDaemonEvent({
     });
   }
 
+  const shouldDeferTerminalTransition =
+    deferTerminalTransitionToRoute && isThreadFinished;
+
+  // Defer terminal metadata updates to the fenced route transition so we never
+  // write "terminal-ish" fields while status surfaces can still be stale.
+  if (shouldDeferTerminalTransition) {
+    threadChatUpdates.errorMessage = null;
+    threadChatUpdates.errorMessageInfo = null;
+  }
+
   let didUpdateStatus: boolean;
+  let threadChatMessageSeq: number | null = null;
+  let broadcastData:
+    | Parameters<typeof publishBroadcastUserMessage>[0]
+    | undefined;
   try {
-    const result = await updateThreadChatWithTransition({
-      userId,
-      threadId,
-      threadChatId: threadChat.id,
-      markAsUnread: isDone || isError,
-      updates: { bootingSubstatus: null },
-      chatUpdates: threadChatUpdates,
-      eventType: isStop
-        ? "assistant.message_stop"
-        : isRateLimited && rateLimitResetTime
-          ? "system.agent-rate-limit"
-          : isError
-            ? "assistant.message_error"
-            : isDone && shouldSkipCheckpoint
-              ? "assistant.message_done_skip_checkpoint"
-              : isDone
-                ? "assistant.message_done"
-                : "assistant.message",
-      rateLimitResetTime,
-      skipAppendMessagesInBroadcast: !!hasPreviewMessages,
-    });
-    didUpdateStatus = result.didUpdateStatus;
+    if (shouldDeferTerminalTransition) {
+      await updateThread({
+        db,
+        userId,
+        threadId,
+        updates: { bootingSubstatus: null },
+      });
+      const chatUpdateResult = await updateThreadChat({
+        db,
+        userId,
+        threadId,
+        threadChatId: threadChat.id,
+        updates: threadChatUpdates,
+        skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+        skipBroadcast: true,
+      });
+      didUpdateStatus = false;
+      threadChatMessageSeq = chatUpdateResult.chatSequence ?? null;
+      broadcastData = chatUpdateResult.broadcastData;
+    } else {
+      const result = await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId: threadChat.id,
+        markAsUnread: isDone || isError,
+        updates: { bootingSubstatus: null },
+        chatUpdates: threadChatUpdates,
+        eventType: isStop
+          ? "assistant.message_stop"
+          : isRateLimited && rateLimitResetTime
+            ? "system.agent-rate-limit"
+            : isError
+              ? "assistant.message_error"
+              : isDone && shouldSkipCheckpoint
+                ? "assistant.message_done_skip_checkpoint"
+                : isDone
+                  ? "assistant.message_done"
+                  : "assistant.message",
+        rateLimitResetTime,
+        skipAppendMessagesInBroadcast: !!hasPreviewMessages,
+        skipBroadcast: true, // Async broadcast for faster response
+      });
+      didUpdateStatus = result.didUpdateStatus;
+      threadChatMessageSeq = result.chatSequence ?? null;
+      broadcastData = result.broadcastData;
+    }
   } catch (dbError) {
     // DB write failed after pre-broadcast — tell client to refetch
     // so it doesn't keep stale optimistic messages.
@@ -1012,6 +844,18 @@ export async function handleDaemonEvent({
     }
     throw dbError;
   }
+
+  // Async broadcast for faster response (~30ms improvement)
+  if (broadcastData) {
+    waitUntil(
+      publishBroadcastUserMessage(broadcastData).catch((error) => {
+        console.warn("[handle-daemon-event] async broadcast failed", {
+          threadId,
+          error,
+        });
+      }),
+    );
+  }
   if (isThreadFinished && didUpdateStatus) {
     // TODO this should block queueing up new threads.
     waitUntil(
@@ -1030,7 +874,12 @@ export async function handleDaemonEvent({
       }),
     );
   }
-  return { success: true };
+  return {
+    success: true,
+    threadChatMessageSeq,
+    terminalRecoveryQueued:
+      (threadChatUpdates.appendQueuedMessages?.length ?? 0) > 0,
+  };
 }
 
 async function handleThreadFinish({

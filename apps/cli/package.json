@@ -29,7 +29,6 @@
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "node-fetch": "^3.3.2",
-    "pg": "^8.11.0",
     "react": "19.1.2",
     "update-notifier": "^7.3.1"
   },
@@ -37,7 +36,6 @@
     "@terragon/agent": "workspace:*",
     "@terragon/cli-api-contract": "workspace:*",
     "@types/node": "^22.6.1",
-    "@types/pg": "^8.11.0",
     "@types/react": "^19.1.8",
     "@types/update-notifier": "^6.0.8",
     "dotenv": "^16.5.0",

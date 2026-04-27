@@ -8,10 +8,27 @@ import { ansiToHtml } from "./tools/utils";
 
 const ERROR_TYPES_THAT_HIDE_RETRY_BUTTON = new Set<ThreadErrorType>([
   "no-user-message",
-  "request-timeout",
-  "unknown-error",
   "prompt-too-long",
 ]);
+
+/**
+ * Error types that originate from the sandbox boot / connect pipeline.
+ * Used to suppress the "Assistant is working" footer when one of these is
+ * the latest error on the thread: the sandbox clearly is NOT running and
+ * showing two contradictory signals confuses users.
+ */
+const SANDBOX_ERROR_TYPES = new Set<ThreadErrorType>([
+  "sandbox-not-found",
+  "sandbox-creation-failed",
+  "sandbox-resume-failed",
+]);
+
+export function isSandboxErrorType(
+  errorType: string | null | undefined,
+): boolean {
+  if (!errorType) return false;
+  return SANDBOX_ERROR_TYPES.has(errorType as ThreadErrorType);
+}
 
 export function ChatError({
   errorType,
@@ -47,6 +64,7 @@ export function ChatError({
             variant="ghost"
             className="size-6 hover:bg-transparent hover:text-foreground flex-shrink-0"
             title="Retry"
+            aria-label="Retry"
             disabled={isRetrying}
           >
             {isRetrying ? (
@@ -242,7 +260,15 @@ function ChatContent({
     }
     case "request-timeout": {
       return (
-        <ChatErrorContentsWithPre header="Request timed out" errorStr={null} />
+        <ChatErrorContents
+          header="Request timed out"
+          body={
+            <>
+              The request took too long to complete. This is usually transient —
+              retry to try again.
+            </>
+          }
+        />
       );
     }
     case "no-user-message": {
@@ -254,31 +280,96 @@ function ChatContent({
       );
     }
     case "unknown-error": {
+      // Keep the honest default: we don't have finer classification for
+      // this bucket, so the friendliest thing we can do is stop pretending
+      // we know what happened and offer a retry.
       return (
-        <ChatErrorContentsWithPre header="Unknown Error" errorStr={errorInfo} />
+        <ChatErrorContents
+          header="Something went wrong"
+          body={
+            <>
+              We couldn&apos;t complete the request. Retry to try again.
+              {errorInfo ? (
+                <details className="mt-2 text-muted-foreground/80">
+                  <summary className="cursor-pointer select-none">
+                    Details
+                  </summary>
+                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
+                    {errorInfo}
+                  </pre>
+                </details>
+              ) : null}
+            </>
+          }
+        />
       );
     }
     case "sandbox-not-found": {
       return (
-        <ChatErrorContentsWithPre
-          header="Sandbox not found"
-          errorStr={errorInfo}
+        <ChatErrorContents
+          header="Couldn't connect to sandbox"
+          body={
+            <>
+              The sandbox for this task is no longer available. Retry to
+              provision a fresh sandbox and continue.
+            </>
+          }
         />
       );
     }
     case "sandbox-creation-failed": {
       return (
-        <ChatErrorContentsWithPre
-          header="Sandbox creation failed"
-          errorStr={errorInfo}
+        <ChatErrorContents
+          header="Couldn't start sandbox"
+          body={
+            <>
+              We couldn&apos;t create a sandbox for this task. This is usually a
+              transient provider issue — retry to try again. If it keeps
+              failing, check the{" "}
+              <Link
+                href="https://isanthropicdown.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:no-underline"
+              >
+                status page
+              </Link>
+              .
+              {errorInfo ? (
+                <details className="mt-2 text-muted-foreground/80">
+                  <summary className="cursor-pointer select-none">
+                    Details
+                  </summary>
+                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
+                    {errorInfo}
+                  </pre>
+                </details>
+              ) : null}
+            </>
+          }
         />
       );
     }
     case "sandbox-resume-failed": {
       return (
-        <ChatErrorContentsWithPre
-          header="Sandbox failed to start"
-          errorStr={errorInfo}
+        <ChatErrorContents
+          header="Couldn't resume sandbox"
+          body={
+            <>
+              The sandbox failed to come back online. Retry to create a fresh
+              one and continue where you left off.
+              {errorInfo ? (
+                <details className="mt-2 text-muted-foreground/80">
+                  <summary className="cursor-pointer select-none">
+                    Details
+                  </summary>
+                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
+                    {errorInfo}
+                  </pre>
+                </details>
+              ) : null}
+            </>
+          }
         />
       );
     }

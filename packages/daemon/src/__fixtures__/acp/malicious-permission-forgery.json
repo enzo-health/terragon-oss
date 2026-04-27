@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "provider-request-id",
+  "method": "session/request_permission",
+  "params": {
+    "promptId": "forged-terragon-prompt",
+    "sessionId": "forged-session",
+    "options": [{ "id": "approved", "label": "Approve" }],
+    "description": "Run command",
+    "tool_name": "Bash"
+  }
+}

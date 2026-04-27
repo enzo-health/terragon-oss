@@ -1,16 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { DBMessage } from "@terragon/shared";
 import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { Check, Copy, ExternalLink } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "../../ui/button";
+import { useSecondaryPanel } from "../hooks";
+import { findArtifactDescriptorForPart } from "../secondary-panel";
+import type { PromptBoxRef } from "../thread-context";
 import { GenericToolPart } from "./generic-ui";
 import { resolvePlanText } from "./plan-utils";
-import { Button } from "../../ui/button";
-import { Check, Copy, ExternalLink } from "lucide-react";
-import type { DBMessage } from "@terragon/shared";
-import { PromptBoxRef } from "../thread-context";
-import { toast } from "sonner";
-import { usePlanApproval, useSecondaryPanel } from "../hooks";
-import { findArtifactDescriptorForPart } from "../secondary-panel";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
 
 export function truncateAtWordBoundary(text: string, maxChars = 300): string {
   if (text.length <= maxChars) return text;
@@ -22,11 +21,7 @@ export function truncateAtWordBoundary(text: string, maxChars = 300): string {
 
 export function ExitPlanModeTool({
   toolPart,
-  threadId,
-  threadChatId,
   messages,
-  isReadOnly,
-  promptBoxRef,
   artifactDescriptors = [],
   onOpenArtifact,
 }: {
@@ -36,6 +31,7 @@ export function ExitPlanModeTool({
   messages: DBMessage[];
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 }) {
@@ -63,15 +59,6 @@ export function ExitPlanModeTool({
   );
   const [copied, setCopied] = useState(false);
 
-  const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
-    threadId,
-    threadChatId,
-    isReadOnly,
-    promptBoxRef,
-    toolPartId: toolPart.id,
-    messages,
-  });
-
   const handleCopy = async () => {
     if (copied) {
       return;
@@ -96,14 +83,9 @@ export function ExitPlanModeTool({
     }
   };
 
-  const planViewModel = useMemo(
-    () => (plan ? parsePlanSpecViewModelFromText(plan) : null),
-    [plan],
-  );
-
   const freeFormPreview = useMemo(
-    () => (plan && !planViewModel ? truncateAtWordBoundary(plan) : null),
-    [plan, planViewModel],
+    () => (plan ? truncateAtWordBoundary(plan) : null),
+    [plan],
   );
 
   return (
@@ -137,55 +119,17 @@ export function ExitPlanModeTool({
           </div>
         )}
         <div className="p-3 bg-muted/50 rounded-md space-y-3">
-          {planViewModel ? (
-            <div className="max-w-none font-sans pr-10 space-y-2">
-              <h4 className="text-sm font-semibold leading-tight">
-                {planViewModel.title}
-              </h4>
-              <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-                {truncateAtWordBoundary(planViewModel.summary, 200)}
+          <div className="max-w-none font-sans pr-10">
+            {freeFormPreview ? (
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {freeFormPreview}
               </p>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-medium text-muted-foreground bg-muted rounded px-1.5 py-0.5">
-                  {planViewModel.tasks.length}{" "}
-                  {planViewModel.tasks.length === 1 ? "task" : "tasks"}
-                </span>
-              </div>
-              <ol className="space-y-0.5 text-xs">
-                {planViewModel.tasks.map((task, idx) => (
-                  <li key={task.stableTaskId} className="text-foreground">
-                    <span className="text-muted-foreground">{idx + 1}.</span>{" "}
-                    {task.title}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : (
-            <div className="max-w-none font-sans pr-10">
-              {freeFormPreview ? (
-                <p className="text-sm text-foreground whitespace-pre-wrap">
-                  {freeFormPreview}
-                </p>
-              ) : (
-                <span className="text-muted-foreground italic">
-                  (No plan content available)
-                </span>
-              )}
-            </div>
-          )}
-          {shouldShowApprove && (
-            <div className="flex gap-2 pt-2">
-              <Button
-                size="sm"
-                onClick={handleApprove}
-                className="flex items-center gap-2 font-sans"
-                disabled={isPending}
-              >
-                <Check className="h-4 w-4" />
-                Approve
-              </Button>
-            </div>
-          )}
+            ) : (
+              <span className="text-muted-foreground italic">
+                (No plan content available)
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </GenericToolPart>

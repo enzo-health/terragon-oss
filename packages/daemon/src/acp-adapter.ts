@@ -34,6 +34,18 @@ type JsonRpcEnvelope = {
   error?: unknown;
 };
 
+export type AcpPermissionRequest = {
+  acpRequestId: unknown;
+  options: unknown[];
+  description: string;
+  toolName: string;
+};
+
+export type NormalizedAcpPermissionRequest = {
+  request: AcpPermissionRequest;
+  message: ClaudeMessage;
+};
+
 // ---------------------------------------------------------------------------
 // Tool-call lifecycle tracker (Task 3.2)
 // ---------------------------------------------------------------------------
@@ -257,12 +269,102 @@ function toTextContent(content: unknown): string {
   return typeof text === "string" ? text : "";
 }
 
-function getSessionId(params: JsonObject, fallbackSessionId: string): string {
-  const sessionId = params.sessionId;
-  if (typeof sessionId === "string" && sessionId.length > 0) {
-    return sessionId;
-  }
+function getSessionId(_params: JsonObject, fallbackSessionId: string): string {
   return fallbackSessionId;
+}
+
+export function parseAcpPermissionRequest(
+  payload: string,
+): AcpPermissionRequest | null {
+  let parsed: JsonRpcEnvelope | null = null;
+  try {
+    parsed = JSON.parse(payload) as JsonRpcEnvelope;
+  } catch {
+    return null;
+  }
+  const envelope = asObject(parsed);
+  if (
+    !envelope ||
+    envelope.method !== "session/request_permission" ||
+    envelope.id === undefined
+  ) {
+    return null;
+  }
+  const params = asObject(envelope.params);
+  const toolCall = params ? asObject(params.toolCall) : null;
+  const rawOptions = Array.isArray(params?.options) ? params.options : [];
+  return {
+    acpRequestId: envelope.id,
+    options: rawOptions,
+    description:
+      typeof params?.description === "string"
+        ? params.description
+        : typeof toolCall?.title === "string"
+          ? toolCall.title
+          : typeof toolCall?.rawInput === "string"
+            ? toolCall.rawInput
+            : "",
+    toolName:
+      typeof params?.tool_name === "string"
+        ? params.tool_name
+        : typeof toolCall?.kind === "string"
+          ? toolCall.kind
+          : "",
+  };
+}
+
+export function normalizeAcpPermissionRequest({
+  payload,
+  promptId,
+  sessionId,
+}: {
+  payload: string;
+  promptId: string;
+  sessionId: string;
+}): NormalizedAcpPermissionRequest | null {
+  const request = parseAcpPermissionRequest(payload);
+  if (!request) {
+    return null;
+  }
+  return {
+    request,
+    message: createAcpPermissionRequestMessage({
+      request,
+      promptId,
+      sessionId,
+    }),
+  };
+}
+
+export function createAcpPermissionRequestMessage({
+  request,
+  promptId,
+  sessionId,
+}: {
+  request: AcpPermissionRequest;
+  promptId: string;
+  sessionId: string;
+}): ClaudeMessage {
+  return {
+    type: "assistant",
+    session_id: sessionId,
+    parent_tool_use_id: null,
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: promptId,
+          name: "PermissionRequest",
+          input: {
+            options: request.options,
+            description: request.description,
+            tool_name: request.toolName,
+          },
+        },
+      ],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +798,9 @@ export function parseAcpLineToClaudeMessages(
   line: string,
   fallbackSessionId: string,
   toolCallTracker?: AcpToolCallTracker,
+  options?: {
+    allowedTerminalResponseIds?: ReadonlySet<unknown>;
+  },
 ): ClaudeMessage[] {
   let parsed: JsonRpcEnvelope | null = null;
   try {
@@ -707,10 +812,22 @@ export function parseAcpLineToClaudeMessages(
   if (!envelope) {
     return [];
   }
-  // Detect JSON-RPC terminal response: {"id":N,"jsonrpc":"2.0","result":{"stopReason":"end_turn"}}
-  // This is the response to the session/prompt POST, signaling the agent turn is complete.
+  // Detect validated JSON-RPC terminal response:
+  // {"id":N,"jsonrpc":"2.0","result":{"stopReason":"end_turn"}}.
+  // SSE payloads are provider-controlled, so stopReason is only terminal when
+  // the caller can tie the envelope id to a daemon-owned control request.
   const resultObj = asObject(envelope.result);
   if (resultObj && typeof resultObj.stopReason === "string") {
+    if (!options?.allowedTerminalResponseIds?.has(envelope.id)) {
+      recordUnknownEvent({
+        transport: "acp",
+        method: "jsonrpc/result",
+        itemType: "stopReason",
+        threadChatId: fallbackSessionId,
+        reason: "ignored unvalidated terminal result envelope",
+      });
+      return [];
+    }
     return [
       {
         type: "result",
@@ -749,7 +866,6 @@ export function parseAcpLineToClaudeMessages(
           reason: contentText
             ? "surfaced as text (no structured handler)"
             : "dropped (no content)",
-          payload: update,
         });
         if (contentText) {
           return [
@@ -777,24 +893,4 @@ export function parseAcpLineToClaudeMessages(
     return parseAgentExited(params);
   }
   return parseEnvelopeError(envelope);
-}
-
-// ---------------------------------------------------------------------------
-// Raw session-update parser (throws UnknownAcpContentTypeError — for tests)
-// ---------------------------------------------------------------------------
-
-/**
- * Parse a session/update envelope's inner update object, throwing
- * `UnknownAcpContentTypeError` for unrecognised discriminants.
- *
- * Used by the exhaustiveness test (Task 3.8) and by callers that want to
- * handle unknown-type errors themselves rather than relying on the catch in
- * `parseAcpLineToClaudeMessages`.
- */
-export function parseSessionUpdateStrict(
-  params: JsonObject,
-  fallbackSessionId: string,
-  toolCallTracker?: AcpToolCallTracker,
-): ClaudeMessage[] {
-  return parseSessionUpdate(params, fallbackSessionId, toolCallTracker);
 }

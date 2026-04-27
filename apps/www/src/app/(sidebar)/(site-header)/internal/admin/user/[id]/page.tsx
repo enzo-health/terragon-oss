@@ -1,4 +1,4 @@
-import { AdminUserContent } from "@/components/admin/user-content";
+import dynamic from "next/dynamic";
 import { getUser, getUserSettings } from "@terragon/shared/model/user";
 import { getUserFlags } from "@terragon/shared/model/user-flags";
 import { db } from "@/lib/db";
@@ -14,6 +14,21 @@ import {
 import { getAutomations } from "@terragon/shared/model/automations";
 import { getAgentProviderCredentials } from "@/server-lib/credentials";
 import { getSlackAccounts } from "@terragon/shared/model/slack";
+import { Skeleton } from "@/components/ui/skeleton";
+
+// Dynamically import the heavy admin user content component
+const AdminUserContent = dynamic(
+  () =>
+    import("@/components/admin/user-content").then((m) => m.AdminUserContent),
+  {
+    loading: () => (
+      <div className="flex flex-col gap-4 p-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    ),
+  },
+);
 
 export default async function AdminUserPage({
   params,

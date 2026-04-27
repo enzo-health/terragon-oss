@@ -1,14 +1,13 @@
-import { DBMessage, type UIPlanPart } from "@terragon/shared";
+import type {
+  DBMessage,
+  UIPlanPart,
+  UIStructuredPlanPart,
+} from "@terragon/shared";
 import {
   type ExitPlanModeToolPart,
   type PlanArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import { Check } from "lucide-react";
 import React, { useMemo } from "react";
-import { DeliveryLoopPlanReviewCard } from "@/components/patterns/delivery-loop-plan-review-card";
-import { Button } from "@/components/ui/button";
-import { parsePlanSpecViewModelFromText } from "@/lib/delivery-loop-plan-view-model";
-import { usePlanApproval } from "./hooks";
 import { TextPart } from "./text-part";
 import type { PromptBoxRef } from "./thread-context";
 import { resolvePlanText } from "./tools/plan-utils";
@@ -16,10 +15,6 @@ import { resolvePlanText } from "./tools/plan-utils";
 export function PlanArtifactRenderer({
   descriptor,
   messages = [],
-  threadId,
-  threadChatId,
-  isReadOnly = false,
-  promptBoxRef,
 }: {
   descriptor: PlanArtifactDescriptor;
   messages?: DBMessage[];
@@ -27,6 +22,7 @@ export function PlanArtifactRenderer({
   threadChatId?: string;
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
 }) {
   const planText = useMemo(() => {
     if (descriptor.origin.type === "plan-tool") {
@@ -38,60 +34,36 @@ export function PlanArtifactRenderer({
       });
     }
 
+    if (descriptor.part.type === "plan-structured") {
+      return renderStructuredPlanText(descriptor.part);
+    }
+
     const planPart = descriptor.part as UIPlanPart;
     return planPart.planText;
   }, [descriptor, messages]);
 
-  const toolPartId =
-    descriptor.origin.type === "plan-tool"
-      ? (descriptor.part as ExitPlanModeToolPart).id
-      : undefined;
-
-  const { handleApprove, isPending, shouldShowApprove } = usePlanApproval({
-    threadId,
-    threadChatId,
-    isReadOnly,
-    promptBoxRef,
-    toolPartId,
-    messages,
-  });
-
-  // For delivery loop plans, try to parse as structured plan
-  const deliveryLoopPlan = useMemo(() => {
-    if (descriptor.origin.type !== "tool-part" || !planText) return null;
-    return parsePlanSpecViewModelFromText(planText);
-  }, [descriptor.origin.type, planText]);
-
   return (
     <div className="h-full overflow-auto p-4">
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        {deliveryLoopPlan ? (
-          <DeliveryLoopPlanReviewCard plan={deliveryLoopPlan} />
-        ) : (
-          <div className="max-w-none font-sans prose prose-sm">
-            {planText ? (
-              <TextPart text={planText} />
-            ) : (
-              <p className="text-muted-foreground italic">
-                (No plan content available)
-              </p>
-            )}
-          </div>
-        )}
-        {shouldShowApprove && (
-          <div className="flex gap-2 pt-4 border-t mt-4">
-            <Button
-              size="sm"
-              onClick={handleApprove}
-              className="flex items-center gap-2 font-sans"
-              disabled={isPending}
-            >
-              <Check className="h-4 w-4" />
-              Approve
-            </Button>
-          </div>
-        )}
+      <div className="rounded-lg border bg-card p-3">
+        <div className="max-w-none font-sans prose prose-sm">
+          {planText ? (
+            <TextPart text={planText} />
+          ) : (
+            <p className="text-muted-foreground italic">
+              (No plan content available)
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function renderStructuredPlanText(part: UIStructuredPlanPart): string {
+  return part.entries
+    .map((entry) => {
+      const marker = entry.status === "completed" ? "x" : " ";
+      return `- [${marker}] ${entry.content}`;
+    })
+    .join("\n");
 }

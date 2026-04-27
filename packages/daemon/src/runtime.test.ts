@@ -1,11 +1,23 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import {
-  DaemonRuntime,
-  writeToUnixSocket,
-  parseSdlcSelfDispatchPayload,
-} from "./runtime";
-import { nanoid } from "nanoid/non-secure";
 import fs from "node:fs";
+import { nanoid } from "nanoid/non-secure";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { claudeAcpRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/claude-code-implementation-adapter";
+import { codexRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/codex-implementation-adapter";
+import { legacyRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/implementation-adapter";
+import {
+  createDaemonRuntimeAdapterContract,
+  DaemonRuntime,
+  getRuntimeAdapterLifecycleOperation,
+  hasRuntimeAdapterContractDrift,
+  requireRuntimeAdapterOperation,
+  resolveDaemonRuntimeAdapterContract,
+  runtimeAdapterUnsupportedOperationToMessage,
+  writeToUnixSocket,
+} from "./runtime";
+import {
+  RuntimeAdapterContract,
+  RuntimeAdapterOperationSchema,
+} from "./shared";
 
 async function sleep(ms: number = 10) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -332,93 +344,228 @@ describe("runtime", () => {
   });
 });
 
-describe("parseSdlcSelfDispatchPayload", () => {
-  const validPayload = {
-    selfDispatch: {
-      token: "tok",
-      prompt: "do stuff",
-      runId: "run-1",
-      threadId: "t-1",
-      threadChatId: "tc-1",
-      tokenNonce: "nonce",
-      model: "claude-4",
-      agent: "claude-code",
-      agentVersion: 1,
-      protocolVersion: 2,
-      transportMode: "acp",
-      permissionMode: "allowAll",
-      sessionId: null as string | null,
-      featureFlags: {},
-    },
-  };
-
-  it("returns null for null/undefined/non-object body", () => {
-    expect(parseSdlcSelfDispatchPayload(null)).toBeNull();
-    expect(parseSdlcSelfDispatchPayload(undefined)).toBeNull();
-    expect(parseSdlcSelfDispatchPayload("string")).toBeNull();
-    expect(parseSdlcSelfDispatchPayload(42)).toBeNull();
-  });
-
-  it("returns null when selfDispatch is missing or not an object", () => {
-    expect(parseSdlcSelfDispatchPayload({})).toBeNull();
-    expect(parseSdlcSelfDispatchPayload({ selfDispatch: null })).toBeNull();
-    expect(parseSdlcSelfDispatchPayload({ selfDispatch: "bad" })).toBeNull();
-    expect(parseSdlcSelfDispatchPayload({ selfDispatch: 123 })).toBeNull();
-  });
-
-  it("returns null when required string fields are missing", () => {
-    const requiredStrings = [
-      "token",
-      "prompt",
-      "runId",
-      "threadId",
-      "threadChatId",
-      "tokenNonce",
-      "model",
-      "agent",
-      "transportMode",
-      "permissionMode",
+describe("runtime adapter operation contracts", () => {
+  it("defines executable operation parity for codex, ACP, and legacy transports", () => {
+    const matrix = [
+      createDaemonRuntimeAdapterContract({ transportMode: "codex-app-server" }),
+      createDaemonRuntimeAdapterContract({ transportMode: "acp" }),
+      createDaemonRuntimeAdapterContract({ transportMode: "legacy" }),
     ];
-    for (const field of requiredStrings) {
-      const bad = structuredClone(validPayload);
-      delete (bad.selfDispatch as Record<string, unknown>)[field];
-      expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
+
+    for (const contract of matrix) {
+      expect(contract.operations.start.status).toBe("supported");
+      expect(contract.operations.resume.status).toBe("supported");
+      expect(contract.operations.stop.status).toBe("supported");
+      expect(contract.operations.retry.status).toBe("supported");
+      expect(contract.operations["event-normalization"].status).toBe(
+        "supported",
+      );
+      expect(contract.operations["compact-and-retry"].status).toBe(
+        "unsupported",
+      );
+      expect(contract.operations["human-intervention"].status).toBe(
+        "unsupported",
+      );
+    }
+
+    expect(matrix[0]?.session.previousResponseField).toBe(
+      "codexPreviousResponseId",
+    );
+    expect(matrix[1]?.session.resolvedSessionField).toBe("acpSessionId");
+    expect(matrix[2]?.session.resolvedSessionField).toBe("sessionId");
+  });
+
+  it("keeps web and daemon runtime adapter contracts in parity", () => {
+    const pairs = [
+      {
+        web: codexRuntimeAdapterContract,
+        daemon: createDaemonRuntimeAdapterContract({
+          transportMode: "codex-app-server",
+        }),
+      },
+      {
+        web: claudeAcpRuntimeAdapterContract,
+        daemon: createDaemonRuntimeAdapterContract({ transportMode: "acp" }),
+      },
+      {
+        web: legacyRuntimeAdapterContract,
+        daemon: createDaemonRuntimeAdapterContract({ transportMode: "legacy" }),
+      },
+    ];
+
+    for (const { web, daemon } of pairs) {
+      expect(daemon.adapterId).toBe(web.adapterId);
+      expect(daemon.transportMode).toBe(web.transportMode);
+      expect(daemon.protocolVersion).toBe(web.protocolVersion);
+      expect(daemon.session).toEqual(web.session);
+      expect(Object.keys(daemon.operations).sort()).toEqual(
+        Object.keys(web.operations).sort(),
+      );
+      for (const operation of RuntimeAdapterOperationSchema.options) {
+        expect(daemon.operations[operation]).toEqual(web.operations[operation]);
+      }
     }
   });
 
-  it("returns null when number fields are wrong type", () => {
-    for (const field of ["agentVersion", "protocolVersion"]) {
-      const bad = structuredClone(validPayload);
-      (bad.selfDispatch as Record<string, unknown>)[field] = "not-a-number";
-      expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
+  it("returns typed unsupported-operation results with clear recovery", () => {
+    const contract = createDaemonRuntimeAdapterContract({
+      transportMode: "codex-app-server",
+    });
+
+    const result = requireRuntimeAdapterOperation({
+      contract,
+      operation: "compact-and-retry",
+    });
+
+    expect(result).toEqual({
+      status: "unsupported",
+      operation: "compact-and-retry",
+      reason:
+        "Compaction is emitted as a typed recovery result before starting another Codex turn.",
+      recovery: "retry-new-run",
+    });
+  });
+
+  it("derives ACP resume from acpSessionId using the contract session field", () => {
+    const contract = createDaemonRuntimeAdapterContract({
+      transportMode: "acp",
+    });
+
+    expect(
+      getRuntimeAdapterLifecycleOperation({
+        contract,
+        input: { sessionId: null, acpSessionId: "acp-session-1" },
+      }),
+    ).toBe("resume");
+    expect(
+      getRuntimeAdapterLifecycleOperation({
+        contract,
+        input: { sessionId: "legacy-session", acpSessionId: null },
+      }),
+    ).toBe("start");
+  });
+
+  it("enforces canonical daemon contracts instead of stale inbound contracts", () => {
+    const staleInbound: RuntimeAdapterContract = {
+      ...createDaemonRuntimeAdapterContract({ transportMode: "acp" }),
+      adapterId: "legacy",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      session: {
+        requestedSessionField: "sessionId",
+        resolvedSessionField: "sessionId",
+        previousResponseField: null,
+      },
+      operations: {
+        ...createDaemonRuntimeAdapterContract({ transportMode: "acp" })
+          .operations,
+        "permission-response": {
+          status: "unsupported",
+          reason: "malicious stale contract",
+          recovery: "manual-intervention",
+        },
+      },
+    };
+
+    const canonicalAcp = resolveDaemonRuntimeAdapterContract({
+      transportMode: "acp",
+      runtimeAdapterContract: staleInbound,
+    });
+
+    expect(canonicalAcp).toEqual(
+      createDaemonRuntimeAdapterContract({ transportMode: "acp" }),
+    );
+    expect(
+      hasRuntimeAdapterContractDrift({
+        inbound: staleInbound,
+        canonical: canonicalAcp,
+      }),
+    ).toBe(true);
+    expect(
+      getRuntimeAdapterLifecycleOperation({
+        contract: canonicalAcp,
+        input: { sessionId: null, acpSessionId: "acp-session-1" },
+      }),
+    ).toBe("resume");
+    expect(
+      requireRuntimeAdapterOperation({
+        contract: canonicalAcp,
+        operation: "permission-response",
+      }),
+    ).toEqual({ status: "ok" });
+
+    const forgedLegacy = resolveDaemonRuntimeAdapterContract({
+      transportMode: "legacy",
+      runtimeAdapterContract: createDaemonRuntimeAdapterContract({
+        transportMode: "acp",
+      }),
+    });
+
+    expect(forgedLegacy).toEqual(
+      createDaemonRuntimeAdapterContract({ transportMode: "legacy" }),
+    );
+    expect(
+      requireRuntimeAdapterOperation({
+        contract: forgedLegacy,
+        operation: "permission-response",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      operation: "permission-response",
+    });
+
+    const forgedCodex = resolveDaemonRuntimeAdapterContract({
+      transportMode: "codex-app-server",
+      runtimeAdapterContract: createDaemonRuntimeAdapterContract({
+        transportMode: "acp",
+      }),
+    });
+
+    expect(forgedCodex).toEqual(
+      createDaemonRuntimeAdapterContract({ transportMode: "codex-app-server" }),
+    );
+    expect(
+      getRuntimeAdapterLifecycleOperation({
+        contract: forgedCodex,
+        input: { sessionId: null, acpSessionId: "forged-acp-session" },
+      }),
+    ).toBe("start");
+    expect(
+      requireRuntimeAdapterOperation({
+        contract: forgedCodex,
+        operation: "permission-response",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      operation: "permission-response",
+    });
+  });
+
+  it("turns unsupported compact/restart/human recovery operations into UI-visible messages", () => {
+    const contract = createDaemonRuntimeAdapterContract({
+      transportMode: "codex-app-server",
+    });
+
+    for (const operation of [
+      "compact-and-retry",
+      "restart",
+      "human-intervention",
+    ] as const) {
+      const result = requireRuntimeAdapterOperation({ contract, operation });
+      expect(result.status).toBe("unsupported");
+      if (result.status === "unsupported") {
+        const message = runtimeAdapterUnsupportedOperationToMessage(result);
+        expect(message.type).toBe("custom-error");
+        if (message.type === "custom-error") {
+          expect(message.error_info).toContain(operation);
+          expect(message.error_info).toContain(`Recovery: ${result.recovery}`);
+          expect(message.runtimeRecovery).toEqual({
+            operation,
+            reason: result.reason,
+            recovery: result.recovery,
+          });
+        }
+      }
     }
-  });
-
-  it("returns null when featureFlags is null or not an object", () => {
-    const bad1 = structuredClone(validPayload);
-    (bad1.selfDispatch as Record<string, unknown>).featureFlags = null;
-    expect(parseSdlcSelfDispatchPayload(bad1)).toBeNull();
-
-    const bad2 = structuredClone(validPayload);
-    (bad2.selfDispatch as Record<string, unknown>).featureFlags = "bad";
-    expect(parseSdlcSelfDispatchPayload(bad2)).toBeNull();
-  });
-
-  it("returns null when sessionId is not string or null", () => {
-    const bad = structuredClone(validPayload);
-    (bad.selfDispatch as Record<string, unknown>).sessionId = 123;
-    expect(parseSdlcSelfDispatchPayload(bad)).toBeNull();
-  });
-
-  it("returns valid payload with sessionId: null", () => {
-    const result = parseSdlcSelfDispatchPayload(validPayload);
-    expect(result).toEqual(validPayload.selfDispatch);
-  });
-
-  it("returns valid payload with sessionId as string", () => {
-    const withSession = structuredClone(validPayload);
-    withSession.selfDispatch.sessionId = "sess-1";
-    const result = parseSdlcSelfDispatchPayload(withSession);
-    expect(result).toEqual(withSession.selfDispatch);
   });
 });

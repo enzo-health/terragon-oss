@@ -98,8 +98,13 @@ export const SendButton = memo(function SendButton({
         submitForm({ saveAsDraft: false, scheduleAt: null });
       }}
       title={title}
+      aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
-      className={cn("size-auto h-8 px-2 transition-all", className)}
+      className={cn(
+        "size-auto h-8 px-2 transition-all duration-200",
+        isSubmitting && "animate-pulse-subtle",
+        className,
+      )}
       size="icon"
     >
       <SendActionIcon
@@ -165,7 +170,12 @@ export const SendComboButton = memo(function SendComboButton({
 
   return (
     <>
-      <div className="relative inline-flex">
+      <div
+        className={cn(
+          "relative inline-flex",
+          isSubmitting && "animate-pulse-subtle",
+        )}
+      >
         <Button
           onClick={(event) => {
             event.preventDefault();
@@ -174,7 +184,8 @@ export const SendComboButton = memo(function SendComboButton({
           title={title}
           disabled={isDisabled}
           className={cn(
-            "h-8 px-2 pr-6 transition-all rounded-r-none group",
+            "h-8 px-2 pr-6 transition-all duration-200 rounded-r-none group",
+            isSubmitting && "opacity-90",
             className,
           )}
           size="sm"

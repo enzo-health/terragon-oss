@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { unwrapResult } from "@/lib/server-actions";
+import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
+import * as schema from "@terragon/shared/db/schema";
+import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import {
   createTestThread,
   createTestUser,
@@ -10,50 +11,45 @@ import {
   getThreads,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sendDaemonMessage } from "@/agent/daemon";
 import { db } from "@/lib/db";
-import * as schema from "@terragon/shared/db/schema";
+import { unwrapResult } from "@/lib/server-actions";
+import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import {
-  getAgentRunContextByRunId,
-  upsertAgentRunContext,
-} from "@terragon/shared/model/agent-run-context";
-import {
-  newThread as newThreadAction,
-  NewThreadArgs,
-} from "@/server-actions/new-thread";
-import {
-  followUp as followUpAction,
   FollowUpArgs,
-  queueFollowUp as queueFollowUpAction,
+  followUp as followUpAction,
   QueueFollowUpArgs,
+  queueFollowUp as queueFollowUpAction,
 } from "@/server-actions/follow-up";
+import {
+  NewThreadArgs,
+  newThread as newThreadAction,
+} from "@/server-actions/new-thread";
+import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
+import { retryThread as retryThreadAction } from "@/server-actions/retry-thread";
+import {
+  cancelScheduledThread as cancelScheduledThreadAction,
+  runScheduledThread as runScheduledThreadAction,
+} from "@/server-actions/scheduled-thread";
+import { stopThread } from "@/server-actions/stop-thread";
+import {
+  getClaudeRateLimitMessage,
+  getClaudeResultMessage,
+  saveClaudeTokensForTest,
+} from "@/test-helpers/agent";
 import {
   mockLoggedInUser,
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { sendDaemonMessage } from "@/agent/daemon";
-import {
-  getClaudeResultMessage,
-  getClaudeRateLimitMessage,
-  saveClaudeTokensForTest,
-} from "@/test-helpers/agent";
 import { handleDaemonEvent } from "./handle-daemon-event";
 import { internalPOST } from "./internal-request";
 import { maybeStartQueuedThreadChat } from "./process-queued-thread";
-import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
-import { stopThread } from "@/server-actions/stop-thread";
-import { retryThread as retryThreadAction } from "@/server-actions/retry-thread";
-import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
-import {
-  runScheduledThread as runScheduledThreadAction,
-  cancelScheduledThread as cancelScheduledThreadAction,
-} from "@/server-actions/scheduled-thread";
-import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
 
 const newThread = async (args: NewThreadArgs) => {
   return unwrapResult(
     await newThreadAction({
-      runInDeliveryLoop: false,
       ...args,
     }),
   );
@@ -864,199 +860,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(threadChatUpdated!.status).toBe("booting");
     expect(threadChatUpdated!.errorMessage).toBeNull();
-  });
-
-  it("delivery-loop run context persists workflow lease and fences stale terminal errors", async () => {
-    const testUserAndAccount = await createTestUser({ db });
-    const user = testUserAndAccount.user;
-    const { threadId, threadChatId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        codesandboxId: "mock-sandbox-id",
-        sandboxProvider: "mock",
-        disableGitCheckpointing: true,
-      },
-      chatOverrides: {
-        status: "working",
-      },
-    });
-    const workflowId = `workflow-${user.id}`;
-    const runId = `run-${user.id}-stale-terminal`;
-    await db.insert(schema.deliveryWorkflow).values({
-      id: workflowId,
-      threadId,
-      generation: 1,
-      kind: "delivery",
-      stateJson: {},
-      userId: user.id,
-      repoFullName: "terragon/test-repo",
-    });
-    await db.insert(schema.deliveryWorkflowHeadV3).values({
-      workflowId,
-      threadId,
-      generation: 1,
-      version: 0,
-      state: "implementing",
-      activeRunId: runId,
-      activeRunSeq: 8,
-    });
-    await upsertAgentRunContext({
-      db,
-      runId,
-      workflowId,
-      runSeq: 7,
-      userId: user.id,
-      threadId,
-      threadChatId,
-      sandboxId: "mock-sandbox-id",
-      transportMode: "acp",
-      protocolVersion: 2,
-      agent: "claudeCode",
-      permissionMode: "allowAll",
-      requestedSessionId: null,
-      resolvedSessionId: null,
-      status: "processing",
-      tokenNonce: `nonce-${user.id}`,
-    });
-
-    const runContext = await getAgentRunContextByRunId({
-      db,
-      runId,
-      userId: user.id,
-    });
-    expect(runContext).toBeDefined();
-    expect(runContext!.workflowId).toBe(workflowId);
-    expect(runContext!.runSeq).toBe(7);
-
-    await handleDaemonEvent({
-      threadId,
-      threadChatId,
-      userId: user.id,
-      timezone: "America/New_York",
-      runId,
-      runContext,
-      workflowId,
-      messages: [
-        {
-          type: "custom-error",
-          session_id: null,
-          duration_ms: 1000,
-          error_info: "transient daemon hiccup",
-        },
-      ],
-      contextUsage: null,
-    });
-    await waitUntilResolved();
-
-    const threadChatUpdated = await getThreadChat({
-      db,
-      userId: user.id,
-      threadId,
-      threadChatId,
-    });
-    expect(["working-error", "complete"]).toContain(threadChatUpdated!.status);
-    if (threadChatUpdated!.status === "working-error") {
-      expect(threadChatUpdated!.errorMessage).toBe("agent-generic-error");
-      expect(threadChatUpdated!.errorMessageInfo).toBe(
-        "transient daemon hiccup",
-      );
-    }
-  });
-
-  it("allows degraded delivery-loop linkage in agent run context writes", async () => {
-    const testUserAndAccount = await createTestUser({ db });
-    const user = testUserAndAccount.user;
-    const { threadId, threadChatId } = await createTestThread({
-      db,
-      userId: user.id,
-      overrides: {
-        codesandboxId: "mock-sandbox-id",
-        disableGitCheckpointing: true,
-      },
-    });
-    const workflowId = `workflow-${user.id}`;
-    await db.insert(schema.deliveryWorkflow).values({
-      id: workflowId,
-      threadId,
-      generation: 1,
-      kind: "delivery",
-      stateJson: {},
-      userId: user.id,
-      repoFullName: "terragon/test-repo",
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-missing-run-seq`,
-        workflowId,
-        runSeq: null,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-missing-run-seq`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId,
-      runSeq: null,
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-missing-workflow`,
-        workflowId: null,
-        runSeq: 1,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-missing-workflow`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId: null,
-      runSeq: 1,
-    });
-
-    await expect(
-      upsertAgentRunContext({
-        db,
-        runId: `run-${user.id}-non-delivery`,
-        workflowId: null,
-        runSeq: null,
-        userId: user.id,
-        threadId,
-        threadChatId,
-        sandboxId: "mock-sandbox-id",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "pending",
-        tokenNonce: `nonce-${user.id}-non-delivery`,
-      }),
-    ).resolves.toMatchObject({
-      workflowId: null,
-      runSeq: null,
-    });
   });
 
   it("new thread -> checkpoint error -> retry git checkpoint", async () => {

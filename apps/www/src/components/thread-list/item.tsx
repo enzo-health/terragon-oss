@@ -117,6 +117,7 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
       ref={triggerRef}
       variant="ghost"
       size="icon"
+      aria-label="Thread options"
       className="w-fit px-1 hover:bg-transparent cursor-pointer"
     >
       <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
@@ -151,32 +152,125 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
   );
 });
 
+/**
+ * Animated loading indicator for optimistic threads
+ * Designed with Linear/Vercel-inspired minimalism
+ */
+const CreatingIndicator = memo(function CreatingIndicator() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-primary/60">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/60" />
+      </span>
+      <span className="text-[11px] font-medium tracking-wide uppercase">
+        Creating
+      </span>
+    </span>
+  );
+});
+
+/**
+ * Global registry to track recently reconciled thread titles
+ * Used to detect when a real thread replaces an optimistic one
+ */
+const recentlyReconciledTitles = new Set<string>();
+let reconciliationTimeout: NodeJS.Timeout | null = null;
+
+export function markThreadAsReconciled(title: string) {
+  recentlyReconciledTitles.add(title);
+
+  // Clear the registry after a short delay
+  if (reconciliationTimeout) {
+    clearTimeout(reconciliationTimeout);
+  }
+  reconciliationTimeout = setTimeout(() => {
+    recentlyReconciledTitles.clear();
+  }, 500);
+}
+
+/**
+ * Hook to track if thread was recently reconciled (optimistic -> real)
+ * Used to trigger smooth transition animation
+ */
+function useReconciliationAnimation(
+  threadId: string,
+  isOptimistic: boolean,
+  title: string,
+) {
+  const [isReconciling, setIsReconciling] = useState(false);
+  const prevOptimisticRef = useRef(isOptimistic);
+  const hasCheckedMountRef = useRef(false);
+
+  // Check on mount if this real thread was just reconciled
+  useEffect(() => {
+    if (!hasCheckedMountRef.current && !isOptimistic) {
+      hasCheckedMountRef.current = true;
+
+      // Check if a thread with this title was recently marked as reconciled
+      if (recentlyReconciledTitles.has(title)) {
+        setIsReconciling(true);
+        const timer = setTimeout(() => setIsReconciling(false), 400);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isOptimistic, title]);
+
+  // Track when optimistic thread disappears
+  useEffect(() => {
+    const wasOptimistic = prevOptimisticRef.current;
+
+    if (wasOptimistic && !isOptimistic) {
+      // This optimistic thread is being replaced - mark it
+      markThreadAsReconciled(title);
+    }
+
+    prevOptimisticRef.current = isOptimistic;
+  }, [isOptimistic, title]);
+
+  return isReconciling;
+}
+
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
   pathname,
+  relativeTimeTick: _relativeTimeTick,
   className,
   hideRepository,
+  style,
 }: {
   pathname: string;
   thread: ThreadInfo;
+  relativeTimeTick: number;
   className?: string;
   hideRepository: boolean;
+  style?: React.CSSProperties;
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
   const isOptimisticThread = thread.id.startsWith("optimistic-");
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const relativeTime = useMemo(
-    () => formatRelativeTime(thread.updatedAt),
-    [thread.updatedAt],
+  const isReconciling = useReconciliationAnimation(
+    thread.id,
+    isOptimisticThread,
+    title,
   );
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const relativeTime = formatRelativeTime(thread.updatedAt);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
 
   return (
     <>
       <div
-        className="relative group animate-in fade-in slide-in-from-top-1 duration-200"
-        style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
+        className={cn(
+          "relative group",
+          "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
+          isReconciling && "reconciliation-flash",
+        )}
+        style={{
+          contentVisibility: "auto",
+          containIntrinsicSize: "80px",
+          ...style,
+        }}
       >
         <Link
           href={`/task/${thread.id}`}
@@ -184,12 +278,16 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-[8px] transition-[background-color,border-color] duration-150 px-2.5 py-[7px] relative pr-9 border border-transparent",
+            "block rounded-lg transition-all duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
             pathname === `/task/${thread.id}`
-              ? "bg-primary/8 border-primary/15"
-              : "hover:bg-accent/50",
+              ? "bg-primary/[0.06] border-primary/20"
+              : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
-            isOptimisticThread && "opacity-80",
+            isOptimisticThread && [
+              "bg-primary/[0.03] border-primary/15",
+              "relative overflow-hidden",
+              "cursor-default",
+            ],
             className,
           )}
           onMouseEnter={() => {
@@ -208,10 +306,19 @@ export const ThreadListItem = memo(function ThreadListItem({
             }
           }}
         >
+          {/* Subtle progress bar for optimistic threads */}
+          {isOptimisticThread && (
+            <div className="absolute bottom-0 left-2 right-2 h-[1.5px] bg-primary/10 rounded-full overflow-hidden">
+              <div className="h-full bg-primary/50 animate-progress-indeterminate rounded-full" />
+            </div>
+          )}
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
-                <ThreadStatusIndicator thread={thread} />
+                <ThreadStatusIndicator
+                  thread={thread}
+                  isOptimistic={isOptimisticThread}
+                />
               </div>
               {isEditingName ? (
                 <InlineNameEditor
@@ -220,7 +327,12 @@ export const ThreadListItem = memo(function ThreadListItem({
                 />
               ) : (
                 <p
-                  className="text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug text-foreground"
+                  className={cn(
+                    "text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug",
+                    isOptimisticThread
+                      ? "text-foreground/80"
+                      : "text-foreground",
+                  )}
                   title={title}
                 >
                   {title}
@@ -233,7 +345,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
                 >
-                  {isOptimisticThread ? "Creating..." : relativeTime}
+                  {isOptimisticThread ? <CreatingIndicator /> : relativeTime}
                 </span>
                 {thread.githubRepoFullName && !hideRepository && (
                   <>
@@ -300,6 +412,7 @@ function SmallAutomationIndicator({ automationId }: { automationId: string }) {
   return (
     <Link
       href={`/automations/${automationId}`}
+      prefetch={true}
       onClick={(e) => e.stopPropagation()}
       className="cursor-pointer"
       title="Automation"

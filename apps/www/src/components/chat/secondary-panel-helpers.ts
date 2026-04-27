@@ -5,6 +5,7 @@ import {
   type UIPdfPart,
   type UIPlanPart,
   type UIRichTextPart,
+  type UIStructuredPlanPart,
   type UITextFilePart,
 } from "@terragon/shared";
 import {
@@ -30,7 +31,10 @@ export interface ArtifactWorkspaceItem extends ArtifactWorkspaceItemSummary {
   descriptor: ArtifactDescriptor;
 }
 
-export type ArtifactWorkspaceComparablePart = UIPart | UIGitDiffPart;
+export type ArtifactWorkspaceComparablePart =
+  | UIPart
+  | UIGitDiffPart
+  | UIStructuredPlanPart;
 
 /**
  * Resolves which artifact should be the active one in the workspace.
@@ -123,6 +127,11 @@ function partsContentEqual(
         "planText" in b &&
         a.planText === (b as UIPlanPart).planText
       );
+    case "plan-structured":
+      return (
+        JSON.stringify(a.entries) ===
+        JSON.stringify((b as UIStructuredPlanPart).entries)
+      );
     case "git-diff":
       return a.diff === (b as UIGitDiffPart).diff;
     default:
@@ -204,6 +213,8 @@ function getArtifactSourceLabel(origin: ArtifactDescriptorOrigin) {
       return "Checkpoint";
     case "plan-tool":
       return "Agent plan";
+    case "artifact-reference":
+      return "Runtime artifact";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;
@@ -223,6 +234,8 @@ function getArtifactResponseActionLabel(origin: ArtifactDescriptorOrigin) {
       return undefined;
     case "plan-tool":
       return "Plan";
+    case "artifact-reference":
+      return origin.artifactType;
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;

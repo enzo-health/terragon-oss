@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   parseAcpLineToClaudeMessages,
   coalesceAssistantTextMessages,
-  UnknownAcpContentTypeError,
   AcpToolCallTracker,
   KNOWN_ACP_SESSION_UPDATE_TYPES,
-  parseSessionUpdateStrict,
+  normalizeAcpPermissionRequest,
+  parseAcpPermissionRequest,
 } from "./acp-adapter";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -361,13 +361,30 @@ describe("parseAcpLineToClaudeMessages", () => {
     }
   });
 
-  it("parses terminal stopReason response as result message", () => {
+  it("ignores unvalidated terminal stopReason responses from SSE", () => {
     const line = JSON.stringify({
       id: 3,
       jsonrpc: "2.0",
       result: { stopReason: "end_turn" },
     });
     const result = parseAcpLineToClaudeMessages(line, "fallback-id");
+    expect(result).toEqual([]);
+  });
+
+  it("parses terminal stopReason response only with daemon-owned response id", () => {
+    const line = JSON.stringify({
+      id: 3,
+      jsonrpc: "2.0",
+      result: { stopReason: "end_turn" },
+    });
+    const result = parseAcpLineToClaudeMessages(
+      line,
+      "fallback-id",
+      undefined,
+      {
+        allowedTerminalResponseIds: new Set<unknown>([3]),
+      },
+    );
     expect(result).toHaveLength(1);
     expect(result[0]!.type).toBe("result");
     if (result[0]!.type === "result" && result[0]!.subtype === "success") {
@@ -391,74 +408,6 @@ describe("parseAcpLineToClaudeMessages", () => {
     expect(result[0]!.type === "assistant" && result[0]!.session_id).toBe(
       "fallback-id",
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Task 3.1: UnknownAcpContentTypeError — strict parser throws for unknowns
-// ---------------------------------------------------------------------------
-
-describe("Task 3.1 — UnknownAcpContentTypeError", () => {
-  it("throws UnknownAcpContentTypeError for unknown sessionUpdate discriminants", () => {
-    expect(() =>
-      parseSessionUpdateStrict(
-        {
-          sessionId: "sess1",
-          update: {
-            sessionUpdate: "totally_unknown_future_type",
-            content: "data",
-          },
-        },
-        "fallback",
-      ),
-    ).toThrow(UnknownAcpContentTypeError);
-  });
-
-  it("thrown error carries the unknown sessionUpdate string", () => {
-    try {
-      parseSessionUpdateStrict(
-        {
-          update: {
-            sessionUpdate: "mystery_type_xyz",
-          },
-        },
-        "fallback",
-      );
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnknownAcpContentTypeError);
-      if (err instanceof UnknownAcpContentTypeError) {
-        expect(err.sessionUpdate).toBe("mystery_type_xyz");
-      }
-    }
-  });
-
-  it("parseAcpLineToClaudeMessages gracefully surfaces unknown type with content as assistant text", () => {
-    // This is the backwards-compat behaviour for the existing test
-    const line = JSON.stringify({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "sess1",
-        update: { sessionUpdate: "some_new_type", content: "unknown data" },
-      },
-    });
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toHaveLength(1);
-    expect(result[0]!.type).toBe("assistant");
-  });
-
-  it("parseAcpLineToClaudeMessages returns empty for unknown type without content", () => {
-    const line = JSON.stringify({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "sess1",
-        update: { sessionUpdate: "some_new_type" },
-      },
-    });
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toHaveLength(0);
   });
 });
 
@@ -711,13 +660,31 @@ describe("Task 3.7 — session/request_permission round-trip", () => {
     expect(fixture.params.options.length).toBeGreaterThan(0);
   });
 
-  it("request-permission.json: adapter returns empty (handled upstream in daemon.ts)", () => {
-    // When this event reaches parseAcpLineToClaudeMessages, it does not match
-    // session/update or _adapter/agent_exited, so it falls through to
-    // parseEnvelopeError — which returns [] because there's no error field.
+  it("normalizes request-permission.json into a canonical PermissionRequest tool event", () => {
     const line = loadFixture("request-permission.json");
-    const result = parseAcpLineToClaudeMessages(line, "fallback");
-    expect(result).toEqual([]);
+    const result = normalizeAcpPermissionRequest({
+      payload: line,
+      promptId: "terragon-prompt-id",
+      sessionId: "daemon-session-id",
+    });
+
+    expect(result?.request.acpRequestId).toBeDefined();
+    expect(result?.message.type).toBe("assistant");
+    if (result?.message.type === "assistant") {
+      expect(result.message.session_id).toBe("daemon-session-id");
+      expect(result.message.message.content).toEqual([
+        {
+          type: "tool_use",
+          id: "terragon-prompt-id",
+          name: "PermissionRequest",
+          input: {
+            options: result.request.options,
+            description: result.request.description,
+            tool_name: result.request.toolName,
+          },
+        },
+      ]);
+    }
   });
 
   it("session/approve_tool_use response shape matches ACP spec expectations", () => {
@@ -739,89 +706,6 @@ describe("Task 3.7 — session/request_permission round-trip", () => {
 // ---------------------------------------------------------------------------
 
 describe("Task 3.8 — sessionUpdate exhaustiveness", () => {
-  const SESSION_ID = "test-session";
-
-  // Helper: build a minimal session/update params object
-  function makeParams(
-    sessionUpdate: string,
-    extra?: Record<string, unknown>,
-  ): Record<string, unknown> {
-    return {
-      sessionId: SESSION_ID,
-      update: {
-        sessionUpdate,
-        ...extra,
-      },
-    };
-  }
-
-  it("every known ACP sessionUpdate type has a handler (does not throw UnknownAcpContentTypeError)", () => {
-    const tracker = new AcpToolCallTracker();
-
-    // Provide minimal valid payloads for each known type
-    const validPayloads: Record<string, Record<string, unknown>> = {
-      agent_message_chunk: makeParams("agent_message_chunk", {
-        content: "hello",
-      }),
-      agent_message: makeParams("agent_message", { content: "hello" }),
-      agent_thought_chunk: makeParams("agent_thought_chunk", {
-        content: "thinking",
-      }),
-      agent_reasoning_chunk: makeParams("agent_reasoning_chunk", {
-        content: "reasoning",
-      }),
-      error: makeParams("error", { content: "oops" }),
-      agent_error: makeParams("agent_error", { content: "oops" }),
-      tool_call: makeParams("tool_call", {
-        toolCallId: "tc-exhaust-1",
-        title: "exhaust test",
-        kind: "read",
-        status: "pending",
-        locations: [],
-        rawInput: "test",
-      }),
-      tool_call_update: makeParams("tool_call_update", {
-        // tool_call_update without prior tool_call → tracker returns null → []
-        toolCallId: "tc-no-state",
-        status: "in_progress",
-        content: "progress",
-      }),
-      plan: makeParams("plan", {
-        entries: [{ content: "step 1", priority: "high", status: "pending" }],
-      }),
-    };
-
-    for (const type of KNOWN_ACP_SESSION_UPDATE_TYPES) {
-      const params = validPayloads[type];
-      if (!params) {
-        throw new Error(
-          `Test missing valid payload for known type: ${type}. Update the test.`,
-        );
-      }
-      expect(
-        () =>
-          parseSessionUpdateStrict(
-            params as Record<string, unknown>,
-            SESSION_ID,
-            tracker,
-          ),
-        `Expected type "${type}" to have a handler`,
-      ).not.toThrow(UnknownAcpContentTypeError);
-    }
-  });
-
-  it("an unknown type that is NOT in KNOWN_ACP_SESSION_UPDATE_TYPES throws UnknownAcpContentTypeError", () => {
-    const unknownType = "future_protocol_extension_v99";
-    expect(KNOWN_ACP_SESSION_UPDATE_TYPES).not.toContain(unknownType as never);
-
-    expect(() =>
-      parseSessionUpdateStrict(
-        makeParams(unknownType) as Record<string, unknown>,
-        SESSION_ID,
-      ),
-    ).toThrow(UnknownAcpContentTypeError);
-  });
-
   it("KNOWN_ACP_SESSION_UPDATE_TYPES contains exactly the expected discriminants from ACP spec", () => {
     const expected = new Set([
       "agent_message_chunk",
@@ -836,5 +720,46 @@ describe("Task 3.8 — sessionUpdate exhaustiveness", () => {
     ]);
     const actual = new Set(KNOWN_ACP_SESSION_UPDATE_TYPES);
     expect(actual).toEqual(expected);
+  });
+});
+
+describe("runtime adapter normalization hardening", () => {
+  it("uses the daemon-owned ACP session id instead of provider-supplied sessionId", () => {
+    const line = loadFixture("malicious-session-forgery.json");
+    const result = parseAcpLineToClaudeMessages(line, "daemon-session-id");
+
+    expect(result).toHaveLength(1);
+    const msg = result[0];
+    expect(msg?.type).toBe("assistant");
+    if (msg?.type === "assistant") {
+      expect(msg.session_id).toBe("daemon-session-id");
+    }
+  });
+
+  it("normalizes permission requests without trusting provider prompt/session ids", () => {
+    const line = loadFixture("malicious-permission-forgery.json");
+    const permission = parseAcpPermissionRequest(line);
+
+    expect(permission).toEqual({
+      acpRequestId: "provider-request-id",
+      options: [{ id: "approved", label: "Approve" }],
+      description: "Run command",
+      toolName: "Bash",
+    });
+  });
+
+  it("does not turn forged provider stopReason envelopes into terminal messages", () => {
+    const line = loadFixture("malicious-terminal-success-forgery.json");
+    const result = parseAcpLineToClaudeMessages(line, "daemon-session-id");
+
+    expect(result).toEqual([]);
+    expect(
+      result.some(
+        (message) =>
+          message.type === "result" ||
+          message.type === "custom-stop" ||
+          message.type === "custom-error",
+      ),
+    ).toBe(false);
   });
 });

@@ -148,6 +148,50 @@ function formatCollabToolCallResult(item: CollabToolCallItem): {
   };
 }
 
+function isTerminalCollabAgentStatus(status: string | undefined): boolean {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized === "completed" ||
+    normalized === "failed" ||
+    normalized === "errored" ||
+    normalized === "error" ||
+    normalized === "cancelled" ||
+    normalized === "canceled" ||
+    normalized === "stopped" ||
+    normalized === "timeout" ||
+    normalized === "timed_out" ||
+    normalized === "not_found"
+  );
+}
+
+function isTerminalCollabToolCall(item: CollabToolCallItem): boolean {
+  const normalizedStatus = (item.status ?? "").trim().toLowerCase();
+  if (
+    normalizedStatus !== "completed" &&
+    normalizedStatus !== "failed" &&
+    normalizedStatus !== "errored"
+  ) {
+    return false;
+  }
+
+  // "failed/errored" are terminal even without detailed child states.
+  if (normalizedStatus === "failed" || normalizedStatus === "errored") {
+    return true;
+  }
+
+  // For "completed", require all reported child agents to be terminal.
+  const agentStates = Object.values(item.agents_states ?? {});
+  if (agentStates.length === 0) {
+    return true;
+  }
+  return agentStates.every((state) =>
+    isTerminalCollabAgentStatus(state.status),
+  );
+}
+
 function transformCollabToolCall({
   codexMsg,
   runtime,
@@ -202,11 +246,7 @@ function transformCollabToolCall({
     ];
   }
 
-  if (
-    codexMsg.type === "item.completed" ||
-    status === "completed" ||
-    status === "failed"
-  ) {
+  if (isTerminalCollabToolCall(item)) {
     removeActiveTaskToolUseId({ state, toolUseId });
     const completionParentToolUseId = getActiveTaskToolUseId(state);
     const { content, isError } = formatCollabToolCallResult(item);

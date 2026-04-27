@@ -180,7 +180,78 @@ export const ChatMessage = memo(function ChatMessage({
       {content}
     </div>
   );
-});
+}, areChatMessagePropsEqual);
+
+function areChatMessagePropsEqual(
+  prevProps: ChatMessageProps,
+  nextProps: ChatMessageProps,
+) {
+  const prevMessagePartProps =
+    prevProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
+  const nextMessagePartProps =
+    nextProps.messagePartProps ?? DEFAULT_MESSAGE_PART_PROPS;
+  if (
+    prevProps.message !== nextProps.message ||
+    prevProps.className !== nextProps.className ||
+    prevProps.isLatestMessage !== nextProps.isLatestMessage ||
+    prevProps.isAgentWorking !== nextProps.isAgentWorking ||
+    prevProps.isActiveTurn !== nextProps.isActiveTurn
+  ) {
+    return false;
+  }
+  if (
+    prevProps.message.role === "system" &&
+    (prevProps.thread !== nextProps.thread ||
+      prevProps.latestGitDiffTimestamp !== nextProps.latestGitDiffTimestamp)
+  ) {
+    return false;
+  }
+
+  if (
+    prevMessagePartProps.githubRepoFullName !==
+      nextMessagePartProps.githubRepoFullName ||
+    prevMessagePartProps.branchName !== nextMessagePartProps.branchName ||
+    prevMessagePartProps.baseBranchName !==
+      nextMessagePartProps.baseBranchName ||
+    prevMessagePartProps.hasCheckpoint !== nextMessagePartProps.hasCheckpoint
+  ) {
+    return false;
+  }
+
+  const prevToolProps = prevMessagePartProps.toolProps;
+  const nextToolProps = nextMessagePartProps.toolProps;
+  if (
+    prevToolProps.threadId !== nextToolProps.threadId ||
+    prevToolProps.threadChatId !== nextToolProps.threadChatId ||
+    prevToolProps.isReadOnly !== nextToolProps.isReadOnly ||
+    prevToolProps.promptBoxRef !== nextToolProps.promptBoxRef ||
+    prevToolProps.childThreads !== nextToolProps.childThreads ||
+    prevToolProps.githubRepoFullName !== nextToolProps.githubRepoFullName ||
+    prevToolProps.repoBaseBranchName !== nextToolProps.repoBaseBranchName ||
+    prevToolProps.branchName !== nextToolProps.branchName ||
+    prevToolProps.onOptimisticPermissionModeUpdate !==
+      nextToolProps.onOptimisticPermissionModeUpdate
+  ) {
+    return false;
+  }
+
+  if (
+    messageContainsToolName(prevProps.message, "ExitPlanMode") &&
+    prevToolProps.messages !== nextToolProps.messages
+  ) {
+    return false;
+  }
+
+  if (
+    prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.planOccurrences !== nextProps.planOccurrences
+  ) {
+    return false;
+  }
+
+  return true;
+}
 
 export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   message,

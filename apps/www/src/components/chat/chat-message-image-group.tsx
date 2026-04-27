@@ -1,25 +1,27 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 import { useState } from "react";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { MessagePart } from "./message-part";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";
 
-export function ImageGroup({
-  group,
-  messagePartProps,
-  isLatestMessage = false,
-  artifactDescriptors,
-  onOpenArtifact,
-}: {
+type ImageGroupProps = {
   group: PartGroup;
   messagePartProps: MessagePartRenderProps;
   isLatestMessage?: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
-}) {
+};
+
+export const ImageGroup = memo(function ImageGroup({
+  group,
+  messagePartProps,
+  isLatestMessage = false,
+  artifactDescriptors,
+  onOpenArtifact,
+}: ImageGroupProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
   const imageUrls = group.parts
@@ -58,5 +60,22 @@ export function ImageGroup({
         />
       )}
     </>
+  );
+}, areImageGroupPropsEqual);
+
+function areImageGroupPropsEqual(
+  prev: ImageGroupProps,
+  next: ImageGroupProps,
+): boolean {
+  if (prev.group.type !== next.group.type) return false;
+  if (prev.group.parts.length !== next.group.parts.length) return false;
+  for (let i = 0; i < prev.group.parts.length; i++) {
+    if (prev.group.parts[i] !== next.group.parts[i]) return false;
+  }
+  return (
+    prev.messagePartProps === next.messagePartProps &&
+    prev.isLatestMessage === next.isLatestMessage &&
+    prev.artifactDescriptors === next.artifactDescriptors &&
+    prev.onOpenArtifact === next.onOpenArtifact
   );
 }

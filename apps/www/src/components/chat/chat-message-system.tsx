@@ -41,7 +41,7 @@ export function SystemMessage({
         return "Scheduled task cancelled.";
       case "fix-github-checks":
         return "Fixing GitHub Checks...";
-      case "sdlc-error-retry":
+      case "agent-error-retry":
         return "An error occurred. Automatically retrying...";
       case "follow-up-retry-failed":
         return "Follow-up processing failed.";
@@ -66,7 +66,7 @@ export function SystemMessage({
         return "bg-green-500";
       case "cancel-schedule":
         return "bg-muted-foreground";
-      case "sdlc-error-retry":
+      case "agent-error-retry":
         return "bg-red-500";
       case "follow-up-retry-failed":
         return "bg-red-500";
@@ -105,7 +105,7 @@ export function SystemMessage({
     <div className="py-2 px-4 rounded-xl mr-auto w-fit flex flex-col gap-2">
       <div className="flex flex-col gap-2">
         <div
-          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/60 transition-colors hover:text-muted-foreground cursor-pointer group/system"
+          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/70 transition-colors hover:text-muted-foreground cursor-pointer group/system"
           onClick={() => setIsCollapsed(!isCollapsed)}
         >
           <span className="h-5 flex items-center">

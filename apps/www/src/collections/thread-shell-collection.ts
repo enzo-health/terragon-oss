@@ -19,36 +19,154 @@ function buildCollection() {
   );
 }
 
-let _collection: ReturnType<typeof buildCollection> | null = null;
+type ShellCollection = ReturnType<typeof buildCollection>;
+type PendingCollectionWrite = (collection: ShellCollection) => void;
+
+let _collection: ShellCollection | null = null;
+let _pendingWrites: PendingCollectionWrite[] = [];
+let _flushTimer: ReturnType<typeof setTimeout> | null = null;
+// Shell patches can arrive before the initial query seed (e.g. fast WebSocket
+// ticks during navigation). Preserve them until the shell exists, then apply.
+let _pendingPatchesByThreadId: Map<string, BroadcastThreadPatch[]> = new Map();
+
+function flushPendingWrites(collection: ShellCollection) {
+  if (collection.status !== "ready" || _pendingWrites.length === 0) {
+    return;
+  }
+  const pendingWrites = _pendingWrites;
+  _pendingWrites = [];
+  pendingWrites.forEach((write) => write(collection));
+}
+
+function schedulePendingWriteFlush() {
+  if (_flushTimer) {
+    return;
+  }
+  _flushTimer = setTimeout(() => {
+    _flushTimer = null;
+    const collection = getCollection();
+    if (collection.status === "ready") {
+      flushPendingWrites(collection);
+      return;
+    }
+    if (_pendingWrites.length > 0) {
+      schedulePendingWriteFlush();
+    }
+  }, 16);
+}
 
 function getCollection() {
   if (!_collection) _collection = buildCollection();
+  flushPendingWrites(_collection);
   return _collection;
 }
 
 export { getCollection as getThreadShellCollection };
 
 export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
+  const write: PendingCollectionWrite = (c) => {
+    if (patch.op === "delete") {
+      if (c.state.has(patch.threadId)) c.delete(patch.threadId);
+      _pendingPatchesByThreadId.delete(patch.threadId);
+      return;
+    }
+    const existing = c.state.get(patch.threadId) as ThreadPageShell | undefined;
+    if (!patch.shell) return;
+    if (!existing) {
+      const pending = _pendingPatchesByThreadId.get(patch.threadId) ?? [];
+      pending.push(patch);
+      _pendingPatchesByThreadId.set(patch.threadId, pending);
+      return;
+    }
+    const updated = applyShellPatchFields(existing, patch.shell, patch);
+    if (updated !== existing) {
+      c.update(patch.threadId, (draft) => {
+        Object.assign(draft, updated);
+      });
+    }
+  };
+
   const c = getCollection();
-  if (c.status !== "ready") return;
-  if (patch.op === "delete") {
-    if (c.state.has(patch.threadId)) c.delete(patch.threadId);
+  if (c.status !== "ready") {
+    _pendingWrites.push(write);
+    schedulePendingWriteFlush();
     return;
   }
-  const existing = c.state.get(patch.threadId) as ThreadPageShell | undefined;
-  if (!existing || !patch.shell) return;
-  const updated = applyShellPatchFields(existing, patch.shell, patch);
-  if (updated !== existing) c.update(patch.threadId, () => updated);
+  write(c);
 }
 
 export function seedShell(shell: ThreadPageShell): void {
+  const write: PendingCollectionWrite = (c) => {
+    const pending = _pendingPatchesByThreadId.get(shell.id);
+    const hasPending = Boolean(pending && pending.length > 0);
+    let nextShell = shell;
+
+    if (pending && pending.length > 0) {
+      for (const patch of pending) {
+        if (patch.op === "delete") {
+          if (c.state.has(shell.id)) {
+            c.delete(shell.id);
+          }
+          _pendingPatchesByThreadId.delete(shell.id);
+          return;
+        }
+        if (!patch.shell) continue;
+        nextShell = applyShellPatchFields(nextShell, patch.shell, patch);
+      }
+    }
+
+    const existing = c.state.get(shell.id) as ThreadPageShell | undefined;
+    if (existing) {
+      if (!hasPending && !isIncomingShellSeedFresh(existing, nextShell)) {
+        return;
+      }
+      c.update(shell.id, (draft) => {
+        Object.assign(draft, nextShell);
+      });
+    } else {
+      c.insert(nextShell);
+    }
+
+    if (hasPending) {
+      _pendingPatchesByThreadId.delete(shell.id);
+    }
+  };
+
   const c = getCollection();
-  if (c.status !== "ready") return;
-  if (c.state.has(shell.id)) {
-    c.update(shell.id, () => shell);
-  } else {
-    c.insert(shell);
+  if (c.status !== "ready") {
+    _pendingWrites.push(write);
+    schedulePendingWriteFlush();
+    return;
   }
+  write(c);
+}
+
+function isIncomingShellSeedFresh(
+  existing: ThreadPageShell,
+  incoming: ThreadPageShell,
+): boolean {
+  const existingMessageSeq = existing.primaryThreadChat.messageSeq ?? null;
+  const incomingMessageSeq = incoming.primaryThreadChat.messageSeq ?? null;
+  if (
+    existingMessageSeq !== null &&
+    incomingMessageSeq !== null &&
+    incomingMessageSeq !== existingMessageSeq
+  ) {
+    return incomingMessageSeq > existingMessageSeq;
+  }
+  if (incoming.version !== null && existing.version !== null) {
+    return incoming.version >= existing.version;
+  }
+  return getTime(incoming.updatedAt) >= getTime(existing.updatedAt);
+}
+
+function getTime(value: Date | string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 /**

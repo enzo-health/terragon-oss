@@ -115,6 +115,9 @@ export function usePromptBox({
   const [permissionMode, setPermissionMode] = useState<"allowAll" | "plan">(
     initialPermissionMode,
   );
+  useEffect(() => {
+    setPermissionMode(initialPermissionMode);
+  }, [initialPermissionMode]);
 
   // Store the query string for the current results so that we can display a
   // different message when the query string changes and the previous query

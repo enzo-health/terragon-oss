@@ -1,61 +1,64 @@
 import {
-  getDaemonTokenAuthContextOrNull,
-  type DaemonTokenAuthContext,
-} from "@/lib/auth-server";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-import {
-  publishBroadcastUserMessage,
-  publishDeltaBroadcast,
-} from "@terragon/shared/broadcast-server";
-import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
-  DAEMON_EVENT_VERSION_HEADER,
   DaemonEventAPIBody,
-  type SdlcSelfDispatchPayload,
 } from "@terragon/daemon/shared";
-import { db } from "@/lib/db";
+import { env } from "@terragon/env/apps-www";
+import { extendSandboxLife } from "@terragon/sandbox";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  markDispatchIntentCompleted,
-  markDispatchIntentFailed,
-} from "@terragon/shared/delivery-loop/store/dispatch-intent-store";
+  assignThreadChatMessageSeqToCanonicalEvents,
+  findOpenAgUiMessagesForRun,
+} from "@terragon/shared/model/agent-event-log";
 import {
-  type DaemonTerminalErrorCategory,
-  classifyDaemonTerminalErrorCategory,
-  mapDaemonTerminalCategoryToFailureCategory,
-} from "@terragon/shared/delivery-loop/domain/failure";
-import {
-  buildDispatchIntentId,
-  getReplayableSelfDispatch,
-  updateDispatchIntent,
-} from "@/server-lib/delivery-loop/dispatch-intent";
-import { handleAckReceived } from "@/server-lib/delivery-loop/ack-lifecycle";
-import {
+  completeAgentRunContextTerminal,
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
-import { appendTokenStreamEvents } from "@terragon/shared/model/token-stream-event";
+import {
+  getThreadChat,
+  getThreadMinimal,
+  touchThreadChatUpdatedAt,
+  updateThreadChatTerminalMetadataIfTerminal,
+} from "@terragon/shared/model/threads";
+import {
+  classifyDaemonTerminalErrorCategory,
+  type DaemonTerminalErrorCategory,
+  hashRuntimeFailureMessage,
+  mapDaemonTerminalCategoryToRuntimeFailureCategory,
+  RUNTIME_FAILURE_ACTION_TABLE,
+  type RuntimeFailureCategory,
+} from "@terragon/shared/runtime/failure";
+import { waitUntil } from "@vercel/functions";
 import { and, eq } from "drizzle-orm";
+import { toDBMessage } from "@/agent/msg/toDBMessage";
 import {
-  isLocalRedisHttpMode,
-  isRedisTransportParseError,
-  redis,
-} from "@/lib/redis";
-import { appendEventAndAdvanceExplicit } from "@/server-lib/delivery-loop/v3/kernel";
+  hasOtherActiveRuns,
+  setActiveThreadChat,
+} from "@/agent/sandbox-resource";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
-  getActiveWorkflowForThread,
-  getWorkflowHead,
-} from "@/server-lib/delivery-loop/v3/store";
+  type DaemonTokenAuthContext,
+  type DaemonTokenProvider,
+  getDaemonTokenAuthContextOrNull,
+  hasDaemonProviderScope,
+} from "@/lib/auth-server";
+import { db } from "@/lib/db";
+import {
+  type AssistantMessagePartsInput,
+  broadcastAgUiEventEphemeral,
+  buildDeltaRunEndRows,
+  buildRunTerminalAgUi,
+  canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
+  dbAgentMessagePartsToAgUiRows,
+  metaEventsToAgUiEvents,
+  persistAgUiEvents,
+  persistAndPublishAgUiEvents,
+  publishPersistedAgUiEvents,
+} from "@/server-lib/ag-ui-publisher";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
-import {
-  buildDeltaSequenceKey,
-  computeMaxSeqByKey,
-  type DeltaSequenceKey,
-  filterDeltasByKnownMaxSeq,
-  normalizeDeltasForPersistence,
-} from "@/server-lib/token-stream-guards";
-import { env } from "@terragon/env/apps-www";
+import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 
 type DaemonEventEnvelopeV2 = {
   payloadVersion: 2;
@@ -64,130 +67,66 @@ type DaemonEventEnvelopeV2 = {
   seq: number;
 };
 
-const DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS = 60;
-const DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS = 60 * 60 * 24;
-const DELTA_SEQ_MAX_TTL_SECONDS = 60 * 60 * 24;
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
 const DAEMON_TEST_AUTH_ENABLED_VALUE = "enabled";
-
-type DaemonProcessingEventClaimResult =
-  | {
-      claimed: true;
-    }
-  | {
-      claimed: false;
-      reason: "claim_in_progress" | "duplicate_event";
-    };
 
 type TerminalAckBase = {
   status?: number;
   deduplicated?: true;
   reason?: string;
-  loopId?: string;
   runId?: string;
   acknowledgedEventId: string | null;
   acknowledgedSeq: number | null;
 };
 
-type TerminalAckState =
-  | (TerminalAckBase & { kind: "ack_only" })
-  | (TerminalAckBase & {
-      kind: "self_dispatch";
-      selfDispatch: SdlcSelfDispatchPayload;
-    });
+type TerminalAckState = TerminalAckBase;
 
-function getDeltaSeqMaxRedisKey(sequenceKey: string): string {
-  return `sdlc:delta-seq-max:${sequenceKey}`;
-}
+type CanonicalPersistenceSummary = {
+  attempted: number;
+  inserted: number;
+  deduplicated: number;
+  /**
+   * eventIds of AG-UI rows that were freshly inserted for the incoming
+   * canonical events (expanded 1→N). Used to backfill
+   * `thread_chat_message_seq` after `handleDaemonEvent` returns a replay
+   * sequence number — the route must NOT re-map via
+   * `canonicalEventsToAgUiRows` because that would risk drift between
+   * producer and consumer.
+   */
+  insertedEventIds: string[];
+  persistedEvents: Parameters<
+    typeof publishPersistedAgUiEvents
+  >[0]["persistedEvents"];
+};
 
-function isMissingSchemaError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
+type CanonicalEventsPayload = NonNullable<
+  DaemonEventAPIBody["canonicalEvents"]
+>;
+
+type DaemonDeltasPayload = NonNullable<DaemonEventAPIBody["deltas"]>;
+
+function filterCanonicalEventsForDeltaCoexistence(params: {
+  canonicalEvents: CanonicalEventsPayload | null;
+  deltas: DaemonDeltasPayload | null | undefined;
+}): CanonicalEventsPayload | null {
+  const { canonicalEvents, deltas } = params;
+  if (!canonicalEvents || canonicalEvents.length === 0) {
+    return canonicalEvents;
   }
-  if (!("code" in error)) {
-    return false;
-  }
-  const code = (error as { code?: string }).code;
-  return code === "42P01" || code === "42703";
-}
-
-async function getKnownMaxDeltaSeqByKey(params: {
-  runId: string;
-  deltas: DaemonEventAPIBody["deltas"];
-}): Promise<Map<DeltaSequenceKey, number>> {
-  const result = new Map<DeltaSequenceKey, number>();
-  if (!params.deltas || params.deltas.length === 0 || isLocalRedisHttpMode()) {
-    return result;
-  }
-
-  for (const delta of params.deltas) {
-    const sequenceKey = buildDeltaSequenceKey({
-      runId: params.runId,
-      messageId: delta.messageId,
-      partIndex: delta.partIndex,
-      kind: delta.kind === "thinking" ? "thinking" : "text",
-    });
-    if (result.has(sequenceKey)) {
-      continue;
-    }
-    try {
-      const raw = await redis.get<string>(getDeltaSeqMaxRedisKey(sequenceKey));
-      const parsed = raw == null ? Number.NaN : Number(raw);
-      if (Number.isFinite(parsed)) {
-        result.set(sequenceKey, parsed);
-      }
-    } catch (error) {
-      if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-        console.warn(
-          "[daemon-event] local redis delta max-seq read parse failure, bypassing",
-          { sequenceKey },
-        );
-        return new Map();
-      }
-      throw error;
-    }
+  if (!deltas || deltas.length === 0) {
+    return canonicalEvents;
   }
 
-  return result;
-}
-
-async function persistKnownMaxDeltaSeqByKey(params: {
-  runId: string;
-  deltas: DaemonEventAPIBody["deltas"];
-}): Promise<void> {
-  if (!params.deltas || params.deltas.length === 0 || isLocalRedisHttpMode()) {
-    return;
-  }
-  const maxByKey = computeMaxSeqByKey({
-    runId: params.runId,
-    deltas: params.deltas,
-  });
-  for (const [sequenceKey, maxSeq] of maxByKey) {
-    try {
-      await redis.set(getDeltaSeqMaxRedisKey(sequenceKey), String(maxSeq), {
-        ex: DELTA_SEQ_MAX_TTL_SECONDS,
-      });
-    } catch (error) {
-      if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-        console.warn(
-          "[daemon-event] local redis delta max-seq write parse failure, bypassing",
-          { sequenceKey, maxSeq },
-        );
-        return;
-      }
-      throw error;
-    }
-  }
-}
-
-function buildTerminalAckState(
-  base: TerminalAckBase,
-  selfDispatch: SdlcSelfDispatchPayload | null,
-): TerminalAckState {
-  return selfDispatch
-    ? { ...base, kind: "self_dispatch", selfDispatch }
-    : { ...base, kind: "ack_only" };
+  // Daemon v2 can emit both:
+  // 1) canonical assistant-message events (full text), and
+  // 2) incremental deltas for the same turn.
+  //
+  // Replaying both produces duplicated assistant bubbles in the UI.
+  // Keep streaming deltas as the source of truth for assistant text when
+  // they are present, and persist only the non-assistant canonical events
+  // (run-started, run-terminal, tool lifecycle, etc.).
+  return canonicalEvents.filter((event) => event.type !== "assistant-message");
 }
 
 function jsonTerminalAckResponse(state: TerminalAckState): Response {
@@ -196,212 +135,12 @@ function jsonTerminalAckResponse(state: TerminalAckState): Response {
       success: true,
       ...(state.deduplicated ? { deduplicated: true } : {}),
       ...(state.reason ? { reason: state.reason } : {}),
-      ...(state.loopId ? { loopId: state.loopId } : {}),
       ...(state.runId ? { runId: state.runId } : {}),
       acknowledgedEventId: state.acknowledgedEventId,
       acknowledgedSeq: state.acknowledgedSeq,
-      ...(state.kind === "self_dispatch"
-        ? { selfDispatch: state.selfDispatch }
-        : {}),
     },
     { status: state.status ?? 200 },
   );
-}
-
-function getDaemonProcessingEventClaimKey({
-  loopId,
-  eventId,
-}: {
-  loopId: string;
-  eventId: string;
-}): string {
-  return `sdlc:daemon-processing-event:claim:${loopId}:${eventId}`;
-}
-
-function getDaemonProcessingEventCommittedKey({
-  loopId,
-  eventId,
-}: {
-  loopId: string;
-  eventId: string;
-}): string {
-  return `sdlc:daemon-processing-event:committed:${loopId}:${eventId}`;
-}
-
-async function persistDaemonTerminalDispatchStatus(params: {
-  loopId: string;
-  threadChatId: string;
-  runId: string;
-  daemonRunStatus: "completed" | "failed" | "stopped";
-  daemonErrorMessage: string | null;
-  daemonErrorCategory: DaemonTerminalErrorCategory;
-}): Promise<void> {
-  const intentId = buildDispatchIntentId(params.loopId, params.runId);
-  if (params.daemonRunStatus === "completed") {
-    await Promise.all([
-      updateDispatchIntent(intentId, params.threadChatId, {
-        status: "completed",
-        lastError: null,
-        lastFailureCategory: null,
-      }),
-      markDispatchIntentCompleted(db, params.runId),
-    ]);
-    return;
-  }
-
-  const failureMessage =
-    params.daemonErrorMessage ??
-    `daemon terminal status: ${params.daemonRunStatus}`;
-  const failureCategory = mapDaemonTerminalCategoryToFailureCategory(
-    params.daemonErrorCategory,
-    params.daemonErrorMessage,
-  );
-
-  await Promise.all([
-    updateDispatchIntent(intentId, params.threadChatId, {
-      status: "failed",
-      lastError: failureMessage,
-      lastFailureCategory: failureCategory,
-    }),
-    markDispatchIntentFailed(db, params.runId, failureCategory, failureMessage),
-  ]);
-}
-
-async function claimEnrolledLoopProcessingEvent({
-  loopId,
-  envelope,
-}: {
-  loopId: string;
-  envelope: DaemonEventEnvelopeV2;
-}): Promise<DaemonProcessingEventClaimResult> {
-  if (isLocalRedisHttpMode()) {
-    // Local redis-http can intermittently fail JSON decoding on basic
-    // commands. Allow local daemon retries to keep flowing and rely on
-    // reducer idempotency for duplicate tolerance.
-    return { claimed: true };
-  }
-
-  const claimKey = getDaemonProcessingEventClaimKey({
-    loopId,
-    eventId: envelope.eventId,
-  });
-  const committedKey = getDaemonProcessingEventCommittedKey({
-    loopId,
-    eventId: envelope.eventId,
-  });
-
-  try {
-    const alreadyCommitted = await redis.get<string>(committedKey);
-    if (alreadyCommitted) {
-      return {
-        claimed: false,
-        reason: "duplicate_event",
-      };
-    }
-
-    const claimed = await redis.set(claimKey, new Date().toISOString(), {
-      nx: true,
-      ex: DAEMON_PROCESSING_EVENT_CLAIM_TTL_SECONDS,
-    });
-    if (claimed === "OK") {
-      return {
-        claimed: true,
-      };
-    }
-
-    const committedAfterClaimFailure = await redis.get<string>(committedKey);
-    return {
-      claimed: false,
-      reason: committedAfterClaimFailure
-        ? "duplicate_event"
-        : "claim_in_progress",
-    };
-  } catch (error) {
-    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-      console.warn(
-        "[daemon-event] local redis claim parse failure, bypassing claim",
-        {
-          loopId,
-          eventId: envelope.eventId,
-        },
-      );
-      return { claimed: true };
-    }
-    throw error;
-  }
-}
-
-async function commitEnrolledLoopProcessingEvent({
-  loopId,
-  envelope,
-}: {
-  loopId: string;
-  envelope: DaemonEventEnvelopeV2;
-}): Promise<void> {
-  if (isLocalRedisHttpMode()) {
-    return;
-  }
-
-  const claimKey = getDaemonProcessingEventClaimKey({
-    loopId,
-    eventId: envelope.eventId,
-  });
-  const committedKey = getDaemonProcessingEventCommittedKey({
-    loopId,
-    eventId: envelope.eventId,
-  });
-  try {
-    const pipeline = redis.pipeline();
-    pipeline.set(committedKey, new Date().toISOString(), {
-      ex: DAEMON_PROCESSING_EVENT_COMMITTED_TTL_SECONDS,
-    });
-    pipeline.del(claimKey);
-    await pipeline.exec();
-  } catch (error) {
-    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-      console.warn(
-        "[daemon-event] local redis commit parse failure, skipping commit",
-        {
-          loopId,
-          eventId: envelope.eventId,
-        },
-      );
-      return;
-    }
-    throw error;
-  }
-}
-
-async function rollbackEnrolledLoopProcessingEventClaim({
-  loopId,
-  envelope,
-}: {
-  loopId: string;
-  envelope: DaemonEventEnvelopeV2;
-}): Promise<void> {
-  if (isLocalRedisHttpMode()) {
-    return;
-  }
-
-  const claimKey = getDaemonProcessingEventClaimKey({
-    loopId,
-    eventId: envelope.eventId,
-  });
-  try {
-    await redis.del(claimKey);
-  } catch (error) {
-    if (isLocalRedisHttpMode() && isRedisTransportParseError(error)) {
-      console.warn(
-        "[daemon-event] local redis rollback parse failure, skipping rollback",
-        {
-          loopId,
-          eventId: envelope.eventId,
-        },
-      );
-      return;
-    }
-    throw error;
-  }
 }
 
 function getDaemonEventEnvelopeV2(
@@ -426,6 +165,209 @@ function getDaemonEventEnvelopeV2(
     runId: body.runId,
     seq,
   };
+}
+
+function findCanonicalEventContextMismatch(params: {
+  canonicalEvents: CanonicalEventsPayload;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+}): {
+  eventId: string;
+  reason: "payloadVersion" | "runId" | "threadId" | "threadChatId";
+} | null {
+  for (const event of params.canonicalEvents) {
+    if (event.payloadVersion !== 2) {
+      return { eventId: event.eventId, reason: "payloadVersion" };
+    }
+    if (event.runId !== params.runId) {
+      return { eventId: event.eventId, reason: "runId" };
+    }
+    if (event.threadId !== params.threadId) {
+      return { eventId: event.eventId, reason: "threadId" };
+    }
+    if (event.threadChatId !== params.threadChatId) {
+      return { eventId: event.eventId, reason: "threadChatId" };
+    }
+  }
+
+  return null;
+}
+
+function requiredDaemonProviderScopesForAgent(
+  agent: NonNullable<
+    Awaited<ReturnType<typeof getAgentRunContextByRunId>>
+  >["agent"],
+): DaemonTokenProvider[] {
+  switch (agent) {
+    case "claudeCode":
+    case "amp":
+      return ["anthropic"];
+    case "codex":
+      return ["openai"];
+    case "gemini":
+      return ["google"];
+    case "opencode":
+      return ["openrouter", "openai", "anthropic"];
+    default: {
+      const _exhaustiveCheck: never = agent;
+      throw new Error(
+        `unsupported agent for daemon provider scope: ${_exhaustiveCheck}`,
+      );
+    }
+  }
+}
+
+function hasRequiredDaemonProviderScopes(params: {
+  claims: NonNullable<DaemonTokenAuthContext["claims"]>;
+  agent: NonNullable<
+    Awaited<ReturnType<typeof getAgentRunContextByRunId>>
+  >["agent"];
+}): boolean {
+  return requiredDaemonProviderScopesForAgent(params.agent).every((provider) =>
+    hasDaemonProviderScope(params.claims, provider),
+  );
+}
+
+async function persistCanonicalEventsOrResponse(params: {
+  canonicalEvents: CanonicalEventsPayload | null;
+  canPersistCanonicalEvents: boolean;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  publishLive: boolean;
+}): Promise<
+  | { summary: CanonicalPersistenceSummary; response?: undefined }
+  | { summary?: undefined; response: Response }
+> {
+  const canonicalEvents = params.canonicalEvents;
+  if (!canonicalEvents || canonicalEvents.length === 0) {
+    return {
+      summary: {
+        attempted: 0,
+        inserted: 0,
+        deduplicated: 0,
+        insertedEventIds: [],
+        persistedEvents: [],
+      },
+    };
+  }
+
+  if (!params.canPersistCanonicalEvents) {
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+        { status: 503 },
+      ),
+    };
+  }
+
+  const contextMismatch = findCanonicalEventContextMismatch({
+    canonicalEvents,
+    runId: params.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+  });
+  if (contextMismatch) {
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  const rows = canonicalEventsToAgUiRows(canonicalEvents);
+  try {
+    if (params.publishLive) {
+      const result = await persistAndPublishAgUiEvents({
+        db,
+        runId: params.runId,
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        rows,
+      });
+      return {
+        summary: {
+          attempted: canonicalEvents.length,
+          inserted: result.inserted,
+          deduplicated: result.skipped,
+          insertedEventIds: result.insertedEventIds,
+          persistedEvents: [],
+        },
+      };
+    }
+
+    const result = await persistAgUiEvents({
+      db,
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      rows,
+    });
+    return {
+      summary: {
+        attempted: canonicalEvents.length,
+        inserted: result.inserted,
+        deduplicated: result.skipped,
+        insertedEventIds: result.insertedEventIds,
+        persistedEvents: result.persistedEvents,
+      },
+    };
+  } catch (error) {
+    console.error("[daemon-event] AG-UI canonical persistence failed", {
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
+    return {
+      response: Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 500 },
+      ),
+    };
+  }
+}
+
+async function deactivateAcceptedTerminalRun(params: {
+  sandboxId: string;
+  threadChatId: string;
+  runId: string;
+}): Promise<void> {
+  const otherRunsActive = await hasOtherActiveRuns({
+    sandboxId: params.sandboxId,
+    threadChatId: params.threadChatId,
+    excludeRunId: params.runId,
+  });
+  if (otherRunsActive) {
+    await setActiveThreadChat({
+      sandboxId: params.sandboxId,
+      threadChatId: params.threadChatId,
+      isActive: false,
+      runId: params.runId,
+    });
+    return;
+  }
+  await setActiveThreadChat({
+    sandboxId: params.sandboxId,
+    threadChatId: params.threadChatId,
+    isActive: false,
+    runId: params.runId,
+  });
 }
 
 function deriveSessionIdFromMessages(
@@ -493,6 +435,152 @@ function deriveDaemonTerminalErrorInfo(
   };
 }
 
+function findCanonicalRunTerminalEvent(
+  canonicalEvents: CanonicalEventsPayload,
+): {
+  eventId: string;
+  seq: number;
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCode: string | null;
+  headShaAtCompletion: string | null;
+} | null {
+  for (const event of canonicalEvents) {
+    if (event.category !== "operational") continue;
+    if (event.type !== "run-terminal") continue;
+    return {
+      eventId: event.eventId,
+      seq: event.seq,
+      status: event.status,
+      errorMessage: event.errorMessage ?? null,
+      errorCode: event.errorCode ?? null,
+      headShaAtCompletion: event.headShaAtCompletion ?? null,
+    };
+  }
+  return null;
+}
+
+function buildCanonicalRunTerminalEvent(params: {
+  envelope: DaemonEventEnvelopeV2;
+  threadId: string;
+  threadChatId: string;
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCode: string | null;
+  headShaAtCompletion: string | null;
+}): CanonicalEventsPayload[number] {
+  return {
+    payloadVersion: 2,
+    eventId: params.envelope.eventId,
+    runId: params.envelope.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+    seq: params.envelope.seq,
+    timestamp: new Date().toISOString(),
+    category: "operational",
+    type: "run-terminal",
+    status: params.status,
+    errorMessage: params.errorMessage,
+    errorCode: params.errorCode,
+    headShaAtCompletion: params.headShaAtCompletion,
+  };
+}
+
+function publishMetaEvents(params: {
+  metaEvents: NonNullable<DaemonEventAPIBody["metaEvents"]> | null;
+  threadId: string;
+  threadChatId: string;
+}): void {
+  if (!params.metaEvents || params.metaEvents.length === 0) {
+    return;
+  }
+  for (const agUi of metaEventsToAgUiEvents(params.metaEvents)) {
+    broadcastAgUiEventEphemeral({
+      threadChatId: params.threadChatId,
+      event: agUi,
+    }).catch((error) => {
+      console.warn("[daemon-event] meta-event AG-UI broadcast failed", {
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        error,
+      });
+    });
+  }
+}
+
+function deriveTerminalFailureSource(
+  messages: DaemonEventAPIBody["messages"],
+): "custom-error" | "result" | "custom-stop" | "unknown" | null {
+  for (const message of messages) {
+    if (message.type === "custom-error") return "custom-error";
+    if (message.type === "custom-stop") return "custom-stop";
+    if (message.type === "result" && message.is_error) return "result";
+  }
+  return null;
+}
+
+function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
+  const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
+  return action !== "blocked";
+}
+
+function numericUsageField(usage: object, field: string): number {
+  const value = Reflect.get(usage, field);
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function buildRunContextFailureUpdates(params: {
+  status: "processing" | "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
+}):
+  | {
+      failureCategory: RuntimeFailureCategory | null;
+      failureSource:
+        | "custom-error"
+        | "result"
+        | "custom-stop"
+        | "unknown"
+        | null;
+      failureRetryable: boolean | null;
+      failureSignatureHash: number | null;
+      failureTerminalReason: string | null;
+    }
+  | {} {
+  if (params.status !== "failed") {
+    return {
+      failureCategory: null,
+      failureSource: null,
+      failureRetryable: null,
+      failureSignatureHash: null,
+      failureTerminalReason: null,
+    };
+  }
+  const failureCategory = mapDaemonTerminalCategoryToRuntimeFailureCategory(
+    params.errorCategory,
+    params.errorMessage,
+  );
+  const signatureSource = params.errorMessage;
+  return {
+    failureCategory,
+    failureSource: params.failureSource,
+    failureRetryable: isFailureRetryable(failureCategory),
+    failureSignatureHash:
+      signatureSource != null
+        ? hashRuntimeFailureMessage(signatureSource)
+        : null,
+    failureTerminalReason: params.errorMessage,
+  };
+}
+
 function parseDaemonCapabilitiesHeader(
   daemonCapabilitiesHeader: string | null,
 ): Set<string> {
@@ -507,126 +595,32 @@ function parseDaemonCapabilitiesHeader(
   );
 }
 
-/**
- * Returns true if any message in the batch contains at least one tool_use
- * content block (i.e. the agent invoked at least one tool during this run).
- * Used by the no-progress guard in the v3 delivery-loop reducer.
- */
-/**
- * Returns `true` if any tool usage is OBSERVED in this POST's messages. Returns
- * `undefined` when no tool usage is found — IMPORTANT: do NOT return `false`,
- * because tool calls are commonly emitted in earlier flushes of the same run
- * while the terminal `result` flush carries no tool blocks. The narration-only
- * escalation reducer treats `undefined` as "had tool calls" (safe default), so
- * a `false` here would falsely increment the escalation counter for runs that
- * actually used tools but spread their messages across multiple POSTs.
- *
- * If we ever need authoritative per-run accounting, the daemon should send an
- * explicit `hasToolCallsAtCompletion` field computed across the whole run.
- */
-function hasToolCallsInMessages(
-  messages: DaemonEventAPIBody["messages"],
-): true | undefined {
-  for (const msg of messages) {
-    if (msg.type !== "assistant") continue;
-    const content = msg.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (
-        block !== null &&
-        typeof block === "object" &&
-        "type" in block &&
-        block.type === "tool_use"
-      ) {
-        return true;
-      }
-    }
-  }
-  return undefined;
-}
-
-function buildCompletedEvent(
-  state: string | undefined,
-  runId: string,
-  runSeq: number | null,
-  headSha: string | null | undefined,
-  hasToolCalls?: boolean,
-) {
-  switch (state) {
-    case "planning":
-      return runSeq == null
-        ? { type: "planning_run_completed" as const }
-        : { type: "planning_run_completed" as const, runId, runSeq };
-    case "gating_review":
-      return { type: "gate_review_passed" as const, runId, runSeq, headSha };
-    case "gating_ci":
-      return { type: "gate_ci_passed" as const, runId, runSeq, headSha };
-    default:
-      return {
-        type: "run_completed" as const,
-        runId,
-        runSeq,
-        headSha,
-        hasToolCalls,
-      };
-  }
-}
-
-function buildFailedEvent(
-  state: string | undefined,
-  runId: string,
-  runSeq: number | null,
-  headSha: string | null | undefined,
-  errorMessage: string | undefined,
-  errorCategory: string | null,
-) {
-  switch (state) {
-    case "planning":
-      // Daemon-reported failures during planning are process crashes (e.g.
-      // Codex app-server died from bad skill YAML), NOT plan-artifact parse
-      // failures.  Emit run_failed so the reducer routes through
-      // classifyFailureLane → retryInPlanning with proper lane/budget logic.
-      // plan_failed is reserved for the effect system (process-effects.ts)
-      // when a plan artifact itself cannot be parsed.
-      return {
-        type: "run_failed" as const,
-        runId,
-        runSeq,
-        message: errorMessage ?? "Planning run failed",
-        category: errorCategory,
-      };
-    case "gating_review":
-      return {
-        type: "gate_review_failed" as const,
-        runId,
-        runSeq,
-        reason: errorMessage ?? "Gate blocked",
-      };
-    case "gating_ci":
-      return {
-        type: "gate_ci_failed" as const,
-        runId,
-        runSeq,
-        headSha,
-        reason: errorMessage ?? "CI gate blocked",
-      };
-    default:
-      return {
-        type: "run_failed" as const,
-        runId,
-        runSeq,
-        message: errorMessage ?? "Run failed",
-        category: errorCategory,
-      };
-  }
-}
-
 function hasValidThreadChatId(threadChatId: unknown): threadChatId is string {
   return (
     typeof threadChatId === "string" &&
     threadChatId.length > 0 &&
     threadChatId !== "legacy-thread-chat-id"
   );
+}
+
+function logDaemonAuthReject(params: {
+  reason: string;
+  threadId: string;
+  threadChatId: string;
+  runId: string | null;
+  hasDaemonToken?: boolean;
+  hasTestAuthHeader?: boolean;
+  hasSharedSecretHeader?: boolean;
+}): void {
+  console.warn("[daemon-event] auth reject", {
+    reason: params.reason,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+    runId: params.runId,
+    hasDaemonToken: params.hasDaemonToken ?? false,
+    hasTestAuthHeader: params.hasTestAuthHeader ?? false,
+    hasSharedSecretHeader: params.hasSharedSecretHeader ?? false,
+  });
 }
 
 function getDaemonTestAuthContextOrNull(
@@ -665,8 +659,6 @@ function getDaemonTestAuthContextOrNull(
 
 export async function POST(request: Request) {
   const json: DaemonEventAPIBody = await request.json();
-  const daemonVersionHeader =
-    request.headers.get(DAEMON_EVENT_VERSION_HEADER) ?? null;
   const daemonCapabilitiesHeader =
     request.headers.get(DAEMON_EVENT_CAPABILITIES_HEADER) ?? null;
   const daemonCapabilities = parseDaemonCapabilitiesHeader(
@@ -700,7 +692,6 @@ export async function POST(request: Request) {
   }
   const threadChatId = rawThreadChatId;
   const envelopeV2 = getDaemonEventEnvelopeV2(json);
-  let selfDispatchPayload: SdlcSelfDispatchPayload | null = null;
   const daemonTokenAuthContext = await getDaemonTokenAuthContextOrNull(request);
   const daemonTestAuthContext = daemonTokenAuthContext
     ? null
@@ -708,47 +699,34 @@ export async function POST(request: Request) {
   const daemonAuthContext = daemonTokenAuthContext ?? daemonTestAuthContext;
   const usingDaemonTestAuth = daemonTestAuthContext !== null;
   if (!daemonAuthContext) {
-    return new Response("Unauthorized", { status: 401 });
+    const hasDaemonToken = request.headers.has("X-Daemon-Token");
+    const hasTestAuthHeader = request.headers.has(DAEMON_TEST_AUTH_HEADER);
+    const hasSharedSecretHeader = request.headers.has("X-Terragon-Secret");
+    logDaemonAuthReject({
+      reason: "daemon_auth_context_missing",
+      threadId,
+      threadChatId,
+      runId: envelopeV2?.runId ?? null,
+      hasDaemonToken,
+      hasTestAuthHeader,
+      hasSharedSecretHeader,
+    });
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_auth_context_missing",
+      },
+      { status: 401 },
+    );
   }
   const userId = daemonAuthContext.userId;
   const claims = daemonAuthContext.claims;
 
+  const rawCanonicalEvents = Array.isArray(json.canonicalEvents)
+    ? json.canonicalEvents
+    : null;
   const deltas = json.deltas;
-
-  // Meta events (token usage, rate limits, model re-routing, MCP health,
-  // config warnings) are fire-and-forget operational signals. They don't
-  // need DB persistence — the chip UI displays only the current value.
-  // Broadcast them immediately so the UI updates without waiting for the
-  // downstream DB write or delivery-loop processing.
   const metaEvents = Array.isArray(json.metaEvents) ? json.metaEvents : null;
-  if (metaEvents && metaEvents.length > 0) {
-    publishBroadcastUserMessage({
-      type: "user",
-      id: userId,
-      data: {
-        threadPatches: [
-          {
-            threadId,
-            threadChatId,
-            op: "upsert",
-            metaEvents,
-          },
-        ],
-      },
-    }).catch((error) => {
-      console.warn("[daemon-event] meta-event broadcast failed", {
-        threadId,
-        threadChatId,
-        count: metaEvents.length,
-        error,
-      });
-    });
-  }
-
-  const dbPreflight = await getDaemonEventDbPreflight(db);
-  const canPersistTokenStreamEvents = dbPreflight.tokenStreamEventReady;
-  const canPersistRunContextFailureMeta =
-    dbPreflight.agentRunContextFailureColumnsReady;
 
   if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
     return Response.json(
@@ -769,6 +747,84 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+
+  if (envelopeV2 && claims && envelopeV2.runId !== claims.runId) {
+    logDaemonAuthReject({
+      reason: "daemon_event_run_id_claim_mismatch",
+      threadId,
+      threadChatId,
+      runId: envelopeV2.runId,
+    });
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_run_id_claim_mismatch",
+        runId: envelopeV2.runId,
+      },
+      { status: 401 },
+    );
+  }
+
+  if (envelopeV2 && !claims && !usingDaemonTestAuth) {
+    logDaemonAuthReject({
+      reason: "daemon_token_claims_required",
+      threadId,
+      threadChatId,
+      runId: envelopeV2.runId,
+    });
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_token_claims_required",
+        runId: envelopeV2.runId,
+      },
+      { status: 401 },
+    );
+  }
+
+  if (claims) {
+    if (claims.exp <= Date.now()) {
+      logDaemonAuthReject({
+        reason: "daemon_token_expired",
+        threadId,
+        threadChatId,
+        runId: claims.runId,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_expired",
+          runId: claims.runId,
+        },
+        { status: 401 },
+      );
+    }
+    if (claims.threadId !== threadId || claims.threadChatId !== threadChatId) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: claims.runId,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
+  const dbPreflight = await getDaemonEventDbPreflight(db);
+  if (!dbPreflight.agentRunContextFailureColumnsReady) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_runtime_session_schema_not_ready",
+        missing: dbPreflight.missing,
+      },
+      { status: 503 },
+    );
+  }
+  const canPersistCanonicalEvents = dbPreflight.agentEventLogReady;
+  const canPersistRunContextFailureMeta =
+    dbPreflight.agentRunContextFailureColumnsReady;
 
   let runContext: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null =
     null;
@@ -823,28 +879,7 @@ export async function POST(request: Request) {
     });
   };
 
-  if (envelopeV2 && claims && envelopeV2.runId !== claims.runId) {
-    return Response.json(
-      {
-        success: false,
-        error: "daemon_event_run_id_claim_mismatch",
-        runId: envelopeV2.runId,
-      },
-      { status: 401 },
-    );
-  }
-
   if (envelopeV2 && !claims) {
-    if (!usingDaemonTestAuth) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_token_claims_required",
-          runId: envelopeV2.runId,
-        },
-        { status: 401 },
-      );
-    }
     if (!runContext) {
       return Response.json(
         {
@@ -881,44 +916,9 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    if (
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      const replayedSelfDispatch = await getReplayableSelfDispatch({
-        threadChatId,
-        sourceEventId: envelopeV2.eventId,
-        sourceSeq: envelopeV2.seq,
-        sourceRunId: runContext.runId,
-      });
-      return jsonTerminalAckResponse(
-        buildTerminalAckState(
-          {
-            status: 202,
-            deduplicated: true,
-            reason: "run_terminal_ignored",
-            runId: runContext.runId,
-            acknowledgedEventId: envelopeV2.eventId,
-            acknowledgedSeq: envelopeV2.seq,
-          },
-          replayedSelfDispatch,
-        ),
-      );
-    }
   }
 
   if (claims) {
-    if (claims.exp <= Date.now()) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_token_expired",
-          runId: claims.runId,
-        },
-        { status: 401 },
-      );
-    }
     if (!runContext) {
       return Response.json(
         {
@@ -931,9 +931,7 @@ export async function POST(request: Request) {
     }
     if (
       runContext.threadId !== threadId ||
-      runContext.threadChatId !== threadChatId ||
-      claims.threadId !== threadId ||
-      claims.threadChatId !== threadChatId
+      runContext.threadChatId !== threadChatId
     ) {
       return Response.json(
         {
@@ -954,6 +952,12 @@ export async function POST(request: Request) {
       claims.transportMode !== runContext.transportMode ||
       claims.protocolVersion !== runContext.protocolVersion
     ) {
+      logDaemonAuthReject({
+        reason: "daemon_token_claim_mismatch",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -963,7 +967,34 @@ export async function POST(request: Request) {
         { status: 401 },
       );
     }
+    if (
+      !hasRequiredDaemonProviderScopes({
+        claims,
+        agent: runContext.agent,
+      })
+    ) {
+      logDaemonAuthReject({
+        reason: "daemon_token_provider_scope_mismatch",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_token_provider_scope_mismatch",
+          runId: runContext.runId,
+        },
+        { status: 401 },
+      );
+    }
     if (!daemonAuthContext.keyId || !runContext.daemonTokenKeyId) {
+      logDaemonAuthReject({
+        reason: "daemon_token_key_missing",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -974,6 +1005,12 @@ export async function POST(request: Request) {
       );
     }
     if (daemonAuthContext.keyId !== runContext.daemonTokenKeyId) {
+      logDaemonAuthReject({
+        reason: "daemon_token_key_mismatch",
+        threadId,
+        threadChatId,
+        runId: runContext.runId,
+      });
       return Response.json(
         {
           success: false,
@@ -996,166 +1033,256 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    if (
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      const replayedSelfDispatch = envelopeV2
-        ? await getReplayableSelfDispatch({
-            threadChatId,
-            sourceEventId: envelopeV2.eventId,
-            sourceSeq: envelopeV2.seq,
-            sourceRunId: runContext.runId,
-          })
-        : null;
-      return jsonTerminalAckResponse(
-        buildTerminalAckState(
-          {
-            status: 202,
-            deduplicated: true,
-            reason: "run_terminal_ignored",
-            runId: runContext.runId,
-            acknowledgedEventId: envelopeV2?.eventId ?? null,
-            acknowledgedSeq: envelopeV2?.seq ?? null,
-          },
-          replayedSelfDispatch,
-        ),
+  }
+
+  if (rawCanonicalEvents && rawCanonicalEvents.length > 0) {
+    const contextMismatch = findCanonicalEventContextMismatch({
+      canonicalEvents: rawCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+    });
+    if (contextMismatch) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+        { status: 409 },
       );
     }
   }
 
-  if (deltas && deltas.length > 0) {
-    const deltaRunId = authoritativeRunId;
-    const normalizedDeltas = normalizeDeltasForPersistence(deltas);
-    const knownMaxSeqByKey = await getKnownMaxDeltaSeqByKey({
-      runId: deltaRunId,
-      deltas: normalizedDeltas,
-    });
-    const acceptedDeltas = filterDeltasByKnownMaxSeq({
-      deltas: normalizedDeltas,
-      runId: deltaRunId,
-      maxSeqByKey: knownMaxSeqByKey,
-    });
+  const canonicalEvents = filterCanonicalEventsForDeltaCoexistence({
+    canonicalEvents: rawCanonicalEvents,
+    deltas,
+  });
+  const canonicalTerminalBeforePersistence = canonicalEvents
+    ? findCanonicalRunTerminalEvent(canonicalEvents)
+    : null;
 
-    if (acceptedDeltas.length > 0) {
-      await persistKnownMaxDeltaSeqByKey({
-        runId: deltaRunId,
-        deltas: acceptedDeltas,
-      });
-    }
-
-    if (acceptedDeltas.length > 0) {
-      if (canPersistTokenStreamEvents) {
-        try {
-          const tokenEvents = await appendTokenStreamEvents({
-            db,
-            events: acceptedDeltas.map((delta, index) => ({
-              userId,
-              threadId,
-              threadChatId,
-              messageId: delta.messageId,
-              partIndex: delta.partIndex,
-              partType: delta.kind === "thinking" ? "thinking" : "text",
-              text: delta.text,
-              idempotencyKey:
-                envelopeV2 !== null
-                  ? `${threadChatId}:${envelopeV2.eventId}:${envelopeV2.seq}:${index}`
-                  : `${threadChatId}:${deltaRunId}:delta:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-            })),
-          });
-
-          const orderedTokenEvents = [...tokenEvents].sort(
-            (a, b) => a.streamSeq - b.streamSeq,
-          );
-          for (const tokenEvent of orderedTokenEvents) {
-            await publishDeltaBroadcast({
-              userId,
-              threadId,
-              threadChatId,
-              messageId: tokenEvent.messageId,
-              partIndex: tokenEvent.partIndex,
-              deltaSeq: tokenEvent.streamSeq,
-              deltaIdempotencyKey: tokenEvent.idempotencyKey,
-              deltaKind:
-                tokenEvent.partType === "thinking" ? "thinking" : "text",
-              text: tokenEvent.text,
-            }).catch((error) => {
-              console.warn("[daemon-event] delta broadcast failed", {
-                threadId,
-                threadChatId,
-                messageId: tokenEvent.messageId,
-                streamSeq: tokenEvent.streamSeq,
-                error,
-              });
-            });
-          }
-        } catch (error) {
-          if (!isMissingSchemaError(error)) {
-            throw error;
-          }
-          console.error(
-            "[daemon-event] token stream persistence unavailable, falling back to direct broadcast",
-            {
-              threadId,
-              threadChatId,
-              error,
-            },
-          );
-          for (const [index, delta] of acceptedDeltas.entries()) {
-            await publishDeltaBroadcast({
-              userId,
-              threadId,
-              threadChatId,
-              messageId: delta.messageId,
-              partIndex: delta.partIndex,
-              deltaSeq: delta.deltaSeq,
-              deltaIdempotencyKey: `${threadChatId}:${deltaRunId}:fallback:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-              deltaKind: delta.kind === "thinking" ? "thinking" : "text",
-              text: delta.text,
-            }).catch((broadcastError) => {
-              console.warn("[daemon-event] fallback delta broadcast failed", {
-                threadId,
-                threadChatId,
-                messageId: delta.messageId,
-                deltaSeq: delta.deltaSeq,
-                error: broadcastError,
-              });
-            });
-          }
-        }
-      } else {
-        for (const [index, delta] of acceptedDeltas.entries()) {
-          await publishDeltaBroadcast({
-            userId,
-            threadId,
-            threadChatId,
-            messageId: delta.messageId,
-            partIndex: delta.partIndex,
-            deltaSeq: delta.deltaSeq,
-            deltaIdempotencyKey: `${threadChatId}:${deltaRunId}:preflight-fallback:${delta.messageId}:${delta.partIndex}:${delta.deltaSeq}:${index}`,
-            deltaKind: delta.kind === "thinking" ? "thinking" : "text",
-            text: delta.text,
-          }).catch((error) => {
-            console.warn(
-              "[daemon-event] preflight fallback delta broadcast failed",
-              {
-                threadId,
-                threadChatId,
-                messageId: delta.messageId,
-                deltaSeq: delta.deltaSeq,
-                error,
-              },
-            );
-          });
-        }
+  const canonicalTerminal = canonicalTerminalBeforePersistence;
+  const daemonRunStatusFromMessages = canonicalTerminal
+    ? canonicalTerminal.status
+    : deriveRunStatusFromMessages(messages);
+  const daemonTerminalErrorInfo = canonicalTerminal
+    ? {
+        errorMessage: canonicalTerminal.errorMessage,
+        errorCategory: canonicalTerminal.errorMessage
+          ? classifyDaemonTerminalErrorCategory(canonicalTerminal.errorMessage)
+          : "unknown",
       }
+    : deriveDaemonTerminalErrorInfo(messages);
+  const terminalFailureSource = canonicalTerminal
+    ? daemonRunStatusFromMessages === "stopped"
+      ? ("custom-stop" as const)
+      : daemonRunStatusFromMessages === "failed"
+        ? ("custom-error" as const)
+        : null
+    : deriveTerminalFailureSource(messages);
+  const effectiveHeadShaAtCompletion =
+    daemonHeadShaAtCompletion ?? canonicalTerminal?.headShaAtCompletion ?? null;
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    !envelopeV2 &&
+    !canonicalTerminal
+  ) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_terminal_requires_v2_envelope",
+      },
+      { status: 409 },
+    );
+  }
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    !canPersistCanonicalEvents
+  ) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_canonical_persistence_unavailable",
+        missing: dbPreflight.missing,
+      },
+      { status: 503 },
+    );
+  }
+
+  const terminalFailureUpdates = buildRunContextFailureUpdates({
+    status: daemonRunStatusFromMessages,
+    errorMessage: daemonTerminalErrorInfo.errorMessage,
+    errorCategory: daemonTerminalErrorInfo.errorCategory,
+    failureSource: terminalFailureSource,
+  });
+  let terminalFenceOutcome: "committed" | "duplicate" | null = null;
+  let terminalEventIdForAck: string | null = null;
+  let terminalSeqForAck: number | null = null;
+  if (daemonRunStatusFromMessages !== "processing") {
+    const terminalEventId = canonicalTerminal?.eventId ?? envelopeV2?.eventId;
+    const terminalSeq = canonicalTerminal?.seq ?? envelopeV2?.seq;
+    if (!terminalEventId || terminalSeq === undefined) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_terminal_fence_missing_event_identity",
+        },
+        { status: 409 },
+      );
+    }
+    terminalEventIdForAck = terminalEventId;
+    terminalSeqForAck = terminalSeq;
+
+    const terminalFenceResult = await completeAgentRunContextTerminal({
+      db,
+      runId: runContext.runId,
+      userId,
+      threadId,
+      threadChatId,
+      transportMode: runContext.transportMode,
+      protocolVersion: runContext.protocolVersion,
+      runtimeProvider: runContext.runtimeProvider,
+      daemonTokenKeyId: runContext.daemonTokenKeyId,
+      terminalStatus: daemonRunStatusFromMessages,
+      lastAcceptedSeq: terminalSeq,
+      terminalEventId,
+      failureUpdates: terminalFailureUpdates,
+    });
+    if (terminalFenceResult.status === "rejected") {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_terminal_run_context_cas_failed",
+          reason: terminalFenceResult.reason,
+          runId: runContext.runId,
+        },
+        { status: 409 },
+      );
+    }
+    terminalFenceOutcome = terminalFenceResult.status;
+    runContext = terminalFenceResult.runContext;
+    if (terminalFenceOutcome === "duplicate") {
+      return jsonTerminalAckResponse({
+        status: 202,
+        deduplicated: true,
+        reason: "run_terminal_ignored",
+        runId: runContext.runId,
+        acknowledgedEventId: terminalEventIdForAck,
+        acknowledgedSeq: terminalSeqForAck,
+      });
     }
   }
 
-  // Heartbeat shortcut: empty messages skip delivery loop, envelope validation, and
-  // run-context status transitions — just extend sandbox life + refresh updatedAt.
-  if (messages.length === 0 && (!deltas || deltas.length === 0)) {
+  let canonicalEventsForPersistence: CanonicalEventsPayload | null =
+    canonicalEvents;
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    envelopeV2 &&
+    !canonicalTerminal
+  ) {
+    const synthesizedTerminal = buildCanonicalRunTerminalEvent({
+      envelope: envelopeV2,
+      threadId,
+      threadChatId,
+      status: daemonRunStatusFromMessages,
+      errorMessage: daemonTerminalErrorInfo.errorMessage,
+      errorCode: daemonTerminalErrorInfo.errorCategory,
+      headShaAtCompletion: effectiveHeadShaAtCompletion,
+    });
+    canonicalEventsForPersistence = canonicalEventsForPersistence
+      ? [...canonicalEventsForPersistence, synthesizedTerminal]
+      : [synthesizedTerminal];
+  }
+
+  const canonicalPersistence = await persistCanonicalEventsOrResponse({
+    canonicalEvents: canonicalEventsForPersistence,
+    canPersistCanonicalEvents,
+    runId: runContext.runId,
+    threadId,
+    threadChatId,
+    publishLive: daemonRunStatusFromMessages === "processing",
+  });
+  if (canonicalPersistence.response) {
+    return canonicalPersistence.response;
+  }
+
+  publishMetaEvents({ metaEvents, threadId, threadChatId });
+
+  const shouldIgnoreTerminalRun =
+    runContext !== null &&
+    (claims !== null || (usingDaemonTestAuth && envelopeV2 !== null)) &&
+    canonicalTerminal === null &&
+    daemonRunStatusFromMessages === "processing" &&
+    (runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped");
+  if (shouldIgnoreTerminalRun) {
+    return jsonTerminalAckResponse({
+      status: 202,
+      deduplicated: true,
+      reason: "run_terminal_ignored",
+      runId: runContext.runId,
+      acknowledgedEventId: envelopeV2?.eventId ?? null,
+      acknowledgedSeq: envelopeV2?.seq ?? null,
+    });
+  }
+
+  // Daemon deltas → AG-UI TEXT_MESSAGE_CONTENT / REASONING_MESSAGE_CONTENT
+  // rows. Persisted to agent_event_log with per-thread-chat seq and
+  // XADD'd to the live-tail stream. The legacy token_stream_event table
+  // and the deltaSeq broadcast patch are gone — AG-UI replay via
+  // /api/ag-ui/[threadId] covers both live tail and reconnection catch-up.
+  if (deltas && deltas.length > 0) {
+    if (!canPersistCanonicalEvents) {
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+        { status: 503 },
+      );
+    }
+    try {
+      await persistAndPublishAgUiEvents({
+        db,
+        runId: authoritativeRunId,
+        threadId,
+        threadChatId,
+        rows: daemonDeltasToAgUiRows({
+          runId: authoritativeRunId,
+          deltas,
+        }),
+      });
+    } catch (error) {
+      console.error("[daemon-event] AG-UI delta persistence failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  // Heartbeat shortcut: empty messages skip message/event persistence,
+  // envelope validation, and run-context status transitions.
+  if (
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    (!canonicalEvents || canonicalEvents.length === 0)
+  ) {
     const result = await handleDaemonEvent({
       messages: [],
       threadId,
@@ -1172,113 +1299,95 @@ export async function POST(request: Request) {
     return Response.json({ success: true });
   }
 
-  const daemonRunStatusFromMessages = deriveRunStatusFromMessages(messages);
-  const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
-
-  const activeWorkflow = await getActiveWorkflowForThread({ db, threadId });
-  const effectiveLoopId =
-    runContext?.workflowId ?? activeWorkflow?.workflow.id ?? null;
-
-  // Acknowledge dispatch intent once the run context is still in a
-  // dispatch-pending state. Envelope v2 starts at seq=0, so this stays
-  // status-based (idempotent), not seq-based. The workflow reducer no longer
-  // depends on ack/start events for progression; terminal signals remain
-  // authoritative when fenced by runSeq.
   if (
-    effectiveLoopId &&
-    envelopeV2 &&
-    runContext &&
-    (runContext.status === "pending" || runContext.status === "dispatched")
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    canonicalEvents &&
+    canonicalEvents.length > 0
   ) {
-    try {
-      await handleAckReceived({
-        db,
-        runId: envelopeV2.runId,
-        loopId: effectiveLoopId!,
-        threadChatId,
-      });
-    } catch (ackError) {
-      console.warn("[delivery-loop] dispatch intent ack failed, non-blocking", {
-        loopId: effectiveLoopId!,
-        threadId,
-        threadChatId,
-        runId: envelopeV2.runId,
-        error: ackError,
+    const canonicalTerminal = findCanonicalRunTerminalEvent(canonicalEvents);
+    if (canonicalTerminal) {
+      // Canonical-only terminal batches must not take the freshness-touch
+      // shortcut; they need the fenced terminal transition contract below.
+    } else {
+      waitUntil(
+        (async () => {
+          try {
+            await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only freshness touch failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
+          }
+        })(),
+      );
+      waitUntil(
+        (async () => {
+          try {
+            const thread = await getThreadMinimal({ db, threadId, userId });
+            if (thread?.codesandboxId && thread.sandboxProvider) {
+              await extendSandboxLife({
+                sandboxId: thread.codesandboxId,
+                sandboxProvider: thread.sandboxProvider,
+              });
+            }
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only thread refresh failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
+          }
+        })(),
+      );
+      return Response.json({
+        success: true,
+        canonicalEventsPersisted: canonicalPersistence.summary.inserted,
+        canonicalEventsDeduplicated: canonicalPersistence.summary.deduplicated,
       });
     }
   }
 
-  let claimedProcessingEvent = false;
-
-  if (effectiveLoopId) {
-    if (!envelopeV2) {
-      console.error(
-        "[delivery-loop] rejecting daemon event for enrolled loop without v2 envelope",
-        {
-          userId,
-          threadId,
-          loopId: effectiveLoopId!,
-          daemonVersionHeader,
-          daemonCapabilitiesHeader,
-          payloadVersion: json.payloadVersion ?? null,
-        },
-      );
-      return Response.json(
-        {
-          success: false,
-          error: "enrolled_loop_requires_v2_envelope",
-          loopId: effectiveLoopId!,
-        },
-        { status: 409 },
-      );
-    }
-
-    if (envelopeV2 && daemonRunStatusFromMessages === "processing") {
-      const processingClaimResult = await claimEnrolledLoopProcessingEvent({
-        loopId: effectiveLoopId!,
-        envelope: envelopeV2,
-      });
-      if (!processingClaimResult.claimed) {
-        if (processingClaimResult.reason === "claim_in_progress") {
-          return Response.json(
-            {
-              success: false,
-              error: "daemon_event_claim_in_progress",
-              loopId: effectiveLoopId!,
-            },
-            { status: 409 },
-          );
-        }
-        return Response.json(
-          {
-            success: true,
-            deduplicated: true,
-            reason: processingClaimResult.reason,
-            loopId: effectiveLoopId!,
-            acknowledgedEventId: envelopeV2.eventId,
-            acknowledgedSeq: envelopeV2.seq,
-          },
-          { status: 202 },
-        );
-      }
-      claimedProcessingEvent = true;
-    }
-  }
+  // Terminal transitions must be fenced across canonical runtime status surfaces.
+  // Canonical terminal events carry their own event id + seq; message-derived
+  // terminals still require envelope v2 so the daemon can retry fail-closed.
+  const fenceTerminalTransition =
+    daemonRunStatusFromMessages !== "processing" &&
+    (envelopeV2 != null || canonicalTerminal != null);
 
   // Prefer computing context usage from the last non-result message's usage
   // fields when available. Do not sum across all messages.
   const computedContextUsage = (() => {
     try {
       for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i] as any;
-        if (!m || m.type === "result") continue;
-        const usage = m.message?.usage;
-        if (!usage) continue;
-        if (m.parent_tool_use_id) continue;
-        const input = Number(usage.input_tokens ?? 0);
-        const output = Number(usage.output_tokens ?? 0);
-        const cacheCreate = Number(usage.cache_creation_input_tokens ?? 0);
-        const cacheRead = Number(usage.cache_read_input_tokens ?? 0);
+        const message = messages[i];
+        if (!message || message.type === "result") continue;
+        if (!("message" in message)) continue;
+        if ("parent_tool_use_id" in message && message.parent_tool_use_id) {
+          continue;
+        }
+        const messagePayload = message.message;
+        if (typeof messagePayload !== "object" || messagePayload === null) {
+          continue;
+        }
+        if (!("usage" in messagePayload)) continue;
+        const usage = messagePayload.usage;
+        if (typeof usage !== "object" || usage === null) continue;
+        const input = numericUsageField(usage, "input_tokens");
+        const output = numericUsageField(usage, "output_tokens");
+        const cacheCreate = numericUsageField(
+          usage,
+          "cache_creation_input_tokens",
+        );
+        const cacheRead = numericUsageField(usage, "cache_read_input_tokens");
         const total = input + output + cacheCreate + cacheRead;
         return Number.isFinite(total) && total > 0 ? total : null;
       }
@@ -1297,31 +1406,35 @@ export async function POST(request: Request) {
     });
   }
   try {
-    result = await handleDaemonEvent({
-      messages,
-      threadId,
-      threadChatId,
-      userId,
-      timezone,
-      contextUsage: computedContextUsage ?? null,
-      runId: authoritativeRunId,
-      runContext,
-      workflowId: effectiveLoopId,
-    });
+    const isCanonicalOnlyTerminalBatch =
+      canonicalTerminal != null &&
+      messages.length === 0 &&
+      (!deltas || deltas.length === 0);
+    result = isCanonicalOnlyTerminalBatch
+      ? {
+          success: true,
+          threadChatMessageSeq: null,
+          terminalRecoveryQueued: false,
+        }
+      : await handleDaemonEvent({
+          messages,
+          threadId,
+          threadChatId,
+          userId,
+          timezone,
+          contextUsage: computedContextUsage ?? null,
+          runId: authoritativeRunId,
+          runContext,
+          deferTerminalTransitionToRoute: fenceTerminalTransition,
+        });
   } catch (error) {
     console.error(
       "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
       error,
     );
-    if (runContext) {
+    if (runContext && !fenceTerminalTransition) {
       await updateRunContextIfPresent({
         status: "failed",
-      });
-    }
-    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
-      await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: effectiveLoopId!,
-        envelope: envelopeV2,
       });
     }
     throw error;
@@ -1333,13 +1446,74 @@ export async function POST(request: Request) {
         status: "failed",
       });
     }
-    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
-      await rollbackEnrolledLoopProcessingEventClaim({
-        loopId: effectiveLoopId!,
-        envelope: envelopeV2,
+    return new Response(result.error, { status: result.status || 500 });
+  }
+
+  if (result.threadChatMessageSeq != null) {
+    const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
+    if (insertedEventIds.length > 0) {
+      // The persist layer already recorded the exact eventIds it wrote —
+      // use them directly instead of re-running the mapper (which would
+      // risk drift between producer and consumer if the mapping ever
+      // changed). Duplicates from earlier POSTs already carry their seq
+      // from the initial insert, so they're intentionally excluded here.
+      await assignThreadChatMessageSeqToCanonicalEvents({
+        db,
+        eventIds: insertedEventIds,
+        threadChatMessageSeq: result.threadChatMessageSeq,
       });
     }
-    return new Response(result.error, { status: result.status || 500 });
+  }
+
+  // Emit AG-UI events for rich DBAgentMessage parts that are NOT covered by
+  // the canonical-events pipeline (thinking, terminal, diff, image, audio,
+  // pdf, text-file, resource-link, auto-approval-review, plan,
+  // plan-structured, server-tool-use, web-search-result, rich-text). We
+  // rebuild the DBMessages here rather than threading them back from
+  // `handleDaemonEvent` — `toDBMessage` is pure, so the second call is
+  // deterministic, and the stable (envelope eventId + messageIndex)
+  // messageId pattern means retried POSTs dedupe on (runId, eventId).
+  if (canPersistCanonicalEvents && envelopeV2) {
+    const richPartInputs: AssistantMessagePartsInput[] = [];
+    let messageIndex = 0;
+    for (const claudeMessage of messages) {
+      for (const dbMsg of toDBMessage(claudeMessage)) {
+        const currentIndex = messageIndex++;
+        if (dbMsg.type !== "agent") continue;
+        // DBAgentMessage parts never contain tool-use/tool-result — those
+        // are separate top-level DBMessage variants. The mapper's skip set
+        // is a superset; here we only need to filter out pure-text parts.
+        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
+        if (!hasRichParts) continue;
+        richPartInputs.push({
+          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
+          parts: dbMsg.parts,
+        });
+      }
+    }
+    if (richPartInputs.length > 0) {
+      try {
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
+        });
+      } catch (error) {
+        // Rich-part emission is best-effort: the DBMessages themselves are
+        // already committed via handleDaemonEvent, and the frontend
+        // fallback-reads from thread chat if the AG-UI stream misses
+        // something. Log and continue rather than 500 (which would force
+        // the daemon to retry the whole POST and duplicate side effects).
+        console.warn("[daemon-event] AG-UI rich-part persistence failed", {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        });
+      }
+    }
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
@@ -1351,14 +1525,6 @@ export async function POST(request: Request) {
   // "claimed" state until stale-claim timeout, blocking daemon retries.
   {
     const postHandleOps: Array<Promise<unknown>> = [];
-    if (effectiveLoopId && envelopeV2 && claimedProcessingEvent) {
-      postHandleOps.push(
-        commitEnrolledLoopProcessingEvent({
-          loopId: effectiveLoopId!,
-          envelope: envelopeV2,
-        }),
-      );
-    }
     if (runContext) {
       // Only update resolvedSessionId here. Terminal status (completed/
       // failed/stopped) is deferred until after the coordinator tick
@@ -1413,7 +1579,7 @@ export async function POST(request: Request) {
     ) {
       // Invalid type — skip codex persistence but do NOT rollback claimed
       // signal. Rolling back after terminal side effects would permanently
-      // lose the daemon completion signal for enrolled loops.
+      // lose the daemon completion signal for runtime sessions.
       console.warn(
         "[daemon-event] invalid codexPreviousResponseId type, skipping persistence",
         {
@@ -1429,18 +1595,23 @@ export async function POST(request: Request) {
         json.codexPreviousResponseId === null;
       if (shouldPersistCodexPreviousResponseId) {
         try {
-          await db
-            .update(schema.threadChat)
-            .set({
-              codexPreviousResponseId: json.codexPreviousResponseId,
-            })
-            .where(
-              and(
-                eq(schema.threadChat.userId, userId),
-                eq(schema.threadChat.threadId, threadId),
-                eq(schema.threadChat.id, threadChatId),
+          await Promise.all([
+            db
+              .update(schema.threadChat)
+              .set({
+                codexPreviousResponseId: json.codexPreviousResponseId,
+              })
+              .where(
+                and(
+                  eq(schema.threadChat.userId, userId),
+                  eq(schema.threadChat.threadId, threadId),
+                  eq(schema.threadChat.id, threadChatId),
+                ),
               ),
-            );
+            updateRunContextIfPresent({
+              previousResponseId: json.codexPreviousResponseId,
+            }),
+          ]);
         } catch (error) {
           console.error(
             "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
@@ -1458,184 +1629,256 @@ export async function POST(request: Request) {
     }
   }
 
-  // V3 kernel bridge: mirror terminal daemon outcomes into the
-  // Postgres-canonical journal/effect-ledger runtime.
-  if (
-    effectiveLoopId &&
-    envelopeV2 &&
-    daemonRunStatusFromMessages !== "processing"
-  ) {
-    try {
-      const headAtTerminal = await getWorkflowHead({
-        db,
-        workflowId: effectiveLoopId,
-      });
-      const terminalState = headAtTerminal?.state;
-      const terminalRunSeq =
-        runContext?.runSeq ??
-        (headAtTerminal?.activeRunId === null ||
-        headAtTerminal?.activeRunId === envelopeV2.runId
-          ? (headAtTerminal?.activeRunSeq ?? null)
-          : null);
-      if (terminalRunSeq == null) {
-        // Migration-window fallback: keep bridging terminal events even when
-        // older run-context rows lack runSeq or the active head cannot be
-        // correlated to this run. Fencing by runSeq is still used whenever
-        // available.
-        console.warn(
-          "[daemon-event] bridging terminal event without persisted runSeq (legacy fallback)",
-          {
-            loopId: effectiveLoopId,
-            runId: envelopeV2.runId,
-            state: terminalState,
-          },
-        );
-      }
-
-      if (daemonRunStatusFromMessages === "stopped") {
-        // Preserve prior behavior: stopped terminals do not advance the v3 loop.
-      } else if (daemonRunStatusFromMessages === "completed") {
-        await appendEventAndAdvanceExplicit({
-          db,
-          workflowId: effectiveLoopId,
-          source: "daemon",
-          idempotencyKey:
-            terminalState === "planning" && terminalRunSeq == null
-              ? `planning-terminal:${envelopeV2.eventId}`
-              : `run-completed:${envelopeV2.eventId}`,
-          event: buildCompletedEvent(
-            terminalState,
-            envelopeV2.runId,
-            terminalRunSeq,
-            daemonHeadShaAtCompletion,
-            hasToolCallsInMessages(messages),
-          ),
-          behavior: {
-            applyGateBypass: false,
-            drainEffects: true,
-          },
-        });
-      } else if (daemonRunStatusFromMessages === "failed") {
-        await appendEventAndAdvanceExplicit({
-          db,
-          workflowId: effectiveLoopId,
-          source: "daemon",
-          idempotencyKey:
-            terminalState === "planning" && terminalRunSeq == null
-              ? `planning-terminal:${envelopeV2.eventId}`
-              : `run-failed:${envelopeV2.eventId}`,
-          event: buildFailedEvent(
-            terminalState,
-            envelopeV2.runId,
-            terminalRunSeq,
-            daemonHeadShaAtCompletion,
-            daemonTerminalErrorInfo.errorMessage ?? undefined,
-            daemonTerminalErrorInfo.errorCategory,
-          ),
-          behavior: {
-            applyGateBypass: false,
-            drainEffects: true,
-          },
-        });
-      }
-    } catch (v3Err) {
-      console.error("[daemon-event] v3 kernel bridge failed, continuing", {
-        loopId: effectiveLoopId,
-        runId: envelopeV2?.runId,
-        error: v3Err,
-      });
-    }
-
-    // NOTE: kernel advance is configured for eager effect drain in this path.
-    // The cron at /api/internal/cron/dispatch-ack-timeout remains as safety net.
-  }
-
   // Now that the coordinator tick succeeded, finalize the terminal run status.
   // This was deferred from the postHandleOps block so that a tick failure
   // keeps the run non-terminal and allows daemon retries to re-enter the
   // main processing path. Both writes are awaited to prevent silent drops.
-  let didUpdateTerminalDispatchStatus = false;
   {
     const terminalOps: Array<Promise<unknown>> = [];
-    if (runContext && resolvedStatus !== "processing") {
-      terminalOps.push(updateRunContextIfPresent({ status: resolvedStatus }));
-    }
-    if (
-      effectiveLoopId &&
-      envelopeV2 &&
-      daemonRunStatusFromMessages !== "processing"
-    ) {
-      terminalOps.push(
-        persistDaemonTerminalDispatchStatus({
-          loopId: effectiveLoopId!,
+
+    if (fenceTerminalTransition) {
+      const terminalStatusForTransition = result.terminalRecoveryQueued
+        ? ("completed" as const)
+        : resolvedStatus;
+      const eventType =
+        terminalStatusForTransition === "stopped"
+          ? ("assistant.message_stop" as const)
+          : terminalStatusForTransition === "failed"
+            ? ("assistant.message_error" as const)
+            : ("assistant.message_done" as const);
+
+      const transitionResult = await updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType,
+        // `handleDaemonEvent` skips unread + terminal metadata when it defers the
+        // terminal transition to this fenced route path.
+        markAsUnread: true,
+        // No chatUpdates here: this path is terminal-only and must not append
+        // messages. Terminal metadata is written in a separate, status-gated
+        // update below.
+        requireStatusTransitionForChatUpdates: true,
+        skipBroadcast: true,
+      });
+
+      if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
+        const latest = await getThreadChat({
+          db,
+          userId,
+          threadId,
           threadChatId,
-          runId: envelopeV2.runId,
-          daemonRunStatus: daemonRunStatusFromMessages,
-          daemonErrorMessage: daemonTerminalErrorInfo.errorMessage,
-          daemonErrorCategory: daemonTerminalErrorInfo.errorCategory,
-        }).then((result) => {
-          didUpdateTerminalDispatchStatus = true;
-          return result;
-        }),
-      );
-    }
-    if (terminalOps.length > 0) {
-      const results = await Promise.allSettled(terminalOps);
-      for (const r of results) {
-        if (r.status === "rejected") {
-          // Non-blocking: handleDaemonEvent already committed thread
-          // side effects (messages, tool results). Returning 500 here
-          // would cause the daemon to retry and duplicate those effects.
-          // Terminal run-status staleness is acceptable — the cron sweep
-          // and ack timeout will eventually reconcile.
-          console.warn("[daemon-event] terminal state persistence failed", {
-            runId: runContext?.runId ?? envelopeV2?.runId,
-            enrolled: !!effectiveLoopId,
-            error: r.reason,
-          });
+        });
+        if (!latest || latest.status !== transitionResult.updatedStatus) {
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_terminal_thread_chat_cas_failed",
+              expectedStatus: transitionResult.updatedStatus,
+              actualStatus: latest?.status ?? null,
+            },
+            { status: 409 },
+          );
+        }
+      }
+
+      await deactivateAcceptedTerminalRun({
+        sandboxId: runContext.sandboxId,
+        threadChatId,
+        runId: runContext.runId,
+      });
+
+      if (result.terminalRecoveryQueued) {
+        await Promise.all([
+          updateThreadChatTerminalMetadataIfTerminal({
+            db,
+            userId,
+            threadId,
+            threadChatId,
+            updates: {
+              errorMessage: null,
+              errorMessageInfo: null,
+            },
+          }),
+          updateRunContextIfPresent({
+            status: "completed",
+            ...buildRunContextFailureUpdates({
+              status: "completed",
+              errorMessage: null,
+              errorCategory: "unknown",
+              failureSource: null,
+            }),
+          }),
+        ]);
+      } else if (resolvedStatus === "failed") {
+        const errorMessageStr = daemonTerminalErrorInfo.errorMessage;
+        const isPromptTooLong =
+          !!errorMessageStr &&
+          /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
+            errorMessageStr,
+          );
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: isPromptTooLong
+              ? "prompt-too-long"
+              : "agent-generic-error",
+            errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
+          },
+        });
+      } else {
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: null,
+            errorMessageInfo: null,
+          },
+        });
+      }
+      if (terminalOps.length > 0) {
+        try {
+          await Promise.all(terminalOps);
+        } catch (error) {
+          console.warn(
+            "[daemon-event] fenced terminal state persistence failed",
+            {
+              threadId,
+              threadChatId,
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error,
+            },
+          );
+          return Response.json(
+            {
+              success: false,
+              error: "daemon_event_terminal_persistence_failed",
+              runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+              detail: error instanceof Error ? error.message : String(error),
+            },
+            { status: 503 },
+          );
+        }
+      }
+    } else {
+      if (runContext && resolvedStatus !== "processing") {
+        terminalOps.push(
+          updateRunContextIfPresent({
+            status: resolvedStatus,
+            ...buildRunContextFailureUpdates({
+              status: resolvedStatus,
+              errorMessage: daemonTerminalErrorInfo.errorMessage,
+              errorCategory: daemonTerminalErrorInfo.errorCategory,
+              failureSource: terminalFailureSource,
+            }),
+          }),
+        );
+      }
+      if (terminalOps.length > 0) {
+        const results = await Promise.allSettled(terminalOps);
+        for (const r of results) {
+          if (r.status === "rejected") {
+            // Non-blocking: handleDaemonEvent already committed thread
+            // side effects (messages, tool results). Returning 500 here
+            // would cause the daemon to retry and duplicate those effects.
+            // Terminal run-status staleness is acceptable — the cron sweep
+            // and ack timeout will eventually reconcile.
+            console.warn("[daemon-event] terminal state persistence failed", {
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error: r.reason,
+            });
+          }
         }
       }
     }
   }
 
-  // Broadcast delivery-loop refetch on terminal daemon events that materially
-  // changed the delivery-loop state. This enables event-driven UI updates.
   if (
-    didUpdateTerminalDispatchStatus &&
-    effectiveLoopId &&
-    envelopeV2 &&
+    daemonRunStatusFromMessages !== "processing" &&
+    canonicalPersistence.summary.persistedEvents.length > 0
+  ) {
+    await publishPersistedAgUiEvents({
+      threadChatId,
+      persistedEvents: canonicalPersistence.summary.persistedEvents,
+      insertedEventIds: canonicalPersistence.summary.insertedEventIds,
+    });
+  }
+
+  // Before the terminal marker, close any (messageId, kind) lifecycles that
+  // the delta ingestion path opened for this run but never closed. Without
+  // the synthetic ENDs the AG-UI event log is not protocol-compliant and the
+  // client rejects follow-up CONTENT/END events on replay. Scoped to the
+  // current run so we only touch rows this run wrote.
+  if (
+    canPersistCanonicalEvents &&
     daemonRunStatusFromMessages !== "processing"
   ) {
-    publishBroadcastUserMessage({
-      type: "user",
-      id: userId,
-      data: {
-        threadPatches: [
-          {
-            threadId,
-            threadChatId,
-            op: "refetch",
-            refetch: ["delivery-loop"],
-          },
-        ],
-      },
+    try {
+      const openMessages = await findOpenAgUiMessagesForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      if (openMessages.length > 0) {
+        const endRows = buildDeltaRunEndRows({
+          runId: authoritativeRunId,
+          openMessages,
+        });
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: endRows,
+        });
+      }
+    } catch (error) {
+      // Best-effort: END synthesis is a consistency guarantee, but the
+      // surrounding terminal path (status persistence, run finish marker)
+      // must not be blocked by a read/write failure here. The AG-UI replay
+      // synthesis in the SSE route serves as a secondary safety net for any
+      // rows that slip through.
+      console.warn(
+        "[daemon-event] AG-UI run-terminal END synthesis failed, continuing",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
+    }
+  }
+
+  // Emit a terminal AG-UI marker (RUN_FINISHED or RUN_ERROR) on the thread
+  // chat stream. Ephemeral: not persisted to agent_event_log — the status
+  // of the run is already in agentRunContext.status.
+  if (daemonRunStatusFromMessages !== "processing") {
+    broadcastAgUiEventEphemeral({
+      threadChatId,
+      event: buildRunTerminalAgUi({
+        threadId,
+        runId: authoritativeRunId,
+        daemonRunStatus: daemonRunStatusFromMessages,
+        errorMessage: daemonTerminalErrorInfo.errorMessage,
+        errorCode: daemonTerminalErrorInfo.errorCategory,
+      }),
     }).catch((error) => {
-      console.warn("[daemon-event] delivery-loop broadcast failed", {
+      console.warn("[daemon-event] run-terminal AG-UI broadcast failed", {
         threadId,
         threadChatId,
-        loopId: effectiveLoopId,
+        runId: authoritativeRunId,
         error,
       });
     });
   }
 
-  return jsonTerminalAckResponse(
-    buildTerminalAckState(
-      {
-        acknowledgedEventId: envelopeV2?.eventId ?? null,
-        acknowledgedSeq: envelopeV2?.seq ?? null,
-      },
-      selfDispatchPayload,
-    ),
-  );
+  return jsonTerminalAckResponse({
+    acknowledgedEventId: terminalEventIdForAck ?? envelopeV2?.eventId ?? null,
+    acknowledgedSeq: terminalSeqForAck ?? envelopeV2?.seq ?? null,
+  });
 }

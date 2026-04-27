@@ -36,6 +36,14 @@ loadLocalEnvFiles();
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  // Disable type checking in dev for faster HMR
+  typescript: {
+    ignoreBuildErrors: process.env.NODE_ENV === "development",
+  },
+  // @ts-ignore - eslint option is valid but not in type definitions
+  eslint: {
+    ignoreDuringBuilds: process.env.NODE_ENV === "development",
+  },
   images: {
     remotePatterns: [
       {
@@ -49,13 +57,41 @@ const nextConfig: NextConfig = {
     root: repoRoot,
   },
   experimental: {
-    optimizePackageImports: ["lucide-react"],
+    // Reduce unnecessary re-renders during HMR
+    optimizeCss: false, // CSS optimization can slow down HMR
+    optimizePackageImports: [
+      "lucide-react",
+      "@radix-ui/react-avatar",
+      "@radix-ui/react-checkbox",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "@radix-ui/react-label",
+      "@radix-ui/react-popover",
+      "@radix-ui/react-portal",
+      "@radix-ui/react-progress",
+      "@radix-ui/react-radio-group",
+      "@radix-ui/react-scroll-area",
+      "@radix-ui/react-select",
+      "@radix-ui/react-separator",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-switch",
+      "@radix-ui/react-tabs",
+      "@radix-ui/react-tooltip",
+      "@radix-ui/react-visually-hidden",
+      "@tiptap/react",
+      "@tiptap/starter-kit",
+      "@assistant-ui/react",
+      "@ag-ui/client",
+      "@ag-ui/core",
+      "@anthropic-ai/sdk",
+      "@aws-sdk/client-s3",
+      "ai",
+      "zod",
+    ],
     staleTimes: {
-      // Cache dynamic pages for 3 minutes on client-side navigation
-      // This makes back/forward navigation instant
-      dynamic: 180,
-      // Static pages cached for 5 minutes
-      static: 300,
+      // Dev uses minimal caching (30s minimum), prod uses longer caching
+      dynamic: process.env.NODE_ENV === "development" ? 30 : 180,
+      static: process.env.NODE_ENV === "development" ? 30 : 300,
     },
     serverActions: {
       bodySizeLimit: "4mb",
@@ -73,6 +109,26 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
     ];
+  },
+  // Webpack configuration for faster HMR
+  webpack: (config, { dev }) => {
+    if (dev) {
+      // Exclude test and story files from webpack watch in dev
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/*.test.ts",
+          "**/*.test.tsx",
+          "**/*.stories.ts",
+          "**/*.stories.tsx",
+          "**/*.spec.ts",
+          "**/*.spec.tsx",
+        ],
+      };
+    }
+    return config;
   },
 };
 

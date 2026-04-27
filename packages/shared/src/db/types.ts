@@ -1,7 +1,7 @@
 import { SelectedAIModels } from "@terragon/agent/types";
 import { AutomationTrigger, AutomationTriggerType } from "../automations";
 import * as schema from "../db/schema";
-import type { DeliveryLoopFailureCategory } from "../delivery-loop/domain/failure";
+import type { RuntimeFailureCategory } from "../runtime/failure";
 
 type UserInner = typeof schema.user.$inferSelect;
 type SessionInner = typeof schema.session.$inferSelect;
@@ -48,23 +48,11 @@ export type Thread = typeof schema.thread.$inferSelect;
 export type ThreadChat = typeof schema.threadChat.$inferSelect;
 export type AgentRunContext = typeof schema.agentRunContext.$inferSelect;
 export type AgentRunContextInsert = typeof schema.agentRunContext.$inferInsert;
-export type TokenStreamEvent = typeof schema.tokenStreamEvent.$inferSelect;
-export type TokenStreamEventInsert =
-  typeof schema.tokenStreamEvent.$inferInsert;
+export type AgentEventLog = typeof schema.agentEventLog.$inferSelect;
+export type AgentEventLogInsert = typeof schema.agentEventLog.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
 export type Waitlist = typeof schema.waitlist.$inferSelect;
-export type DeliveryLoopSignalInbox =
-  typeof schema.deliverySignalInbox.$inferSelect;
-export type DeliveryLoopSignalInboxInsert =
-  typeof schema.deliverySignalInbox.$inferInsert;
-export type DeliveryPhaseArtifact =
-  typeof schema.deliveryPhaseArtifact.$inferSelect;
-export type DeliveryPhaseArtifactInsert =
-  typeof schema.deliveryPhaseArtifact.$inferInsert;
-export type DeliveryPlanTask = typeof schema.deliveryPlanTask.$inferSelect;
-export type DeliveryPlanTaskInsert =
-  typeof schema.deliveryPlanTask.$inferInsert;
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -73,84 +61,6 @@ export type AgentProviderCredentials =
   typeof schema.agentProviderCredentials.$inferSelect;
 export type AgentProviderCredentialsInsert =
   typeof schema.agentProviderCredentials.$inferInsert;
-export type DeliveryLoopDispatchIntentRow =
-  typeof schema.deliveryLoopDispatchIntent.$inferSelect;
-export type DeliveryLoopDispatchIntentInsert =
-  typeof schema.deliveryLoopDispatchIntent.$inferInsert;
-
-export type DeliverySignalSourceV3 =
-  | "daemon"
-  | "github"
-  | "human"
-  | "timer"
-  | "system";
-
-export type DeliveryEffectKindV3 =
-  | "dispatch_implementing"
-  | "dispatch_gate_review"
-  | "run_lease_expiry_check"
-  | "ack_timeout_check"
-  | "ensure_pr"
-  | "create_plan_artifact"
-  | "publish_status"
-  | "gate_staleness_check";
-
-export type DeliveryEffectStatusV3 =
-  | "planned"
-  | "running"
-  | "succeeded"
-  | "cancelled"
-  | "dead_letter";
-
-export type DeliveryTimerKindV3 = "dispatch_ack_timeout";
-
-export type DeliveryTimerStatusV3 =
-  | "planned"
-  | "running"
-  | "fired"
-  | "cancelled"
-  | "dead_letter";
-
-export type DeliveryOutboxTopicV3 = "signal" | "effect" | "timer";
-
-export type DeliveryOutboxStatusV3 =
-  | "pending"
-  | "publishing"
-  | "published"
-  | "cancelled"
-  | "dead_letter";
-
-// Delivery Loop tables
-export type DeliveryWorkflowRow = typeof schema.deliveryWorkflow.$inferSelect;
-export type DeliveryWorkflowInsert =
-  typeof schema.deliveryWorkflow.$inferInsert;
-export type DeliveryLoopIncidentRow =
-  typeof schema.deliveryLoopIncident.$inferSelect;
-export type DeliveryLoopIncidentInsert =
-  typeof schema.deliveryLoopIncident.$inferInsert;
-export type DeliveryWorkflowRetrospectiveRow =
-  typeof schema.deliveryWorkflowRetrospective.$inferSelect;
-export type DeliveryWorkflowRetrospectiveInsert =
-  typeof schema.deliveryWorkflowRetrospective.$inferInsert;
-export type DeliveryWorkflowHeadV3Row =
-  typeof schema.deliveryWorkflowHeadV3.$inferSelect;
-export type DeliveryWorkflowHeadV3Insert =
-  typeof schema.deliveryWorkflowHeadV3.$inferInsert;
-export type DeliveryLoopJournalV3Row =
-  typeof schema.deliveryLoopJournalV3.$inferSelect;
-export type DeliveryLoopJournalV3Insert =
-  typeof schema.deliveryLoopJournalV3.$inferInsert;
-export type DeliveryEffectLedgerV3Row =
-  typeof schema.deliveryEffectLedgerV3.$inferSelect;
-export type DeliveryEffectLedgerV3Insert =
-  typeof schema.deliveryEffectLedgerV3.$inferInsert;
-export type DeliveryTimerLedgerV3Row =
-  typeof schema.deliveryTimerLedgerV3.$inferSelect;
-export type DeliveryTimerLedgerV3Insert =
-  typeof schema.deliveryTimerLedgerV3.$inferInsert;
-export type DeliveryOutboxV3Row = typeof schema.deliveryOutboxV3.$inferSelect;
-export type DeliveryOutboxV3Insert =
-  typeof schema.deliveryOutboxV3.$inferInsert;
 export type SlackInstallation = typeof schema.slackInstallation.$inferSelect;
 export type SlackInstallationInsert =
   typeof schema.slackInstallation.$inferInsert;
@@ -216,12 +126,6 @@ export type ThreadSource =
 export type ThreadSourceMetadata =
   | {
       type: "www";
-      deliveryLoopOptIn: boolean;
-      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
-      /** @deprecated Backward compat — old DB rows may still carry this key */
-      sdlcLoopOptIn?: boolean;
-      /** @deprecated Backward compat — old DB rows may still carry this key */
-      sdlcPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
     }
   | {
       type: "github-mention";
@@ -253,8 +157,6 @@ export type ThreadSourceMetadata =
       issueId: string;
       issueIdentifier: string;
       issueUrl: string;
-      deliveryLoopOptIn?: boolean;
-      deliveryPlanApprovalPolicy?: DeliveryPlanApprovalPolicy;
       /** Optional — agent sessions from delegation/assignment have no comment */
       commentId?: string;
       /** Webhook delivery ID for idempotency */
@@ -316,6 +218,14 @@ export type ThreadStatus =
 
 export type AgentTransportMode = "legacy" | "acp" | "codex-app-server";
 
+export type AgentRuntimeProvider =
+  | "codex-app-server"
+  | "claude-acp"
+  | "legacy-claude"
+  | "legacy-gemini"
+  | "legacy-amp"
+  | "legacy-opencode";
+
 export type AgentRunProtocolVersion = 1 | 2;
 
 export type AgentRunStatus =
@@ -352,7 +262,7 @@ export type ThreadFailureSource =
   | "custom-stop"
   | "unknown";
 export type ThreadFailureMetadata = {
-  failureCategory: DeliveryLoopFailureCategory | null;
+  failureCategory: RuntimeFailureCategory | null;
   failureSource: ThreadFailureSource | null;
   failureRetryable: boolean | null;
   failureSignatureHash: number | null;
@@ -509,6 +419,8 @@ export type ThreadPageChat = ThreadChatInfoFull & {
   messageCount: number;
   chatSequence: number | null;
   patchVersion: number | null;
+  projectedMessages: ThreadChat["messages"];
+  isCanonicalProjection?: boolean;
 };
 
 export type ThreadPageDiff = Pick<
@@ -753,215 +665,3 @@ export type OpenAIProviderMetadata = {
 export type AgentProviderMetadata =
   | ClaudeAgentProviderMetadata
   | OpenAIProviderMetadata;
-
-export type DeliveryLoopState =
-  | "planning"
-  | "implementing"
-  | "review_gate"
-  | "ci_gate"
-  | "awaiting_pr_link"
-  | "babysitting"
-  | "blocked"
-  | "terminated_pr_closed"
-  | "terminated_pr_merged"
-  | "done"
-  | "stopped";
-
-export type DeliveryPhase =
-  | "planning"
-  | "implementing"
-  | "review_gate"
-  | "ci_gate"
-  | "awaiting_pr_link"
-  | "babysitting";
-
-export type DeliveryArtifactType =
-  | "plan_spec"
-  | "implementation_snapshot"
-  | "review_bundle"
-  | "ui_smoke_result"
-  | "pr_link"
-  | "babysit_evaluation"
-  | "human_intervention";
-
-export type DeliveryArtifactStatus =
-  | "generated"
-  | "approved"
-  | "accepted"
-  | "rejected"
-  | "superseded";
-
-export type DeliveryArtifactGeneratedBy = "agent" | "system" | "human";
-
-export type DeliveryPlanTaskStatus =
-  | "todo"
-  | "in_progress"
-  | "done"
-  | "blocked"
-  | "skipped";
-
-export type DeliveryPlanTaskCompletedBy = "agent" | "verifier" | "human";
-
-export type DeliveryPlanApprovalPolicy = "auto" | "human_required";
-
-export type DeliveryPlanTaskDefinition = {
-  stableTaskId: string;
-  title: string;
-  description?: string | null;
-  acceptance: string[];
-};
-
-export type DeliveryPlanSpecPayload = {
-  planText: string;
-  tasks: DeliveryPlanTaskDefinition[];
-  source: "exit_plan_mode" | "write_tool" | "agent_text" | "system";
-};
-
-export type DeliveryPlanTaskCompletionEvidence = {
-  headSha: string;
-  note?: string | null;
-  changedFiles?: string[] | null;
-};
-
-export type DeliveryImplementationSnapshotPayload = {
-  headSha: string;
-  summary: string;
-  changedFiles: string[];
-  completedTaskIds: string[];
-};
-
-export type DeliveryReviewBundlePayload = {
-  headSha: string;
-  deepRunId?: string | null;
-  carmackRunId?: string | null;
-  deepBlockingFindings: number;
-  carmackBlockingFindings: number;
-  gatePassed: boolean;
-  summary: string;
-};
-
-export type DeliveryUiSmokePayload = {
-  headSha: string;
-  gatePassed: boolean;
-  summary: string;
-  blockingIssues: string[];
-  changedFiles: string[];
-};
-
-export type DeliveryPrLinkPayload = {
-  repoFullName: string;
-  prNumber: number;
-  pullRequestUrl: string;
-  operation: "created" | "updated" | "linked";
-};
-
-export type DeliveryBabysitEvaluationPayload = {
-  headSha: string;
-  requiredCiPassed: boolean;
-  unresolvedReviewThreads: number;
-  unresolvedDeepBlockers: number;
-  unresolvedCarmackBlockers: number;
-  allRequiredGatesPassed: boolean;
-};
-
-export type DeliveryLoopCauseType =
-  | "daemon_terminal"
-  | "check_run.completed"
-  | "check_suite.completed"
-  | "pull_request.synchronize"
-  | "pull_request.closed"
-  | "pull_request.reopened"
-  | "pull_request.edited"
-  | "pull_request_review"
-  | "pull_request_review_comment"
-  | "review-thread-poll-synthetic";
-
-export type DeliveryLoopOutboxActionType =
-  | "publish_status_comment"
-  | "publish_check_summary"
-  | "enqueue_fix_task"
-  | "publish_video_link"
-  | "emit_telemetry";
-
-export type DeliveryLoopOutboxSupersessionGroup =
-  | "publication_status"
-  | "fix_task_enqueue"
-  | "publication_video"
-  | "telemetry";
-
-export type DeliveryLoopOutboxStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "canceled";
-
-export type DeliveryOutboxAttemptStatus =
-  | "completed"
-  | "retry_scheduled"
-  | "failed";
-
-export type DeliveryDeepReviewSeverity = "critical" | "high" | "medium" | "low";
-
-export type DeliveryDeepReviewStatus = "passed" | "blocked" | "invalid_output";
-
-export type DeliveryCarmackReviewSeverity =
-  | "critical"
-  | "high"
-  | "medium"
-  | "low";
-
-export type DeliveryCarmackReviewStatus =
-  | "passed"
-  | "blocked"
-  | "invalid_output";
-
-export type DeliveryCiCapabilityState =
-  | "supported"
-  | "forbidden"
-  | "unsupported"
-  | "transient_error";
-
-export type DeliveryCiGateStatus = "passed" | "blocked" | "capability_error";
-
-export type DeliveryCiRequiredCheckSource =
-  | "ruleset"
-  | "branch_protection"
-  | "allowlist"
-  | "no_required";
-
-export type DeliveryReviewThreadGateStatus =
-  | "passed"
-  | "blocked"
-  | "transient_error";
-
-export type DeliveryReviewThreadEvaluationSource = "webhook" | "polling";
-
-export type DeliveryVideoCaptureStatus = "not_started" | "captured" | "failed";
-
-export type DeliveryVideoFailureClass = "auth" | "quota" | "script" | "infra";
-
-export type DeliveryCodexTransportFailureClass =
-  | "turn_input_too_large"
-  | "app_server_exit_mid_turn"
-  | "ws_connect_timeout"
-  | "config_invalid_provider"
-  | "subagent_child_failure";
-
-export type DeliveryParityTargetClass = "coordinator";
-
-export type DispatchIntentStatus =
-  | "pending"
-  | "dispatched"
-  | "acknowledged"
-  | "failed"
-  | "completed";
-
-export type DispatchIntentExecutionClass =
-  | "implementation_runtime"
-  | "implementation_runtime_fallback"
-  | "gate_runtime";
-
-export type DispatchIntentDispatchMechanism =
-  | "self_dispatch"
-  | "queue_fallback";

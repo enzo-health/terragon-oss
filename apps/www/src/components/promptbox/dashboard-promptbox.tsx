@@ -26,7 +26,6 @@ export type DashboardPromptBoxHandleSubmit = (
     disableGitCheckpointing: boolean;
     skipSetup: boolean;
     createNewBranch: boolean;
-    runInDeliveryLoop: boolean;
   },
 ) => Promise<void>;
 
@@ -46,7 +45,6 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const repoFullName = selectedRepo;
   const branchName = selectedBranch;
   const [isRecording, setIsRecording] = useState(false);
-  const [runInDeliveryLoop, setRunInDeliveryLoop] = useState(true);
   const onRepoBranchChange = useCallback(
     (repo: string | null, branch: string | null) => {
       void setSelectedRepoAndBranch(repo, branch);
@@ -97,16 +95,9 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         disableGitCheckpointing,
         skipSetup,
         createNewBranch,
-        runInDeliveryLoop,
       });
     },
-    [
-      props,
-      disableGitCheckpointing,
-      skipSetup,
-      createNewBranch,
-      runInDeliveryLoop,
-    ],
+    [props, disableGitCheckpointing, skipSetup, createNewBranch],
   );
 
   const {
@@ -208,10 +199,6 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
             createNewBranchValue={createNewBranch}
             onCreateNewBranchChange={setCreateNewBranch}
             createNewBranchDisabled={!repoFullName}
-            showDeliveryLoopOptIn={true}
-            deliveryLoopOptInValue={runInDeliveryLoop}
-            onDeliveryLoopOptInChange={setRunInDeliveryLoop}
-            deliveryLoopOptInDisabled={!repoFullName}
           />
         </div>
       </div>

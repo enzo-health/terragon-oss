@@ -14,6 +14,7 @@ import { BootingSubstatus } from "@terragon/sandbox/types";
 import { ChatMessageWithToolbar } from "./chat-message";
 import { BootChecklist } from "./boot-checklist";
 import { LeafLoading } from "./leaf-loading";
+import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
 import { PromptBoxRef } from "./thread-context";
 import Link from "next/link";
 import {
@@ -286,19 +287,43 @@ function getStatusMessage({
   }
 }
 
+export function PassiveWaitFooter({
+  message,
+  reason,
+}: {
+  message: string;
+  reason?: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 px-2 text-muted-foreground/70 text-sm">
+      <span>{message}</span>
+      {reason ? (
+        <span className="text-muted-foreground/70 text-xs">{reason}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export function WorkingMessage({
   agent,
   status,
   bootingSubstatus,
   reattemptQueueAt,
-  threadId,
+  metaSnapshot,
+  passiveWait,
 }: {
   agent: AIAgent;
   status: ThreadStatus;
   bootingSubstatus?: BootingSubstatus;
   reattemptQueueAt: Date | null;
-  /** Required when status === "booting" to power the BootChecklist. */
-  threadId?: string;
+  metaSnapshot: ThreadMetaSnapshot;
+  /**
+   * When provided, render a quieter passive-wait line instead of the
+   * animated "Assistant is working" indicator. Used when the delivery
+   * loop is in a passive state (awaiting PR merge, waiting for human
+   * input) so users aren't misled into thinking the agent is stuck.
+   */
+  passiveWait?: { message: string; reason?: string | null } | null;
 }) {
   const isTouchDevice = useTouchDevice();
   const [_, setForceUpdate] = useState(0);
@@ -311,14 +336,26 @@ export function WorkingMessage({
     }
   }, [status, reattemptQueueAt]);
 
+  // Passive-wait takes precedence: regardless of the underlying thread
+  // status (which may still read "working" due to broadcast-before-
+  // persist timing) we show the accurate run-derived message.
+  if (passiveWait) {
+    return (
+      <PassiveWaitFooter
+        message={passiveWait.message}
+        reason={passiveWait.reason ?? null}
+      />
+    );
+  }
+
   // The booting status renders a persistent checklist instead of a single line.
-  if (status === "booting" && threadId) {
+  if (status === "booting") {
     return (
       <LeafLoading
         message={
           <BootChecklist
-            threadId={threadId}
             currentSubstatus={bootingSubstatus ?? null}
+            metaSnapshot={metaSnapshot}
           />
         }
       />

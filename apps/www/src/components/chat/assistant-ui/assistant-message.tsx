@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { useTerragonThread } from "./thread-context";
 import { ChatMessage } from "../chat-message";
 import { MessageToolbar } from "../chat-message-toolbar";
@@ -7,18 +8,24 @@ import type { UIMessage } from "@terragon/shared";
 
 /**
  * Renders an assistant/agent message within the assistant-ui thread.
+ *
+ * `isLatestMessage` / `isLatestAgentMessage` are passed by the parent
+ * `TerragonThread.messages.map()` loop so this component doesn't have
+ * to read the whole `messages` array from context — that would force
+ * every row to re-render on every token delta.
  */
-export function TerragonAssistantMessage({
+export const TerragonAssistantMessage = memo(function TerragonAssistantMessage({
   message,
   messageIndex,
+  isLatestMessage,
+  isLatestAgentMessage,
 }: {
   message: UIMessage;
   messageIndex: number;
+  isLatestMessage: boolean;
+  isLatestAgentMessage: boolean;
 }) {
   const ctx = useTerragonThread();
-  const isLatestMessage = messageIndex === ctx.messages.length - 1;
-  const isLatestAgentMessage =
-    message.role === "agent" && messageIndex === ctx.latestAgentMessageIndex;
   const rowIsAgentWorking =
     ctx.isAgentWorking && isLatestMessage && message.role === "agent";
 
@@ -31,13 +38,7 @@ export function TerragonAssistantMessage({
         message={message}
         isLatestMessage={isLatestMessage}
         isAgentWorking={rowIsAgentWorking}
-        messagePartProps={{
-          githubRepoFullName: ctx.githubRepoFullName,
-          branchName: ctx.branchName,
-          baseBranchName: ctx.baseBranchName,
-          hasCheckpoint: ctx.hasCheckpoint,
-          toolProps: ctx.toolProps,
-        }}
+        messagePartProps={ctx.messagePartProps}
         thread={message.role === "system" ? ctx.thread : null}
         latestGitDiffTimestamp={
           message.role === "system" ? ctx.latestGitDiffTimestamp : null
@@ -56,4 +57,4 @@ export function TerragonAssistantMessage({
       />
     </div>
   );
-}
+});

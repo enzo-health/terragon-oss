@@ -49,7 +49,7 @@ export type DBSystemMessage = {
     | "invalid-token-retry"
     | "clear-context"
     | "compact-result"
-    | "sdlc-error-retry"
+    | "agent-error-retry"
     | "follow-up-retry-failed";
   parts: DBTextPart[];
   timestamp?: string;
@@ -288,6 +288,20 @@ type DBErrorMessage = {
   type: "error";
   error_type?: string; // Can be ThreadErrorType or any string
   error_info?: string;
+  runtimeRecovery?: {
+    operation:
+      | "start"
+      | "resume"
+      | "stop"
+      | "restart"
+      | "retry"
+      | "permission-response"
+      | "event-normalization"
+      | "compact-and-retry"
+      | "human-intervention";
+    reason: string;
+    recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
+  };
   timestamp?: string;
 };
 
