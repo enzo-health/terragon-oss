@@ -36,7 +36,7 @@ loadLocalEnvFiles();
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-  // Disable type checking in dev for faster HMR
+  // Skip Next build-time type checking in dev; tsc-check still owns type safety.
   typescript: {
     ignoreBuildErrors: process.env.NODE_ENV === "development",
   },
@@ -89,8 +89,9 @@ const nextConfig: NextConfig = {
       "zod",
     ],
     staleTimes: {
-      // Dev uses minimal caching (30s minimum), prod uses longer caching
-      dynamic: process.env.NODE_ENV === "development" ? 30 : 180,
+      // Keep active task pages fresh on client navigation while preserving a
+      // small router-cache window for back/forward responsiveness.
+      dynamic: process.env.NODE_ENV === "development" ? 30 : 60,
       static: process.env.NODE_ENV === "development" ? 30 : 300,
     },
     serverActions: {

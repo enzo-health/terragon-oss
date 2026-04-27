@@ -41,10 +41,15 @@ let mathPluginInstance: MathPlugin | null = null;
 function ensureMathPlugin(): Promise<MathPlugin> {
   if (mathPluginInstance) return Promise.resolve(mathPluginInstance);
   if (!mathPluginPromise) {
-    mathPluginPromise = import("./math-plugin-loader").then((mod) => {
-      mathPluginInstance = mod.createMathPlugin();
-      return mathPluginInstance;
-    });
+    mathPluginPromise = import("./math-plugin-loader")
+      .then((mod) => {
+        mathPluginInstance = mod.createMathPlugin();
+        return mathPluginInstance;
+      })
+      .catch((error: unknown) => {
+        mathPluginPromise = null;
+        throw error;
+      });
   }
   return mathPluginPromise;
 }

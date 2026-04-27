@@ -41,7 +41,13 @@ export function useTerragonRuntime({
     ...(onError && { onError }),
     ...(onCancel && {
       onCancel: () => {
-        void onCancel();
+        void Promise.resolve(onCancel()).catch((error: unknown) => {
+          const normalizedError =
+            error instanceof Error
+              ? error
+              : new Error(`Cancel failed: ${String(error)}`);
+          onError?.(normalizedError);
+        });
       },
     }),
     // History adapter is required to open the SSE stream on mount.

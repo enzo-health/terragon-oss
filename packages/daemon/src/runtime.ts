@@ -11,6 +11,10 @@ import { nanoid } from "nanoid/non-secure";
 import stripAnsi from "strip-ansi";
 import { Logger, OutputFormat } from "./logger";
 import {
+  getRuntimeAdapterContract,
+  unsupportedRuntimeOperation,
+} from "./runtime-contracts";
+import {
   ClaudeMessage,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
@@ -21,7 +25,6 @@ import {
   DaemonTransportMode,
   RuntimeAdapterContract,
   RuntimeAdapterOperation,
-  RuntimeAdapterOperationSupport,
 } from "./shared";
 
 function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
@@ -104,183 +107,12 @@ export type RuntimeAdapterOperationResult =
       recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
     };
 
-function supportedOperation(): RuntimeAdapterOperationSupport {
-  return { status: "supported" };
-}
-
-function unsupportedOperation(
-  reason: string,
-  recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback",
-): RuntimeAdapterOperationSupport {
-  return { status: "unsupported", reason, recovery };
-}
-
-function createOperationContract(
-  supported: RuntimeAdapterOperation[],
-  unsupported: Partial<
-    Record<
-      RuntimeAdapterOperation,
-      {
-        reason: string;
-        recovery: "retry-new-run" | "manual-intervention" | "legacy-fallback";
-      }
-    >
-  >,
-): Record<RuntimeAdapterOperation, RuntimeAdapterOperationSupport> {
-  const supportedSet = new Set(supported);
-  const operations: RuntimeAdapterOperation[] = [
-    "start",
-    "resume",
-    "stop",
-    "restart",
-    "retry",
-    "permission-response",
-    "event-normalization",
-    "compact-and-retry",
-    "human-intervention",
-  ];
-  const contract = {} as Record<
-    RuntimeAdapterOperation,
-    RuntimeAdapterOperationSupport
-  >;
-  for (const operation of operations) {
-    if (supportedSet.has(operation)) {
-      contract[operation] = supportedOperation();
-      continue;
-    }
-    const details = unsupported[operation] ?? {
-      reason: `${operation} is not implemented by this runtime adapter`,
-      recovery: "manual-intervention" as const,
-    };
-    contract[operation] = unsupportedOperation(
-      details.reason,
-      details.recovery,
-    );
-  }
-  return contract;
-}
-
 export function createDaemonRuntimeAdapterContract({
   transportMode,
 }: {
   transportMode: DaemonTransportMode;
 }): RuntimeAdapterContract {
-  switch (transportMode) {
-    case "codex-app-server":
-      return {
-        adapterId: "codex-app-server",
-        transportMode,
-        protocolVersion: 1,
-        session: {
-          requestedSessionField: "sessionId",
-          resolvedSessionField: "sessionId",
-          previousResponseField: "codexPreviousResponseId",
-        },
-        operations: createOperationContract(
-          ["start", "resume", "stop", "retry", "event-normalization"],
-          {
-            restart: {
-              reason:
-                "Codex app-server process restarts are operational recovery; user restart/retry is a new run.",
-              recovery: "retry-new-run",
-            },
-            "permission-response": {
-              reason:
-                "Codex app-server does not expose Terragon-addressable pending permission requests.",
-              recovery: "manual-intervention",
-            },
-            "compact-and-retry": {
-              reason:
-                "Compaction is emitted as a typed recovery result before starting another Codex turn.",
-              recovery: "retry-new-run",
-            },
-            "human-intervention": {
-              reason:
-                "Human intervention is surfaced as a terminal recovery result, not a Codex app-server operation.",
-              recovery: "manual-intervention",
-            },
-          },
-        ),
-      };
-    case "acp":
-      return {
-        adapterId: "claude-acp",
-        transportMode,
-        protocolVersion: 2,
-        session: {
-          requestedSessionField: "acpSessionId",
-          resolvedSessionField: "acpSessionId",
-          previousResponseField: null,
-        },
-        operations: createOperationContract(
-          [
-            "start",
-            "resume",
-            "stop",
-            "retry",
-            "permission-response",
-            "event-normalization",
-          ],
-          {
-            restart: {
-              reason:
-                "Claude ACP server restart is sandbox-agent bootstrap recovery; user retry starts a fresh run.",
-              recovery: "retry-new-run",
-            },
-            "compact-and-retry": {
-              reason:
-                "Compaction is emitted as a typed recovery result before another ACP run.",
-              recovery: "retry-new-run",
-            },
-            "human-intervention": {
-              reason:
-                "Human intervention is surfaced as a terminal recovery result, not an ACP operation.",
-              recovery: "manual-intervention",
-            },
-          },
-        ),
-      };
-    case "legacy":
-      return {
-        adapterId: "legacy",
-        transportMode,
-        protocolVersion: 1,
-        session: {
-          requestedSessionField: "sessionId",
-          resolvedSessionField: "sessionId",
-          previousResponseField: null,
-        },
-        operations: createOperationContract(
-          ["start", "resume", "stop", "retry", "event-normalization"],
-          {
-            restart: {
-              reason:
-                "Legacy stream-json processes are single-turn child processes; restart is represented as a new run.",
-              recovery: "retry-new-run",
-            },
-            "permission-response": {
-              reason:
-                "Legacy stream-json permission prompts are not addressable by daemon operation id.",
-              recovery: "manual-intervention",
-            },
-            "compact-and-retry": {
-              reason:
-                "Compaction is handled before dispatch and retried as a fresh legacy run.",
-              recovery: "retry-new-run",
-            },
-            "human-intervention": {
-              reason:
-                "Human intervention is surfaced as a terminal recovery result, not a legacy adapter operation.",
-              recovery: "manual-intervention",
-            },
-          },
-        ),
-      };
-    default: {
-      const _exhaustiveCheck: never = transportMode;
-      throw new Error(`Unknown transport mode: ${_exhaustiveCheck}`);
-    }
-  }
+  return getRuntimeAdapterContract(transportMode);
 }
 
 export function resolveDaemonRuntimeAdapterContract(
@@ -352,7 +184,7 @@ export function requireRuntimeAdapterOperation({
   }
   const unsupported =
     support ??
-    unsupportedOperation(
+    unsupportedRuntimeOperation(
       `${operation} is not implemented by ${contract.adapterId}`,
       "manual-intervention",
     );

@@ -5,7 +5,7 @@ import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgUiAgentProvider } from "../ag-ui-agent-context";
 import {
   useThreadMetaEvents,
@@ -104,6 +104,10 @@ function latest(snapshots: ThreadMetaSnapshot[]): ThreadMetaSnapshot {
 
 describe("useThreadMetaEvents (AG-UI integration)", () => {
   const cleanups: Array<() => void> = [];
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_BROADCAST_HOST = "localhost:1999";
+  });
+
   afterEach(() => {
     for (const fn of cleanups.splice(0)) fn();
   });

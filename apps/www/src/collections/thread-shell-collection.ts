@@ -21,13 +21,52 @@ function buildCollection() {
 
 type ShellCollection = ReturnType<typeof buildCollection>;
 type PendingCollectionWrite = (collection: ShellCollection) => void;
+type PendingShellPatchQueue = {
+  patches: BroadcastThreadPatch[];
+  updatedAtMs: number;
+};
+
+const MAX_PENDING_SHELL_PATCHES_PER_THREAD = 50;
+const MAX_PENDING_SHELL_PATCH_THREADS = 200;
+const PENDING_SHELL_PATCH_TTL_MS = 30_000;
 
 let _collection: ShellCollection | null = null;
 let _pendingWrites: PendingCollectionWrite[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 // Shell patches can arrive before the initial query seed (e.g. fast WebSocket
 // ticks during navigation). Preserve them until the shell exists, then apply.
-let _pendingPatchesByThreadId: Map<string, BroadcastThreadPatch[]> = new Map();
+let _pendingPatchesByThreadId: Map<string, PendingShellPatchQueue> = new Map();
+
+function prunePendingShellPatches(nowMs: number): void {
+  for (const [threadId, queue] of _pendingPatchesByThreadId) {
+    if (nowMs - queue.updatedAtMs > PENDING_SHELL_PATCH_TTL_MS) {
+      _pendingPatchesByThreadId.delete(threadId);
+    }
+  }
+  while (_pendingPatchesByThreadId.size > MAX_PENDING_SHELL_PATCH_THREADS) {
+    const oldestThread = _pendingPatchesByThreadId.keys().next();
+    if (oldestThread.done) {
+      return;
+    }
+    _pendingPatchesByThreadId.delete(oldestThread.value);
+  }
+}
+
+function enqueuePendingShellPatch(patch: BroadcastThreadPatch): void {
+  const nowMs = Date.now();
+  prunePendingShellPatches(nowMs);
+  const queue = _pendingPatchesByThreadId.get(patch.threadId) ?? {
+    patches: [],
+    updatedAtMs: nowMs,
+  };
+  queue.patches.push(patch);
+  if (queue.patches.length > MAX_PENDING_SHELL_PATCHES_PER_THREAD) {
+    queue.patches = queue.patches.slice(-MAX_PENDING_SHELL_PATCHES_PER_THREAD);
+  }
+  queue.updatedAtMs = nowMs;
+  _pendingPatchesByThreadId.delete(patch.threadId);
+  _pendingPatchesByThreadId.set(patch.threadId, queue);
+}
 
 function flushPendingWrites(collection: ShellCollection) {
   if (collection.status !== "ready" || _pendingWrites.length === 0) {
@@ -73,9 +112,7 @@ export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
     const existing = c.state.get(patch.threadId) as ThreadPageShell | undefined;
     if (!patch.shell) return;
     if (!existing) {
-      const pending = _pendingPatchesByThreadId.get(patch.threadId) ?? [];
-      pending.push(patch);
-      _pendingPatchesByThreadId.set(patch.threadId, pending);
+      enqueuePendingShellPatch(patch);
       return;
     }
     const updated = applyShellPatchFields(existing, patch.shell, patch);
@@ -97,7 +134,8 @@ export function applyShellPatchToCollection(patch: BroadcastThreadPatch): void {
 
 export function seedShell(shell: ThreadPageShell): void {
   const write: PendingCollectionWrite = (c) => {
-    const pending = _pendingPatchesByThreadId.get(shell.id);
+    prunePendingShellPatches(Date.now());
+    const pending = _pendingPatchesByThreadId.get(shell.id)?.patches;
     const hasPending = Boolean(pending && pending.length > 0);
     let nextShell = shell;
 

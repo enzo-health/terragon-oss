@@ -390,10 +390,6 @@ export const defaultConfig: ArchitectureLintConfig = {
         "remove after provider tool content is schema-normalized before handling",
     },
     ...baselineUnsafeCastDebtAllowlist([
-      {
-        file: "apps/www/src/agent/runtime/implementation-adapter.ts",
-        line: 119,
-      },
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 671 },
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 682 },
       {

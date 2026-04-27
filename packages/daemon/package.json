@@ -11,6 +11,9 @@
     "./shared": {
       "import": "./src/shared.ts"
     },
+    "./runtime-contracts": {
+      "import": "./src/runtime-contracts.ts"
+    },
     "./raw-txt": {
       "import": "./dist/raw.txt",
       "types": "./src/raw-txt.d.ts"

@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import { nanoid } from "nanoid/non-secure";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { claudeAcpRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/claude-code-implementation-adapter";
-import { codexRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/codex-implementation-adapter";
-import { legacyRuntimeAdapterContract } from "../../../apps/www/src/agent/runtime/implementation-adapter";
+import {
+  claudeAcpRuntimeAdapterContract,
+  codexRuntimeAdapterContract,
+  legacyRuntimeAdapterContract,
+} from "./runtime-contracts";
 import {
   createDaemonRuntimeAdapterContract,
   DaemonRuntime,

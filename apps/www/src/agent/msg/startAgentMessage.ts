@@ -34,13 +34,11 @@ import {
   updateThreadChat,
 } from "@terragon/shared/model/threads";
 import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
+import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { waitUntil } from "@vercel/functions";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
-import {
-  type RuntimeAdapterContract,
-  resolveImplementationRuntimeAdapter,
-} from "@/agent/runtime/implementation-adapter";
+import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
 import {
   createSandboxForThread,
   getSandboxForThreadOrNull,

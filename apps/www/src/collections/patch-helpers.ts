@@ -476,6 +476,7 @@ function buildChatObject(
       ? { updatedAt: new Date(patch.chat.updatedAt) }
       : {}),
     ...(queuedMessages !== undefined ? { queuedMessages } : {}),
+    messages: nextMessages,
     projectedMessages: nextMessages,
     messageCount: nextMessages.length,
     chatSequence,

@@ -80,7 +80,8 @@ type GitHubWebhookClaimOutcome =
   | "claimed_new"
   | "stale_stolen"
   | "already_completed"
-  | "in_progress_fresh";
+  | "in_progress_fresh"
+  | "claim_unavailable";
 
 type GitHubWebhookClaim = {
   shouldProcess: boolean;
@@ -88,6 +89,7 @@ type GitHubWebhookClaim = {
 };
 
 const GITHUB_WEBHOOK_CLAIM_TTL_MS = 5 * 60 * 1000;
+const GITHUB_WEBHOOK_CLAIM_MAX_ATTEMPTS = 3;
 
 function getGithubWebhookClaimHttpStatus(
   outcome: GitHubWebhookClaimOutcome,
@@ -99,7 +101,14 @@ function getGithubWebhookClaimHttpStatus(
       return 202;
     case "already_completed":
       return 200;
+    case "claim_unavailable":
+      return 503;
   }
+}
+
+async function waitForGithubWebhookClaimRetry(attempt: number): Promise<void> {
+  const waitMs = 25 * (attempt + 1) + Math.floor(Math.random() * 25);
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
 }
 
 async function claimGithubWebhookDelivery(params: {
@@ -107,74 +116,85 @@ async function claimGithubWebhookDelivery(params: {
   claimantToken: string;
   eventType: string;
 }): Promise<GitHubWebhookClaim> {
-  const now = new Date();
-  const claimExpiresAt = new Date(now.getTime() + GITHUB_WEBHOOK_CLAIM_TTL_MS);
-  const inserted = await db
-    .insert(schema.githubWebhookDeliveries)
-    .values({
-      deliveryId: params.deliveryId,
-      claimantToken: params.claimantToken,
-      claimExpiresAt,
-      eventType: params.eventType,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoNothing()
-    .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
+  for (
+    let attempt = 0;
+    attempt < GITHUB_WEBHOOK_CLAIM_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    const now = new Date();
+    const claimExpiresAt = new Date(
+      now.getTime() + GITHUB_WEBHOOK_CLAIM_TTL_MS,
+    );
+    const inserted = await db
+      .insert(schema.githubWebhookDeliveries)
+      .values({
+        deliveryId: params.deliveryId,
+        claimantToken: params.claimantToken,
+        claimExpiresAt,
+        eventType: params.eventType,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
 
-  if (inserted.length > 0) {
-    return { shouldProcess: true, outcome: "claimed_new" };
-  }
+    if (inserted.length > 0) {
+      return { shouldProcess: true, outcome: "claimed_new" };
+    }
 
-  const [existing] = await db
-    .select({
-      claimantToken: schema.githubWebhookDeliveries.claimantToken,
-      claimExpiresAt: schema.githubWebhookDeliveries.claimExpiresAt,
-      completedAt: schema.githubWebhookDeliveries.completedAt,
-    })
-    .from(schema.githubWebhookDeliveries)
-    .where(eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId))
-    .limit(1);
+    const [existing] = await db
+      .select({
+        claimantToken: schema.githubWebhookDeliveries.claimantToken,
+        claimExpiresAt: schema.githubWebhookDeliveries.claimExpiresAt,
+        completedAt: schema.githubWebhookDeliveries.completedAt,
+      })
+      .from(schema.githubWebhookDeliveries)
+      .where(eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId))
+      .limit(1);
 
-  if (!existing) {
-    return claimGithubWebhookDelivery(params);
-  }
-  if (existing.completedAt) {
-    return { shouldProcess: false, outcome: "already_completed" };
-  }
-  if (existing.claimExpiresAt.getTime() > now.getTime()) {
-    return { shouldProcess: false, outcome: "in_progress_fresh" };
-  }
+    if (!existing) {
+      await waitForGithubWebhookClaimRetry(attempt);
+      continue;
+    }
+    if (existing.completedAt) {
+      return { shouldProcess: false, outcome: "already_completed" };
+    }
+    if (existing.claimExpiresAt.getTime() > now.getTime()) {
+      return { shouldProcess: false, outcome: "in_progress_fresh" };
+    }
 
-  const stolen = await db
-    .update(schema.githubWebhookDeliveries)
-    .set({
-      claimantToken: params.claimantToken,
-      claimExpiresAt,
-      eventType: params.eventType,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId),
-        eq(
-          schema.githubWebhookDeliveries.claimantToken,
-          existing.claimantToken,
+    const stolen = await db
+      .update(schema.githubWebhookDeliveries)
+      .set({
+        claimantToken: params.claimantToken,
+        claimExpiresAt,
+        eventType: params.eventType,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.githubWebhookDeliveries.deliveryId, params.deliveryId),
+          eq(
+            schema.githubWebhookDeliveries.claimantToken,
+            existing.claimantToken,
+          ),
+          eq(
+            schema.githubWebhookDeliveries.claimExpiresAt,
+            existing.claimExpiresAt,
+          ),
+          isNull(schema.githubWebhookDeliveries.completedAt),
+          lte(schema.githubWebhookDeliveries.claimExpiresAt, now),
         ),
-        eq(
-          schema.githubWebhookDeliveries.claimExpiresAt,
-          existing.claimExpiresAt,
-        ),
-        isNull(schema.githubWebhookDeliveries.completedAt),
-        lte(schema.githubWebhookDeliveries.claimExpiresAt, now),
-      ),
-    )
-    .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
-  if (stolen.length > 0) {
-    return { shouldProcess: true, outcome: "stale_stolen" };
+      )
+      .returning({ deliveryId: schema.githubWebhookDeliveries.deliveryId });
+    if (stolen.length > 0) {
+      return { shouldProcess: true, outcome: "stale_stolen" };
+    }
+
+    await waitForGithubWebhookClaimRetry(attempt);
   }
 
-  return claimGithubWebhookDelivery(params);
+  return { shouldProcess: false, outcome: "claim_unavailable" };
 }
 
 async function completeGithubWebhookDelivery(params: {
@@ -360,7 +380,7 @@ export async function POST(request: NextRequest) {
     if (!claim.shouldProcess) {
       return NextResponse.json(
         {
-          success: true,
+          success: claim.outcome !== "claim_unavailable",
           claimOutcome: claim.outcome,
         },
         { status: getGithubWebhookClaimHttpStatus(claim.outcome) },

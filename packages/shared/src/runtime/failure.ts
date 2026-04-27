@@ -82,7 +82,7 @@ export function mapDaemonTerminalCategoryToRuntimeFailureCategory(
 
   switch (category) {
     case "provider_not_configured":
-      return "config_error";
+      return "config_invalid_provider";
     case "acp_sse_not_found":
       return "daemon_unreachable";
     case "daemon_custom_error":

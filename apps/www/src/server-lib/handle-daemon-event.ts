@@ -10,7 +10,10 @@ import {
 } from "@terragon/shared";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import {
+  getAgentRunContextByRunId,
+  updateAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   getThreadChat,
@@ -19,6 +22,14 @@ import {
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import {
+  classifyDaemonTerminalErrorCategory,
+  hashRuntimeFailureMessage,
+  mapDaemonTerminalCategoryToRuntimeFailureCategory,
+  RUNTIME_FAILURE_ACTION_TABLE,
+  type DaemonTerminalErrorCategory,
+  type RuntimeFailureCategory,
+} from "@terragon/shared/runtime/failure";
 import { waitUntil } from "@vercel/functions";
 import {
   parseClaudeOAuthTokenRevokedMessage,
@@ -58,6 +69,96 @@ import { trackUsageEvents } from "./usage-events";
 
 const FIRST_ASSISTANT_TRACKED_PREFIX = "run-first-assistant-tracked:";
 const FOLLOW_UP_TTFR_START_PREFIX = "follow-up-ttfr-start:";
+
+function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
+  const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
+  return action !== "blocked";
+}
+
+function deriveTerminalFailureSource(
+  messages: ClaudeMessage[],
+): "custom-error" | "result" | "custom-stop" | "unknown" | null {
+  for (const message of messages) {
+    if (message.type === "custom-error") return "custom-error";
+    if (message.type === "custom-stop") return "custom-stop";
+    if (message.type === "result" && message.is_error) return "result";
+  }
+  return null;
+}
+
+function deriveDaemonTerminalErrorInfo(messages: ClaudeMessage[]): {
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+} {
+  for (const message of messages) {
+    if (message.type === "custom-error") {
+      const errorMessage = message.error_info ?? null;
+      return {
+        errorMessage,
+        errorCategory: classifyDaemonTerminalErrorCategory(errorMessage),
+      };
+    }
+    if (message.type === "result" && message.is_error) {
+      const errorMessage =
+        "error" in message && typeof message.error === "string"
+          ? message.error
+          : null;
+      return {
+        errorMessage,
+        errorCategory: "daemon_result_error",
+      };
+    }
+  }
+  return {
+    errorMessage: null,
+    errorCategory: "unknown",
+  };
+}
+
+function buildRunContextFailureUpdates(params: {
+  isError: boolean;
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+  terminalReason?: string | null;
+  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
+}):
+  | {
+      failureCategory: RuntimeFailureCategory | null;
+      failureSource:
+        | "custom-error"
+        | "result"
+        | "custom-stop"
+        | "unknown"
+        | null;
+      failureRetryable: boolean | null;
+      failureSignatureHash: number | null;
+      failureTerminalReason: string | null;
+    }
+  | {} {
+  if (!params.isError) {
+    return {
+      failureCategory: null,
+      failureSource: null,
+      failureRetryable: null,
+      failureSignatureHash: null,
+      failureTerminalReason: null,
+    };
+  }
+  const failureCategory = mapDaemonTerminalCategoryToRuntimeFailureCategory(
+    params.errorCategory,
+    params.errorMessage,
+  );
+  return {
+    failureCategory,
+    failureSource: params.failureSource,
+    failureRetryable: isFailureRetryable(failureCategory),
+    failureSignatureHash:
+      params.errorMessage != null
+        ? hashRuntimeFailureMessage(params.errorMessage)
+        : null,
+    failureTerminalReason: params.terminalReason ?? params.errorMessage,
+  };
+}
 
 function getFirstAssistantTrackedKey(runId: string) {
   return `${FIRST_ASSISTANT_TRACKED_PREFIX}${runId}`;
@@ -194,14 +295,6 @@ export async function handleDaemonEvent({
     "messages",
     JSON.stringify(messages, null, 2),
   );
-  if (!runId) {
-    return {
-      success: false,
-      error: "Run id is required",
-      status: 400,
-    };
-  }
-
   // Heartbeat: empty messages just extend sandbox life and refresh updatedAt
   if (messages.length === 0) {
     const thread = await getThreadMinimal({ db, threadId, userId });
@@ -236,6 +329,7 @@ export async function handleDaemonEvent({
   if (!threadChat || !thread) {
     return { success: false, error: "Thread chat not found", status: 404 };
   }
+  const effectiveRunId = runId ?? `legacy:${threadChat.id}`;
   console.log("Thread chat status: ", threadChat.status);
 
   if (messages.length > 0 && messages.some((m) => m.type === "assistant")) {
@@ -249,7 +343,7 @@ export async function handleDaemonEvent({
   }
   waitUntil(
     maybeTrackFirstAssistantLatency({
-      runId,
+      runId: effectiveRunId,
       userId,
       threadId,
       threadChatId,
@@ -393,6 +487,24 @@ export async function handleDaemonEvent({
   );
   const isThreadFinished = isStop || isDone || isError;
   const statusBeforeUpdate = threadChat.status;
+  if (isThreadFinished && runId && !deferTerminalTransitionToRoute) {
+    const daemonTerminalErrorInfo = deriveDaemonTerminalErrorInfo(messages);
+    await updateAgentRunContext({
+      db,
+      userId,
+      runId,
+      updates: {
+        status: isStop ? "stopped" : isError ? "failed" : "completed",
+        ...buildRunContextFailureUpdates({
+          isError,
+          errorMessage: daemonTerminalErrorInfo.errorMessage,
+          errorCategory: daemonTerminalErrorInfo.errorCategory,
+          terminalReason: isError ? "agent-generic-error" : null,
+          failureSource: deriveTerminalFailureSource(messages),
+        }),
+      },
+    });
+  }
   if (isThreadFinished) {
     getPostHogServer().capture({
       distinctId: userId,
@@ -870,7 +982,8 @@ export async function handleDaemonEvent({
         shouldSkipCheckpoint,
         sourceType: thread.sourceType ?? null,
         sourceMetadata: thread.sourceMetadata ?? null,
-        runId,
+        runId: effectiveRunId,
+        followUpRunId: runId ?? null,
       }),
     );
   }
@@ -894,6 +1007,7 @@ async function handleThreadFinish({
   sourceType,
   sourceMetadata,
   runId,
+  followUpRunId,
 }: {
   userId: string;
   threadId: string;
@@ -906,6 +1020,7 @@ async function handleThreadFinish({
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
   runId: string;
+  followUpRunId: string | null;
 }) {
   // Check if another run is still active for this threadChat on this sandbox.
   // If so, skip cleanup — the sandbox must stay active for the other run.
@@ -997,7 +1112,7 @@ async function handleThreadFinish({
         threadId,
         threadChatId,
         userId,
-        runId,
+        runId: followUpRunId,
       }),
     );
   } else {
