@@ -10,6 +10,8 @@ import {
   createAgUiHistoryAdapter,
 } from "./ag-ui-history-adapter";
 
+const EMPTY_HISTORY_MESSAGES: readonly AgUiMessage[] = [];
+
 /**
  * Terragon chat runtime backed by the AG-UI HttpAgent transport.
  *
@@ -27,7 +29,7 @@ import {
  */
 export function useTerragonRuntime({
   agent,
-  historyMessages = [],
+  historyMessages = EMPTY_HISTORY_MESSAGES,
   loadHistoryMessages,
   onError,
   onCancel,
