@@ -120,9 +120,14 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   const handleStop = useCallback(async () => {
-    await stopThread({ threadId, threadChatId });
+    const stopResult = await stopThread({ threadId, threadChatId });
+    if (!stopResult.success) {
+      setError(stopResult.errorMessage);
+      await refetch();
+      return;
+    }
     await refetch();
-  }, [threadId, threadChatId, refetch]);
+  }, [threadId, threadChatId, refetch, setError]);
 
   const updateQueuedMessages = useCallback(
     async (messages: DBUserMessage[]) => {
