@@ -138,7 +138,7 @@ export const MessagePart = memo(function MessagePart({
   // a registry entry breaks compilation in `part-registry.ts`.
   type Key = UIPartExtended["type"];
   const key = extendedPart.type as Key;
-  const entry = PART_REGISTRY[key] as {
+  const entry = PART_REGISTRY[key] as unknown as {
     component: React.ComponentType<Record<string, unknown>>;
     buildProps: (
       ctx: PartRegistryContext,

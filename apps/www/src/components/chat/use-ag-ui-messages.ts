@@ -29,7 +29,7 @@ type UseThreadViewModelArgs = {
   snapshot: ThreadViewSnapshot;
 };
 
-type ThreadViewModelController = ThreadViewModel & {
+export type ThreadViewModelController = ThreadViewModel & {
   dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
 };
 

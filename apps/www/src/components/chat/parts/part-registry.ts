@@ -139,7 +139,7 @@ export interface PartRegistryContext {
 
   // Resolved before dispatch so renderers don't re-derive them ─────────────
   /** Resolved artifact descriptor for this specific part, if any. */
-  artifactDescriptor: ArtifactDescriptor | null;
+  artifactDescriptor: Pick<ArtifactDescriptor, "id" | "part"> | null;
   /** Resolved opener for the artifact descriptor above, if any. */
   onOpenInArtifactWorkspace?: () => void;
   /** Resolved opener for plan artifacts referenced from `text` parts. */
@@ -203,22 +203,13 @@ export interface PartRegistry {
     PartByType<"thinking">,
     React.ComponentProps<typeof ThinkingPart>
   >;
-  tool: PartRegistryEntry<
-    AllToolParts,
-    React.ComponentProps<typeof ToolPart>
-  >;
-  image: PartRegistryEntry<
-    UIImagePart,
-    React.ComponentProps<typeof ImagePart>
-  >;
+  tool: PartRegistryEntry<AllToolParts, React.ComponentProps<typeof ToolPart>>;
+  image: PartRegistryEntry<UIImagePart, React.ComponentProps<typeof ImagePart>>;
   "rich-text": PartRegistryEntry<
     UIRichTextPart,
     React.ComponentProps<typeof RichTextPart>
   >;
-  pdf: PartRegistryEntry<
-    UIPdfPart,
-    React.ComponentProps<typeof PdfPart>
-  >;
+  pdf: PartRegistryEntry<UIPdfPart, React.ComponentProps<typeof PdfPart>>;
   "text-file": PartRegistryEntry<
     UITextFilePart,
     React.ComponentProps<typeof TextFilePart>
@@ -283,8 +274,10 @@ type _AssertPartTypeCoversUnion = UIPartExtended["type"] extends PartType
 type _AssertPartRegistryHasNoExtras = PartType extends UIPartExtended["type"]
   ? true
   : never;
-const _exhaustive: [_AssertPartTypeCoversUnion, _AssertPartRegistryHasNoExtras] =
-  [true, true];
+const _exhaustive: [
+  _AssertPartTypeCoversUnion,
+  _AssertPartRegistryHasNoExtras,
+] = [true, true];
 void _exhaustive;
 
 // ─────────────────────────────────────────────────────────────────────────────
