@@ -12,9 +12,7 @@ import { RedoTaskDialog } from "./redo-task-dialog";
 import { ForkTaskDialog } from "./fork-task-dialog";
 import type { RedoDialogData, ForkDialogData } from "./chat-message.types";
 
-// Phase 3c shape. ActionBarPrimitive.Root/useAuiState require a per-message
-// MessagePrimitive context that lands in Phase 6.5; until then we mirror the
-// composition manually. Copy is useCallback over [parts] to avoid stale capture.
+// Manual composition (no ActionBarPrimitive.Root) until per-message MessagePrimitive context lands.
 const BTN =
   "flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
 const ICON = "h-3.5 w-3.5";

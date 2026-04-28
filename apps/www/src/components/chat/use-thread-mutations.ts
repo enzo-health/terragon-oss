@@ -59,10 +59,14 @@ export function useRetryThreadMutation({
 
   const handleRetry = useCallback(async () => {
     if (isReadOnly) {
-      throw new Error("Cannot retry thread in read-only mode");
+      // Surface the error via setError instead of throwing into the event
+      // handler. Throwing from a button click handler unwinds into React's
+      // synthetic event dispatch and the user sees a blank screen.
+      setError("Cannot retry thread in read-only mode");
+      return;
     }
     await mutation.mutateAsync();
-  }, [isReadOnly, mutation]);
+  }, [isReadOnly, mutation, setError]);
 
   return { handleRetry, isRetrying: mutation.isPending };
 }
@@ -72,6 +76,12 @@ export function useRetryThreadMutation({
  * the server and dispatches a `server.refetch-reconciled` event into the
  * view model. Used by the prompt box to settle optimistic state after
  * follow-up / queue / stop calls.
+ *
+ * Error handling: if the fetch fails (network error, server error, etc.),
+ * the error is logged via `console.warn` and forwarded to the optional
+ * `setError` callback. The returned promise still resolves so callers do
+ * not need to wrap each invocation in try/catch — but they MAY also handle
+ * the returned promise themselves if they want to react to the failure.
  */
 export function useReconcileActiveChatFromServer({
   threadId,
@@ -79,38 +89,49 @@ export function useReconcileActiveChatFromServer({
   threadViewModel,
   chatAgent,
   thread,
+  setError,
 }: {
   threadId: string;
   threadChatId: string;
   threadViewModel: ThreadViewModelController;
   chatAgent: AIAgent;
   thread: Pick<ThreadInfoFull, "id" | "updatedAt" | "gitDiff" | "gitDiffStats">;
+  setError?: (error: ThreadErrorMessage | null) => void;
 }) {
   const queryClient = useQueryClient();
   return useCallback(async () => {
-    const reconciledChat = await queryClient.fetchQuery(
-      threadChatQueryOptions({ threadId, threadChatId }),
-    );
-    threadViewModel.dispatchThreadViewEvent({
-      type: "server.refetch-reconciled",
-      snapshot: createThreadViewSnapshot({
-        threadChat: reconciledChat,
-        agent: chatAgent,
-        source: "react-query",
-        artifactThread: {
-          id: thread.id,
-          updatedAt: thread.updatedAt,
-          gitDiff: thread.gitDiff,
-          gitDiffStats: thread.gitDiffStats ?? null,
-        },
-        githubSummary: threadViewModel.githubSummary,
-        meta: threadViewModel.meta,
-        runId: threadViewModel.lifecycle.runId,
-      }),
-    });
+    try {
+      const reconciledChat = await queryClient.fetchQuery(
+        threadChatQueryOptions({ threadId, threadChatId }),
+      );
+      threadViewModel.dispatchThreadViewEvent({
+        type: "server.refetch-reconciled",
+        snapshot: createThreadViewSnapshot({
+          threadChat: reconciledChat,
+          agent: chatAgent,
+          source: "react-query",
+          artifactThread: {
+            id: thread.id,
+            updatedAt: thread.updatedAt,
+            gitDiff: thread.gitDiff,
+            gitDiffStats: thread.gitDiffStats ?? null,
+          },
+          githubSummary: threadViewModel.githubSummary,
+          meta: threadViewModel.meta,
+          runId: threadViewModel.lifecycle.runId,
+        }),
+      });
+    } catch (error) {
+      console.warn(
+        "[useReconcileActiveChatFromServer] failed to reconcile thread chat",
+        { threadId, threadChatId, error },
+      );
+      setError?.(unwrapError(error));
+    }
   }, [
     chatAgent,
     queryClient,
+    setError,
     thread.gitDiff,
     thread.gitDiffStats,
     thread.id,
