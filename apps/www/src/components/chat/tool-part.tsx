@@ -1,4 +1,4 @@
-import React, { memo, type ReactNode } from "react";
+import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
 import { AllToolParts, type UIPart, type UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -20,7 +20,7 @@ import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
 import { getToolVerb } from "./tools/utils";
-import type { ToolName } from "./tools/tool-registry";
+import type { ToolArgs, ToolName } from "./tools/tool-registry";
 import { Badge } from "@/components/ui/badge";
 import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
@@ -29,6 +29,7 @@ import { ImagePart } from "./image-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import { PromptBoxRef } from "./thread-context";
 import { ChildThreadInfo } from "@terragon/shared/db/types";
+import type { UIToolPartWithLifecycle } from "./ui-parts-extended";
 
 /**
  * Sibling state needed by a subset of tool renderers (Task, ExitPlanMode,
@@ -52,29 +53,46 @@ type ToolRenderContext = {
   renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
 };
 
-type ToolRenderer = (
-  toolPart: AllToolParts,
+/**
+ * Per-name tool variant. For tool names present as a discriminated arm in
+ * `AllToolParts` (the typed daemon tools), this resolves to the exact
+ * `UIToolPart<N, ...>` variant. For names that arrive only via the catch-all
+ * `UIToolPart<string, Record<string, any>>` arm — `MCPTool` and
+ * `mcp__terry__SuggestFollowupTask` — `Extract` collapses to `never`, so we
+ * fall back to `AllToolParts`. The runtime discriminator is still
+ * `toolPart.name`, dispatched through `isToolName`.
+ */
+type ToolPartFor<N extends ToolName> = [
+  Extract<AllToolParts, { name: N }>,
+] extends [never]
+  ? AllToolParts
+  : Extract<AllToolParts, { name: N }>;
+
+/**
+ * Per-name renderer: the dispatch table parameterizes each entry with the
+ * exact tool variant for that key, so each renderer body sees its narrowed
+ * `toolPart` without runtime casts. Compare to the previous shape, which
+ * typed every entry as `(AllToolParts) => ...` and required a per-renderer
+ * `narrow<N>()` cast inside the body.
+ */
+type ToolRenderer<N extends ToolName> = (
+  toolPart: ToolPartFor<N>,
   ctx: ToolRenderContext,
 ) => ReactNode;
 
-/**
- * Typed cast for the very common "narrow `AllToolParts` to one variant" step.
- * Every renderer below knows its key statically, so the cast is sound — but TS
- * can't infer that from the `Record<ToolName, ToolRenderer>` shape alone.
- */
-const narrow = <N extends AllToolParts["name"]>(tp: AllToolParts) =>
-  tp as Extract<AllToolParts, { name: N }>;
+type ToolDispatchTable = { [N in ToolName]: ToolRenderer<N> };
 
 /**
- * Typed dispatch table keyed by `ToolName` from `tool-registry.ts`. Using
- * `Record<ToolName, ToolRenderer>` makes TS prove every registry entry has a
- * renderer at compile time — adding a new `ToolName` without a dispatch entry
- * is a type error. Unknown tool names (not in `ToolName`) fall back to
- * `renderUnknownTool` at runtime.
+ * Typed dispatch table keyed by `ToolName` from `tool-registry.ts`. The mapped
+ * `ToolDispatchTable` type makes TS prove every registry entry has a renderer
+ * at compile time AND that each renderer body sees the correctly narrowed
+ * variant. Adding a new `ToolName` without a dispatch entry is a type error.
+ * Unknown tool names (not in `ToolName`) fall back to `renderUnknownTool` at
+ * runtime.
  */
-const TOOL_DISPATCH: Record<ToolName, ToolRenderer> = {
-  Read: (tp) => <ReadTool toolPart={narrow<"Read">(tp)} />,
-  Write: (tp) => <WriteTool toolPart={narrow<"Write">(tp)} />,
+const TOOL_DISPATCH: ToolDispatchTable = {
+  Read: (tp) => <ReadTool toolPart={tp} />,
+  Write: (tp) => <WriteTool toolPart={tp} />,
   Edit: (tp) => {
     // Some Edit calls come without new/old_string (e.g. partial updates from
     // older daemon versions). Fall back to DefaultTool rather than crash.
@@ -83,49 +101,44 @@ const TOOL_DISPATCH: Record<ToolName, ToolRenderer> = {
       "new_string" in tp.parameters &&
       "old_string" in tp.parameters
     ) {
-      return <EditTool toolPart={narrow<"Edit">(tp)} />;
+      return <EditTool toolPart={tp} />;
     }
     return <DefaultTool toolPart={tp} />;
   },
-  MultiEdit: (tp) => <MultiEditTool toolPart={narrow<"MultiEdit">(tp)} />,
-  Grep: (tp) => <SearchTool toolPart={narrow<"Grep">(tp)} />,
-  Glob: (tp) => <SearchTool toolPart={narrow<"Glob">(tp)} />,
-  LS: (tp) => <LSTool toolPart={narrow<"LS">(tp)} />,
-  Bash: (tp) => <BashTool toolPart={narrow<"Bash">(tp)} />,
-  TodoRead: (tp) => <TodoReadTool toolPart={narrow<"TodoRead">(tp)} />,
-  TodoWrite: (tp) => <TodoWriteTool toolPart={narrow<"TodoWrite">(tp)} />,
-  NotebookRead: (tp) => (
-    <NotebookReadTool toolPart={narrow<"NotebookRead">(tp)} />
-  ),
-  NotebookEdit: (tp) => (
-    <NotebookEditTool toolPart={narrow<"NotebookEdit">(tp)} />
-  ),
+  MultiEdit: (tp) => <MultiEditTool toolPart={tp} />,
+  Grep: (tp) => <SearchTool toolPart={tp} />,
+  Glob: (tp) => <SearchTool toolPart={tp} />,
+  LS: (tp) => <LSTool toolPart={tp} />,
+  Bash: (tp) => <BashTool toolPart={tp} />,
+  TodoRead: (tp) => <TodoReadTool toolPart={tp} />,
+  TodoWrite: (tp) => <TodoWriteTool toolPart={tp} />,
+  NotebookRead: (tp) => <NotebookReadTool toolPart={tp} />,
+  NotebookEdit: (tp) => <NotebookEditTool toolPart={tp} />,
   Task: (tp, ctx) => (
-    <TaskTool
-      toolPart={narrow<"Task">(tp)}
-      renderToolPart={ctx.renderChildToolPart}
-    />
+    <TaskTool toolPart={tp} renderToolPart={ctx.renderChildToolPart} />
   ),
-  WebFetch: (tp) => <WebFetchTool toolPart={narrow<"WebFetch">(tp)} />,
-  WebSearch: (tp) => <WebSearchTool toolPart={narrow<"WebSearch">(tp)} />,
+  WebFetch: (tp) => <WebFetchTool toolPart={tp} />,
+  WebSearch: (tp) => <WebSearchTool toolPart={tp} />,
   SuggestFollowupTask: (tp, ctx) => (
     <SuggestFollowupTaskTool
-      toolPart={{
-        ...narrow<"SuggestFollowupTask">(tp),
-        name: "SuggestFollowupTask",
-      }}
+      toolPart={{ ...tp, name: "SuggestFollowupTask" }}
       threadId={ctx.threadId}
       childThreads={ctx.childThreads}
       githubRepoFullName={ctx.githubRepoFullName}
       repoBaseBranchName={ctx.repoBaseBranchName}
     />
   ),
-  // Alias from the MCP follow-up server. Same args, same component.
+  // Alias from the MCP follow-up server. Same args, same component. The cast
+  // is sound because both names share the `SuggestFollowupTask` parameter
+  // shape (see ToolRegistry in tool-registry.ts).
   mcp__terry__SuggestFollowupTask: (tp, ctx) =>
-    TOOL_DISPATCH.SuggestFollowupTask(tp, ctx),
+    TOOL_DISPATCH.SuggestFollowupTask(
+      tp as Extract<AllToolParts, { name: "SuggestFollowupTask" }>,
+      ctx,
+    ),
   ExitPlanMode: (tp, ctx) => (
     <ExitPlanModeTool
-      toolPart={narrow<"ExitPlanMode">(tp)}
+      toolPart={tp}
       threadId={ctx.threadId}
       threadChatId={ctx.threadChatId}
       messages={ctx.messagesRef.current}
@@ -137,22 +150,18 @@ const TOOL_DISPATCH: Record<ToolName, ToolRenderer> = {
   ),
   PermissionRequest: (tp, ctx) => (
     <PermissionRequestTool
-      toolPart={narrow<"PermissionRequest">(tp)}
+      toolPart={tp}
       threadId={ctx.threadId}
       threadChatId={ctx.threadChatId}
       isReadOnly={ctx.isReadOnly}
     />
   ),
-  FileChange: (tp) => <FileChangeTool toolPart={narrow<"FileChange">(tp)} />,
+  FileChange: (tp) => <FileChangeTool toolPart={tp} />,
   // Codex MCPTool: rewrite name to `mcp__server__tool` then route to
   // DefaultTool. The daemon emits it pre-rewrite; this is the only place that
   // rewrite happens.
   MCPTool: (tp) => {
-    const { server, tool, ...mcpArgs } = tp.parameters as {
-      server?: string;
-      tool?: string;
-      [key: string]: unknown;
-    };
+    const { server, tool, ...mcpArgs } = tp.parameters as ToolArgs<"MCPTool">;
     const mcpName = server && tool ? `mcp__${server}__${tool}` : tp.name;
     return (
       <DefaultTool toolPart={{ ...tp, name: mcpName, parameters: mcpArgs }} />
@@ -164,21 +173,33 @@ const TOOL_DISPATCH: Record<ToolName, ToolRenderer> = {
  * Runtime fallback for tool names not in the typed `ToolName` registry — e.g.
  * arbitrary `mcp__*` tools the daemon forwards or unknown tool names from a
  * newer daemon version. Compile-time exhaustiveness is preserved by
- * `TOOL_DISPATCH`'s `Record<ToolName, ...>` type; this only fires on names
- * outside the registry's domain.
+ * `TOOL_DISPATCH`'s mapped type; this only fires on names outside the
+ * registry's domain.
  */
-const renderUnknownTool: ToolRenderer = (tp) => <DefaultTool toolPart={tp} />;
+const renderUnknownTool = (tp: AllToolParts): ReactNode => (
+  <DefaultTool toolPart={tp} />
+);
 
-/**
- * Type predicate: narrows an arbitrary string to `ToolName` by membership
- * in `TOOL_DISPATCH`. Replaces the previous `as ToolName` widening cast,
- * which let any daemon-supplied string slip into the dispatch table lookup
- * without proof. The runtime check is the same `name in TOOL_DISPATCH`
- * shape it always was — TypeScript just gets to see the narrowing now.
- */
+/** Type predicate: narrows an arbitrary string to `ToolName` by membership in `TOOL_DISPATCH`. */
 function isToolName(name: string): name is ToolName {
   return name in TOOL_DISPATCH;
 }
+
+/**
+ * Hoisted predicate-typed filter: a discriminated-union narrower for the
+ * artifact-bearing UI part variants. Defined at module scope so the closure
+ * isn't reallocated per render.
+ */
+const isArtifactPart = (
+  part: UIPart,
+): part is Extract<
+  UIPart,
+  { type: "rich-text" | "text-file" | "pdf" | "image" }
+> =>
+  part.type === "rich-text" ||
+  part.type === "text-file" ||
+  part.type === "pdf" ||
+  part.type === "image";
 
 export type ToolPartProps = {
   toolPart: AllToolParts;
@@ -213,25 +234,12 @@ const ToolPart = memo(function ToolPart({
 }: ToolPartProps) {
   const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
 
-  // Context passed to renderers that need sibling state (Task, ExitPlanMode,
-  // etc.). Tools that only need `toolPart` ignore it. Phase 3b's typed-dispatch
-  // alternative: compile-time exhaustiveness via `Record<ToolName, ...>`
-  // without adopting `makeAssistantToolUI` (which requires args/result shapes
-  // we don't have until plan Phases 1+2 land).
-  const renderCtx: ToolRenderContext = {
-    threadId,
-    threadChatId,
-    messagesRef,
-    isReadOnly,
-    promptBoxRef,
-    childThreads,
-    githubRepoFullName,
-    repoBaseBranchName,
-    branchName,
-    onOptimisticPermissionModeUpdate,
-    artifactDescriptors,
-    onOpenArtifact,
-    renderChildToolPart: (childToolPart) => (
+  // Stable recursive renderer. Deps mirror the props compared by
+  // `areToolPartPropsEqual` below — when those are referentially stable across
+  // renders, this callback identity is too, so memoized children of `TaskTool`
+  // (which receives this via `renderToolPart`) don't see a churning prop.
+  const renderChildToolPart = useCallback(
+    (childToolPart: AllToolParts) => (
       <ToolPart
         toolPart={childToolPart}
         threadId={threadId}
@@ -248,38 +256,78 @@ const ToolPart = memo(function ToolPart({
         onOpenArtifact={onOpenArtifact}
       />
     ),
-  };
+    [
+      threadId,
+      threadChatId,
+      messagesRef,
+      isReadOnly,
+      promptBoxRef,
+      childThreads,
+      githubRepoFullName,
+      repoBaseBranchName,
+      branchName,
+      onOptimisticPermissionModeUpdate,
+      artifactDescriptors,
+      onOpenArtifact,
+    ],
+  );
 
-  const renderer = isToolName(toolPart.name)
-    ? TOOL_DISPATCH[toolPart.name]
+  // Context passed to renderers that need sibling state (Task, ExitPlanMode,
+  // etc.). Tools that only need `toolPart` ignore it. Memoized on the same
+  // dependency set as `renderChildToolPart` so dispatch-site renderers see
+  // a stable `ctx` reference across renders.
+  const renderCtx = useMemo<ToolRenderContext>(
+    () => ({
+      threadId,
+      threadChatId,
+      messagesRef,
+      isReadOnly,
+      promptBoxRef,
+      childThreads,
+      githubRepoFullName,
+      repoBaseBranchName,
+      branchName,
+      onOptimisticPermissionModeUpdate,
+      artifactDescriptors,
+      onOpenArtifact,
+      renderChildToolPart,
+    }),
+    [
+      threadId,
+      threadChatId,
+      messagesRef,
+      isReadOnly,
+      promptBoxRef,
+      childThreads,
+      githubRepoFullName,
+      repoBaseBranchName,
+      branchName,
+      onOptimisticPermissionModeUpdate,
+      artifactDescriptors,
+      onOpenArtifact,
+      renderChildToolPart,
+    ],
+  );
+
+  // `isToolName` proves membership in `TOOL_DISPATCH`, but TS still sees the
+  // looked-up entry as a contravariant union of `ToolRenderer<N>` for each N
+  // in `ToolName` — and the intersected parameter type collapses to `never`.
+  // Widen at the dispatch boundary once via a typed alias; the runtime
+  // discriminator is `toolPart.name` matching the registry key, so the
+  // dispatch is sound. Mirrors the pattern in `renderPartFromRegistry`.
+  type DispatchFn = (tp: AllToolParts, ctx: ToolRenderContext) => ReactNode;
+  const renderer: DispatchFn = isToolName(toolPart.name)
+    ? (TOOL_DISPATCH[toolPart.name] as DispatchFn)
     : renderUnknownTool;
   const renderedTool = renderer(toolPart, renderCtx);
 
-  // Predicate-typed filter so the switch below sees correctly narrowed parts
-  // without per-case `as` casts. `UIPart` is a discriminated union on `type`;
-  // narrowing through `Extract` keeps the dispatch source-of-truth in one
-  // place.
-  const isArtifactPart = (
-    part: UIPart,
-  ): part is Extract<
-    UIPart,
-    { type: "rich-text" | "text-file" | "pdf" | "image" }
-  > =>
-    part.type === "rich-text" ||
-    part.type === "text-file" ||
-    part.type === "pdf" ||
-    part.type === "image";
   const artifactParts = toolPart.parts.filter(isArtifactPart);
 
   // Extended lifecycle fields carried from DBToolCall via InternalToolPart.
   // These live on the daemon-side `DBToolCall` (db-message.ts) but are not on
-  // the UI `AllToolParts` union — widening the UI type to include them is a
-  // separate refactor. The intersection cast is the minimum-surface bridge.
-  const extendedPart = toolPart as AllToolParts & {
-    progressChunks?: Array<{ seq: number; text: string }>;
-    mcpMetadata?: { server: string; tool: string };
-    toolStatus?: string;
-  };
+  // the UI `AllToolParts` union — `UIToolPartWithLifecycle` (ui-parts-extended.ts)
+  // is the minimum-surface bridge until the UI union is widened.
+  const extendedPart = toolPart as UIToolPartWithLifecycle;
   const progressChunks = extendedPart.progressChunks;
   const mcpMetadata = extendedPart.mcpMetadata;
   const isInProgress =
@@ -292,6 +340,12 @@ const ToolPart = memo(function ToolPart({
       const match = toolPart.name.match(/^mcp__([^_]+)__/);
       return match ? match[1] : null;
     })();
+
+  const hasExtras = !!mcpServer || !!progressChunks?.length || isInProgress;
+
+  if (artifactParts.length === 0 && !hasExtras) {
+    return renderedTool;
+  }
 
   const extraContent = (
     <>
@@ -314,15 +368,6 @@ const ToolPart = memo(function ToolPart({
       )}
     </>
   );
-
-  if (
-    artifactParts.length === 0 &&
-    !mcpServer &&
-    !progressChunks?.length &&
-    !isInProgress
-  ) {
-    return renderedTool;
-  }
 
   if (artifactParts.length === 0) {
     return (
