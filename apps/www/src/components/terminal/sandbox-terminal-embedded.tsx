@@ -209,7 +209,7 @@ function SandboxTerminalBanner({
   return (
     <div
       className={cn(
-        "mb-2 flex items-center justify-between border-b px-2 py-1 text-sm bg-muted h-10 transition-all duration-500",
+        "mb-2 flex items-center justify-between border-b px-2 py-1 text-sm bg-muted h-10 transition-[opacity,border-color] duration-500",
         {
           "border-b-2 border-destructive": status === "error",
           "opacity-0": isConnected,

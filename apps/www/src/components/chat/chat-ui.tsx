@@ -786,7 +786,7 @@ function ChatUIContent({
                 <button
                   onClick={forceScrollToBottom}
                   className={cn(
-                    "pointer-events-auto flex size-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm transition-all duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md hover:bg-background",
+                    "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform,scale,box-shadow,background-color] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     hasInitialized && !isAtBottom
                       ? "opacity-100 translate-y-0 scale-100"
                       : "opacity-0 translate-y-2 scale-95 pointer-events-none",

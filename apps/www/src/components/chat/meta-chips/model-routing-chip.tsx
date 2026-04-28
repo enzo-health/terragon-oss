@@ -1,5 +1,6 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
+import { MetaChip } from "./meta-chip";
 import type { ThreadMetaSnapshot } from "./use-thread-meta-events";
 
 export interface ModelRoutingChipProps {
@@ -11,14 +12,14 @@ export function ModelRoutingChip({ modelReroute }: ModelRoutingChipProps) {
   if (!modelReroute) return null;
 
   return (
-    <div
+    <MetaChip
       data-testid="model-routing-chip"
       data-state="warning"
+      variant="warning"
       title={`Model rerouted: ${modelReroute.originalModel} → ${modelReroute.reroutedModel}. Reason: ${modelReroute.reason}`}
-      className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-500/5 px-2 py-0.5 text-[11px] font-medium text-amber-600"
+      icon={<AlertTriangle className="size-3" />}
     >
-      <AlertTriangle className="size-3" />
       Rerouted to {modelReroute.reroutedModel}
-    </div>
+    </MetaChip>
   );
 }

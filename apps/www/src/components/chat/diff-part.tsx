@@ -1,12 +1,7 @@
 import React, { useState } from "react";
-import {
-  CheckCircle,
-  XCircle,
-  Clock,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { CheckCircle, XCircle, Clock, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import type { DBDiffPart } from "@terragon/shared";
 
 export interface DiffPartViewProps {
@@ -66,11 +61,12 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
           className="flex items-center gap-1.5 font-mono text-xs font-medium truncate hover:text-foreground transition-colors text-left"
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? (
-            <ChevronDown className="size-3 shrink-0" />
-          ) : (
-            <ChevronRight className="size-3 shrink-0" />
-          )}
+          <ChevronRight
+            className={cn(
+              "size-3 shrink-0 transition-transform duration-200 ease-[var(--ease-standard)]",
+              expanded && "rotate-90",
+            )}
+          />
           <span className="truncate">{part.filePath}</span>
         </button>
         <div className="flex items-center gap-2 shrink-0">

@@ -135,7 +135,11 @@ export function MessageToolbar({
     <>
       <div
         className={cn(
-          "flex gap-1 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity",
+          // mt-1 lifts the toolbar half a step off the bubble's baseline so
+          // it doesn't crowd the message; gap-1.5 between actions is wider
+          // than the original gap-1 — toolbar buttons are 28×28 px hit
+          // targets, and gap-1 made them feel taped together.
+          "mt-1 flex gap-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity",
           {
             "justify-start": message.role === "agent",
             "justify-end": message.role === "user",
@@ -154,35 +158,38 @@ export function MessageToolbar({
         {isFirstUserMessage && redoDialogData && (
           <button
             onClick={() => setShowRedoDialog(true)}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Retry task"
+            aria-label="Retry task"
           >
-            <RefreshCw className="h-3 w-3" />
+            <RefreshCw className="h-3.5 w-3.5" />
           </button>
         )}
         {hasTextContent && (
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Copy message"
+            aria-label={copied ? "Message copied" : "Copy message"}
           >
             {copied ? (
-              <Check className="h-3 w-3" />
+              <Check className="h-3.5 w-3.5" />
             ) : (
-              <Copy className="h-3 w-3" />
+              <Copy className="h-3.5 w-3.5" />
             )}
           </button>
         )}
         {messageIndex !== undefined && hasTextContent && (
           <button
             onClick={handleCopyLink}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
             title="Copy link to message"
+            aria-label={linkCopied ? "Link copied" : "Copy link to message"}
           >
             {linkCopied ? (
-              <Check className="h-3 w-3" />
+              <Check className="h-3.5 w-3.5" />
             ) : (
-              <Link className="h-3 w-3" />
+              <Link className="h-3.5 w-3.5" />
             )}
           </button>
         )}
@@ -192,10 +199,11 @@ export function MessageToolbar({
           !isAgentWorking && (
             <button
               onClick={() => setShowForkDialog(true)}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
               title="Fork task"
+              aria-label="Fork task from this message"
             >
-              <Split className="h-3 w-3" />
+              <Split className="h-3.5 w-3.5" />
             </button>
           )}
       </div>

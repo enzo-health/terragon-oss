@@ -278,7 +278,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-lg transition-all duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
+            "block rounded-lg transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
             pathname === `/task/${thread.id}`
               ? "bg-primary/[0.06] border-primary/20"
               : "hover:bg-accent/60 border-transparent",

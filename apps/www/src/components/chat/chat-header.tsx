@@ -115,8 +115,21 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <>
       <div
+        role={isMobile ? "button" : undefined}
+        tabIndex={isMobile && onHeaderClick ? 0 : undefined}
+        aria-label={isMobile ? "Open task details" : undefined}
         className={`relative z-10 flex w-full items-center justify-between gap-4 overflow-hidden px-4 md:px-6 ${headerClassName} ${headerSurfaceClassName}`}
         onClick={isMobile ? onHeaderClick : undefined}
+        onKeyDown={
+          isMobile && onHeaderClick
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onHeaderClick();
+                }
+              }
+            : undefined
+        }
         style={isMobile ? { cursor: "pointer" } : undefined}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -132,12 +145,12 @@ export const ChatHeader = memo(function ChatHeader({
               <PanelRightClose className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex flex-col min-w-0 w-full gap-0.5">
+          <div className="flex flex-col min-w-0 w-full gap-1">
             <div className="flex items-center gap-3 w-full">
               <div className="opacity-80">
                 <ThreadStatusIndicator thread={thread} />
               </div>
-              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 {isEditing ? (
                   <Input
                     ref={inputRef}
@@ -145,7 +158,8 @@ export const ChatHeader = memo(function ChatHeader({
                     onChange={(e) => setEditedName(e.target.value)}
                     onBlur={handleSave}
                     onKeyDown={handleKeyDown}
-                    className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[15px] font-display font-medium tracking-[-0.02em] focus-visible:ring-1 focus-visible:ring-ring md:text-[17px]"
+                    aria-label="Edit task name"
+                    className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[15px] font-sans font-medium tracking-[-0.01em] focus-visible:ring-1 focus-visible:ring-ring md:text-[17px]"
                     placeholder={getThreadTitle(thread)}
                     style={{ minWidth: "150px" }}
                     autoComplete="off"
@@ -154,7 +168,7 @@ export const ChatHeader = memo(function ChatHeader({
                     spellCheck={false}
                   />
                 ) : (
-                  <span className="truncate font-display text-[15px] font-medium leading-tight tracking-[-0.02em] text-foreground md:text-[17px]">
+                  <span className="truncate font-sans text-[15px] font-medium leading-tight tracking-[-0.01em] text-foreground md:text-[17px]">
                     {getThreadTitle(thread)}
                   </span>
                 )}
@@ -174,8 +188,8 @@ export const ChatHeader = memo(function ChatHeader({
               </div>
             </div>
             {/* metadata */}
-            <div className="flex h-5 min-w-0 items-center gap-2 text-[12px] tracking-[0.12px] text-muted-foreground/75 md:text-[13px]">
-              <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/65">
+            <div className="flex h-5 min-w-0 items-center gap-2 text-[12px] tracking-[0.12px] text-muted-foreground md:text-[13px]">
+              <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/80">
                 {thread.githubRepoFullName}
               </span>
               {thread.branchName && thread.repoBaseBranchName && (
@@ -184,26 +198,29 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
+                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
                   </a>
-                  <span className="flex-shrink-0 text-muted-foreground/55">
+                  <span
+                    aria-hidden="true"
+                    className="flex-shrink-0 text-muted-foreground/80"
+                  >
                     →
                   </span>
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-colors hover:bg-muted hover:text-foreground"
+                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     title={thread.branchName}
                   >
                     {thread.branchName}
                   </a>
                   <button
                     type="button"
-                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-colors hover:bg-muted hover:text-foreground"
+                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -214,7 +231,6 @@ export const ChatHeader = memo(function ChatHeader({
                         console.error("Failed to copy branch name", err);
                       }
                     }}
-                    title="Copy branch name"
                     aria-label="Copy branch name"
                   >
                     <Copy className="h-3 w-3" />
@@ -259,7 +275,7 @@ export const ChatHeader = memo(function ChatHeader({
         />
       </div>
       {thread.sourceType === "www-fork" && (
-        <div className="flex w-full items-center overflow-hidden border-b border-border/70 bg-muted/55 px-4 py-2.5">
+        <div className="flex w-full items-center overflow-hidden border-b border-hairline bg-surface-soft px-4 py-2.5">
           {(isMobile || isThreadListCollapsed) && (
             <div
               className="px-0 size-auto w-fit block"
@@ -284,7 +300,7 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
       )}
       {isReadOnly && (
-        <div className="flex w-full items-center overflow-hidden border-b border-border/70 bg-muted/55 px-4 py-2.5">
+        <div className="flex w-full items-center overflow-hidden border-b border-hairline bg-surface-soft px-4 py-2.5">
           {(isMobile || isThreadListCollapsed) && (
             <div
               className="px-0 size-auto w-fit block"

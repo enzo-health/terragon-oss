@@ -195,11 +195,12 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
       )}
       onClick={onToggle}
     >
-      {isCollapsed ? (
-        <ChevronRight className="size-3 opacity-50" />
-      ) : (
-        <ChevronDown className="size-3 opacity-50" />
-      )}
+      <ChevronRight
+        className={cn(
+          "size-3 opacity-50 transition-transform duration-200 ease-[var(--ease-standard)]",
+          !isCollapsed && "rotate-90",
+        )}
+      />
       {title}
       <span className="text-muted-foreground/70 font-sans text-[10px] font-medium">
         {numThreads}

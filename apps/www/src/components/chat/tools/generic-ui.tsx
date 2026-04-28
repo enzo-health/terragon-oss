@@ -81,8 +81,8 @@ export function GenericToolPart({
       <span className="h-5 flex items-center">
         <span
           className={cn("shrink-0 size-2 rounded-full inline-block", {
-            "bg-green-500": toolStatus === "completed",
-            "bg-red-500": toolStatus === "error",
+            "bg-emerald-500 dark:bg-emerald-400": toolStatus === "completed",
+            "bg-destructive dark:bg-red-400": toolStatus === "error",
             "bg-muted-foreground animate-blink": toolStatus === "pending",
           })}
           aria-hidden="true"

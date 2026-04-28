@@ -4,54 +4,85 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.995 0 0);
-  --foreground: oklch(0.34 0.015 285);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.19 0.004 285);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.27 0.006 285);
-  --primary: oklch(0.6688 0.1174 50.1276);
+  /* === Claude.com brand foundation ===
+     Warm cream canvas + coral primary + dark navy product surfaces.
+     Hue ≈ 80–85 (warm cream), 38 (coral). Chroma kept low at extremes
+     so neutrals stay tinted-warm without going garish at high lightness. */
+  --background: oklch(0.972 0.011 84); /* canvas — #faf9f5 */
+  --foreground: oklch(0.21 0.006 84); /* ink — #141413 */
+  --card: oklch(0.93 0.015 78); /* surface-card — #efe9de */
+  --card-foreground: oklch(0.21 0.006 84);
+  --popover: oklch(0.972 0.011 84);
+  --popover-foreground: oklch(0.24 0.006 84);
+  --primary: oklch(0.62 0.115 39); /* coral — #cc785c */
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.92 0.004 285);
-  --secondary-foreground: oklch(0.43 0.006 285);
-  --muted: oklch(0.93 0.004 285);
-  --muted-foreground: oklch(0.45 0.004 285);
-  --accent: oklch(0.92 0.004 285);
-  --accent-foreground: oklch(0.27 0.006 285);
-  --destructive: oklch(0.577 0.245 27.325);
+  --secondary: oklch(0.91 0.013 78); /* surface-cream-strong */
+  --secondary-foreground: oklch(0.3 0.006 80);
+  --muted: oklch(0.93 0.014 78);
+  --muted-foreground: oklch(0.48 0.009 80); /* muted — #6c6a64 */
+  --accent: oklch(0.91 0.013 78);
+  --accent-foreground: oklch(0.24 0.006 80);
+  --destructive: oklch(0.55 0.18 27); /* error — #c64545 */
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.885 0.004 285);
-  --input: oklch(0.76 0.005 285);
-  --ring: oklch(0.6171 0.1375 39.0427);
-  --chart-1: oklch(0.5583 0.1276 42.9956);
-  --chart-2: oklch(0.6898 0.1581 290.4107);
-  --chart-3: oklch(0.88 0.01 285);
-  --chart-4: oklch(0.8822 0.0403 298.1792);
-  --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.967 0.001 285);
-  --sidebar-foreground: oklch(0.36 0.004 285);
-  --sidebar-primary: oklch(0.6171 0.1375 39.0427);
-  --sidebar-primary-foreground: oklch(0.9881 0 0);
-  --sidebar-accent: oklch(0.92 0.004 285);
-  --sidebar-accent-foreground: oklch(0.25 0.005 285);
-  --sidebar-border: oklch(0.87 0.004 285);
-  --sidebar-ring: oklch(0.6171 0.1375 39.0427);
-  --app-background: oklch(0.967 0.001 285);
+  --border: oklch(0.89 0.012 78); /* hairline — #e6dfd8 */
+  --input: oklch(0.79 0.011 80);
+  --ring: oklch(0.62 0.115 39); /* coral focus ring */
+  --chart-1: oklch(0.62 0.115 39); /* coral */
+  --chart-2: oklch(0.71 0.07 175); /* accent-teal — #5db8a6 */
+  --chart-3: oklch(0.93 0.015 78);
+  --chart-4: oklch(0.72 0.13 65); /* accent-amber — #e8a55a */
+  --chart-5: oklch(0.51 0.1 40);
+  --sidebar: oklch(0.95 0.013 80); /* surface-soft — #f5f0e8 */
+  --sidebar-foreground: oklch(0.36 0.006 80);
+  --sidebar-primary: oklch(0.62 0.115 39);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.91 0.013 78);
+  --sidebar-accent-foreground: oklch(0.24 0.006 80);
+  --sidebar-border: oklch(0.89 0.012 78);
+  --sidebar-ring: oklch(0.62 0.115 39);
+  --app-background: oklch(0.972 0.011 84);
 
-  --warm-stone: rgba(245, 242, 239, 0.8);
-  --warm-gray: #71717a;
+  /* Brand-specific extensions — dark product surfaces, hairline tones,
+     and accent companions. Use these directly when the semantic tokens
+     above don't fit (e.g., a code editor surface always wants dark navy
+     regardless of light/dark mode). */
+  --hairline: oklch(0.89 0.012 78); /* #e6dfd8 */
+  --hairline-soft: oklch(0.91 0.011 80); /* #ebe6df */
+  --surface-soft: oklch(0.95 0.013 80); /* #f5f0e8 */
+  --surface-cream-strong: oklch(0.91 0.013 78); /* #e8e0d2 */
+  --surface-dark: oklch(0.18 0.005 88); /* #181715 — code & terminal */
+  --surface-dark-soft: oklch(0.2 0.005 88); /* #1f1e1b */
+  --surface-dark-elevated: oklch(0.22 0.005 88); /* #252320 */
+  --on-dark: oklch(0.972 0.011 84); /* cream-tinted white on dark */
+  --on-dark-soft: oklch(0.66 0.01 82); /* #a09d96 */
+  --coral: oklch(0.62 0.115 39);
+  --coral-active: oklch(0.51 0.1 40); /* #a9583e */
+  --accent-teal: oklch(0.71 0.07 175);
+  --accent-amber: oklch(0.72 0.13 65);
+
+  /* Existing — kept for compatibility; warm-stone now resolves against the
+     cream canvas so user message bubbles stay one elevation step warmer. */
+  --warm-stone: oklch(0.95 0.013 80 / 0.7);
+  --warm-gray: oklch(0.55 0.008 80);
 
   /* next/font/google injects --font-geist, --font-geist-mono
      onto <body> via the `geist.variable` class chain in layout.tsx. Do NOT
      redefine them here — the browser would otherwise fall back to literal
      "Geist" (which isn't installed) and then to system defaults like Roboto. */
   --font-sans:
-    var(--font-geist, ui-sans-serif), ui-sans-serif, system-ui, sans-serif;
+    var(--font-geist, ui-sans-serif), "Inter", ui-sans-serif, system-ui,
+    sans-serif;
   --font-mono:
-    var(--font-geist-mono, ui-monospace), SFMono-Regular, Menlo, Monaco,
-    Consolas, "Liberation Mono", "Courier New", monospace;
+    var(--font-geist-mono, ui-monospace), "JetBrains Mono", SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Display — slab-serif editorial voice. Copernicus / Tiempos Headline are
+     licensed Anthropic faces; --font-cormorant (loaded by next/font in
+     layout.tsx) is the open-source approximation. The negative tracking
+     applied below in the @layer base h1-h6 rule is essential — these serifs
+     without it read as off-brand. */
   --font-display:
-    var(--font-geist, ui-sans-serif), ui-sans-serif, system-ui, sans-serif;
+    var(--font-cormorant, "Cormorant Garamond"), "Tiempos Headline",
+    "EB Garamond", Garamond, "Times New Roman", serif;
 
   --radius: 0.75rem;
 
@@ -126,46 +157,63 @@
 }
 
 .dark {
-  --background: oklch(0.2679 0.0036 106.6427);
-  --foreground: oklch(0.8074 0.0142 93.0137);
-  --card: oklch(0.2679 0.0036 106.6427);
-  --card-foreground: oklch(0.9818 0.0054 95.0986);
-  --popover: oklch(0.3085 0.0035 106.6039);
-  --popover-foreground: oklch(0.9211 0.004 106.4781);
-  --primary: oklch(0.6724 0.1308 38.7559);
+  /* Dark mode anchors on the brand's dark navy product surface (#181715)
+     rather than a generic neutral, so code-block surfaces and the chat
+     surface share a consistent warm-dark tone. */
+  --background: oklch(0.18 0.005 88); /* surface-dark */
+  --foreground: oklch(0.972 0.011 84); /* on-dark — cream-tinted */
+  --card: oklch(0.2 0.005 88); /* surface-dark-soft */
+  --card-foreground: oklch(0.972 0.011 84);
+  --popover: oklch(0.22 0.005 88);
+  --popover-foreground: oklch(0.94 0.01 84);
+  --primary: oklch(0.69 0.13 39); /* coral — slightly brighter for dark */
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.9818 0.0054 95.0986);
-  --secondary-foreground: oklch(0.3085 0.0035 106.6039);
-  --muted: oklch(0.2213 0.0038 106.707);
-  --muted-foreground: oklch(0.7713 0.0169 99.0657);
-  --accent: oklch(0.213 0.0078 95.4245);
-  --accent-foreground: oklch(0.9663 0.008 98.8792);
-  --destructive: oklch(0.6368 0.2078 25.3313);
+  --secondary: oklch(0.22 0.005 88);
+  --secondary-foreground: oklch(0.94 0.01 84);
+  --muted: oklch(0.22 0.005 88);
+  --muted-foreground: oklch(0.72 0.01 82);
+  --accent: oklch(0.24 0.006 90);
+  --accent-foreground: oklch(0.94 0.01 84);
+  --destructive: oklch(0.62 0.2 25);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.3618 0.0101 106.8928);
-  --input: oklch(0.4336 0.0113 100.2195);
-  --ring: oklch(0.6724 0.1308 38.7559);
-  --chart-1: oklch(0.5583 0.1276 42.9956);
-  --chart-2: oklch(0.6898 0.1581 290.4107);
-  --chart-3: oklch(0.213 0.0078 95.4245);
-  --chart-4: oklch(0.3074 0.0516 289.323);
-  --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.2357 0.0024 67.7077);
-  --sidebar-foreground: oklch(0.8074 0.0142 93.0137);
-  --sidebar-primary: oklch(0.6724 0.1308 38.7559);
+  --border: oklch(0.32 0.008 92);
+  --input: oklch(0.4 0.01 92);
+  --ring: oklch(0.69 0.13 39);
+  --chart-1: oklch(0.69 0.13 39);
+  --chart-2: oklch(0.71 0.07 175);
+  --chart-3: oklch(0.24 0.006 90);
+  --chart-4: oklch(0.72 0.13 65);
+  --chart-5: oklch(0.62 0.115 39);
+  --sidebar: oklch(0.22 0.005 88);
+  --sidebar-foreground: oklch(0.84 0.012 84);
+  --sidebar-primary: oklch(0.69 0.13 39);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.2854 0.006 95);
-  --sidebar-accent-foreground: oklch(0.9074 0.0142 93.0137);
-  --sidebar-border: oklch(0.3618 0.0101 106.8928);
-  --sidebar-ring: oklch(0.6724 0.1308 38.7559);
-  --app-background: oklch(0.21 0.006 285);
+  --sidebar-accent: oklch(0.26 0.006 90);
+  --sidebar-accent-foreground: oklch(0.94 0.01 84);
+  --sidebar-border: oklch(0.32 0.008 92);
+  --sidebar-ring: oklch(0.69 0.13 39);
+  --app-background: oklch(0.18 0.005 88);
+
+  /* Dark-mode brand extensions */
+  --hairline: oklch(0.32 0.008 92);
+  --hairline-soft: oklch(0.28 0.007 92);
+  --surface-soft: oklch(0.2 0.005 88);
+  --surface-cream-strong: oklch(0.22 0.005 88);
+  /* Surface dark tokens stay constant — they're anchored, not theme-flipped. */
+  --surface-dark: oklch(0.18 0.005 88);
+  --surface-dark-soft: oklch(0.2 0.005 88);
+  --surface-dark-elevated: oklch(0.22 0.005 88);
+  --on-dark: oklch(0.972 0.011 84);
+  --on-dark-soft: oklch(0.66 0.01 82);
+  --coral: oklch(0.69 0.13 39);
+  --coral-active: oklch(0.55 0.11 40);
 
   --invert: #ffffff;
   --invert-foreground: #000000;
   --diff-added-fg: var(--color-emerald-400);
   --diff-removed-fg: var(--color-red-400);
-  --warm-stone: rgba(30, 28, 26, 0.8);
-  --warm-gray: #a1a1aa;
+  --warm-stone: oklch(0.22 0.005 88 / 0.8);
+  --warm-gray: oklch(0.72 0.008 80);
 }
 
 @theme inline {
@@ -248,6 +296,22 @@
   --color-info: var(--info);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
+
+  /* Brand surface tokens — registered with the theme so Tailwind generates
+     bg-surface-dark, bg-surface-cream-strong, text-on-dark, etc. */
+  --color-hairline: var(--hairline);
+  --color-hairline-soft: var(--hairline-soft);
+  --color-surface-soft: var(--surface-soft);
+  --color-surface-cream-strong: var(--surface-cream-strong);
+  --color-surface-dark: var(--surface-dark);
+  --color-surface-dark-soft: var(--surface-dark-soft);
+  --color-surface-dark-elevated: var(--surface-dark-elevated);
+  --color-on-dark: var(--on-dark);
+  --color-on-dark-soft: var(--on-dark-soft);
+  --color-coral: var(--coral);
+  --color-coral-active: var(--coral-active);
+  --color-accent-teal: var(--accent-teal);
+  --color-accent-amber: var(--accent-amber);
 }
 @layer base {
   * {
@@ -272,6 +336,9 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* Display headlines: serif at weight 400 (never bold), with negative
+     tracking. The serif character + tracking is the brand voice — bolding
+     these reads as bombastic and breaks the editorial feel. */
   h1,
   h2,
   h3,
@@ -279,8 +346,34 @@
   h5,
   h6 {
     font-family: var(--font-display);
-    font-weight: 500;
+    font-weight: 400;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+    color: var(--foreground);
+  }
+  h1 {
+    letter-spacing: -0.04em;
+    line-height: 1.05;
+  }
+  h2 {
     letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+
+  /* Prevent layout shift on numbers that update at runtime
+     (token counts, timers, rate-limit gauges). Opt-in via attribute. */
+  [data-stream-counter],
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Subtle 1px outline for images. Use pure black/white at low alpha
+     so the edge doesn't pick up a tinted neutral and read as dirt. */
+  .image-outline {
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+  }
+  .dark .image-outline {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   }
 
   .dark body {

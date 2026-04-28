@@ -34,8 +34,9 @@ export function AttachedFiles({
             {file.fileType === "image" ? (
               <button
                 onClick={() => setExpandedImageId(file.id)}
-                className="relative block cursor-pointer"
+                className="relative block cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-150 active:scale-[0.98]"
                 type="button"
+                aria-label={`View attached image: ${file.fileName ?? "image"}`}
               >
                 <img
                   src={
@@ -43,13 +44,13 @@ export function AttachedFiles({
                   }
                   alt="Attached image"
                   className={cn(
-                    "max-w-20 max-h-20 object-cover rounded border transition-opacity",
+                    "max-w-20 max-h-20 object-cover rounded transition-opacity",
+                    file.uploadStatus === "failed"
+                      ? "opacity-70 border-destructive border-2"
+                      : "image-outline",
                     file.uploadStatus === "pending" ||
                       file.uploadStatus === "uploading"
                       ? "opacity-50"
-                      : "",
-                    file.uploadStatus === "failed"
-                      ? "opacity-70 border-destructive border-2"
                       : "",
                   )}
                 />

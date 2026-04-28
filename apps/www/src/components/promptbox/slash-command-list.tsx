@@ -69,40 +69,46 @@ export const SlashCommandListContent = forwardRef<
   return (
     <>
       {items.length ? (
-        <div className="overflow-hidden text-foreground">
-          {items.map((item, index) => (
-            <div
-              key={item.name}
-              onClick={() =>
-                onExecuteItem ? onExecuteItem(index) : onSelectItem(index)
-              }
-              onMouseEnter={() => onSelectItem(index)}
-              className={cn(
-                "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
-                "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
-                index === selectedIndex && "bg-accent text-accent-foreground",
-              )}
-            >
-              <div className="flex flex-col gap-0.5">
-                {item.isLoading ? (
-                  <div className="flex items-center gap-2 py-0.5">
-                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-transparent" />
-                    <span className="text-xs text-muted-foreground italic">
-                      Loading repository commands...
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="font-medium">/{item.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {item.description}
-                    </div>
-                  </>
+        <ul role="listbox" className="overflow-hidden text-foreground">
+          {items.map((item, index) => {
+            const isSelected = index === selectedIndex;
+            return (
+              <li
+                key={item.name}
+                role="option"
+                aria-selected={isSelected}
+                aria-disabled={item.isLoading || undefined}
+                onClick={() =>
+                  onExecuteItem ? onExecuteItem(index) : onSelectItem(index)
+                }
+                onMouseEnter={() => onSelectItem(index)}
+                className={cn(
+                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
+                  "aria-disabled:pointer-events-none aria-disabled:opacity-50",
+                  isSelected && "bg-accent text-accent-foreground",
                 )}
-              </div>
-            </div>
-          ))}
-        </div>
+              >
+                <div className="flex flex-col gap-0.5">
+                  {item.isLoading ? (
+                    <div className="flex items-center gap-2 py-0.5">
+                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-transparent" />
+                      <span className="text-xs text-muted-foreground italic">
+                        Loading repository commands...
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="font-medium">/{item.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {item.description}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       ) : (
         <div className="py-2 px-2 text-center text-sm text-muted-foreground">
           No matching commands

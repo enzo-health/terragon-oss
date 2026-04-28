@@ -316,7 +316,13 @@ export function TerragonThread({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <TerragonThreadProvider value={ctx}>
-        <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-6 mt-12 mb-4">
+        {/* Macro chat rhythm:
+            - mt-12 (48px) above first message: generous separation from header
+            - gap-6 (24px) between messages: reading rhythm
+            - mb-8 (32px) below last message: breathing room above the prompt box
+            - max-w-chat caps body line length around 65–75ch via the
+              --chat-max-width CSS var. */}
+        <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-12 mb-8">
           {lifecycleMessages.length > 0 ? (
             <div className="flex flex-col gap-3">
               {lifecycleMessages.map((message, index) => (

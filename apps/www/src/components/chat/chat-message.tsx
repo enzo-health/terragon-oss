@@ -106,8 +106,11 @@ export const ChatMessage = memo(function ChatMessage({
   const lastGroupIndex = groups.length - 1;
 
   const content = (
+    // Single rhythm inside the message: gap-3 (12px) between part groups.
+    // The previous double-wrapper (outer gap-3 + inner gap-2) created two
+    // competing rhythms that flattened the visual hierarchy of grouped tools.
     <div className="flex flex-col gap-3 text-sm leading-relaxed">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {groups.map((group, groupIndex) => {
           if (group.type === "collapsible-agent-activity") {
             return (
@@ -166,9 +169,11 @@ export const ChatMessage = memo(function ChatMessage({
     <div
       style={{ overflowAnchor: "none" }}
       className={cn(
-        "w-full break-words transition-all duration-200 animate-in fade-in slide-in-from-bottom-2",
+        "w-full break-words animate-in fade-in slide-in-from-bottom-2",
         message.role === "user"
-          ? "ml-auto w-fit max-w-[85%] rounded-[calc(var(--radius)+0.15rem)] border border-border/40 bg-[var(--warm-stone)] px-4 py-3 shadow-[var(--shadow-warm-lift)] md:px-5"
+          ? // Brand: cream feature-card surface, no border ("color-block first,
+            // shadow rare"). The warm-lift shadow does the elevation work.
+            "ml-auto w-fit max-w-[90%] sm:max-w-[85%] rounded-[calc(var(--radius)+0.15rem)] bg-card text-card-foreground px-4 py-3 shadow-[var(--shadow-warm-lift)] md:px-5"
           : "mr-auto",
         className,
       )}
@@ -262,7 +267,9 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
 }: ChatMessageWithToolbarProps) {
   return (
     <div
-      className="flex flex-col gap-1 group [scroll-margin-top:6rem]"
+      // gap-0 between bubble and toolbar — toolbar carries its own mt-1
+      // breathing internally, so a parent gap stacks two spacers.
+      className="flex flex-col group [scroll-margin-top:6rem]"
       data-message-index={messageIndex}
     >
       <ChatMessage

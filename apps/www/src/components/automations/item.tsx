@@ -97,7 +97,7 @@ export function AutomationItem({
           }
         }}
         className={cn(
-          "group flex flex-col border rounded-lg transition-all py-2",
+          "group flex flex-col border rounded-lg transition-colors py-2",
           verbose && "!cursor-default",
         )}
       >

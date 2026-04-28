@@ -80,7 +80,7 @@ function CollapsibleCodeBlockOverlay({
   return (
     <div
       className={cn(
-        "absolute right-0 bottom-0 left-0 z-10 flex items-end justify-center transition-all",
+        "absolute right-0 bottom-0 left-0 z-10 flex items-end justify-center transition-opacity",
         !isExpanded && "pointer-events-none",
       )}
       style={!isExpanded ? { height: `${LINE_HEIGHT_PX * 4}px` } : undefined}
@@ -91,7 +91,7 @@ function CollapsibleCodeBlockOverlay({
       <button
         type="button"
         onClick={onToggle}
-        className="pointer-events-auto relative z-20 mb-1 cursor-pointer rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+        className="pointer-events-auto relative z-20 mb-1 cursor-pointer rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {isExpanded ? "Show less" : `Show ${hiddenLines} more lines`}
       </button>
@@ -160,7 +160,10 @@ const TextPart = memo(function TextPart({
     onOpenInArtifactWorkspace,
   ]);
 
-  // Scan for collapsible code blocks after DOM updates
+  // Scan for collapsible code blocks after DOM updates.
+  // Streaming inserts a text node per character — without coalescing, this
+  // observer fires hundreds of times per second. We debounce to 150ms which
+  // is well below human-perceptible latency for "show more" affordances.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -187,25 +190,21 @@ const TextPart = memo(function TextPart({
       });
     };
 
-    // Run immediately
     runScan();
 
-    // Observe for new code blocks rendered asynchronously (Suspense, lazy highlight)
-    // Throttle via requestAnimationFrame to avoid running scanForCodeBlocks
-    // hundreds of times per second during agent streaming
-    let rafId: number | null = null;
-    const throttledScan = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedScan = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
         runScan();
-      });
+      }, 150);
     };
-    const observer = new MutationObserver(throttledScan);
+    const observer = new MutationObserver(debouncedScan);
     observer.observe(container, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (timer !== null) clearTimeout(timer);
     };
   }, []);
 

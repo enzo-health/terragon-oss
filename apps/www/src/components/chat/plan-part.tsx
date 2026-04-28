@@ -11,8 +11,8 @@ function PriorityStripe({ priority }: { priority: PlanEntry["priority"] }) {
       aria-label={`Priority: ${priority}`}
       data-priority={priority}
       className={cn("shrink-0 w-1 self-stretch rounded-full", {
-        "bg-red-500": priority === "high",
-        "bg-amber-400": priority === "medium",
+        "bg-destructive dark:bg-red-400": priority === "high",
+        "bg-amber-500 dark:bg-amber-300": priority === "medium",
         "bg-muted-foreground/30": priority === "low",
       })}
     />

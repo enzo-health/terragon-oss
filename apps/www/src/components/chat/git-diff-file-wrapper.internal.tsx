@@ -5,7 +5,7 @@ import {
   type DiffLineAnnotation,
   type DiffLineEventBaseProps,
 } from "@pierre/diffs/react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ImageDiffView } from "@/components/chat/image-diff-view";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
@@ -130,11 +130,12 @@ export function FileDiffWrapper({
         }}
       >
         <div className="flex items-center min-w-0 gap-2">
-          {expanded ? (
-            <ChevronDown className="w-4 h-4 flex-shrink-0" />
-          ) : (
-            <ChevronRight className="w-4 h-4 flex-shrink-0" />
-          )}
+          <ChevronRight
+            className={cn(
+              "w-4 h-4 flex-shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
+              expanded && "rotate-90",
+            )}
+          />
           {getFileIcon(parsedFile.changeType, isImage)}
           <span className="truncate-start">{parsedFile.fileName}</span>
         </div>
