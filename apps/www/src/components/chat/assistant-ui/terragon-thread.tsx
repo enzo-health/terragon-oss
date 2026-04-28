@@ -11,7 +11,14 @@ import type {
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { isQueuedStatus } from "@/agent/thread-status";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { useTerragonRuntime } from "../assistant-runtime";
@@ -159,11 +166,20 @@ export function TerragonThread({
   // thinking UI. Other agents would show an empty "thinking" affordance.
   const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
 
-  const runtime = useTerragonRuntime({
-    agent,
-    showThinking,
-    ...(onCancel && { onCancel }),
-  });
+  // Memoize the runtime config so `useTerragonRuntime` sees a stable input
+  // across renders. Without this, the config object is reallocated on every
+  // render (including every token delta), which churns the AG-UI runtime's
+  // internal effect deps unnecessarily.
+  const runtimeConfig = useMemo(
+    () => ({
+      agent,
+      showThinking,
+      ...(onCancel && { onCancel }),
+    }),
+    [agent, showThinking, onCancel],
+  );
+
+  const runtime = useTerragonRuntime(runtimeConfig);
 
   // Reference-stabilize plan occurrences and artifact descriptors. Both
   // reallocate on every `messages` change (i.e. every token delta) but
@@ -403,4 +419,73 @@ export function TerragonThread({
       </TerragonThreadProvider>
     </AssistantRuntimeProvider>
   );
+}
+
+type TerragonThreadErrorBoundaryProps = {
+  /** Status passed through to `<ChatError/>` when the boundary catches. */
+  threadStatus: ThreadStatus | null;
+  /** Optional retry handler — wired to the same `handleRetry` the live UI uses. */
+  handleRetry?: () => Promise<void>;
+  isReadOnly?: boolean;
+  children: ReactNode;
+};
+
+type TerragonThreadErrorBoundaryState = {
+  error: Error | null;
+};
+
+/**
+ * Error boundary for `<TerragonThread/>`. Catches render-time runtime / SSE
+ * errors that would otherwise unmount the chat tree and surface them via the
+ * existing `<ChatError/>` fallback so the user sees a coherent message and a
+ * retry affordance instead of a blank screen.
+ *
+ * Class component (no `react-error-boundary` dependency); the boundary is
+ * placed at the consumer site so the rest of the chat shell (header, prompt
+ * box) keeps rendering even when the transcript itself throws.
+ */
+export class TerragonThreadErrorBoundary extends Component<
+  TerragonThreadErrorBoundaryProps,
+  TerragonThreadErrorBoundaryState
+> {
+  state: TerragonThreadErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(
+    error: Error,
+  ): TerragonThreadErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    // Surface the error to the console for debugging. Production telemetry
+    // can hook in here later if needed.
+    console.error("TerragonThread crashed:", error, info);
+  }
+
+  private handleRetry = async (): Promise<void> => {
+    // Clear the error first so the tree gets a chance to re-mount even if
+    // the caller's retry handler is a no-op or throws synchronously.
+    this.setState({ error: null });
+    if (this.props.handleRetry) {
+      await this.props.handleRetry();
+    }
+  };
+
+  render(): ReactNode {
+    const { error } = this.state;
+    if (error) {
+      return (
+        <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-12 mb-8">
+          <ChatError
+            status={this.props.threadStatus ?? "error"}
+            errorType="unknown-error"
+            errorInfo={error.message || "The chat UI crashed unexpectedly."}
+            handleRetry={this.handleRetry}
+            isReadOnly={this.props.isReadOnly ?? false}
+          />
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
