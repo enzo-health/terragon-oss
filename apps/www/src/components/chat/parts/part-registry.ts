@@ -73,7 +73,7 @@
  * type-level analogue of Phase 4's runtime gate
  * `Object.keys(PART_REGISTRY).length === union size`.
  */
-import type { ComponentType } from "react";
+import { createElement, type ComponentType, type ReactElement } from "react";
 import type {
   AllToolParts,
   DBAudioPart,
@@ -166,10 +166,42 @@ export type PartByType<K extends UIPartExtended["type"]> = Extract<
  * Single registry entry: the component plus its prop builder.
  *
  * `Component` is the React component. `Part` is the narrowed part variant.
+ *
+ * `render` is a closed-over dispatcher that ties `component` and `buildProps`
+ * together at *definition* time. Exposing only `render` at the dispatch
+ * boundary lets us keep a uniform `(ctx, part) => ReactElement` signature in
+ * the registry's index type — TypeScript can't otherwise correlate the
+ * per-K Component and Props post-distribution. Construction goes through
+ * `definePartEntry` so callers never wire `render` themselves.
  */
 export interface PartRegistryEntry<Part, Props> {
   component: ComponentType<Props>;
   buildProps: (ctx: PartRegistryContext, part: Part) => Props;
+  /** Dispatcher closed over the typed component+buildProps pair. */
+  render: (ctx: PartRegistryContext, part: Part) => ReactElement;
+}
+
+/**
+ * Construct a `PartRegistryEntry` and synthesize its `render` dispatcher.
+ * Keeping the wiring inside this helper preserves the strict per-K typing
+ * (Component props === buildProps return) without forcing every call site
+ * to repeat the boilerplate.
+ *
+ * `Props` is inferred *only* from the `component` parameter (the
+ * `NoInfer<Props>` wrapper on `buildProps` blocks bidirectional inference).
+ * That avoids the trap where a builder returning `{ filename: string |
+ * undefined }` would otherwise widen `Props` and decouple it from the
+ * component's `{ filename?: string }` declaration.
+ */
+function definePartEntry<Props extends object, Part>(
+  component: ComponentType<Props>,
+  buildProps: (ctx: PartRegistryContext, part: Part) => NoInfer<Props>,
+): PartRegistryEntry<Part, Props> {
+  return {
+    component,
+    buildProps,
+    render: (ctx, part) => createElement(component, buildProps(ctx, part)),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,138 +317,131 @@ void _exhaustive;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PART_REGISTRY: PartRegistry = {
-  text: {
-    component: TextPart,
-    buildProps: (ctx, part) => ({
-      text: part.text,
-      streaming: ctx.isLatest && ctx.isAgentWorking,
-      githubRepoFullName: ctx.githubRepoFullName,
-      branchName: ctx.branchName ?? undefined,
-      baseBranchName: ctx.baseBranchName,
-      hasCheckpoint: ctx.hasCheckpoint,
-      onOpenInArtifactWorkspace: ctx.onOpenPlanArtifact,
-    }),
-  },
+  text: definePartEntry(TextPart, (ctx, part) => ({
+    text: part.text,
+    streaming: ctx.isLatest && ctx.isAgentWorking,
+    githubRepoFullName: ctx.githubRepoFullName,
+    branchName: ctx.branchName ?? undefined,
+    baseBranchName: ctx.baseBranchName,
+    hasCheckpoint: ctx.hasCheckpoint,
+    onOpenInArtifactWorkspace: ctx.onOpenPlanArtifact,
+  })),
 
-  thinking: {
-    component: ThinkingPart,
-    buildProps: (ctx, part) => ({
-      thinking: part.thinking,
-      isLatest: ctx.isLatest,
-      isAgentWorking: ctx.isAgentWorking,
-    }),
-  },
+  thinking: definePartEntry(ThinkingPart, (ctx, part) => ({
+    thinking: part.thinking,
+    isLatest: ctx.isLatest,
+    isAgentWorking: ctx.isAgentWorking,
+  })),
 
-  tool: {
-    component: ToolPart,
-    buildProps: (ctx, part) => ({
-      toolPart: part,
-      ...ctx.toolProps,
-      artifactDescriptors: ctx.artifactDescriptors,
-      onOpenArtifact: ctx.onOpenArtifact,
-    }),
-  },
+  tool: definePartEntry(ToolPart, (ctx, part) => ({
+    toolPart: part,
+    ...ctx.toolProps,
+    artifactDescriptors: ctx.artifactDescriptors,
+    onOpenArtifact: ctx.onOpenArtifact,
+  })),
 
-  image: {
-    component: ImagePart,
-    buildProps: (ctx, part) => ({
-      imageUrl: part.image_url,
-      onClick: ctx.onClick,
-      onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
-    }),
-  },
+  image: definePartEntry(ImagePart, (ctx, part) => ({
+    imageUrl: part.image_url,
+    onClick: ctx.onClick,
+    onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
+  })),
 
-  "rich-text": {
-    component: RichTextPart,
-    buildProps: (ctx, part) => ({
-      richTextPart: part,
-      onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
-    }),
-  },
+  "rich-text": definePartEntry(RichTextPart, (ctx, part) => ({
+    richTextPart: part,
+    onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
+  })),
 
-  pdf: {
-    component: PdfPart,
-    buildProps: (ctx, part) => ({
-      pdfUrl: part.pdf_url,
-      filename: part.filename,
-      onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
-    }),
-  },
+  pdf: definePartEntry(PdfPart, (ctx, part) => ({
+    pdfUrl: part.pdf_url,
+    filename: part.filename,
+    onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
+  })),
 
-  "text-file": {
-    component: TextFilePart,
-    buildProps: (ctx, part) => ({
-      textFileUrl: part.file_url,
-      filename: part.filename,
-      mimeType: part.mime_type,
-      onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
-    }),
-  },
+  "text-file": definePartEntry(TextFilePart, (ctx, part) => ({
+    textFileUrl: part.file_url,
+    filename: part.filename,
+    mimeType: part.mime_type,
+    onOpenInArtifactWorkspace: ctx.onOpenInArtifactWorkspace,
+  })),
 
-  plan: {
-    // Suppressed inline — plan parts surface via the artifact-workspace
-    // panel. See the file header for rationale.
-    component: NullRenderer,
-    buildProps: () => ({}),
-  },
+  // Suppressed inline — plan parts surface via the artifact-workspace
+  // panel. See the file header for rationale.
+  plan: definePartEntry(NullRenderer, () => ({})),
 
-  audio: {
-    component: AudioPartView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  audio: definePartEntry(AudioPartView, (_ctx, part) => ({ part })),
 
-  "resource-link": {
-    component: ResourceLinkView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  "resource-link": definePartEntry(ResourceLinkView, (_ctx, part) => ({
+    part,
+  })),
 
-  terminal: {
-    component: TerminalPartView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  terminal: definePartEntry(TerminalPartView, (_ctx, part) => ({ part })),
 
-  diff: {
-    component: DiffPartView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  diff: definePartEntry(DiffPartView, (_ctx, part) => ({ part })),
 
-  "auto-approval-review": {
-    component: AutoApprovalReviewCard,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  "auto-approval-review": definePartEntry(
+    AutoApprovalReviewCard,
+    (_ctx, part) => ({ part }),
+  ),
 
-  "plan-structured": {
-    component: PlanPartView,
-    // The structured-plan UI part already carries an `entries` array with
-    // the same shape as `DBPlanPart`. `PlanPartView` accepts a
-    // `DBPlanPart`-shaped argument, so we re-tag the discriminator.
-    buildProps: (_ctx, part) => ({
-      part: { type: "plan", entries: part.entries },
-    }),
-  },
+  // The structured-plan UI part already carries an `entries` array with
+  // the same shape as `DBPlanPart`. `PlanPartView` accepts a
+  // `DBPlanPart`-shaped argument, so we re-tag the discriminator.
+  "plan-structured": definePartEntry(PlanPartView, (_ctx, part) => ({
+    part: { type: "plan", entries: part.entries },
+  })),
 
-  "server-tool-use": {
-    component: ServerToolUseView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  "server-tool-use": definePartEntry(ServerToolUseView, (_ctx, part) => ({
+    part,
+  })),
 
-  "web-search-result": {
-    component: WebSearchResultView,
-    buildProps: (_ctx, part) => ({ part }),
-  },
+  "web-search-result": definePartEntry(WebSearchResultView, (_ctx, part) => ({
+    part,
+  })),
 
-  delegation: {
-    component: DelegationItemCard,
-    // The existing switch handles two delegation shapes:
-    //   - `DBDelegationMessage` (full payload)  → `<DelegationItemCard>`
-    //   - `{ type: "delegation"; agentName; status; message }` (stub) →
-    //     a small inline card
-    // Phase 4 main will need to decide whether to (a) widen
-    // `DelegationItemCard` to accept the stub, (b) keep a thin local
-    // wrapper, or (c) split the registry entry. For now we register the
-    // canonical renderer; the stub branch will need a follow-up.
-    buildProps: (_ctx, part) => ({
-      delegation: part as DBDelegationMessage,
-    }),
-  },
+  // The existing switch handles two delegation shapes:
+  //   - `DBDelegationMessage` (full payload)  → `<DelegationItemCard>`
+  //   - `{ type: "delegation"; agentName; status; message }` (stub) →
+  //     a small inline card
+  // Phase 4 main will need to decide whether to (a) widen
+  // `DelegationItemCard` to accept the stub, (b) keep a thin local
+  // wrapper, or (c) split the registry entry. For now we register the
+  // canonical renderer; the stub branch will need a follow-up.
+  delegation: definePartEntry(DelegationItemCard, (_ctx, part) => ({
+    delegation: part as DBDelegationMessage,
+  })),
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Typed dispatch helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render the registry entry for `part` against `ctx`. Co-locating the
+ * dispatcher with the registry is what lets TypeScript preserve the
+ * per-variant K → Part → Props correlation: each entry's `render` field
+ * closes over its own typed `component` + `buildProps` pair, so the strict
+ * pairing is enforced inside the entry rather than at the call site.
+ *
+ * Strict component / buildProps typing is preserved at registration time
+ * via `definePartEntry`; the registry's exhaustiveness assertion above
+ * guarantees every `UIPartExtended` variant has an entry.
+ */
+export function renderPartFromRegistry(
+  ctx: PartRegistryContext,
+  part: UIPartExtended,
+): ReactElement {
+  // Each entry's `render` closes over its own typed `component` + `buildProps`
+  // pair (see `definePartEntry`). At this dispatch site `PART_REGISTRY[part.type]`
+  // is still a union of entries, so `entry.render` is contravariant in its
+  // `Part` parameter — TypeScript intersects the per-arm Part types to
+  // `never`. The dispatch is sound at runtime (the discriminator is the
+  // registry key), so we widen the call boundary once via a typed
+  // `RenderFn` alias. No erasure of component or props types: the strict
+  // pairing is preserved inside each entry's closure.
+  type RenderFn = (
+    ctx: PartRegistryContext,
+    part: UIPartExtended,
+  ) => ReactElement;
+  const render = PART_REGISTRY[part.type].render as RenderFn;
+  return render(ctx, part);
+}

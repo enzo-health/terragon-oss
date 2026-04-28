@@ -8,9 +8,8 @@ import { ToolPartProps } from "./tool-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import type { UIPartExtended } from "./ui-parts-extended";
 import {
-  PART_REGISTRY,
-  type PartByType,
   type PartRegistryContext,
+  renderPartFromRegistry,
 } from "./parts/part-registry";
 
 export interface MessagePartProps {
@@ -131,23 +130,12 @@ export const MessagePart = memo(function MessagePart({
     hasCheckpoint,
   };
 
-  // Typed dispatch via the registry. Each entry's `buildProps` is narrowed
-  // to its specific part variant; the cast through `unknown` here is the
-  // single bridge between the runtime-discriminated lookup and the
-  // statically-typed entry. Adding a new `UIPartExtended` variant without
-  // a registry entry breaks compilation in `part-registry.ts`.
-  type Key = UIPartExtended["type"];
-  const key = extendedPart.type as Key;
-  const entry = PART_REGISTRY[key] as unknown as {
-    component: React.ComponentType<Record<string, unknown>>;
-    buildProps: (
-      ctx: PartRegistryContext,
-      part: PartByType<Key>,
-    ) => Record<string, unknown>;
-  };
-  const Component = entry.component;
-  const props = entry.buildProps(ctx, extendedPart as PartByType<Key>);
-  return <Component {...props} />;
+  // Typed dispatch via the registry. The dispatcher lives in
+  // `parts/part-registry.ts` so it can isolate the runtime → static-typing
+  // bridge to a single point. Adding a new `UIPartExtended` variant without
+  // a registry entry breaks compilation in `part-registry.ts` via the
+  // exhaustiveness assertion there.
+  return renderPartFromRegistry(ctx, extendedPart);
 }, areMessagePartPropsEqual);
 
 function areMessagePartPropsEqual(

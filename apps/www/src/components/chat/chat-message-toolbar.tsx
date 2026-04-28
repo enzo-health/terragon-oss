@@ -71,9 +71,14 @@ export function MessageToolbar({
     }
   }, [parts]);
   const handleLink = useCallback(async () => {
+    // `useParams` returns `string | string[] | undefined`. Catch-all routes
+    // would yield an array, but `/task/[id]` is a single-segment route so
+    // `params.id` is `string | undefined` in practice. Fall back gracefully
+    // rather than coercing through `as string`.
+    const taskId = typeof params.id === "string" ? params.id : "";
     try {
       await navigator.clipboard.writeText(
-        `${window.location.origin}/task/${params.id as string}#message-${messageIndex}`,
+        `${window.location.origin}/task/${taskId}#message-${messageIndex}`,
       );
       toast.success("Link copied");
       flash(setLinkCopied);

@@ -1,13 +1,6 @@
 import React, { memo, type ReactNode } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
-import {
-  AllToolParts,
-  type UIImagePart,
-  type UIPdfPart,
-  type UIRichTextPart,
-  type UIMessage,
-  type UITextFilePart,
-} from "@terragon/shared";
+import { AllToolParts, type UIPart, type UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ReadTool } from "./tools/read-tool";
 import { WriteTool } from "./tools/write-tool";
@@ -176,6 +169,17 @@ const TOOL_DISPATCH: Record<ToolName, ToolRenderer> = {
  */
 const renderUnknownTool: ToolRenderer = (tp) => <DefaultTool toolPart={tp} />;
 
+/**
+ * Type predicate: narrows an arbitrary string to `ToolName` by membership
+ * in `TOOL_DISPATCH`. Replaces the previous `as ToolName` widening cast,
+ * which let any daemon-supplied string slip into the dispatch table lookup
+ * without proof. The runtime check is the same `name in TOOL_DISPATCH`
+ * shape it always was — TypeScript just gets to see the narrowing now.
+ */
+function isToolName(name: string): name is ToolName {
+  return name in TOOL_DISPATCH;
+}
+
 export type ToolPartProps = {
   toolPart: AllToolParts;
   threadId: string;
@@ -246,19 +250,31 @@ const ToolPart = memo(function ToolPart({
     ),
   };
 
-  const renderer =
-    TOOL_DISPATCH[toolPart.name as ToolName] ?? renderUnknownTool;
+  const renderer = isToolName(toolPart.name)
+    ? TOOL_DISPATCH[toolPart.name]
+    : renderUnknownTool;
   const renderedTool = renderer(toolPart, renderCtx);
 
-  const artifactParts = toolPart.parts.filter(
-    (part) =>
-      part.type === "rich-text" ||
-      part.type === "text-file" ||
-      part.type === "pdf" ||
-      part.type === "image",
-  );
+  // Predicate-typed filter so the switch below sees correctly narrowed parts
+  // without per-case `as` casts. `UIPart` is a discriminated union on `type`;
+  // narrowing through `Extract` keeps the dispatch source-of-truth in one
+  // place.
+  const isArtifactPart = (
+    part: UIPart,
+  ): part is Extract<
+    UIPart,
+    { type: "rich-text" | "text-file" | "pdf" | "image" }
+  > =>
+    part.type === "rich-text" ||
+    part.type === "text-file" ||
+    part.type === "pdf" ||
+    part.type === "image";
+  const artifactParts = toolPart.parts.filter(isArtifactPart);
 
-  // Extended lifecycle fields carried from DBToolCall via InternalToolPart
+  // Extended lifecycle fields carried from DBToolCall via InternalToolPart.
+  // These live on the daemon-side `DBToolCall` (db-message.ts) but are not on
+  // the UI `AllToolParts` union — widening the UI type to include them is a
+  // separate refactor. The intersection cast is the minimum-surface bridge.
   const extendedPart = toolPart as AllToolParts & {
     progressChunks?: Array<{ seq: number; text: string }>;
     mcpMetadata?: { server: string; tool: string };
@@ -337,7 +353,7 @@ const ToolPart = memo(function ToolPart({
               return (
                 <RichTextPart
                   key={artifactDescriptor?.id ?? index}
-                  richTextPart={part as UIRichTextPart}
+                  richTextPart={part}
                   onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
@@ -345,9 +361,9 @@ const ToolPart = memo(function ToolPart({
               return (
                 <TextFilePart
                   key={artifactDescriptor?.id ?? index}
-                  textFileUrl={(part as UITextFilePart).file_url}
-                  filename={(part as UITextFilePart).filename}
-                  mimeType={(part as UITextFilePart).mime_type}
+                  textFileUrl={part.file_url}
+                  filename={part.filename}
+                  mimeType={part.mime_type}
                   onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
@@ -355,8 +371,8 @@ const ToolPart = memo(function ToolPart({
               return (
                 <PdfPart
                   key={artifactDescriptor?.id ?? index}
-                  pdfUrl={(part as UIPdfPart).pdf_url}
-                  filename={(part as UIPdfPart).filename}
+                  pdfUrl={part.pdf_url}
+                  filename={part.filename}
                   onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
@@ -364,7 +380,7 @@ const ToolPart = memo(function ToolPart({
               return (
                 <ImagePart
                   key={artifactDescriptor?.id ?? index}
-                  imageUrl={(part as UIImagePart).image_url}
+                  imageUrl={part.image_url}
                   onOpenInArtifactWorkspace={handleOpenArtifact}
                 />
               );
