@@ -1,61 +1,39 @@
-import { useState } from "react";
+"use client";
+
+import { useCallback, useState } from "react";
+import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { Check, Copy, Link, RefreshCw, Split } from "lucide-react";
-import { AIAgent, AIModel } from "@terragon/agent/types";
-import { DBUserMessage, GitDiffStats, UIMessage } from "@terragon/shared";
-import { cn } from "@/lib/utils";
-import { useParams } from "next/navigation";
+import type { UIMessage } from "@terragon/shared";
 import { getModelDisplayName } from "@terragon/agent/utils";
+import { cn } from "@/lib/utils";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { RedoTaskDialog } from "./redo-task-dialog";
 import { ForkTaskDialog } from "./fork-task-dialog";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import type { RedoDialogData, ForkDialogData } from "./chat-message.types";
 
-type RedoDialogData = {
-  threadId: string;
-  repoFullName: string;
-  repoBaseBranchName: string;
-  disableGitCheckpointing: boolean;
-  skipSetup: boolean;
-  permissionMode: "allowAll" | "plan";
-  initialUserMessage: DBUserMessage;
-};
-
-type ForkDialogData = {
-  threadId: string;
-  threadChatId: string;
-  repoFullName: string;
-  repoBaseBranchName: string;
-  branchName: string | null;
-  gitDiffStats: GitDiffStats | null;
-  disableGitCheckpointing: boolean;
-  skipSetup: boolean;
-  agent: AIAgent;
-  lastSelectedModel: AIModel | null;
-};
-
-function getTextContent(message: UIMessage): string {
-  return message.parts
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text;
-      }
-      if (part.type === "rich-text") {
-        return part.nodes.map((node) => node.text).join("");
-      }
-      if (part.type === "image") {
-        return `![](${part.image_url})`;
-      }
-      return "";
-    })
+// Phase 3c shape. ActionBarPrimitive.Root/useAuiState require a per-message
+// MessagePrimitive context that lands in Phase 6.5; until then we mirror the
+// composition manually. Copy is useCallback over [parts] to avoid stale capture.
+const BTN =
+  "flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
+const ICON = "h-3.5 w-3.5";
+const partsToMd = (ps: UIMessage["parts"]) =>
+  ps
+    .map((p) =>
+      p.type === "text"
+        ? p.text
+        : p.type === "rich-text"
+          ? p.nodes.map((n) => n.text).join("")
+          : p.type === "image"
+            ? `![](${p.image_url})`
+            : "",
+    )
     .join("\n");
-}
-
-function getModelNameFromMessage(message: UIMessage): string | null {
-  if (message.role === "user" && message.model) {
-    return getModelDisplayName(message.model).fullName;
-  }
-  return null;
-}
+const flash = (s: (v: boolean) => void) => {
+  s(true);
+  setTimeout(() => s(false), 2000);
+};
 
 export function MessageToolbar({
   message,
@@ -76,165 +54,111 @@ export function MessageToolbar({
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
 }) {
+  const params = useParams();
+  const forkEnabled = useFeatureFlag("forkTask");
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [showRedoDialog, setShowRedoDialog] = useState(false);
-  const [showForkDialog, setShowForkDialog] = useState(false);
-  const params = useParams();
-  const isForkTaskEnabled = useFeatureFlag("forkTask");
-
-  const handleCopy = async () => {
-    if (copied) {
-      return;
-    }
+  const [showRedo, setShowRedo] = useState(false);
+  const [showFork, setShowFork] = useState(false);
+  const parts = message.parts;
+  const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(getTextContent(message));
+      await navigator.clipboard.writeText(partsToMd(parts));
       toast.success("Copied");
-      setCopied(true);
-      setTimeout(() => {
-        setCopied(false);
-      }, 2000);
-    } catch (error) {
+      flash(setCopied);
+    } catch {
       toast.error("Failed to copy message");
     }
-  };
-
-  const handleCopyLink = async () => {
-    if (linkCopied || messageIndex === undefined) {
-      return;
-    }
+  }, [parts]);
+  const handleLink = useCallback(async () => {
     try {
-      const threadId = params.id as string;
-      const url = `${window.location.origin}/task/${threadId}#message-${messageIndex}`;
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(
+        `${window.location.origin}/task/${params.id as string}#message-${messageIndex}`,
+      );
       toast.success("Link copied");
-      setLinkCopied(true);
-      setTimeout(() => {
-        setLinkCopied(false);
-      }, 2000);
-    } catch (error) {
+      flash(setLinkCopied);
+    } catch {
       toast.error("Failed to copy link");
     }
-  };
-
-  // Get model display name for user messages
-  const modelDisplay = getModelNameFromMessage(message);
-  const hasTextContent = message.parts.some(
-    (part) => part.type === "text" || part.type === "rich-text",
+  }, [params.id, messageIndex]);
+  const model =
+    message.role === "user" && message.model
+      ? getModelDisplayName(message.model).fullName
+      : null;
+  const hasText = parts.some(
+    (p) => p.type === "text" || p.type === "rich-text",
   );
-  // Only show the toolbar if there is text content in the message or if it's a user message with model info
-  if (
-    !hasTextContent &&
-    !modelDisplay &&
-    !isFirstUserMessage &&
-    !isLatestAgentMessage
-  ) {
+  const canFork =
+    forkEnabled && forkDialogData && isLatestAgentMessage && !isAgentWorking;
+  if (!hasText && !model && !isFirstUserMessage && !isLatestAgentMessage)
     return null;
-  }
   return (
     <>
       <div
         className={cn(
-          // mt-1 lifts the toolbar half a step off the bubble's baseline so
-          // it doesn't crowd the message; gap-1.5 between actions is wider
-          // than the original gap-1 — toolbar buttons are 28×28 px hit
-          // targets, and gap-1 made them feel taped together.
           "mt-1 flex gap-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity",
-          {
-            "justify-start": message.role === "agent",
-            "justify-end": message.role === "user",
-          },
+          message.role === "agent" ? "justify-start" : "justify-end",
           className,
         )}
       >
-        {modelDisplay && (
+        {model && (
           <span
             className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground rounded-md select-none"
-            title={`Model: ${modelDisplay}`}
+            title={`Model: ${model}`}
           >
-            <span>{modelDisplay}</span>
+            {model}
           </span>
         )}
         {isFirstUserMessage && redoDialogData && (
           <button
-            onClick={() => setShowRedoDialog(true)}
-            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setShowRedo(true)}
+            className={BTN}
             title="Retry task"
             aria-label="Retry task"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={ICON} />
           </button>
         )}
-        {hasTextContent && (
+        {hasText && (
           <button
             onClick={handleCopy}
-            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            className={BTN}
             title="Copy message"
             aria-label={copied ? "Message copied" : "Copy message"}
           >
-            {copied ? (
-              <Check className="h-3.5 w-3.5" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
+            {copied ? <Check className={ICON} /> : <Copy className={ICON} />}
           </button>
         )}
-        {messageIndex !== undefined && hasTextContent && (
+        {hasText && (
           <button
-            onClick={handleCopyLink}
-            className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={handleLink}
+            className={BTN}
             title="Copy link to message"
             aria-label={linkCopied ? "Link copied" : "Copy link to message"}
           >
             {linkCopied ? (
-              <Check className="h-3.5 w-3.5" />
+              <Check className={ICON} />
             ) : (
-              <Link className="h-3.5 w-3.5" />
+              <Link className={ICON} />
             )}
           </button>
         )}
-        {isForkTaskEnabled &&
-          forkDialogData &&
-          isLatestAgentMessage &&
-          !isAgentWorking && (
-            <button
-              onClick={() => setShowForkDialog(true)}
-              className="flex items-center justify-center min-h-[28px] min-w-[28px] sm:min-h-[32px] sm:min-w-[32px] gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.96] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
-              title="Fork task"
-              aria-label="Fork task from this message"
-            >
-              <Split className="h-3.5 w-3.5" />
-            </button>
-          )}
+        {canFork && (
+          <button
+            onClick={() => setShowFork(true)}
+            className={BTN}
+            title="Fork task"
+            aria-label="Fork task from this message"
+          >
+            <Split className={ICON} />
+          </button>
+        )}
       </div>
-      {showRedoDialog && redoDialogData && (
-        <RedoTaskDialog
-          open={showRedoDialog}
-          threadId={redoDialogData.threadId}
-          repoFullName={redoDialogData.repoFullName}
-          repoBaseBranchName={redoDialogData.repoBaseBranchName}
-          disableGitCheckpointing={redoDialogData.disableGitCheckpointing}
-          skipSetup={redoDialogData.skipSetup}
-          permissionMode={redoDialogData.permissionMode}
-          initialUserMessage={redoDialogData.initialUserMessage}
-          onOpenChange={setShowRedoDialog}
-        />
+      {showRedo && redoDialogData && (
+        <RedoTaskDialog open onOpenChange={setShowRedo} {...redoDialogData} />
       )}
-      {showForkDialog && forkDialogData && (
-        <ForkTaskDialog
-          open={showForkDialog}
-          threadId={forkDialogData.threadId}
-          threadChatId={forkDialogData.threadChatId}
-          repoFullName={forkDialogData.repoFullName}
-          repoBaseBranchName={forkDialogData.repoBaseBranchName}
-          branchName={forkDialogData.branchName}
-          gitDiffStats={forkDialogData.gitDiffStats}
-          disableGitCheckpointing={forkDialogData.disableGitCheckpointing}
-          skipSetup={forkDialogData.skipSetup}
-          agent={forkDialogData.agent}
-          lastSelectedModel={forkDialogData.lastSelectedModel}
-          onOpenChange={setShowForkDialog}
-        />
+      {showFork && forkDialogData && (
+        <ForkTaskDialog open onOpenChange={setShowFork} {...forkDialogData} />
       )}
     </>
   );
