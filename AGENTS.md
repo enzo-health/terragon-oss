@@ -172,9 +172,20 @@ pnpm -C apps/cli uninstall:dev
 - **Follow-up Tasks**: Suggest follow-up task tool integration
 - **Copy Features**: Copy buttons for chat messages and code blocks
 - **Scroll Navigation**: Floating scroll-to-bottom button with delayed visibility
-- **Rich Part Renderers**: Dedicated components for delegation, plan, diff, terminal, image, audio, resource-link, and auto-approval-review parts (one component per `DBPart` discriminant; `message-part.tsx` dispatches via a typed switch)
+- **Rich Part Renderers**: Dedicated components for delegation, plan, diff, terminal, image, audio, resource-link, and auto-approval-review parts (one component per `DBPart` discriminant; `message-part.tsx` dispatches via the typed `PART_REGISTRY` in `parts/part-registry.ts` — see Chat Layer Architecture Invariants below)
 - **Meta Event Chips** (`meta-chips/`): Header chips subscribed to the daemon's `ThreadMetaEvent` channel — token usage, rate limits, model re-routing, MCP server health
 - **Integration Harness** (`apps/www/test/integration/`): Replay-based E2E tests. The recorder CLI (`pnpm recorder`) captures live `daemon-event` POST traffic to JSONL; the replayer drives recordings through the real Next.js API route + chat UI in-process for deterministic CI assertions without a live sandbox
+
+### Chat Layer Architecture Invariants
+
+The chat layer is in the middle of a multi-phase consolidation onto `@assistant-ui/react`. The consolidated plan of record is `docs/plans/2026-04-27-refactor-chat-layer-consolidated-plan.md` (predecessor plans are archived under `docs/plans/archive/`). The invariants below reflect what is already true on `main` after recent refactors — do not regress them. Anything not listed here (full assistant-ui runtime ownership, makeAssistantToolUI cascade, REASONING\_\* events, ActivityMessage adoption, single-writer DB enforcement) is still in-flight and tracked in the consolidated plan.
+
+- **Tool dispatch is table-driven, not switch-driven.** All tool UI rendering goes through a typed `Record<ToolName, ToolRenderer>` table named `TOOL_DISPATCH` in `apps/www/src/components/chat/tool-part.tsx`. `ToolName` and the canonical tool list come from `apps/www/src/components/chat/tools/tool-registry.ts` (`ToolRegistry` type, `TOOL_NAMES` array). Adding a new tool requires (1) extending `ToolRegistry` in `tool-registry.ts` and (2) registering a renderer in `TOOL_DISPATCH` in `tool-part.tsx`. The dispatch object is typed such that a missing key fails the build — do not reintroduce ad-hoc `switch` or `if/else` chains over tool names.
+- **Part dispatch is registry-driven, not switch-driven.** All `DBPart` variants render through `PART_REGISTRY` in `apps/www/src/components/chat/parts/part-registry.ts`, consumed by `apps/www/src/components/chat/message-part.tsx`. Adding a new part variant requires (1) extending the discriminated union in `packages/shared/src/db/db-message.ts` and the corresponding UI message types in `apps/www/src/components/chat/ui-messages.ts`, and (2) adding a registry entry. The registry uses compile-time exhaustiveness assertions — a missing variant breaks `tsc-check`. Do not reintroduce a free-form `switch` in `message-part.tsx`.
+- **assistant-ui dependencies are pinned to exact versions.** `@assistant-ui/react` is pinned to `0.12.24`. `@assistant-ui/react-ag-ui`, `@ag-ui/client`, and `@ag-ui/core` are all pinned to exact pre-1.0 versions. Both libraries have documented protocol churn between minor versions; do not switch any of these to caret (`^`) or tilde (`~`) ranges. Upgrades must be deliberate and tested end-to-end against the integration harness.
+- **Justified divergences from assistant-ui (do NOT propose migrating these):**
+  - `apps/www/src/components/promptbox/use-promptbox.tsx` — TipTap-based composer with slash commands, mentions, drafts, transcription, and the multi-message queue. assistant-ui's `ComposerPrimitive` is plain text only and would lose all of these features.
+  - `apps/www/src/components/ai-elements/markdown-renderer.tsx` — streamdown-based renderer. `@assistant-ui/react-markdown` does not expose `parseIncompleteMarkdown`, so swapping it in would regress streaming-token rendering UX.
 
 ### Database Schema (`packages/shared/src/db/`)
 
