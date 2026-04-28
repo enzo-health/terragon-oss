@@ -174,7 +174,7 @@ export function TerragonThread({
     () => ({
       agent,
       showThinking,
-      ...(onCancel && { onCancel }),
+      onCancel,
     }),
     [agent, showThinking, onCancel],
   );
