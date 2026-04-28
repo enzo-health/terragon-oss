@@ -20,7 +20,16 @@ import {
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
-import { ChatUILayout } from "./chat-ui-layout";
+import {
+  ChatUILayout,
+  type ChatUICoreData,
+  type ChatUIDialogData,
+  type ChatUIErrorState,
+  type ChatUIOptimisticHandlers,
+  type ChatUIPanelState,
+  type ChatUIScrollState,
+  type ChatUIViewModelData,
+} from "./chat-ui-layout";
 import {
   useMarkChatAsRead,
   useSecondaryPanel,
@@ -223,6 +232,7 @@ function ChatUIContent() {
     threadViewModel,
     chatAgent,
     thread,
+    setError,
   });
 
   const handleOpenArtifact = useCallback(
@@ -300,7 +310,122 @@ function ChatUIContent() {
     [dispatch],
   );
 
-  if (!agent) {
+  // Group props by concern so `<ChatUILayout/>` sees a stable ~7-prop signature
+  // instead of 49 individual fields. Each group is `useMemo`-wrapped so its
+  // identity is stable across re-renders that don't touch the underlying data.
+  // The `agent` early-null guard below is intentionally placed AFTER the hooks
+  // (the conditional `null` flows through the memo dependency arrays via the
+  // typed-narrowing assertion at the render site).
+  const coreData = useMemo<ChatUICoreData | null>(
+    () =>
+      agent
+        ? {
+            agent,
+            chatAgent,
+            isReadOnly,
+            threadId,
+            threadChatId,
+            threadChat,
+            thread,
+            threadWithViewModelStatus,
+          }
+        : null,
+    [
+      agent,
+      chatAgent,
+      isReadOnly,
+      thread,
+      threadChat,
+      threadChatId,
+      threadId,
+      threadWithViewModelStatus,
+    ],
+  );
+
+  const viewModel = useMemo<ChatUIViewModelData>(
+    () => ({
+      threadViewModel,
+      messages,
+      queuedMessages,
+      artifactDescriptors,
+      effectiveThreadStatus,
+      isAgentCurrentlyWorking,
+      toolProps,
+      lastUsedModel,
+      handleOpenArtifact,
+    }),
+    [
+      artifactDescriptors,
+      effectiveThreadStatus,
+      handleOpenArtifact,
+      isAgentCurrentlyWorking,
+      lastUsedModel,
+      messages,
+      queuedMessages,
+      threadViewModel,
+      toolProps,
+    ],
+  );
+
+  const scrollState = useMemo<ChatUIScrollState>(
+    () => ({
+      transcriptRef,
+      scrollAreaRef,
+      chatContainerRef,
+      messagesEndRef,
+      promptBoxRef,
+      forceScrollToBottom,
+      scrollToTop,
+      isAtBottom,
+      hasInitialized,
+    }),
+    [
+      forceScrollToBottom,
+      hasInitialized,
+      isAtBottom,
+      messagesEndRef,
+      scrollToTop,
+    ],
+  );
+
+  const panelState = useMemo<ChatUIPanelState>(
+    () => ({
+      activeArtifactId,
+      setActiveArtifactId,
+      showTerminal,
+      setShowTerminal,
+      shouldRenderSecondaryPanel,
+      platform,
+    }),
+    [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
+  );
+
+  const dialogData = useMemo<ChatUIDialogData>(
+    () => ({ redoDialogData, forkDialogData }),
+    [forkDialogData, redoDialogData],
+  );
+
+  const optimisticHandlers = useMemo<ChatUIOptimisticHandlers>(
+    () => ({
+      onOptimisticUserSubmit,
+      onOptimisticQueuedMessagesUpdate,
+      onOptimisticPermissionModeUpdate,
+      reconcileActiveChatFromServer,
+    }),
+    [
+      onOptimisticPermissionModeUpdate,
+      onOptimisticQueuedMessagesUpdate,
+      onOptimisticUserSubmit,
+      reconcileActiveChatFromServer,
+    ],
+  );
+
+  const errorState = useMemo<ChatUIErrorState>(
+    () => ({ error, setError, isRetrying, handleRetry }),
+    [error, handleRetry, isRetrying],
+  );
+
+  if (!coreData) {
     // `useAgUiTransport` returns null only when `threadChatId` is falsy,
     // which the provider has already gated against. Keep this guard so
     // TypeScript narrows downstream and we never render against a null
@@ -314,50 +439,13 @@ function ChatUIContent() {
 
   return (
     <ChatUILayout
-      {...{
-        agent,
-        chatAgent,
-        isReadOnly,
-        threadId,
-        threadChatId,
-        threadChat,
-        thread,
-        threadWithViewModelStatus,
-        threadViewModel,
-        messages,
-        queuedMessages,
-        artifactDescriptors,
-        effectiveThreadStatus,
-        isAgentCurrentlyWorking,
-        redoDialogData,
-        forkDialogData,
-        toolProps,
-        lastUsedModel,
-        error,
-        setError,
-        handleRetry,
-        isRetrying,
-        handleOpenArtifact,
-        activeArtifactId,
-        setActiveArtifactId,
-        showTerminal,
-        setShowTerminal,
-        shouldRenderSecondaryPanel,
-        platform,
-        scrollToTop,
-        transcriptRef,
-        scrollAreaRef,
-        chatContainerRef,
-        messagesEndRef,
-        forceScrollToBottom,
-        isAtBottom,
-        hasInitialized,
-        promptBoxRef,
-        reconcileActiveChatFromServer,
-        onOptimisticUserSubmit,
-        onOptimisticQueuedMessagesUpdate,
-        onOptimisticPermissionModeUpdate,
-      }}
+      coreData={coreData}
+      viewModel={viewModel}
+      scrollState={scrollState}
+      panelState={panelState}
+      dialogData={dialogData}
+      optimisticHandlers={optimisticHandlers}
+      errorState={errorState}
     />
   );
 }

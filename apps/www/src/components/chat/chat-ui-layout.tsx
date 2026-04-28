@@ -41,10 +41,26 @@ const SecondaryPanel = dynamic(
  * are passed in by `ChatUIContent` — this component holds no React Query,
  * no transport state, no view-model wiring.
  *
+ * Props are grouped by concern (coreData, viewModel, scrollState, panelState,
+ * dialogData, optimisticHandlers, errorState) so future state additions only
+ * widen the relevant group rather than the whole signature. Each group is
+ * `useMemo`-stabilized in `ChatUIContent` to keep referential identity stable
+ * across parent re-renders.
+ *
  * The `<AgUiQueryInvalidatorMount/>` lives inside the `<AgUiAgentProvider/>`
  * so it can read the agent from context.
  */
 export function ChatUILayout(props: ChatUILayoutProps) {
+  const {
+    coreData,
+    viewModel,
+    scrollState,
+    panelState,
+    dialogData,
+    optimisticHandlers,
+    errorState,
+  } = props;
+
   const {
     agent,
     chatAgent,
@@ -54,41 +70,51 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     threadChat,
     thread,
     threadWithViewModelStatus,
+  } = coreData;
+
+  const {
     threadViewModel,
     messages,
     queuedMessages,
     artifactDescriptors,
     effectiveThreadStatus,
     isAgentCurrentlyWorking,
-    redoDialogData,
-    forkDialogData,
     toolProps,
     lastUsedModel,
-    error,
-    setError,
-    handleRetry,
-    isRetrying,
     handleOpenArtifact,
+  } = viewModel;
+
+  const {
+    transcriptRef,
+    scrollAreaRef,
+    chatContainerRef,
+    messagesEndRef,
+    promptBoxRef,
+    forceScrollToBottom,
+    scrollToTop,
+    isAtBottom,
+    hasInitialized,
+  } = scrollState;
+
+  const {
     activeArtifactId,
     setActiveArtifactId,
     showTerminal,
     setShowTerminal,
     shouldRenderSecondaryPanel,
     platform,
-    scrollToTop,
-    transcriptRef,
-    scrollAreaRef,
-    chatContainerRef,
-    messagesEndRef,
-    forceScrollToBottom,
-    isAtBottom,
-    hasInitialized,
-    promptBoxRef,
-    reconcileActiveChatFromServer,
+  } = panelState;
+
+  const { redoDialogData, forkDialogData } = dialogData;
+
+  const {
     onOptimisticUserSubmit,
     onOptimisticQueuedMessagesUpdate,
     onOptimisticPermissionModeUpdate,
-  } = props;
+    reconcileActiveChatFromServer,
+  } = optimisticHandlers;
+
+  const { error, setError, isRetrying, handleRetry } = errorState;
 
   const handleCancel = useCallback(async () => {
     await stopThread({
@@ -260,7 +286,12 @@ function AgUiQueryInvalidatorMount({
   return null;
 }
 
-export type ChatUILayoutProps = {
+/**
+ * Stable identity of the active thread / chat / agent. These rarely change in
+ * a single render pass and form the immutable backbone the rest of the layout
+ * depends on.
+ */
+export type ChatUICoreData = {
   agent: HttpAgent;
   chatAgent: AIAgent;
   isReadOnly: boolean;
@@ -269,43 +300,93 @@ export type ChatUILayoutProps = {
   threadChat: ThreadPageChat;
   thread: ThreadInfoFull;
   threadWithViewModelStatus: ThreadInfoFull;
+};
+
+/**
+ * Derived view-model state: messages, descriptors, status, tool wiring. Widens
+ * whenever the AG-UI view model surfaces a new piece of data to the layout.
+ */
+export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
   messages: ThreadViewModelController["messages"];
   queuedMessages: DBUserMessage[] | null;
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];
   isAgentCurrentlyWorking: boolean;
-  redoDialogData: React.ComponentProps<typeof ChatHeader>["redoDialogData"];
-  forkDialogData: React.ComponentProps<typeof TerragonThread>["forkDialogData"];
   toolProps: React.ComponentProps<typeof TerragonThread>["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
-  error: ThreadErrorMessage | null;
-  setError: (error: ThreadErrorMessage | null) => void;
-  handleRetry: () => Promise<void>;
-  isRetrying: boolean;
   handleOpenArtifact: (artifactId: string) => void;
+};
+
+/**
+ * DOM refs and scroll-position primitives for the transcript / prompt-box
+ * scroll choreography.
+ */
+export type ChatUIScrollState = {
+  transcriptRef: React.RefObject<HTMLDivElement | null>;
+  scrollAreaRef: React.RefObject<HTMLDivElement | null>;
+  chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  promptBoxRef: React.RefObject<{
+    focus: () => void;
+    setPermissionMode: (mode: "allowAll" | "plan") => void;
+  } | null>;
+  forceScrollToBottom: () => void;
+  scrollToTop: () => void;
+  isAtBottom: boolean;
+  hasInitialized: boolean;
+};
+
+/**
+ * Visibility / selection state for the secondary (artifact) panel and terminal
+ * overlay, plus the platform hint that drives mobile-vs-desktop behaviour.
+ */
+export type ChatUIPanelState = {
   activeArtifactId: string | null;
   setActiveArtifactId: (id: string | null) => void;
   showTerminal: boolean;
   setShowTerminal: (show: boolean) => void;
   shouldRenderSecondaryPanel: boolean;
   platform: "unknown" | "mobile" | "desktop";
-  scrollToTop: () => void;
-  transcriptRef: React.RefObject<HTMLDivElement | null>;
-  scrollAreaRef: React.RefObject<HTMLDivElement | null>;
-  chatContainerRef: React.RefObject<HTMLDivElement | null>;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
-  forceScrollToBottom: () => void;
-  isAtBottom: boolean;
-  hasInitialized: boolean;
-  promptBoxRef: React.RefObject<{
-    focus: () => void;
-    setPermissionMode: (mode: "allowAll" | "plan") => void;
-  } | null>;
-  reconcileActiveChatFromServer: () => Promise<unknown>;
+};
+
+/**
+ * Pre-built data bundles for the redo and fork confirmation dialogs.
+ */
+export type ChatUIDialogData = {
+  redoDialogData: React.ComponentProps<typeof ChatHeader>["redoDialogData"];
+  forkDialogData: React.ComponentProps<typeof TerragonThread>["forkDialogData"];
+};
+
+/**
+ * Optimistic-update dispatchers and the server-side reconciliation hook. These
+ * write to the AG-UI view model before the round-trip completes.
+ */
+export type ChatUIOptimisticHandlers = {
   onOptimisticUserSubmit: React.ComponentProps<
     typeof ChatPromptBox
   >["onOptimisticUserSubmit"];
   onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
   onOptimisticPermissionModeUpdate: (mode: "allowAll" | "plan") => void;
+  reconcileActiveChatFromServer: () => Promise<unknown>;
+};
+
+/**
+ * Transient error banner state plus the retry mutation.
+ */
+export type ChatUIErrorState = {
+  error: ThreadErrorMessage | null;
+  setError: (error: ThreadErrorMessage | null) => void;
+  isRetrying: boolean;
+  handleRetry: () => Promise<void>;
+};
+
+export type ChatUILayoutProps = {
+  coreData: ChatUICoreData;
+  viewModel: ChatUIViewModelData;
+  scrollState: ChatUIScrollState;
+  panelState: ChatUIPanelState;
+  dialogData: ChatUIDialogData;
+  optimisticHandlers: ChatUIOptimisticHandlers;
+  errorState: ChatUIErrorState;
 };
