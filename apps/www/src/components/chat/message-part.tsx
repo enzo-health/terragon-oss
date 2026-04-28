@@ -48,10 +48,12 @@ export const MessagePart = memo(function MessagePart({
       findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
     [artifactDescriptors, part],
   );
-  const handleOpenArtifact =
-    artifactDescriptor && onOpenArtifact
-      ? () => onOpenArtifact(artifactDescriptor.id)
-      : undefined;
+  const handleOpenArtifact = useMemo(() => {
+    if (!artifactDescriptor || !onOpenArtifact) return undefined;
+    return () => {
+      onOpenArtifact(artifactDescriptor.id);
+    };
+  }, [artifactDescriptor, onOpenArtifact]);
 
   // Find the plan artifact descriptor matching this specific text part's plan content.
   // When multiple parts have identical plan text across messages,
@@ -92,27 +94,12 @@ export const MessagePart = memo(function MessagePart({
   }, [planArtifactDescriptor, onOpenArtifact]);
 
   // Cast to the extended union so the registry sees all www-local variants
-  // (rich content emitted by dbAgentPartToUIPart in Sprint 5).
+  // (rich content emitted by dbAgentPartToUIPart in Sprint 5). The stub
+  // delegation variant now carries an explicit `type: "delegation-stub"`
+  // discriminator (split from the previous `"delegation"`-shaped union) so
+  // the registry handles it via its own entry — no more `"delegationId" in
+  // extendedPart` special-case here.
   const extendedPart = part as UIPartExtended;
-
-  // Special-case: the `delegation` registry entry assumes the canonical
-  // full-payload shape (`DBDelegationMessage`). The stub variant (no
-  // `delegationId`, just `{ agentName, status, message }`) renders to a
-  // small inline card. The registry's author flagged this as needing a
-  // follow-up; we keep the stub branch local until the renderer is widened.
-  if (extendedPart.type === "delegation" && !("delegationId" in extendedPart)) {
-    return (
-      <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-        <div className="font-medium">Delegated to {extendedPart.agentName}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {extendedPart.status}
-        </div>
-        <p className="mt-2 whitespace-pre-wrap text-sm">
-          {extendedPart.message}
-        </p>
-      </div>
-    );
-  }
 
   const ctx: PartRegistryContext = {
     isLatest,
@@ -182,6 +169,6 @@ function areMessagePartPropsEqual(
     return false;
   }
 
-  const toolName = prevToolPart.name;
-  return toolName === "ExitPlanMode" ? true : true;
+  // Per-tool memoization logic could be added here in the future.
+  return true;
 }

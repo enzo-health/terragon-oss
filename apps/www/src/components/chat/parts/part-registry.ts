@@ -78,7 +78,6 @@ import type {
   AllToolParts,
   DBAudioPart,
   DBAutoApprovalReviewPart,
-  DBDelegationMessage,
   DBDiffPart,
   DBPlanPart,
   DBResourceLinkPart,
@@ -111,6 +110,7 @@ import { ToolPart, type ToolPartProps } from "../tool-part";
 import type {
   UIPartExtended,
   UIDelegationPart,
+  UIDelegationStubPart,
   UIStructuredPlanPart,
 } from "../ui-parts-extended";
 
@@ -216,6 +216,36 @@ function definePartEntry<Props extends object, Part>(
  */
 const NullRenderer: ComponentType<Record<string, never>> = () => null;
 
+/**
+ * Inline fallback card for `UIDelegationStubPart`. Mirrors the markup the
+ * old switch in `message-part.tsx` rendered for stub-shaped delegations
+ * before the union was split. Kept in this file so the registry remains the
+ * single source of truth for part dispatch — moving it elsewhere would just
+ * re-introduce a special-case branch in `message-part.tsx`.
+ */
+const DelegationStubCard: ComponentType<{ part: UIDelegationStubPart }> = ({
+  part,
+}) =>
+  createElement(
+    "div",
+    { className: "rounded-lg border border-border bg-muted/30 p-3 text-sm" },
+    createElement(
+      "div",
+      { className: "font-medium" },
+      `Delegated to ${part.agentName}`,
+    ),
+    createElement(
+      "div",
+      { className: "mt-1 text-xs text-muted-foreground" },
+      part.status,
+    ),
+    createElement(
+      "p",
+      { className: "mt-2 whitespace-pre-wrap text-sm" },
+      part.message,
+    ),
+  );
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry type
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +314,17 @@ export interface PartRegistry {
     UIDelegationPart,
     React.ComponentProps<typeof DelegationItemCard>
   >;
+  /**
+   * Stub variant — rendered inline as a small fallback card. See
+   * `UIDelegationStubPart` for rationale on why this is a separate
+   * discriminator from `delegation`. The dispatcher uses a tiny inline
+   * component so the registry stays the single source of truth and
+   * `message-part.tsx` doesn't need a special-case branch.
+   */
+  "delegation-stub": PartRegistryEntry<
+    UIDelegationStubPart,
+    { part: UIDelegationStubPart }
+  >;
 }
 
 /** Union of every supported part-type discriminator. */
@@ -295,22 +336,28 @@ export type PartType = keyof PartRegistry;
 
 /**
  * Type-level guard that `PartType` covers every variant in
- * `UIPartExtended["type"]`. If a new variant is added to the union but no
- * registry entry is created, this assignment fails to type-check.
+ * `UIPartExtended["type"]` (and vice versa). If a new variant is added to
+ * the union but no registry entry is created, this assignment fails to
+ * type-check at the `Assert<...>` site rather than at a downstream
+ * dispatch call — TypeScript reports "Type 'false' does not satisfy the
+ * constraint 'true'", which points directly at the failing arm.
  *
  * NOTE: this is purely a compile-time check — the value side is never read.
  */
-type _AssertPartTypeCoversUnion = UIPartExtended["type"] extends PartType
-  ? true
-  : never;
-type _AssertPartRegistryHasNoExtras = PartType extends UIPartExtended["type"]
-  ? true
-  : never;
-const _exhaustive: [
+type Assert<T extends true> = T;
+type _AssertPartTypeCoversUnion = Assert<
+  UIPartExtended["type"] extends PartType ? true : false
+>;
+type _AssertPartRegistryHasNoExtras = Assert<
+  PartType extends UIPartExtended["type"] ? true : false
+>;
+// Reference both aliases so `noUnusedLocals` keeps them live.
+type _ExhaustivenessGuards = [
   _AssertPartTypeCoversUnion,
   _AssertPartRegistryHasNoExtras,
-] = [true, true];
-void _exhaustive;
+];
+const _exhaustivenessGuards: _ExhaustivenessGuards = [true, true];
+void _exhaustivenessGuards;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registrations
@@ -398,16 +445,16 @@ export const PART_REGISTRY: PartRegistry = {
     part,
   })),
 
-  // The existing switch handles two delegation shapes:
-  //   - `DBDelegationMessage` (full payload)  → `<DelegationItemCard>`
-  //   - `{ type: "delegation"; agentName; status; message }` (stub) →
-  //     a small inline card
-  // Phase 4 main will need to decide whether to (a) widen
-  // `DelegationItemCard` to accept the stub, (b) keep a thin local
-  // wrapper, or (c) split the registry entry. For now we register the
-  // canonical renderer; the stub branch will need a follow-up.
+  // The two delegation shapes now have separate discriminators
+  // (`delegation` vs `delegation-stub`) so each entry's prop builder is
+  // sound — no `as DBDelegationMessage` cast needed. See
+  // `UIDelegationStubPart` in `ui-parts-extended.ts` for the rationale.
   delegation: definePartEntry(DelegationItemCard, (_ctx, part) => ({
-    delegation: part as DBDelegationMessage,
+    delegation: part,
+  })),
+
+  "delegation-stub": definePartEntry(DelegationStubCard, (_ctx, part) => ({
+    part,
   })),
 };
 
@@ -442,6 +489,20 @@ export function renderPartFromRegistry(
     ctx: PartRegistryContext,
     part: UIPartExtended,
   ) => ReactElement;
-  const render = PART_REGISTRY[part.type].render as RenderFn;
+  // Defense-in-depth at the typed-cast boundary: the compile-time
+  // exhaustiveness assertion above guarantees every union variant has an
+  // entry, but bad data (e.g. an unknown variant slipping in via JSON
+  // deserialization or a stale persisted part) would otherwise cause a
+  // confusing `undefined.render is not a function` failure deep in React's
+  // commit phase. Throw a clear error here instead.
+  const entry = PART_REGISTRY[part.type];
+  if (!entry) {
+    throw new Error(
+      `renderPartFromRegistry: unknown part type ${JSON.stringify(
+        (part as { type?: string }).type,
+      )}`,
+    );
+  }
+  const render = entry.render as RenderFn;
   return render(ctx, part);
 }

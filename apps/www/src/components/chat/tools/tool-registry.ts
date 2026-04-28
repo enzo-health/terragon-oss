@@ -2,7 +2,7 @@
  * Typed map of tool name → { args, result } for `makeAssistantToolUI` registrations.
  *
  * Phase 3a (refactor/chat-layer-consolidated-plan, 2026-04-27): a single source of
- * truth so `makeAssistantToolUI<ToolArgs<T>, ToolResult<T>>` calls in Phase 3b are
+ * truth so `makeAssistantToolUI<ToolArgs<T>, ToolResult>` calls in Phase 3b are
  * real generics, not `<any, any>`.
  *
  * Typing sources:
@@ -93,4 +93,11 @@ export type ToolRegistry = {
 
 export type ToolName = keyof ToolRegistry;
 export type ToolArgs<T extends ToolName> = ToolRegistry[T]["args"];
-export type ToolResult<T extends ToolName> = ToolRegistry[T]["result"];
+/**
+ * Every entry in `ToolRegistry` resolves to `result: string` (see file header
+ * for rationale: daemon normalizes tool results to strings before persisting).
+ * A generic `ToolResult<T>` would be a structural no-op that just resolves to
+ * `string` for every `T`, so we expose the constant alias instead. Narrow per
+ * entry if a specific tool ever surfaces structured results.
+ */
+export type ToolResult = string;
