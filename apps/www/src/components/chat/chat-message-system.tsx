@@ -63,7 +63,7 @@ export function SystemMessage({
       case "agent-error-retry":
       case "follow-up-retry-failed":
         // Semantic destructive — uses theme token, dark-mode safe
-        return "bg-destructive dark:bg-red-400";
+        return "bg-error";
       case "clear-context":
       case "compact-result":
         return "bg-emerald-500 dark:bg-emerald-400";

@@ -21,12 +21,9 @@ function RiskLevelPill({
       variant="outline"
       data-risk={riskLevel}
       className={cn("gap-1 text-xs", {
-        "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-400/10 dark:text-emerald-300":
-          riskLevel === "low",
-        "border-amber-500/70 bg-amber-500/10 text-amber-700 dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-300":
-          riskLevel === "medium",
-        "border-red-500/70 bg-red-500/10 text-red-700 dark:border-red-400/60 dark:bg-red-400/10 dark:text-red-300":
-          riskLevel === "high",
+        "border-success/60 bg-success/10 text-success": riskLevel === "low",
+        "border-warning/70 bg-warning/10 text-warning": riskLevel === "medium",
+        "border-error/70 bg-error/10 text-error": riskLevel === "high",
       })}
     >
       {riskLevel === "high" ? (
@@ -62,7 +59,7 @@ function DecisionBadge({
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-400/10 dark:text-emerald-300"
+          className="gap-1 text-xs border-success/60 bg-success/10 text-success"
           data-decision="approved"
         >
           <CheckCircle className="size-3" />
@@ -73,7 +70,7 @@ function DecisionBadge({
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-red-500/70 bg-red-500/10 text-red-700 dark:border-red-400/60 dark:bg-red-400/10 dark:text-red-300"
+          className="gap-1 text-xs border-error/70 bg-error/10 text-error"
           data-decision="denied"
         >
           <XCircle className="size-3" />

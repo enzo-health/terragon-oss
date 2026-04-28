@@ -584,6 +584,7 @@ export async function hasCanonicalReplayProjection({
         eq(schema.agentEventLog.threadId, threadId),
         isNotNull(schema.agentEventLog.threadChatMessageSeq),
         inArray(schema.agentEventLog.eventType, [
+          EventType.MESSAGES_SNAPSHOT,
           "assistant-message",
           "tool-call-start",
           "tool-call-result",

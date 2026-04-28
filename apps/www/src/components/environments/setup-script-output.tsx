@@ -57,7 +57,7 @@ export function SetupScriptOutput({
           onClick={handleCopy}
           variant="ghost"
           size="sm"
-          className="sticky top-2 right-2 z-10 h-7 px-2 bg-black/50 hover:bg-black/70 text-gray-400 hover:text-gray-200 float-right mr-2 mt-2"
+          className="sticky top-2 right-2 z-10 h-7 px-2 bg-surface-dark/50 hover:bg-surface-dark/70 text-on-dark-soft hover:text-on-dark float-right mr-2 mt-2"
           title="Copy output"
         >
           {copied ? (
@@ -79,9 +79,9 @@ export function SetupScriptOutput({
             key={index}
             className={cn(
               "whitespace-pre-wrap break-all",
-              output.type === "stdout" && "text-gray-100",
-              output.type === "stderr" && "text-red-400",
-              output.type === "error" && "text-red-500 font-semibold",
+              output.type === "stdout" && "text-on-dark",
+              output.type === "stderr" && "text-error",
+              output.type === "error" && "text-error font-semibold",
             )}
             dangerouslySetInnerHTML={{
               __html: ansiToHtml(output.content, theme),
@@ -89,7 +89,7 @@ export function SetupScriptOutput({
           />
         ))}
         {isRunning && (
-          <div className="text-gray-400">
+          <div className="text-on-dark-soft">
             <span className="text-muted-foreground">Running...</span>
           </div>
         )}

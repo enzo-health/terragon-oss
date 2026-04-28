@@ -113,7 +113,7 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
                       : line.startsWith("-")
                         ? "bg-[var(--diff-removed-bg)] text-[var(--diff-removed-fg)]"
                         : line.startsWith("@@")
-                          ? "text-blue-600 dark:text-blue-400"
+                          ? "text-info"
                           : "text-muted-foreground"
                   }`}
                 >

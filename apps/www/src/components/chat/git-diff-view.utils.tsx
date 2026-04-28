@@ -58,25 +58,25 @@ export function getFileIcon(
   if (isImage) {
     const colorClass =
       changeType === "added"
-        ? "text-green-600 dark:text-green-400"
+        ? "text-[var(--diff-added-fg)]"
         : changeType === "deleted"
-          ? "text-red-600 dark:text-red-400"
-          : "text-neutral-600 dark:text-neutral-400";
+          ? "text-[var(--diff-removed-fg)]"
+          : "text-muted-foreground";
     return <Image className={cn("w-4 h-4 flex-shrink-0", colorClass)} />;
   }
 
   switch (changeType) {
     case "added":
       return (
-        <FilePlus className="w-4 h-4 flex-shrink-0 text-green-600 dark:text-green-400" />
+        <FilePlus className="w-4 h-4 flex-shrink-0 text-[var(--diff-added-fg)]" />
       );
     case "deleted":
       return (
-        <FileX className="w-4 h-4 flex-shrink-0 text-red-600 dark:text-red-400" />
+        <FileX className="w-4 h-4 flex-shrink-0 text-[var(--diff-removed-fg)]" />
       );
     case "modified":
       return (
-        <FileDiff className="w-4 h-4 flex-shrink-0 text-neutral-600 dark:text-neutral-400" />
+        <FileDiff className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
       );
   }
 }

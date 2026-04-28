@@ -285,6 +285,8 @@ export async function startAgentMessage({
       const uploadedMessage = message
         ? await uploadUserMessageImages({ userId, message })
         : null;
+      const currentMessageAppend =
+        !isNewThread && uploadedMessage ? [uploadedMessage] : undefined;
 
       let threadContextPromise: Promise<void> | null = null;
       const getThreadContextPromise = (): Promise<void> | null => {
@@ -359,7 +361,7 @@ export async function startAgentMessage({
             chatUpdates: {
               errorMessage: null,
               errorMessageInfo: null,
-              appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
+              appendMessages: currentMessageAppend,
             },
           });
           return;
@@ -400,7 +402,7 @@ export async function startAgentMessage({
             chatUpdates: {
               errorMessage: null,
               errorMessageInfo: null,
-              appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
+              appendMessages: currentMessageAppend,
             },
           });
           return;
@@ -417,7 +419,7 @@ export async function startAgentMessage({
         chatUpdates: {
           errorMessage: null,
           errorMessageInfo: null,
-          appendMessages: uploadedMessage ? [uploadedMessage] : undefined,
+          appendMessages: currentMessageAppend,
         },
       });
       // Get or create sandbox for the thread

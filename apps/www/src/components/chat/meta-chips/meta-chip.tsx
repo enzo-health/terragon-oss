@@ -9,23 +9,15 @@ export type MetaChipVariant =
   | "danger";
 
 const VARIANT_CLASSES: Record<MetaChipVariant, string> = {
-  // Resting state — sits on hairline, no semantic charge
-  neutral: "border-hairline text-muted-foreground",
-  // Carrying current data, but nothing to flag
-  active: "border-hairline text-muted-foreground",
-  // Needs attention — uses the brand's accent-amber, which harmonizes with
-  // the cream canvas (a saturated yellow-orange would clash). Visual weight
-  // matches semantic weight via 12% surface tint + ink-dark text.
-  warning:
-    "border-[color:var(--accent-amber)]/70 bg-[color:var(--accent-amber)]/12 text-[color:oklch(0.42_0.10_65)] dark:bg-[color:var(--accent-amber)]/15 dark:text-[color:var(--accent-amber)]",
-  // Healthy / ready — uses the brand's accent-teal so it doesn't drift toward
-  // the SaaS-default emerald.
-  success:
-    "border-[color:var(--accent-teal)]/60 bg-[color:var(--accent-teal)]/12 text-[color:oklch(0.42_0.07_175)] dark:bg-[color:var(--accent-teal)]/15 dark:text-[color:var(--accent-teal)]",
-  // Failure — coral-red borrowed from the brand's destructive token so
-  // failures speak in the brand's voice rather than a generic Tailwind red.
-  danger:
-    "border-destructive/70 bg-destructive/12 text-destructive dark:bg-destructive/20 dark:text-[color:oklch(0.78_0.15_27)]",
+  // Each variant uses the canonical semantic token (--warning, --success,
+  // --error) for border + bg-tint + foreground. One token per variant,
+  // no inline oklch literals. Dark-mode coverage flows through the
+  // semantic tokens themselves.
+  neutral: "border-sunken text-mid",
+  active: "border-sunken text-mid",
+  warning: "border-warning/70 bg-warning/12 text-warning dark:bg-warning/20",
+  success: "border-success/60 bg-success/12 text-success dark:bg-success/20",
+  danger: "border-error/70 bg-error/12 text-error dark:bg-error/20",
 };
 
 export interface MetaChipProps {

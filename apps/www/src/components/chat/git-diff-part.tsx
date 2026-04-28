@@ -148,12 +148,12 @@ export const GitDiffPart = memo(function GitDiffPart({
           {(diffStats.additions > 0 || diffStats.deletions > 0) && (
             <div className="flex items-center gap-2 text-xs font-medium flex-shrink-0 min-w-0">
               {diffStats.additions > 0 && (
-                <span className="flex items-center gap-1 text-green-600 dark:text-green-400 whitespace-nowrap">
+                <span className="flex items-center gap-1 text-[var(--diff-added-fg)] whitespace-nowrap">
                   <span>+{diffStats.additions}</span>
                 </span>
               )}
               {diffStats.deletions > 0 && (
-                <span className="flex items-center gap-1 text-red-600 dark:text-red-400 whitespace-nowrap">
+                <span className="flex items-center gap-1 text-[var(--diff-removed-fg)] whitespace-nowrap">
                   <span>-{diffStats.deletions}</span>
                 </span>
               )}

@@ -11,9 +11,9 @@ function PriorityStripe({ priority }: { priority: PlanEntry["priority"] }) {
       aria-label={`Priority: ${priority}`}
       data-priority={priority}
       className={cn("shrink-0 w-1 self-stretch rounded-full", {
-        "bg-destructive dark:bg-red-400": priority === "high",
-        "bg-amber-500 dark:bg-amber-300": priority === "medium",
-        "bg-muted-foreground/30": priority === "low",
+        "bg-error": priority === "high",
+        "bg-warning": priority === "medium",
+        "bg-mid/40": priority === "low",
       })}
     />
   );
@@ -32,7 +32,7 @@ function StatusIcon({ status }: { status: PlanEntry["status"] }) {
     case "in_progress":
       return (
         <Loader2
-          className="size-4 text-blue-500 animate-spin shrink-0"
+          className="size-4 text-coral animate-spin shrink-0"
           data-status="in_progress"
           aria-label="In progress"
         />
@@ -40,7 +40,7 @@ function StatusIcon({ status }: { status: PlanEntry["status"] }) {
     case "completed":
       return (
         <CheckCircle
-          className="size-4 text-green-500 shrink-0"
+          className="size-4 text-success shrink-0"
           data-status="completed"
           aria-label="Completed"
         />

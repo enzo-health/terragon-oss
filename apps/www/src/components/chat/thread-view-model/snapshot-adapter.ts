@@ -85,6 +85,15 @@ export function selectThreadViewDbMessages(threadChat: ThreadPageChat): {
   };
 }
 
+export function selectAgUiInitialMessages(threadChat: ThreadPageChat) {
+  const { dbMessages, hasCanonicalProjectionSeed } =
+    selectThreadViewDbMessages(threadChat);
+
+  return dbMessagesToAgUiMessages(dbMessages, {
+    includeAssistantHistory: !hasCanonicalProjectionSeed,
+  });
+}
+
 export function createThreadViewSnapshot({
   threadChat,
   agent,
@@ -121,9 +130,7 @@ export function createThreadViewSnapshot({
     threadStatus,
     skipSeededAssistantText: hasCanonicalProjectionSeed,
   });
-  const agUiInitialMessages = dbMessagesToAgUiMessages(dbMessages, {
-    includeAssistantHistory: !hasCanonicalProjectionSeed,
-  });
+  const agUiInitialMessages = selectAgUiInitialMessages(threadChat);
 
   return {
     source,

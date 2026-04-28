@@ -325,6 +325,45 @@ export async function getNativeAgUiTranscriptForThreadChat({
   };
 }
 
+export function getNativeAgUiHistoryMessagesFromEvents(
+  events: readonly BaseEvent[],
+): Message[] {
+  const messages: Message[] = [];
+
+  for (const event of events) {
+    if (event.type !== EventType.MESSAGES_SNAPSHOT) {
+      continue;
+    }
+
+    for (const message of (event as MessagesSnapshotEvent).messages) {
+      if (isContextResetMessage(message)) {
+        messages.length = 0;
+      }
+      if (message.role === "user" || message.role === "system") {
+        messages.push(message);
+      }
+    }
+  }
+
+  return messages;
+}
+
+export async function getNativeAgUiHistoryMessagesForThreadChat({
+  db,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+}): Promise<Message[]> {
+  const envelopes = await getAgUiEventEnvelopesForThreadChat({
+    db,
+    threadChatId,
+  });
+  return getNativeAgUiHistoryMessagesFromEvents(
+    envelopes.map((envelope) => envelope.payload),
+  );
+}
+
 export async function hasNativeAgUiUserMessage({
   db,
   threadChatId,

@@ -259,6 +259,7 @@ function getThreadPageFullChatSelect() {
     agent: schema.threadChat.agent,
     agentVersion: schema.threadChat.agentVersion,
     status: schema.threadChat.status,
+    messages: schema.threadChat.messages,
     queuedMessages: schema.threadChat.queuedMessages,
     sessionId: schema.threadChat.sessionId,
     errorMessage: schema.threadChat.errorMessage,
@@ -530,6 +531,8 @@ export async function getThreadPageChatWithPermissions({
   if (!threadChat) {
     return undefined;
   }
+  const { messages: legacyMessagesRaw, ...threadChatWithoutMessages } =
+    threadChat;
 
   const isCanonicalProjection = await hasCanonicalReplayProjection({
     db,
@@ -537,7 +540,12 @@ export async function getThreadPageChatWithPermissions({
     threadChatId,
   });
 
-  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [];
+  const legacyMessages = (legacyMessagesRaw ?? []).filter(
+    (message) => message.type === "user",
+  );
+  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [
+    ...legacyMessages,
+  ];
   if (isCanonicalProjection) {
     const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
       db,
@@ -545,11 +553,14 @@ export async function getThreadPageChatWithPermissions({
       threadChatId,
       fromThreadChatMessageSeq: 0,
     });
-    projectedMessages = replayEntries.flatMap((entry) => entry.messages);
+    projectedMessages = [
+      ...legacyMessages,
+      ...replayEntries.flatMap((entry) => entry.messages),
+    ];
   }
 
   return {
-    ...threadChat,
+    ...threadChatWithoutMessages,
     messageCount: projectedMessages.length,
     chatSequence:
       threadChat.messageSeq > 0

@@ -186,26 +186,26 @@ function SnapshotStatusBadge({
   switch (status) {
     case "building":
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-info/10 text-info">
           <Loader2 className="h-3 w-3 animate-spin" />
           Building
         </span>
       );
     case "ready":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-success/10 text-success">
           Ready
         </span>
       );
     case "failed":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-error/10 text-error">
           Failed
         </span>
       );
     case "stale":
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-warning/10 text-warning">
           Stale
         </span>
       );
@@ -428,7 +428,7 @@ function SnapshotSection({
             </p>
           )}
           {currentSnapshot.status === "stale" && (
-            <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+            <p className="text-xs text-warning mt-2">
               Setup script changed since this snapshot was built. Rebuild
               recommended.
             </p>

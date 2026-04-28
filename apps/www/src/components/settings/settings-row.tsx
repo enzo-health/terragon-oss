@@ -82,7 +82,9 @@ export function SettingsSection({
     <div className="bg-card rounded-lg border p-6 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <h3 className="text-lg font-display font-[300]">{label}</h3>
+          <h3 className="text-base font-semibold tracking-[-0.01em]">
+            {label}
+          </h3>
           {description && (
             <p className="text-sm text-muted-foreground mt-1">{description}</p>
           )}

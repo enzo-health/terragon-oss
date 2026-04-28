@@ -30,7 +30,7 @@ export function BashTool({
       toolStatus={toolPart.status}
       toolArgSuffix={
         exitCode !== null && exitCode !== 0 ? (
-          <span className="text-red-500 text-xs font-mono ml-1">
+          <span className="text-error text-xs font-mono ml-1">
             Exit code: {exitCode}
           </span>
         ) : null

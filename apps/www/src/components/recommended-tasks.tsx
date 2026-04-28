@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import type { AIModel } from "@terragon/agent/types";
 import { tasksForModel } from "./recommended-tasks.utils";
 
@@ -22,16 +23,26 @@ const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
   task: RecommendedTask;
   onTaskSelect: (prompt: string) => void;
 }) {
-  const handleClick = () => {
-    onTaskSelect(task.prompt);
-  };
-
   return (
+    // Resting affordance: leading sparkle (low-key at rest, coral on
+    // hover), label, trailing arrow that slides in. Two coral signals
+    // on hover — leading + trailing — make the actionability
+    // unmistakable at a glance, even before the cursor moves.
     <button
-      onClick={handleClick}
-      className="w-full cursor-pointer text-left group py-1.5 px-1 rounded-md hover:bg-accent/50 transition-colors"
+      onClick={() => onTaskSelect(task.prompt)}
+      className="group flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left transition-[background-color,color] duration-150 hover:bg-surface-cream-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]"
     >
-      <span className="text-sm text-foreground/80 font-sans">{task.label}</span>
+      <Sparkles
+        aria-hidden
+        className="size-4 shrink-0 text-muted-foreground transition-colors duration-200 group-hover:text-coral"
+      />
+      <span className="flex-1 text-[14px] font-medium text-foreground/85 group-hover:text-foreground">
+        {task.label}
+      </span>
+      <ArrowRight
+        aria-hidden
+        className="size-4 shrink-0 -translate-x-1 text-transparent transition-[color,transform] duration-200 group-hover:translate-x-0 group-hover:text-coral"
+      />
     </button>
   );
 });
@@ -40,20 +51,18 @@ export function RecommendedTasks({
   onTaskSelect,
   selectedModel,
 }: RecommendedTasksProps) {
-  // Select tasks based on the model's agent type
   const tasks = tasksForModel(selectedModel);
 
   return (
-    <div className="w-full">
-      <div className="flex flex-col gap-2">
-        {tasks.map((task) => (
-          <ListRecommendedTaskItem
-            key={task.id}
-            task={task}
-            onTaskSelect={onTaskSelect}
-          />
-        ))}
-      </div>
-    </div>
+    // Hairline dividers between rows give the list a rhythm without
+    // boxing it into a card. divide-y is more honest than gap-* here:
+    // these are rows in a table, not isolated cards.
+    <ul className="flex w-full flex-col divide-y divide-hairline-soft">
+      {tasks.map((task) => (
+        <li key={task.id}>
+          <ListRecommendedTaskItem task={task} onTaskSelect={onTaskSelect} />
+        </li>
+      ))}
+    </ul>
   );
 }

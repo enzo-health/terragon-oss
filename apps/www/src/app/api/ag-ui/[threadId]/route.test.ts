@@ -1379,6 +1379,44 @@ describe("ag-ui SSE route", () => {
     await response.body!.cancel();
   });
 
+  it("durably catches up when an empty live-tail discovers a run after connect", async () => {
+    vi.mocked(getLatestRunIdForThreadChat)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("run-discovered");
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-new",
+        runId: "run-discovered",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "thread-new",
+        runId: "run-discovered",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+    redisMocks.xread.mockResolvedValue(null);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-new?threadChatId=chat-empty",
+      ),
+      makeContext("thread-new"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 2);
+    expect(received).toEqual(runEvents);
+    expect(getAgUiEventEnvelopesForThreadChat).toHaveBeenCalledWith({
+      db: dbMocks.db,
+      threadChatId: "chat-empty",
+      afterSeq: undefined,
+    });
+  });
+
   it("emits the baseline snapshot marker before awaiting-first-run on empty threads", async () => {
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
 

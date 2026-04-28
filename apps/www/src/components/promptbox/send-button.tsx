@@ -101,7 +101,7 @@ export const SendButton = memo(function SendButton({
       aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
       className={cn(
-        "size-auto h-8 px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.96]",
+        "size-auto h-8 px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.98]",
         isSubmitting && "animate-pulse-subtle",
         className,
       )}
@@ -184,7 +184,7 @@ export const SendComboButton = memo(function SendComboButton({
           title={title}
           disabled={isDisabled}
           className={cn(
-            "h-8 px-2 pr-6 transition-[background-color,box-shadow,scale,opacity] duration-200 rounded-r-none group active:scale-[0.96]",
+            "h-8 px-2 pr-6 transition-[background-color,box-shadow,scale,opacity] duration-200 rounded-r-none group active:scale-[0.98]",
             isSubmitting && "opacity-90",
             className,
           )}
@@ -200,7 +200,7 @@ export const SendComboButton = memo(function SendComboButton({
             <Button
               disabled={isDisabled}
               className={cn(
-                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[background-color,border-color,scale] duration-200 active:scale-[0.96]",
+                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[background-color,border-color,scale] duration-200 active:scale-[0.98]",
                 className,
               )}
               size="sm"

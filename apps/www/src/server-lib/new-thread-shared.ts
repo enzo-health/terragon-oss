@@ -3,6 +3,7 @@ import {
   Automation,
   DBThreadContextMessage,
   DBUserMessage,
+  DBUserMessageWithModel,
   ThreadSource,
   ThreadSourceMetadata,
 } from "@terragon/shared";
@@ -132,6 +133,16 @@ export async function createNewThread({
   ]);
   const messageWithModel = { ...message, model: modelOrDefault };
   const agent = modelToAgent(messageWithModel.model);
+  const uploadedInitialMessage = saveAsDraft
+    ? null
+    : await uploadUserMessageImages({ userId, message: messageWithModel });
+  const uploadedInitialMessageWithModel: DBUserMessageWithModel | null =
+    uploadedInitialMessage
+      ? {
+          ...uploadedInitialMessage,
+          model: messageWithModel.model,
+        }
+      : null;
   // Track thread creation
   getPostHogServer().capture({
     distinctId: userId,
@@ -209,6 +220,9 @@ export async function createNewThread({
       agent,
       permissionMode: message.permissionMode || "allowAll",
       status: scheduleAt ? "scheduled" : saveAsDraft ? "draft" : "queued",
+      replaceMessages: uploadedInitialMessageWithModel
+        ? [uploadedInitialMessageWithModel]
+        : undefined,
     },
   });
 
@@ -264,10 +278,6 @@ export async function createNewThread({
     if (scheduleAt < Date.now()) {
       throw new UserFacingError("Schedule time must be in the future");
     }
-    const uploadedMessage = await uploadUserMessageImages({
-      userId,
-      message: messageWithModel,
-    });
     await updateThreadChat({
       db,
       userId,
@@ -275,7 +285,9 @@ export async function createNewThread({
       threadChatId,
       updates: {
         scheduleAt: new Date(scheduleAt),
-        appendMessages: [uploadedMessage],
+        appendMessages: uploadedInitialMessageWithModel
+          ? [uploadedInitialMessageWithModel]
+          : undefined,
       },
     });
     updateThreadMetadata();
@@ -308,7 +320,7 @@ export async function createNewThread({
     dispatchAgentMessage({
       db,
       userId,
-      message: messageWithModel,
+      message: uploadedInitialMessageWithModel ?? messageWithModel,
       threadContextMessage,
       threadId,
       threadChatId,

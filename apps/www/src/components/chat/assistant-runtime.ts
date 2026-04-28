@@ -1,8 +1,14 @@
 "use client";
 
+import type { Message as AgUiMessage } from "@ag-ui/core";
 import { useAgUiRuntime } from "@assistant-ui/react-ag-ui";
 import type { AssistantRuntime } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
+import { useMemo } from "react";
+import {
+  type AgUiHistoryLoader,
+  createAgUiHistoryAdapter,
+} from "./ag-ui-history-adapter";
 
 /**
  * Terragon chat runtime backed by the AG-UI HttpAgent transport.
@@ -21,11 +27,15 @@ import type { HttpAgent } from "@ag-ui/client";
  */
 export function useTerragonRuntime({
   agent,
+  historyMessages = [],
+  loadHistoryMessages,
   onError,
   onCancel,
   showThinking = true,
 }: {
   agent: HttpAgent;
+  historyMessages?: readonly AgUiMessage[];
+  loadHistoryMessages?: AgUiHistoryLoader;
   onError?: (error: Error) => void;
   onCancel?: () => void | Promise<void>;
   /**
@@ -35,6 +45,12 @@ export function useTerragonRuntime({
    */
   showThinking?: boolean;
 }): AssistantRuntime {
+  const history = useMemo(
+    () =>
+      createAgUiHistoryAdapter(loadHistoryMessages ?? (() => historyMessages)),
+    [historyMessages, loadHistoryMessages],
+  );
+
   return useAgUiRuntime({
     agent,
     showThinking,
@@ -57,19 +73,12 @@ export function useTerragonRuntime({
     // `{ unstable_resume: true }`. See
     // AgUiThreadRuntimeCore.__internal_load in @assistant-ui/react-ag-ui.
     //
-    // Returning `messages: []` to the core is safe: our render path reads
-    // from `useThreadViewModel` (the reducer seeded from threadChat), not
-    // from `core.getMessages()`. `append` is a no-op because follow-ups
-    // flow through the `followUp` server action, not through the runtime.
+    // The history adapter loads user/system history from the durable AG-UI
+    // event log. Rendering still reads from `useThreadViewModel`; `append` is
+    // a no-op because follow-ups flow through the `followUp` server action,
+    // not through the runtime.
     adapters: {
-      history: {
-        load: async () => ({
-          messages: [],
-          unstable_resume: true,
-          headId: null,
-        }),
-        append: async () => {},
-      },
+      history,
     },
   });
 }

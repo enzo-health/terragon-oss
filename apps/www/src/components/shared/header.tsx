@@ -1,4 +1,4 @@
-export const headerClassName = "h-14 md:h-[58px]";
+export const headerClassName = "h-14 md:h-[68px]";
 
 // Solid cream header — the brand spec calls for opaque {colors.canvas} on
 // nav bars. The previous implementation used backdrop-blur + 82% opacity,

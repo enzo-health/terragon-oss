@@ -128,7 +128,12 @@ export function SimplePromptBox({
     <DragDropWrapper
       onFilesDropped={handleFilesAttached}
       className={cn(
-        "relative flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-border/60 bg-card p-2 shadow-xs transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-border/80 hover:shadow-sm focus-within:border-border focus-within:shadow-sm focus-within:ring-1 focus-within:ring-ring/10",
+        // Prompt box is the dashboard's primary affordance — it must
+        // read as an input. Solid hairline border (no opacity), warm-lift
+        // shadow at rest for elevation off the canvas, focus brings the
+        // coral ring at higher specificity. Dropped border-border/60 +
+        // shadow-xs combo which was visually invisible on cream-on-cream.
+        "relative flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-hairline bg-card p-2 shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
         isSubmitting && [
           "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
           "animate-pulse-subtle",
@@ -157,7 +162,7 @@ export function SimplePromptBox({
         />
       </ScrollArea>
       <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />
-      <div className="flex flex-row items-center gap-3 border-t border-border/40 px-2 pb-1 pt-2">
+      <div className="flex flex-row items-center gap-3 border-t border-hairline-soft px-2 pb-1 pt-2">
         <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
           {!hideModelSelector && (
             <ModelSelector

@@ -10,13 +10,13 @@ export function ConnectionStatusPill({ connected }: { connected: boolean }) {
         <div
           className={cn(
             "size-1 rounded-full",
-            connected ? "bg-green-500" : "bg-destructive",
+            connected ? "bg-success" : "bg-destructive",
           )}
         />
         <div
           className={cn(
             "absolute inset-0 rounded-full size-2",
-            connected ? "bg-green-500/20" : "bg-destructive/20",
+            connected ? "bg-success/20" : "bg-destructive/20",
           )}
         />
       </div>

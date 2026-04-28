@@ -266,13 +266,13 @@ export function SetupScriptEditor({
               </code>
               <div className="flex items-center gap-2">
                 {scriptSource === "environment" && (
-                  <span className="inline-flex items-center gap-1 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2 py-0.5 rounded">
                     <FileCode2 className="h-3 w-3" />
                     Environment
                   </span>
                 )}
                 {scriptSource === "repo" && (
-                  <span className="inline-flex items-center gap-1 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2 py-0.5 rounded">
                     <FileCode2 className="h-3 w-3" />
                     Repository
                   </span>

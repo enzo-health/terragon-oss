@@ -1,5 +1,6 @@
 "use client";
 
+import type { Message as AgUiMessage } from "@ag-ui/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureAgent } from "@terragon/agent/utils";
 import {
@@ -54,6 +55,34 @@ import {
   useRetryThreadMutation,
 } from "./use-thread-mutations";
 import { useThreadViewModel } from "./use-ag-ui-messages";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAgUiHistoryMessage(value: unknown): value is AgUiMessage {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const id = value.id;
+  const role = value.role;
+  const content = value.content;
+  return (
+    typeof id === "string" &&
+    (role === "user" || role === "system") &&
+    (typeof content === "string" || Array.isArray(content))
+  );
+}
+
+function parseAgUiHistoryMessagesResponse(value: unknown): AgUiMessage[] {
+  if (!isRecord(value) || !Array.isArray(value.messages)) {
+    throw new Error("Invalid AG UI history response");
+  }
+  if (!value.messages.every(isAgUiHistoryMessage)) {
+    throw new Error("Invalid AG UI history message");
+  }
+  return value.messages;
+}
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
 // active thread. Bootstrap queries + loading gate live in <ThreadProvider/>;
@@ -158,19 +187,24 @@ function ChatUIContent() {
     isReadOnly,
   });
 
-  // Snapshot the DB messages for both the AG-UI transport hydration seed (so
-  // the HttpAgent starts from a non-empty state) AND the aggregator's initial
-  // UIMessage[] seed. Because <ThreadProvider/> only mounts this component
-  // once `threadChat.id === shell.primaryThreadChatId`, the seeds are
-  // guaranteed-valid on first render.
-  const [agUiInitialMessages] = useState(
-    () => threadViewSnapshot.agUiInitialMessages,
-  );
+  const loadAgUiHistoryMessages = useCallback(async () => {
+    const query = new URLSearchParams({
+      threadChatId,
+      history: "messages",
+    });
+    const response = await fetch(
+      `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to load AG UI history (${response.status})`);
+    }
+    return parseAgUiHistoryMessagesResponse(await response.json());
+  }, [threadChatId, threadId]);
   const agent = useAgUiTransport({
     threadId,
     threadChatId,
     runId: capturedRunId,
-    initialMessages: agUiInitialMessages,
   });
   const observedRunId = useCurrentRunId(agent);
   useEffect(() => {
@@ -345,6 +379,7 @@ function ChatUIContent() {
   const viewModel = useMemo<ChatUIViewModelData>(
     () => ({
       threadViewModel,
+      loadAgUiHistoryMessages,
       messages,
       queuedMessages,
       artifactDescriptors,
@@ -360,6 +395,7 @@ function ChatUIContent() {
       handleOpenArtifact,
       isAgentCurrentlyWorking,
       lastUsedModel,
+      loadAgUiHistoryMessages,
       messages,
       queuedMessages,
       threadViewModel,

@@ -74,7 +74,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
         className,
       )}
     >
-      <h2 className="font-display font-semibold text-[15px] tracking-[-0.01em] text-foreground">
+      <h2 className="font-semibold text-[13px] uppercase tracking-[0.06em] text-muted-foreground">
         Tasks
       </h2>
       <div className="flex items-center gap-1">
@@ -304,16 +304,23 @@ function EmptyThreadList({
     );
   }
   return (
-    <div className="bg-muted/20 rounded-md p-8 flex flex-col items-center justify-center gap-2">
-      <div className="flex items-center gap-2">
-        {queryFilters.archived ? (
-          <ArchiveX className="size-4 text-muted-foreground/70" />
-        ) : (
-          <List className="size-4 text-muted-foreground/70" />
-        )}
-        <span className="text-sm text-muted-foreground/70">
-          {queryFilters.archived ? "No archived tasks" : "No tasks"}
+    // Empty state: icon + label + one-line of guidance. The previous
+    // "No tasks" terse pair didn't tell first-timers what happens next.
+    <div className="rounded-lg p-8 flex flex-col items-center justify-center gap-3 text-center">
+      {queryFilters.archived ? (
+        <ArchiveX className="size-5 text-muted-foreground/60" />
+      ) : (
+        <List className="size-5 text-muted-foreground/60" />
+      )}
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-foreground/85">
+          {queryFilters.archived ? "No archived tasks" : "No tasks yet"}
         </span>
+        {!queryFilters.archived && (
+          <span className="text-xs text-muted-foreground/85">
+            Tasks you create will show up here.
+          </span>
+        )}
       </div>
     </div>
   );

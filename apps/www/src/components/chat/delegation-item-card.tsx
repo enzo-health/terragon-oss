@@ -31,7 +31,7 @@ function AgentStatusBadge({ status }: { status: AgentStatus }) {
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-blue-400 text-blue-600"
+          className="gap-1 text-xs border-info/40 text-info"
           data-status="running"
         >
           <Loader2 className="size-3 animate-spin" />
@@ -42,7 +42,7 @@ function AgentStatusBadge({ status }: { status: AgentStatus }) {
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-green-400 text-green-600"
+          className="gap-1 text-xs border-success/40 text-success"
           data-status="completed"
         >
           <CheckCircle className="size-3" />
@@ -53,7 +53,7 @@ function AgentStatusBadge({ status }: { status: AgentStatus }) {
       return (
         <Badge
           variant="outline"
-          className="gap-1 text-xs border-red-400 text-red-600"
+          className="gap-1 text-xs border-error/40 text-error"
           data-status="failed"
         >
           <XCircle className="size-3" />

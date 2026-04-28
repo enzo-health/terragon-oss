@@ -169,7 +169,7 @@ function MinimalStatusIndicator({
         className={cn("text-destructive/75", size)}
       />
     ),
-    unread: <div className="w-2 h-2 rounded-full bg-blue-500" />,
+    unread: <div className="w-2 h-2 rounded-full bg-info" />,
   };
   return (
     <div

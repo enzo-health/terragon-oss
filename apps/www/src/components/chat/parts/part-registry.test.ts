@@ -106,8 +106,8 @@ const PART_FIXTURES: { [K in PartType]: Extract<UIPartExtended, { type: K }> } =
       parameters: { file_path: "/x" },
       parts: [],
       agent: "claudeCode",
-      // biome-ignore lint/suspicious/noExplicitAny: fixture uses minimal shape
-    } as any,
+      status: "pending",
+    },
     image: { type: "image", image_url: "data:," },
     "rich-text": { type: "rich-text", nodes: [{ type: "text", text: "hi" }] },
     pdf: { type: "pdf", pdf_url: "data:," },

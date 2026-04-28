@@ -145,7 +145,7 @@ export const ChatHeader = memo(function ChatHeader({
               <PanelRightClose className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex flex-col min-w-0 w-full gap-1">
+          <div className="flex flex-col min-w-0 w-full gap-1.5">
             <div className="flex items-center gap-3 w-full">
               <div className="opacity-80">
                 <ThreadStatusIndicator thread={thread} />
@@ -198,7 +198,7 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
@@ -213,14 +213,14 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     title={thread.branchName}
                   >
                     {thread.branchName}
                   </a>
                   <button
                     type="button"
-                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();

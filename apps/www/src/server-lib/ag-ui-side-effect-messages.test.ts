@@ -19,6 +19,7 @@ vi.mock("@/lib/redis", () => ({
 }));
 
 const {
+  getNativeAgUiHistoryMessagesFromEvents,
   getLatestNativeAgUiSnapshotMessage,
   getNativeAgUiTranscriptForThreadChat,
   hasInvalidTokenRetrySideEffectMarker,
@@ -135,6 +136,43 @@ describe("ag-ui-side-effect-messages", () => {
       history: expect.stringContaining("user: Follow up"),
       messageCount: 2,
     });
+  });
+
+  it("builds assistant-ui history from durable user/system snapshot events only", () => {
+    const events = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 3,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 4,
+        messageId: "assistant-1",
+        delta: "Assistant replay comes from SSE",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 5,
+        messageId: "assistant-1",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getNativeAgUiHistoryMessagesFromEvents(events)).toEqual([
+      { id: "user-1", role: "user", content: "Initial prompt" },
+    ]);
   });
 
   it("does not persist when an append batch has no user or system messages", async () => {

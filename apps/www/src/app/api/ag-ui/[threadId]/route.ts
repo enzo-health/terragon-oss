@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
+import { getNativeAgUiHistoryMessagesForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
@@ -409,6 +410,14 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  if (request.nextUrl.searchParams.get("history") === "messages") {
+    const messages = await getNativeAgUiHistoryMessagesForThreadChat({
+      db,
+      threadChatId,
+    });
+    return NextResponse.json({ messages });
+  }
+
   const streamKey = agUiStreamKey(threadChatId);
 
   // Capture the live-tail cursor BEFORE the DB replay so in-flight events
@@ -526,15 +535,81 @@ export async function GET(
         once: true,
       });
       const replayedEventDedupeKeys = new Set<string>();
+      let lastDeliveredSeq = replayCursorSeq;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
       enqueue(encodeSseComment(BASELINE_SNAPSHOT_COMMENT));
+
+      const emitReplayEntry = (entry: ReplayEntry): boolean => {
+        if (!isValidKnownAgUiEvent(entry.event)) {
+          console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
+            threadId,
+            threadChatId,
+            runId: resolvedRunId,
+            eventType: Reflect.get(entry.event, "type"),
+            seq: entry.seq,
+          });
+          const errorEvent = mapRunErrorToAgui(
+            `Run ${resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
+            "replay_failed",
+          );
+          enqueue(encodeSseEvent(errorEvent));
+          close("malformed_replay");
+          return false;
+        }
+
+        diagnostics.replayCount += 1;
+        replayedEventDedupeKeys.add(getReplayDedupeKey(entry.event));
+        if (entry.seq !== null) {
+          lastDeliveredSeq =
+            lastDeliveredSeq === null
+              ? entry.seq
+              : Math.max(lastDeliveredSeq, entry.seq);
+        }
+        enqueue(encodeSseEvent(entry.event, sseIdForSeq(entry.seq)));
+        return true;
+      };
+
+      const replayDurableEventsAfterCursor = async (): Promise<boolean> => {
+        let replayEnvelopes: AgUiEventEnvelope[];
+        try {
+          replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
+            db,
+            threadChatId,
+            afterSeq: lastDeliveredSeq ?? undefined,
+          });
+        } catch (error) {
+          console.warn(
+            "[ag-ui] durable catch-up replay failed during live-tail; continuing",
+            { threadId, threadChatId, runId: resolvedRunId },
+            error,
+          );
+          return false;
+        }
+
+        if (replayEnvelopes.length === 0) {
+          return false;
+        }
+
+        const replayEntries = toReplayEntries(replayEnvelopes, null);
+        for (const entry of replayEntries) {
+          if (!emitReplayEntry(entry)) {
+            return true;
+          }
+          if (isTerminalRunEventType(entry.event.type)) {
+            close("terminal_event");
+            return true;
+          }
+        }
+        return true;
+      };
 
       // Shared live-tail helper: block-polls Redis starting from the cursor
       // captured before the DB replay. Used after both the run-replay path
       // (for active runs still in progress) and the no-history path (for
       // empty thread chats awaiting their first RUN_STARTED).
       const liveTail = async (params?: { runId?: string; userId?: string }) => {
+        let liveTailParams = params;
         const localRedisHttpMode = isLocalRedisHttpMode();
         keepaliveTimer = setInterval(() => {
           enqueue(encodeSseComment("keepalive"));
@@ -544,14 +619,14 @@ export async function GET(
           phase: "idle" | "xread_error",
           cause?: unknown,
         ): Promise<boolean> => {
-          if (!params?.runId || !params.userId) {
+          if (!liveTailParams?.runId || !liveTailParams.userId) {
             return false;
           }
           try {
             const runContext = await getAgentRunContextByRunId({
               db,
-              runId: params.runId,
-              userId: params.userId,
+              runId: liveTailParams.runId,
+              userId: liveTailParams.userId,
             });
             if (
               runContext !== null &&
@@ -559,7 +634,7 @@ export async function GET(
             ) {
               const terminalEvent = buildRunTerminalAgUi({
                 threadId,
-                runId: params.runId,
+                runId: liveTailParams.runId,
                 daemonRunStatus: runContext.status,
                 errorMessage: runContext.failureTerminalReason ?? null,
                 errorCode: runContext.failureCategory ?? null,
@@ -575,11 +650,44 @@ export async function GET(
           } catch (error) {
             console.warn(
               "[ag-ui] durable run status check failed during live-tail; continuing",
-              { phase, threadId, threadChatId, runId: params.runId },
+              { phase, threadId, threadChatId, runId: liveTailParams.runId },
               cause ?? error,
             );
           }
           return false;
+        };
+
+        const maybeDiscoverRunFromDurableLog = async (): Promise<boolean> => {
+          if (liveTailParams?.runId) {
+            return false;
+          }
+          let latestRunId: string | null = null;
+          try {
+            latestRunId = await getLatestRunIdForThreadChat({
+              db,
+              threadChatId,
+            });
+          } catch (error) {
+            console.warn(
+              "[ag-ui] latest-run discovery failed during empty live-tail; continuing",
+              { threadId, threadChatId },
+              error,
+            );
+            return false;
+          }
+          if (latestRunId === null) {
+            return false;
+          }
+
+          resolvedRunId = latestRunId;
+          const replayed = await replayDurableEventsAfterCursor();
+          if (!closed) {
+            liveTailParams = {
+              runId: latestRunId,
+              userId: session.user.id,
+            };
+          }
+          return replayed;
         };
 
         let lastId = initialLastId;
@@ -605,13 +713,15 @@ export async function GET(
             const entries = parseStreamEntries(raw);
             if (entries.length === 0) {
               consecutiveEmpty++;
-              if (params?.runId && params.userId) {
-                emptyPollsSinceTerminalCheck++;
-                if (
-                  emptyPollsSinceTerminalCheck >=
-                  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
-                ) {
-                  emptyPollsSinceTerminalCheck = 0;
+              emptyPollsSinceTerminalCheck++;
+              if (
+                emptyPollsSinceTerminalCheck >=
+                TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+              ) {
+                emptyPollsSinceTerminalCheck = 0;
+                if (!liveTailParams?.runId) {
+                  await maybeDiscoverRunFromDurableLog();
+                } else if (liveTailParams.userId) {
                   if (await maybeEmitTerminalFromDurable("idle")) {
                     break;
                   }
@@ -639,6 +749,12 @@ export async function GET(
                     replayedEventDedupeKeys.delete(dedupeKey);
                     diagnostics.dedupeCount += 1;
                     continue;
+                  }
+                  if (entry.seq !== null) {
+                    lastDeliveredSeq =
+                      lastDeliveredSeq === null
+                        ? entry.seq
+                        : Math.max(lastDeliveredSeq, entry.seq);
                   }
                   enqueue(encodeSseEvent(entry.event, sseIdForSeq(entry.seq)));
                   if (isTerminalRunEventType(entry.event.type)) {
@@ -673,13 +789,15 @@ export async function GET(
                 error,
               );
             }
-            if (params?.runId && params.userId) {
-              emptyPollsSinceTerminalCheck++;
-              if (
-                emptyPollsSinceTerminalCheck >=
-                TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
-              ) {
-                emptyPollsSinceTerminalCheck = 0;
+            emptyPollsSinceTerminalCheck++;
+            if (
+              emptyPollsSinceTerminalCheck >=
+              TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+            ) {
+              emptyPollsSinceTerminalCheck = 0;
+              if (!liveTailParams?.runId) {
+                await maybeDiscoverRunFromDurableLog();
+              } else if (liveTailParams.userId) {
                 if (await maybeEmitTerminalFromDurable("xread_error", error)) {
                   break;
                 }
@@ -839,25 +957,9 @@ export async function GET(
         resolvedRunHasTerminalEvent || syntheticTerminalEntry !== null;
 
       for (const entry of replayEntries) {
-        if (!isValidKnownAgUiEvent(entry.event)) {
-          console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
-            threadId,
-            threadChatId,
-            runId: resolvedRunId,
-            eventType: Reflect.get(entry.event, "type"),
-            seq: entry.seq,
-          });
-          const errorEvent = mapRunErrorToAgui(
-            `Run ${resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
-            "replay_failed",
-          );
-          enqueue(encodeSseEvent(errorEvent));
-          close("malformed_replay");
+        if (!emitReplayEntry(entry)) {
           return;
         }
-        diagnostics.replayCount += 1;
-        replayedEventDedupeKeys.add(getReplayDedupeKey(entry.event));
-        enqueue(encodeSseEvent(entry.event, sseIdForSeq(entry.seq)));
       }
 
       if (isRunComplete) {

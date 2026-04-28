@@ -119,7 +119,7 @@ export function CreditTesterContent() {
               <span className="font-medium">Balance</span>
               <span
                 className={`text-lg font-semibold ${
-                  balance.balanceCents < 0 ? "text-red-600" : "text-green-600"
+                  balance.balanceCents < 0 ? "text-error" : "text-success"
                 }`}
               >
                 {formatCents(balance.balanceCents)}
@@ -204,17 +204,17 @@ export function CreditTesterContent() {
       </Card>
 
       {error && (
-        <Card className="border-red-200 bg-red-50">
+        <Card className="border-error/30 bg-error/5">
           <CardContent className="pt-6">
-            <p className="text-sm text-red-600">{error}</p>
+            <p className="text-sm text-error">{error}</p>
           </CardContent>
         </Card>
       )}
 
       {success && (
-        <Card className="border-green-200 bg-green-50">
+        <Card className="border-success/30 bg-success/5">
           <CardContent className="pt-6">
-            <p className="text-sm text-green-600">{success}</p>
+            <p className="text-sm text-success">{success}</p>
           </CardContent>
         </Card>
       )}

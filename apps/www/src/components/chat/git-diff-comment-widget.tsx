@@ -101,8 +101,8 @@ export function CommentWidget({
       className={cn(
         "p-4 font-sans",
         isAddition
-          ? "bg-green-50 dark:bg-green-950/20"
-          : "bg-red-50 dark:bg-red-950/20",
+          ? "bg-[var(--diff-added-bg)]"
+          : "bg-[var(--diff-removed-bg)]",
       )}
     >
       <div className="bg-background border rounded-lg shadow-sm p-4">

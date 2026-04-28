@@ -107,7 +107,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-screen items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <div className="mb-4 text-green-600">
+            <div className="mb-4 text-success">
               <svg
                 className="h-12 w-12"
                 fill="none"

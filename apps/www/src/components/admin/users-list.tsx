@@ -216,17 +216,17 @@ export function AdminUsersList({
         return (
           <div className="flex gap-2">
             {u.role && (
-              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+              <span className="text-xs bg-info/10 text-info px-2 py-1 rounded">
                 {u.role}
               </span>
             )}
             {u.banned && (
-              <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
+              <span className="text-xs bg-error/10 text-error px-2 py-1 rounded">
                 Banned
               </span>
             )}
             {u.shadowBanned && (
-              <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+              <span className="text-xs bg-warning/10 text-warning px-2 py-1 rounded">
                 Shadow Ban
               </span>
             )}
@@ -361,7 +361,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Weekly active users by cohort age:
             </div>
-            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            <div className="bg-muted rounded-lg p-4">
               <ChartContainer
                 config={activeUsersChartConfig}
                 className="h-64 w-full"
@@ -395,7 +395,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               User retention by cohort age:
             </div>
-            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            <div className="bg-muted rounded-lg p-4">
               <ChartContainer
                 config={retentionChartConfig}
                 className="h-64 w-full"
@@ -478,7 +478,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly active users by cohort age:
             </div>
-            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            <div className="bg-muted rounded-lg p-4">
               <ChartContainer
                 config={monthlyActiveUsersChartConfig}
                 className="h-64 w-full"
@@ -512,7 +512,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly user retention by cohort age:
             </div>
-            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            <div className="bg-muted rounded-lg p-4">
               <ChartContainer
                 config={monthlyRetentionChartConfig}
                 className="h-64 w-full"
@@ -623,7 +623,7 @@ function AdminUserBigNumber({
   return (
     <div
       className={cn(
-        "flex flex-col items-center gap-2 bg-gray-100 dark:bg-gray-800 p-4 rounded-lg",
+        "flex flex-col items-center gap-2 bg-muted p-4 rounded-lg",
         className,
       )}
     >

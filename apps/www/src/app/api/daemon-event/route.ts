@@ -1325,22 +1325,16 @@ export async function POST(request: Request) {
     }
   }
 
-  if (
-    daemonRunStatusFromMessages !== "processing" &&
-    terminalCanonicalEventsForPersistence
-  ) {
-    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
-      canonicalEvents: terminalCanonicalEventsForPersistence,
-      canPersistCanonicalEvents,
-      runId: runContext.runId,
-      threadId,
-      threadChatId,
-      publishLive: false,
-    });
-    if (terminalCanonicalPersistence.response) {
-      return terminalCanonicalPersistence.response;
-    }
-  }
+  // Terminal canonical events (RUN_FINISHED / RUN_ERROR) are persisted
+  // AFTER handleDaemonEvent + rich-part persistence below so they acquire a
+  // higher per-thread-chat seq than any side-effect MESSAGES_SNAPSHOT or
+  // rich-part rows written for this same batch. Replay is ordered by seq
+  // ASC, and AG-UI's client-side verifyEvents forbids any event after
+  // RUN_ERROR / RUN_FINISHED — out-of-order seq would surface as
+  // "Cannot send event type 'MESSAGES_SNAPSHOT': The run has already
+  // errored with 'RUN_ERROR'" on reconnect. Live publish at the bottom of
+  // the route also reads from `terminalCanonicalPersistence.summary`, so
+  // the persist call still happens before the broadcast loop.
 
   // Heartbeat shortcut: empty messages skip message/event persistence,
   // envelope validation, and run-context status transitions.
@@ -1870,6 +1864,27 @@ export async function POST(request: Request) {
           }
         }
       }
+    }
+  }
+
+  // Deferred terminal-event persistence (see note above the heartbeat
+  // shortcut). At this point handleDaemonEvent has already written any
+  // side-effect MESSAGES_SNAPSHOT / rich-part rows, so the terminal marker
+  // is guaranteed to receive a higher seq and replay in the correct order.
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    terminalCanonicalEventsForPersistence
+  ) {
+    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
+      canonicalEvents: terminalCanonicalEventsForPersistence,
+      canPersistCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+      publishLive: false,
+    });
+    if (terminalCanonicalPersistence.response) {
+      return terminalCanonicalPersistence.response;
     }
   }
 

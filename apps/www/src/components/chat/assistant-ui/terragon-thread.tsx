@@ -1,6 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
+import type { Message as AgUiMessage } from "@ag-ui/core";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
@@ -92,6 +93,11 @@ type TerragonThreadProps = {
    */
   agent: HttpAgent;
   /**
+   * Durable AG-UI event-log history loader for assistant-ui runtime state.
+   * Rendering still uses `messages` during the current bridge slice.
+   */
+  loadAgUiHistoryMessages: () => Promise<readonly AgUiMessage[]>;
+  /**
    * Rendered messages. The active task page passes the `ThreadViewModel`
    * transcript; assistant-ui powers runtime integration but is not transcript
    * authority.
@@ -133,6 +139,7 @@ type TerragonThreadProps = {
 
 export function TerragonThread({
   agent,
+  loadAgUiHistoryMessages,
   messages,
   lifecycleMessages,
   threadStatus,
@@ -173,10 +180,11 @@ export function TerragonThread({
   const runtimeConfig = useMemo(
     () => ({
       agent,
+      loadHistoryMessages: loadAgUiHistoryMessages,
       showThinking,
       onCancel,
     }),
-    [agent, showThinking, onCancel],
+    [agent, loadAgUiHistoryMessages, showThinking, onCancel],
   );
 
   const runtime = useTerragonRuntime(runtimeConfig);

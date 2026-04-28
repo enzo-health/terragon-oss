@@ -316,8 +316,8 @@ export function AdminUserContent({
                             className={cn(
                               "w-2 h-2 rounded-full",
                               account.installation?.isActive
-                                ? "bg-green-500"
-                                : "bg-red-500",
+                                ? "bg-success"
+                                : "bg-error",
                             )}
                           />
                           <span className="text-sm">

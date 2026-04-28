@@ -143,12 +143,12 @@ export function FileDiffWrapper({
           {showLineCounts ? (
             <>
               {parsedFile.additions > 0 && (
-                <span className="text-green-600 dark:text-green-400 text-xs font-medium">
+                <span className="text-[var(--diff-added-fg)] text-xs font-medium">
                   +{parsedFile.additions}
                 </span>
               )}
               {parsedFile.deletions > 0 && (
-                <span className="text-red-600 dark:text-red-400 text-xs font-medium">
+                <span className="text-[var(--diff-removed-fg)] text-xs font-medium">
                   -{parsedFile.deletions}
                 </span>
               )}
@@ -156,13 +156,13 @@ export function FileDiffWrapper({
           ) : isImage ? (
             <span className="text-xs font-medium">
               {parsedFile.changeType === "added" ? (
-                <span className="text-green-600 dark:text-green-400">
+                <span className="text-[var(--diff-added-fg)]">
                   {parsedFile.newFileSize !== undefined
                     ? `+${formatBytes(parsedFile.newFileSize)}`
                     : "New image"}
                 </span>
               ) : parsedFile.changeType === "deleted" ? (
-                <span className="text-red-600 dark:text-red-400">
+                <span className="text-[var(--diff-removed-fg)]">
                   {parsedFile.oldFileSize !== undefined
                     ? `-${formatBytes(parsedFile.oldFileSize)}`
                     : "Deleted image"}

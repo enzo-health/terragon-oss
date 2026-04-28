@@ -156,7 +156,7 @@ function WebSearchToolContent({
               href={r.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-500 hover:underline truncate block"
+              className="text-coral hover:underline truncate block"
             >
               {r.title}
             </a>
@@ -169,7 +169,7 @@ function WebSearchToolContent({
               href={r.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-500 hover:underline truncate block"
+              className="text-coral hover:underline truncate block"
             >
               {r.title}
             </a>

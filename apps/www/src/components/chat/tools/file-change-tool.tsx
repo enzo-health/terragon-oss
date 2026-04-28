@@ -12,11 +12,11 @@ import {
 function getFileIcon(action?: string) {
   switch (action) {
     case "created":
-      return <FilePlus className="size-3.5 text-green-500 shrink-0" />;
+      return <FilePlus className="size-3.5 text-success shrink-0" />;
     case "deleted":
-      return <FileX className="size-3.5 text-red-500 shrink-0" />;
+      return <FileX className="size-3.5 text-error shrink-0" />;
     default:
-      return <FileDiff className="size-3.5 text-yellow-500 shrink-0" />;
+      return <FileDiff className="size-3.5 text-warning shrink-0" />;
   }
 }
 

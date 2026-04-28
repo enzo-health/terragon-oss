@@ -76,7 +76,7 @@ export function ClaudeRedirect({ type }: { type: AuthType }) {
       <div className="text-center">
         {error ? (
           <>
-            <h1 className="text-xl font-semibold text-red-600 mb-2">Error</h1>
+            <h1 className="text-xl font-semibold text-error mb-2">Error</h1>
             <p className="text-muted-foreground">{error}</p>
             <p className="text-sm text-muted-foreground mt-2">
               This window will close automatically...

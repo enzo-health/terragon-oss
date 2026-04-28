@@ -269,6 +269,7 @@ const ToolPart = memo(function ToolPart({
       onOptimisticPermissionModeUpdate,
       artifactDescriptors,
       onOpenArtifact,
+      ToolPart,
     ],
   );
 

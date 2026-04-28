@@ -1,6 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
+import type { Message as AgUiMessage } from "@ag-ui/core";
 import { AIAgent } from "@terragon/agent/types";
 import {
   DBUserMessage,
@@ -74,6 +75,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
 
   const {
     threadViewModel,
+    loadAgUiHistoryMessages,
     messages,
     queuedMessages,
     artifactDescriptors,
@@ -155,6 +157,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                   >
                     <TerragonThread
                       agent={agent}
+                      loadAgUiHistoryMessages={loadAgUiHistoryMessages}
                       messages={messages}
                       lifecycleMessages={threadViewModel.lifecycleMessages}
                       threadStatus={effectiveThreadStatus}
@@ -201,7 +204,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 <button
                   onClick={forceScrollToBottom}
                   className={cn(
-                    "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform,scale,box-shadow,background-color] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform,scale,box-shadow,background-color] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     hasInitialized && !isAtBottom
                       ? "opacity-100 translate-y-0 scale-100"
                       : "opacity-0 translate-y-2 scale-95 pointer-events-none",
@@ -308,6 +311,7 @@ export type ChatUICoreData = {
  */
 export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
+  loadAgUiHistoryMessages: () => Promise<readonly AgUiMessage[]>;
   messages: ThreadViewModelController["messages"];
   queuedMessages: DBUserMessage[] | null;
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];

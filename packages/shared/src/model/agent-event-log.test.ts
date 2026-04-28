@@ -728,6 +728,15 @@ describe("agent-event-log", () => {
         threadChatMessageSeq: 3,
       },
     ]);
+
+    expect(
+      await hasCanonicalReplayProjection({
+        db,
+        threadId: fixture.threadId,
+        threadChatId: fixture.threadChatId,
+      }),
+    ).toBe(true);
+
     await assignThreadChatMessageSeqToCanonicalEvents({
       db,
       eventIds: firstRunEvents.map((event) => event.eventId),
