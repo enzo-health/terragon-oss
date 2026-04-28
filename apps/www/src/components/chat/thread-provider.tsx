@@ -1,11 +1,16 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import type {
   ThreadPageChat,
   ThreadPageShell,
 } from "@terragon/shared/db/types";
-import React, { createContext, useContext, useEffect } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+} from "react";
 import {
   seedChat,
   useChatFromCollection,
@@ -18,6 +23,7 @@ import {
   threadChatQueryOptions,
   threadShellQueryOptions,
 } from "@/queries/thread-queries";
+import { ChatError } from "./chat-error";
 import { LeafLoading } from "./leaf-loading";
 
 /**
@@ -77,7 +83,13 @@ export function ThreadProvider({
   // patches). React Query fetches in the background and seeds collections on
   // delivery. Hover-prefetch (prefetch.ts) pre-populates before mount for
   // instant switching.
-  const { data: shellFromQuery, isLoading: isShellFetching } = useQuery({
+  const {
+    data: shellFromQuery,
+    isLoading: isShellFetching,
+    isError: isShellError,
+    error: shellError,
+    refetch: refetchShell,
+  } = useQuery({
     ...threadShellQueryOptions(threadId),
   });
   useEffect(() => {
@@ -89,15 +101,17 @@ export function ThreadProvider({
   const isShellLoading = !shell && isShellFetching;
 
   const threadChatId = shell?.primaryThreadChatId;
-  const { data: chatFromQuery, isLoading: isChatFetching } = useQuery({
-    ...(threadChatId
+  const {
+    data: chatFromQuery,
+    isLoading: isChatFetching,
+    isError: isChatError,
+    error: chatError,
+    refetch: refetchChat,
+  } = useQuery(
+    threadChatId
       ? threadChatQueryOptions({ threadId, threadChatId })
-      : threadChatQueryOptions({
-          threadId,
-          threadChatId: "missing-thread-chat-id",
-        })),
-    enabled: threadChatId !== undefined,
-  });
+      : threadChatQueryOptions(skipToken),
+  );
   useEffect(() => {
     if (chatFromQuery) seedChat(chatFromQuery);
   }, [chatFromQuery]);
@@ -105,6 +119,34 @@ export function ThreadProvider({
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
   const threadChat = chatFromCollection ?? chatFromQuery ?? null;
   const isThreadChatLoading = !threadChat && isChatFetching;
+
+  // Retry both queries when the user clicks the retry button. We swallow the
+  // refetch error because <ChatError/> already surfaces it via `errorInfo`.
+  const handleRetry = useCallback(async () => {
+    await Promise.allSettled([refetchShell(), refetchChat()]);
+  }, [refetchShell, refetchChat]);
+
+  // If either query errored AND we don't yet have data from the live
+  // collection to fall back on, render <ChatError/> instead of an infinite
+  // spinner. The fallback short-circuits before the loading gate so a stale
+  // collection seed can still keep the UI alive on transient network blips.
+  if ((isShellError && !shell) || (isChatError && !threadChat)) {
+    const err = isShellError ? shellError : chatError;
+    const errorInfo = err instanceof Error ? err.message : String(err ?? "");
+    return (
+      <div className="flex flex-col h-full w-full items-center justify-center p-4">
+        <div className="w-full max-w-2xl">
+          <ChatError
+            status="working-error"
+            errorType="unknown-error"
+            errorInfo={errorInfo}
+            handleRetry={handleRetry}
+            isReadOnly={isReadOnly}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (
     isShellLoading ||
