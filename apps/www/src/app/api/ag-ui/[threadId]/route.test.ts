@@ -615,6 +615,71 @@ describe("ag-ui SSE route", () => {
     });
   });
 
+  it("keeps post-terminal follow-up user snapshots in native history", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-before-follow-up",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 3,
+        messageId: "assistant-1",
+        delta: "First run done.",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "chat-1",
+        runId: "run-before-follow-up",
+      } as BaseEvent,
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 5,
+        messages: [
+          {
+            id: "side-effect-user-follow-up",
+            role: "user",
+            content: "follow-up prompt",
+          },
+        ],
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [11, 21, 31, 41, 51]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "First run done.",
+        },
+        {
+          id: "side-effect-user-follow-up",
+          role: "user",
+          content: "follow-up prompt",
+        },
+      ],
+      lastSeq: 51,
+    });
+  });
+
   it("seeds the thread title when no user message was persisted anywhere", async () => {
     dbMocks.limit.mockResolvedValue([
       {
@@ -861,6 +926,63 @@ describe("ag-ui SSE route", () => {
 
     const received = await readReplayBurst(response, 2);
     expect(received).toEqual(runEvents.slice(2));
+  });
+
+  it("drops inter-run side-effect snapshots from live replay", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-before-follow-up",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-before-follow-up",
+      } as BaseEvent,
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 3,
+        messages: [
+          {
+            id: "side-effect-user-follow-up",
+            role: "user",
+            content: "follow-up prompt",
+          },
+        ],
+      } as BaseEvent,
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-after-follow-up",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 5,
+        threadId: "thread-1",
+        runId: "run-after-follow-up",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-after-follow-up",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 4);
+    expect(received).toEqual([
+      runEvents[0],
+      runEvents[1],
+      runEvents[3],
+      runEvents[4],
+    ]);
   });
 
   it("emits the baseline snapshot marker frame before replay deltas", async () => {

@@ -134,13 +134,22 @@ export function TerragonThreadRuntimeContent({
   });
   const runtimeMessageProjectionById = useMemo(() => {
     const lookup = new Map<string, { message: UIMessage; index: number }>();
+    const runtimeMessageIds = new Set(
+      runtimeMessages.map((message) => message.id),
+    );
     messages.forEach((message, index) => {
-      if (message.id) {
+      if (message.id && runtimeMessageIds.has(message.id)) {
         lookup.set(message.id, { message, index });
       }
     });
     return lookup;
-  }, [messages]);
+  }, [messages, runtimeMessages]);
+  const localTranscriptMessages = useMemo(() => {
+    const runtimeMessageIds = new Set(
+      runtimeMessages.map((message) => message.id),
+    );
+    return messages.filter((message) => !runtimeMessageIds.has(message.id));
+  }, [messages, runtimeMessages]);
 
   const planOccurrencesRaw = useMemo(
     () => buildThreadPlanOccurrenceMap(messages),
@@ -269,6 +278,7 @@ export function TerragonThreadRuntimeContent({
         lifecycleMessages={lifecycleMessages}
         isRuntimeHydrating={isRuntimeHydrating}
         messages={messages}
+        localMessages={localTranscriptMessages}
         runtimeMessageProjectionById={runtimeMessageProjectionById}
         latestAgentMessageIndex={latestAgentMessageIndex}
         chatAgent={chatAgent}

@@ -1,4 +1,9 @@
-import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
+import {
+  type BaseEvent,
+  EventType,
+  type Message,
+  type MessagesSnapshotEvent,
+} from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
@@ -519,11 +524,15 @@ function toReplayEntries(
           seq: entry.seq,
         },
       })),
+    { keepInterRunUserAndSystemSnapshots: false },
   );
 }
 
 function dropEventsAfterTerminalUntilNextRun(
   entries: ReplayEntry[],
+  options: { keepInterRunUserAndSystemSnapshots: boolean } = {
+    keepInterRunUserAndSystemSnapshots: false,
+  },
 ): ReplayEntry[] {
   const filtered: ReplayEntry[] = [];
   let sawTerminal = false;
@@ -535,6 +544,12 @@ function dropEventsAfterTerminalUntilNextRun(
       continue;
     }
     if (sawTerminal) {
+      if (
+        options.keepInterRunUserAndSystemSnapshots &&
+        isUserOrSystemMessagesSnapshot(entry.event)
+      ) {
+        filtered.push(entry);
+      }
       continue;
     }
     filtered.push(entry);
@@ -544,6 +559,19 @@ function dropEventsAfterTerminalUntilNextRun(
   }
 
   return filtered;
+}
+
+function isUserOrSystemMessagesSnapshot(event: BaseEvent): boolean {
+  if (event.type !== EventType.MESSAGES_SNAPSHOT) {
+    return false;
+  }
+  const { messages } = event as MessagesSnapshotEvent;
+  return (
+    messages.length > 0 &&
+    messages.every(
+      (message) => message.role === "user" || message.role === "system",
+    )
+  );
 }
 
 function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
@@ -663,6 +691,7 @@ export async function GET(
         seq: envelope.seq,
         event: envelope.payload,
       })),
+      { keepInterRunUserAndSystemSnapshots: true },
     ).map((entry) => entry.event);
     const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
     const messages = mergeMissingDbUserMessagesIntoHistory({

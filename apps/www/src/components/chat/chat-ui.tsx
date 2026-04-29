@@ -84,13 +84,62 @@ function queuedUserMessageToOptimisticUiMessage({
   };
 }
 
+function submittedUserMessageToOptimisticUiMessage({
+  message,
+  index,
+  threadChatId,
+}: {
+  message: DBUserMessage;
+  index: number;
+  threadChatId: string;
+}): UIUserMessage {
+  return {
+    id: `user-optimistic-local-${threadChatId}-${index}-${message.timestamp ?? "pending"}`,
+    role: "user",
+    parts: message.parts,
+    timestamp: message.timestamp,
+    model: message.model,
+  };
+}
+
+function isSameUiUserMessage(
+  left: UIUserMessage,
+  right: UIUserMessage,
+): boolean {
+  return (
+    left.parts.length === right.parts.length &&
+    left.parts.every(
+      (part, index) =>
+        JSON.stringify(part) === JSON.stringify(right.parts[index]),
+    )
+  );
+}
+
+function appendUniqueUiUserMessages(
+  baseMessages: UIUserMessage[],
+  nextMessages: UIUserMessage[],
+): UIUserMessage[] {
+  let didAppend = false;
+  const out = [...baseMessages];
+  for (const message of nextMessages) {
+    if (out.some((existing) => isSameUiUserMessage(existing, message))) {
+      continue;
+    }
+    out.push(message);
+    didAppend = true;
+  }
+  return didAppend ? out : baseMessages;
+}
+
 function getOptimisticUserMessages({
   messages,
   queuedMessages,
+  submittedMessages,
   threadChatId,
 }: {
   messages: UIMessage[];
   queuedMessages: DBUserMessage[] | null;
+  submittedMessages: UIUserMessage[];
   threadChatId: string;
 }): UIUserMessage[] {
   const optimisticSubmittedMessages = messages.filter(
@@ -105,7 +154,10 @@ function getOptimisticUserMessages({
         threadChatId,
       }),
   );
-  return [...optimisticSubmittedMessages, ...optimisticQueuedMessages];
+  return appendUniqueUiUserMessages(
+    appendUniqueUiUserMessages(optimisticSubmittedMessages, submittedMessages),
+    optimisticQueuedMessages,
+  );
 }
 
 function isAgUiHistoryMessage(value: unknown): value is AgUiMessage {
@@ -197,6 +249,15 @@ function ChatUIContent() {
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  const [submittedOptimisticUserState, setSubmittedOptimisticUserState] =
+    useState<{ threadChatId: string; messages: UIUserMessage[] }>(() => ({
+      threadChatId,
+      messages: [],
+    }));
+  const submittedOptimisticUserMessages =
+    submittedOptimisticUserState.threadChatId === threadChatId
+      ? submittedOptimisticUserState.messages
+      : [];
   // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
   const [hasInitialized, setHasInitialized] = useState(false);
   useEffect(() => {
@@ -408,14 +469,29 @@ function ChatUIContent() {
   }, [thread, threadChat.id, threadViewModel.threadStatus]);
 
   const onOptimisticUserSubmit = useCallback(
-    (userMessage: DBUserMessage, optimisticStatus: ThreadStatus) =>
+    (userMessage: DBUserMessage, optimisticStatus: ThreadStatus) => {
+      setSubmittedOptimisticUserState((current) => {
+        const currentMessages =
+          current.threadChatId === threadChatId ? current.messages : [];
+        return {
+          threadChatId,
+          messages: appendUniqueUiUserMessages(currentMessages, [
+            submittedUserMessageToOptimisticUiMessage({
+              message: userMessage,
+              index: currentMessages.length,
+              threadChatId,
+            }),
+          ]),
+        };
+      });
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
           optimisticStatus,
         }),
-      ),
-    [dispatch],
+      );
+    },
+    [dispatch, threadChatId],
   );
 
   const onOptimisticQueuedMessagesUpdate = useCallback(
@@ -464,6 +540,7 @@ function ChatUIContent() {
       optimisticUserMessages: getOptimisticUserMessages({
         messages: threadViewModel.messages,
         queuedMessages,
+        submittedMessages: submittedOptimisticUserMessages,
         threadChatId: threadViewModel.threadChatId,
       }),
       artifactDescriptors,
@@ -481,6 +558,7 @@ function ChatUIContent() {
       lastUsedModel,
       loadAgUiHistoryMessages,
       queuedMessages,
+      submittedOptimisticUserMessages,
       threadViewModel,
       toolProps,
     ],

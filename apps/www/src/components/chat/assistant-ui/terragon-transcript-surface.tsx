@@ -13,11 +13,13 @@ import { MessageScheduled, WorkingMessage } from "../chat-messages";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { RuntimeTerragonMessage } from "./runtime-terragon-message";
 import { TerragonSystemMessage } from "./system-message";
+import { TerragonUserMessage } from "./user-message";
 
 type TerragonTranscriptSurfaceProps = {
   lifecycleMessages: UISystemMessage[];
   isRuntimeHydrating: boolean;
   messages: UIMessage[];
+  localMessages: UIMessage[];
   runtimeMessageProjectionById: Map<
     string,
     { message: UIMessage; index: number }
@@ -46,6 +48,7 @@ export function TerragonTranscriptSurface({
   lifecycleMessages,
   isRuntimeHydrating,
   messages,
+  localMessages,
   runtimeMessageProjectionById,
   latestAgentMessageIndex,
   chatAgent,
@@ -115,6 +118,37 @@ export function TerragonTranscriptSurface({
           }}
         </ThreadPrimitive.Messages>
       ) : null}
+      {!isRuntimeHydrating
+        ? localMessages.map((message) => {
+            const projectedIndex = messages.findIndex(
+              (candidate) => candidate.id === message.id,
+            );
+            const messageIndex =
+              projectedIndex >= 0 ? projectedIndex : messages.length - 1;
+            if (message.role === "user") {
+              return (
+                <TerragonUserMessage
+                  key={message.id}
+                  message={message}
+                  messageIndex={messageIndex}
+                  isLatestMessage={messageIndex === lastIndex}
+                  isFirstUserMessage={messageIndex === 0}
+                />
+              );
+            }
+            if (message.role === "system") {
+              return (
+                <TerragonSystemMessage
+                  key={message.id}
+                  message={message}
+                  messageIndex={messageIndex}
+                  isLatestMessage={messageIndex === lastIndex}
+                />
+              );
+            }
+            return null;
+          })
+        : null}
       {(error || errorType || errorInfo) && (
         <ChatError
           status={threadStatus ?? "error"}
