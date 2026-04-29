@@ -7,6 +7,7 @@ import type {
   ThreadInfoFull,
   ThreadStatus,
   UIMessage,
+  UIUserMessage,
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -61,6 +62,7 @@ export type TerragonThreadRuntimeContentProps = {
   threadChatId?: string;
   scheduleAt?: Date | null;
   threadChatStatus?: ThreadStatus;
+  optimisticUserMessages?: UIUserMessage[];
   children?: React.ReactNode;
 };
 
@@ -90,6 +92,7 @@ export function TerragonThreadRuntimeContent({
   threadChatId,
   scheduleAt,
   threadChatStatus,
+  optimisticUserMessages = [],
   children,
 }: TerragonThreadRuntimeContentProps) {
   const runtimeMessages = useAuiState((state) => state.thread.messages);
@@ -115,7 +118,14 @@ export function TerragonThreadRuntimeContent({
       }),
     [chatAgent, projectedTranscript, runtimeMessages],
   );
-  const messages = transcriptProjection.messages;
+  const messages = useMemo(
+    () =>
+      appendOptimisticUserMessages(
+        transcriptProjection.messages,
+        optimisticUserMessages,
+      ),
+    [optimisticUserMessages, transcriptProjection.messages],
+  );
   toolProps.messagesRef.current = messages;
   const isRuntimeHydrating = runtimeIsLoading && runtimeMessages.length === 0;
   useScrollToHashMessageOnce({
@@ -281,5 +291,52 @@ export function TerragonThreadRuntimeContent({
       />
       {children}
     </TerragonThreadProvider>
+  );
+}
+
+function appendOptimisticUserMessages(
+  messages: UIMessage[],
+  optimisticUserMessages: UIUserMessage[],
+): UIMessage[] {
+  if (optimisticUserMessages.length === 0) {
+    return messages;
+  }
+
+  let nextMessages: UIMessage[] | null = null;
+  for (const optimisticMessage of optimisticUserMessages) {
+    const existingMessages: UIMessage[] = nextMessages ?? messages;
+    const duplicate = existingMessages.some((message) =>
+      isSameUserMessage(message, optimisticMessage),
+    );
+    if (duplicate) {
+      continue;
+    }
+    nextMessages = [...existingMessages, optimisticMessage];
+  }
+
+  return nextMessages ?? messages;
+}
+
+function isSameUserMessage(
+  message: UIMessage,
+  optimisticMessage: UIUserMessage,
+): boolean {
+  return (
+    message.role === "user" &&
+    message.parts.length === optimisticMessage.parts.length &&
+    message.parts.every((part, index) =>
+      isSameUserMessagePart(part, optimisticMessage.parts[index]),
+    )
+  );
+}
+
+function isSameUserMessagePart(
+  part: UIUserMessage["parts"][number],
+  optimisticPart: UIUserMessage["parts"][number] | undefined,
+): boolean {
+  return (
+    optimisticPart !== undefined &&
+    part.type === optimisticPart.type &&
+    JSON.stringify(part) === JSON.stringify(optimisticPart)
   );
 }

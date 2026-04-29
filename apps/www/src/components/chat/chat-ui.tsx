@@ -9,6 +9,7 @@ import {
   ThreadInfoFull,
   ThreadStatus,
   UIMessage,
+  UIUserMessage,
 } from "@terragon/shared";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -63,6 +64,48 @@ import { useThreadViewModel } from "./use-ag-ui-messages";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function queuedUserMessageToOptimisticUiMessage({
+  message,
+  index,
+  threadChatId,
+}: {
+  message: DBUserMessage;
+  index: number;
+  threadChatId: string;
+}): UIUserMessage {
+  return {
+    id: `queued-optimistic-${threadChatId}-${index}-${message.timestamp ?? "pending"}`,
+    role: "user",
+    parts: message.parts,
+    timestamp: message.timestamp,
+    model: message.model,
+  };
+}
+
+function getOptimisticUserMessages({
+  messages,
+  queuedMessages,
+  threadChatId,
+}: {
+  messages: UIMessage[];
+  queuedMessages: DBUserMessage[] | null;
+  threadChatId: string;
+}): UIUserMessage[] {
+  const optimisticSubmittedMessages = messages.filter(
+    (message): message is UIUserMessage =>
+      message.role === "user" && message.id.startsWith("user-optimistic-"),
+  );
+  const optimisticQueuedMessages = (queuedMessages ?? []).map(
+    (message, index) =>
+      queuedUserMessageToOptimisticUiMessage({
+        message,
+        index,
+        threadChatId,
+      }),
+  );
+  return [...optimisticSubmittedMessages, ...optimisticQueuedMessages];
 }
 
 function isAgUiHistoryMessage(value: unknown): value is AgUiMessage {
@@ -418,6 +461,11 @@ function ChatUIContent() {
       threadViewModel,
       loadAgUiHistoryMessages,
       queuedMessages,
+      optimisticUserMessages: getOptimisticUserMessages({
+        messages: threadViewModel.messages,
+        queuedMessages,
+        threadChatId: threadViewModel.threadChatId,
+      }),
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,

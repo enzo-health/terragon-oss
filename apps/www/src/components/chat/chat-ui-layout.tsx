@@ -77,6 +77,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     threadViewModel,
     loadAgUiHistoryMessages,
     queuedMessages,
+    optimisticUserMessages,
     artifactDescriptors,
     effectiveThreadStatus,
     isAgentCurrentlyWorking,
@@ -158,6 +159,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                       agent={agent}
                       loadAgUiHistoryMessages={loadAgUiHistoryMessages}
                       lifecycleMessages={threadViewModel.lifecycleMessages}
+                      optimisticUserMessages={optimisticUserMessages}
                       threadStatus={effectiveThreadStatus}
                       thread={threadWithViewModelStatus}
                       latestGitDiffTimestamp={
@@ -311,6 +313,9 @@ export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   queuedMessages: DBUserMessage[] | null;
+  optimisticUserMessages: React.ComponentProps<
+    typeof TerragonThread
+  >["optimisticUserMessages"];
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];
   isAgentCurrentlyWorking: boolean;

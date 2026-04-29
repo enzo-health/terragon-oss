@@ -228,6 +228,66 @@ describe("TerragonThreadRuntimeContent", () => {
     );
   });
 
+  it("layers optimistic user messages onto the assistant-ui transcript", () => {
+    const messagesRef = { current: [] as UIMessage[] };
+
+    mount(
+      createElement(TerragonThreadRuntimeContent, {
+        lifecycleMessages: [],
+        optimisticUserMessages: [
+          {
+            id: "user-optimistic-chat-1-1",
+            role: "user",
+            parts: [{ type: "text", text: "Optimistic follow-up renders" }],
+            timestamp: new Date(1).toISOString(),
+            model: null,
+          },
+        ],
+        threadStatus: "complete",
+        thread: makeThreadWithDbTranscriptSentinel(),
+        latestGitDiffTimestamp: null,
+        isAgentWorking: false,
+        artifactDescriptors: [],
+        onOpenArtifact: vi.fn(),
+        toolProps: {
+          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messagesRef,
+          githubRepoFullName: "acme/app",
+          repoBaseBranchName: "main",
+          branchName: "feature/runtime-contract",
+        },
+        hasCheckpoint: false,
+        chatAgent: "codex",
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        reattemptQueueAt: null,
+        threadChatId: "chat-1",
+      }),
+    );
+
+    expect(transcriptSurfaceProps).toHaveLength(1);
+    expect(transcriptSurfaceProps[0]?.messages).toEqual([
+      {
+        id: "runtime-user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Runtime-owned transcript renders" }],
+      },
+      {
+        id: "user-optimistic-chat-1-1",
+        role: "user",
+        parts: [{ type: "text", text: "Optimistic follow-up renders" }],
+        timestamp: new Date(1).toISOString(),
+        model: null,
+      },
+    ]);
+    expect(messagesRef.current).toBe(transcriptSurfaceProps[0]?.messages);
+    expect(container!.textContent).toContain("Optimistic follow-up renders");
+    expect(container!.textContent).not.toContain(
+      "DB threadViewModel.messages must not render",
+    );
+  });
+
   it("does not use DB view-model messages while runtime history is hydrating", () => {
     runtimeState.thread.messages = [];
     runtimeState.thread.isLoading = true;

@@ -94,8 +94,8 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       forceScrollToBottom();
       setError(null);
       // Optimistically add the message to the thread
-      const optimisticStatus =
-        plainText.trim() === "/clear" ? "complete" : "booting";
+      const isClearContext = plainText.trim() === "/clear";
+      const optimisticStatus = isClearContext ? "complete" : "booting";
       onOptimisticUserSubmit(userMessage, optimisticStatus);
       const followUpResult = await followUp({
         threadId,
@@ -107,7 +107,9 @@ export const ChatPromptBox = memo(function ChatPromptBox({
         await refetch();
         return;
       }
-      await refetch();
+      if (isClearContext) {
+        await refetch();
+      }
     },
     [
       threadId,
@@ -159,9 +161,11 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       if (plainText.length === 0) {
         return;
       }
+      forceScrollToBottom();
+      setError(null);
       updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
     },
-    [queuedMessages, updateQueuedMessages],
+    [forceScrollToBottom, queuedMessages, setError, updateQueuedMessages],
   );
 
   return (

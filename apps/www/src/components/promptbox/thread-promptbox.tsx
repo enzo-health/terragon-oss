@@ -21,16 +21,10 @@ import {
   isAgentWorking,
   isPreSandboxStatus,
 } from "@/agent/thread-status";
+import { QueuedMessages } from "./queued-messages";
 import { SimplePromptBox } from "./simple-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
 import { HandleStop, HandleSubmit, usePromptBox } from "./use-promptbox";
-
-const QueuedMessages = dynamic(
-  () => import("./queued-messages").then((mod) => mod.QueuedMessages),
-  {
-    loading: () => null,
-  },
-);
 
 const GitHubQuickActions = dynamic(
   () =>
