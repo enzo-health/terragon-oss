@@ -383,6 +383,8 @@ type GitHubMembershipResponse = {
   state?: string;
 };
 
+const GITHUB_ORG_MEMBERSHIP_TIMEOUT_MS = 10_000;
+
 export async function isGitHubOrgMember({
   userId,
   org,
@@ -400,25 +402,34 @@ export async function isGitHubOrgMember({
     return false;
   }
 
-  const response = await fetch(
-    `https://api.github.com/user/memberships/orgs/${encodeURIComponent(normalizedOrg)}`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "Terragon",
+  try {
+    const response = await fetch(
+      `https://api.github.com/user/memberships/orgs/${encodeURIComponent(normalizedOrg)}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "Terragon",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(GITHUB_ORG_MEMBERSHIP_TIMEOUT_MS),
       },
-      cache: "no-store",
-    },
-  );
+    );
 
-  if (!response.ok) {
+    if (!response.ok) {
+      return false;
+    }
+
+    const membership: GitHubMembershipResponse =
+      (await response.json()) as GitHubMembershipResponse;
+    return membership.state === "active";
+  } catch (error) {
+    console.warn(
+      `[github-oauth] Failed to verify GitHub org membership for user ${userId}`,
+      error,
+    );
     return false;
   }
-
-  const membership: GitHubMembershipResponse =
-    (await response.json()) as GitHubMembershipResponse;
-  return membership.state === "active";
 }
 
 export async function getOctokitForUser({

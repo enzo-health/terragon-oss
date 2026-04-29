@@ -36,6 +36,7 @@ const COMPLETE_STATUS = {
   type: "complete",
   reason: "unknown",
 } satisfies MessageStatus;
+const UNRESOLVED_TOOL_RESULT = "Tool call ended without a result.";
 
 function userMetadata(): ThreadUserMessage["metadata"] {
   return { custom: {} };
@@ -349,6 +350,29 @@ function isFailedToolMessage(
   return isError === true || status === "error" || typeof error === "string";
 }
 
+function finishUnresolvedToolCalls(messages: ThreadMessage[]): ThreadMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant") {
+      return message;
+    }
+
+    let changed = false;
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-call" || part.result !== undefined) {
+        return part;
+      }
+      changed = true;
+      return {
+        ...part,
+        result: UNRESOLVED_TOOL_RESULT,
+        isError: true,
+      };
+    });
+
+    return changed ? { ...message, content } : message;
+  });
+}
+
 export function agUiMessagesToThreadMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
@@ -408,18 +432,23 @@ export function agUiMessagesToThreadMessages(
 
 export function createAgUiHistoryAdapter(
   loadAgUiMessages: AgUiHistoryLoader,
+  options: { resumeOnLoad?: boolean } = {},
 ): ThreadHistoryAdapter {
   return {
     load: async () => {
       const agUiMessages = await loadAgUiMessages();
-      const messages = agUiMessagesToThreadMessages(agUiMessages);
+      const importedMessages = agUiMessagesToThreadMessages(agUiMessages);
+      const messages =
+        options.resumeOnLoad === false
+          ? finishUnresolvedToolCalls(importedMessages)
+          : importedMessages;
       return {
         messages: messages.map((message, index) => ({
           parentId: messages[index - 1]?.id ?? null,
           message,
         })),
         headId: messages.at(-1)?.id ?? null,
-        unstable_resume: true,
+        unstable_resume: options.resumeOnLoad ?? true,
       };
     },
     append: async () => {},

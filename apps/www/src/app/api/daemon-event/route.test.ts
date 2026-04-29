@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getDaemonTokenAuthContextOrNull } from "@/lib/auth-server";
 import { persistAndPublishAgUiEvents } from "@/server-lib/ag-ui-publisher";
+import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
@@ -115,7 +116,9 @@ const agUiPublisherMocks = vi.hoisted(() => ({
       })),
   ),
   daemonDeltasToAgUiRows: vi.fn(() => []),
-  dbAgentMessagePartsToAgUiRows: vi.fn(() => []),
+  dbAgentMessagePartsToAgUiRows: vi.fn(
+    (): Array<{ event: unknown; eventId: string; timestamp: Date }> => [],
+  ),
   metaEventsToAgUiEvents: vi.fn(() => []),
   buildDeltaRunEndRows: vi.fn(() => [
     {
@@ -148,6 +151,10 @@ vi.mock("@/agent/sandbox-resource", () => sandboxResourceMocks);
 
 vi.mock("@/server-lib/handle-daemon-event", () => ({
   handleDaemonEvent: vi.fn(),
+}));
+
+vi.mock("@/server-lib/checkpoint-thread", () => ({
+  checkpointThread: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -434,6 +441,7 @@ describe("daemon-event route", () => {
       reason: "no_queued_messages",
     });
     vi.mocked(queueFollowUpInternal).mockResolvedValue(undefined);
+    vi.mocked(checkpointThread).mockResolvedValue(undefined);
     sandboxResourceMocks.hasOtherActiveRuns.mockResolvedValue(false);
     sandboxResourceMocks.setActiveThreadChat.mockResolvedValue(undefined);
     dbMocks.execute.mockResolvedValue({ rows: [] });
@@ -1010,7 +1018,7 @@ describe("daemon-event route", () => {
       expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
-    it("still routes a failed run with legacy error messages through the DB-message projection seam after persisting RUN_ERROR", async () => {
+    it("routes failed native runs through terminal handling without legacy transcript persistence", async () => {
       const runErrorEvent = createCanonicalRunTerminalEvent({
         eventId: "canonical-run-error",
         seq: 23,
@@ -1051,7 +1059,7 @@ describe("daemon-event route", () => {
         expect.objectContaining({
           messages: [errorMessage],
           deferTerminalTransitionToRoute: true,
-          skipThreadChatPersistence: false,
+          skipThreadChatPersistence: true,
         }),
       );
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
@@ -1227,6 +1235,64 @@ describe("daemon-event route", () => {
     // the DBAgentMessage parts array but the mapper itself skips pure text.
     const partTypes = inputs[0]!.parts.map((p) => p.type);
     expect(partTypes).toContain("thinking");
+  });
+
+  it("fails closed when native-runtime rich-part persistence fails", async () => {
+    agUiPublisherMocks.dbAgentMessagePartsToAgUiRows.mockReturnValueOnce([
+      {
+        event: { type: "CUSTOM" },
+        eventId: "rich-part-row",
+        timestamp: new Date("2026-04-29T00:00:00.000Z"),
+      },
+    ]);
+    agUiPublisherMocks.persistAndPublishAgUiEvents
+      .mockResolvedValueOnce({
+        inserted: 1,
+        skipped: 0,
+        insertedEventIds: ["canonical-start-for-rich-fail:STUB:0"],
+        persistedEnvelopes: [],
+      })
+      .mockRejectedValueOnce(new Error("rich publish failed"));
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-rich-fail",
+        runId: "run-1",
+        seq: 1,
+        canonicalEvents: [
+          createCanonicalRunStartedEvent({
+            eventId: "canonical-start-for-rich-fail",
+            seq: 1,
+          }),
+        ],
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "native-only thought" },
+                { type: "text", text: "answer" },
+              ],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "daemon_event_ag_ui_rich_part_persist_failed",
+    });
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ skipThreadChatPersistence: true }),
+    );
   });
 
   it("skips rich-part emission when assistant message has only text parts", async () => {
@@ -2782,6 +2848,11 @@ describe("daemon-event route", () => {
           skipBroadcast: true,
         }),
       );
+      expect(checkpointThread).toHaveBeenCalledWith({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      });
       expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
         expect.objectContaining({
           threadId: "thread-1",
@@ -2849,6 +2920,43 @@ describe("daemon-event route", () => {
           updates: expect.objectContaining({ status: "completed" }),
         }),
       );
+      expect(checkpointThread).toHaveBeenCalledWith({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      });
+    });
+
+    it("completes pure v2 successful terminals immediately when checkpointing is disabled", async () => {
+      vi.mocked(getThreadMinimal).mockResolvedValue({
+        id: "thread-1",
+        userId: "user-1",
+        codesandboxId: "sandbox-1",
+        sandboxProvider: "e2b",
+        disableGitCheckpointing: true,
+      } as unknown as Awaited<ReturnType<typeof getThreadMinimal>>);
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-no-checkpoint",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done_skip_checkpoint",
+          markAsUnread: true,
+        }),
+      );
+      expect(checkpointThread).not.toHaveBeenCalled();
     });
 
     it("routes stopped terminals through canonical terminal status updates without v3 writes", async () => {
@@ -2882,6 +2990,7 @@ describe("daemon-event route", () => {
           updates: expect.objectContaining({ status: "stopped" }),
         }),
       );
+      expect(checkpointThread).not.toHaveBeenCalled();
     });
 
     it("fails closed when terminal status CAS loses and thread_chat is still non-terminal", async () => {
@@ -2965,6 +3074,11 @@ describe("daemon-event route", () => {
           updates: expect.objectContaining({ status: "completed" }),
         }),
       );
+      expect(checkpointThread).toHaveBeenCalledWith({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+      });
     });
 
     it("fails closed when mixed terminal batch CAS loses and thread_chat is still non-terminal", async () => {
@@ -3215,15 +3329,21 @@ describe("daemon-event route", () => {
       const retryResponse = await POST(createDaemonRequest(requestBody));
       const retryData = await retryResponse.json();
 
-      expect(retryResponse.status).toBe(202);
-      expect(retryData).toMatchObject({
-        success: true,
-        deduplicated: true,
-        reason: "run_terminal_ignored",
-        acknowledgedEventId: "event-projection-retry",
-        acknowledgedSeq: 12,
+      expect(retryResponse.status).toBe(200);
+      expect(retryData).toMatchObject({ success: true });
+      expect(handleDaemonEvent).toHaveBeenCalledTimes(2);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
+      expect(checkpointThread).toHaveBeenCalledWith({
+        userId: "user-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
       });
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
       consoleErrorSpy.mockRestore();
     });
 

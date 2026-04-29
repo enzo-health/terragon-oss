@@ -26,6 +26,7 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
 }));
 
 import {
+  resolveTerragonRuntimeLoadConfig,
   resolveTerragonThreadErrorProps,
   TerragonThreadErrorBoundary,
 } from "./terragon-thread";
@@ -182,6 +183,7 @@ describe("resolveTerragonThreadErrorProps", () => {
         callerError: "Sandbox failed",
         callerErrorType: "sandbox",
         historyLoadError: "History failed",
+        runtimeError: "Runtime failed",
       }),
     ).toEqual({ errorType: "sandbox" });
   });
@@ -191,10 +193,52 @@ describe("resolveTerragonThreadErrorProps", () => {
       resolveTerragonThreadErrorProps({
         callerError: null,
         historyLoadError: "History failed",
+        runtimeError: "Runtime failed",
       }),
     ).toEqual({
       errorType: "history-load",
       errorInfo: "History failed",
+    });
+  });
+
+  it("uses a generic runtime error type for non-history runtime failures", () => {
+    expect(
+      resolveTerragonThreadErrorProps({
+        callerError: null,
+        historyLoadError: null,
+        runtimeError: "Cancel failed",
+      }),
+    ).toEqual({
+      errorType: "runtime",
+      errorInfo: "Cancel failed",
+    });
+  });
+});
+
+describe("resolveTerragonRuntimeLoadConfig", () => {
+  it("loads completed task history without resuming the AG-UI stream", () => {
+    expect(
+      resolveTerragonRuntimeLoadConfig({
+        isAgentWorking: false,
+        threadChatId: "chat-1",
+      }),
+    ).toEqual({
+      resumeOnLoad: false,
+      historyLoadKey: "chat-1:idle",
+      shouldApplyReplayCursor: false,
+    });
+  });
+
+  it("resumes active task history with a stable active load key", () => {
+    expect(
+      resolveTerragonRuntimeLoadConfig({
+        isAgentWorking: true,
+        threadChatId: "chat-1",
+      }),
+    ).toEqual({
+      resumeOnLoad: true,
+      historyLoadKey: "chat-1:active",
+      shouldApplyReplayCursor: true,
     });
   });
 });

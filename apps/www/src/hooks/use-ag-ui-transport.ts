@@ -71,6 +71,11 @@ export function useAgUiTransport(args: {
   useEffect(() => {
     if (!agent || !threadChatId) return;
     const query = new URLSearchParams({ threadChatId });
+    const currentUrl = new URL(agent.url, "http://terragon.local");
+    const fromSeq = currentUrl.searchParams.get("fromSeq");
+    if (fromSeq) {
+      query.set("fromSeq", fromSeq);
+    }
     if (runId) {
       query.set("runId", runId);
     }

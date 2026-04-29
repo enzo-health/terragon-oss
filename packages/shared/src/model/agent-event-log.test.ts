@@ -411,6 +411,35 @@ describe("agent-event-log", () => {
       EventType.CUSTOM,
       EventType.RUN_FINISHED,
     ]);
+
+    const agUiEnvelopes = await getAgUiEventEnvelopesForRun({
+      db,
+      runId: fixture.runId,
+    });
+    const assistantMessageEnvelopeProjection = agUiEnvelopes
+      .filter((entry) => entry.seq === 1)
+      .map((entry) => ({
+        type: entry.payload.type,
+        projectionIndex: entry.projectionIndex,
+        projectionCount: entry.projectionCount,
+      }));
+    expect(assistantMessageEnvelopeProjection).toEqual([
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        projectionIndex: 0,
+        projectionCount: 3,
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        projectionIndex: 1,
+        projectionCount: 3,
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        projectionIndex: 2,
+        projectionCount: 3,
+      },
+    ]);
   });
 
   it("stores quarantined unknown provider events without replaying them through AG UI", async () => {
@@ -1044,6 +1073,8 @@ describe("agent-event-log", () => {
       expect(result).toEqual({
         eventId: "event-1",
         seq: 42,
+        projectionIndex: 0,
+        projectionCount: 1,
         runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
@@ -1846,6 +1877,67 @@ describe("agent-event-log", () => {
           threadChatId: fixture.threadChatId,
         }),
       ).resolves.toBe(fixture.runId);
+    });
+
+    it("selects the latest run when RUN_STARTED arrives after early deltas", async () => {
+      const fixture = await createRunFixture();
+      const delayedRunId = newId("run");
+
+      await db.insert(schema.agentEventLog).values([
+        {
+          eventId: newId("event"),
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 0,
+          eventType: "RUN_STARTED",
+          category: "agui",
+          payloadJson: {
+            type: EventType.RUN_STARTED,
+            runId: fixture.runId,
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: delayedRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 5,
+          eventType: "TEXT_MESSAGE_CONTENT",
+          category: "agui",
+          payloadJson: {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "delayed-msg",
+            delta: "before start",
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+        {
+          eventId: newId("event"),
+          runId: delayedRunId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          seq: 6,
+          eventType: "RUN_STARTED",
+          category: "agui",
+          payloadJson: {
+            type: EventType.RUN_STARTED,
+            runId: delayedRunId,
+          },
+          idempotencyKey: newId("idempotency"),
+          timestamp: new Date(),
+        },
+      ]);
+
+      await expect(
+        getLatestRunIdForThreadChat({
+          db,
+          threadChatId: fixture.threadChatId,
+        }),
+      ).resolves.toBe(delayedRunId);
     });
 
     it("returns null when every run is legacy-shaped", async () => {

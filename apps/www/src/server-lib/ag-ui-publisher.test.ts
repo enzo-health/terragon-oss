@@ -92,7 +92,6 @@ async function fetchRowsForThreadChat(threadChatId: string) {
 
 describe("ag-ui-publisher", () => {
   beforeEach(async () => {
-    await db.delete(schema.agentEventLog);
     vi.clearAllMocks();
     redisMocks.xadd.mockResolvedValue("1-0");
   });

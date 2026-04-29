@@ -16,18 +16,13 @@ export default async function TaskListLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Resolve auth + prefetch the thread list in parallel. The thread-list
-  // server action gets its user scope via cached `getSessionOrNull()`
-  // internally, so it doesn't need `userId` as an arg — we only need
-  // userId to decide whether to render the sidebar. Parallelizing saves
-  // one session-check-worth of wall-clock time from TTFB.
   const queryClient = new QueryClient();
-  const [userId] = await Promise.all([
-    getUserIdOrNull(),
-    queryClient.prefetchInfiniteQuery(
+  const userId = await getUserIdOrNull();
+  if (userId) {
+    await queryClient.prefetchInfiniteQuery(
       threadListQueryOptions({ archived: false }),
-    ),
-  ]);
+    );
+  }
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-4 md:pr-4 md:pl-2">

@@ -103,6 +103,7 @@ export class TerragonAgUiThreadRuntimeCore {
   private readonly recordedHistoryIds = new Set<string>();
   private _isLoading = false;
   private _loadPromise: Promise<void> | undefined;
+  private _loadKey: string | undefined;
 
   constructor(options: TerragonAgUiRuntimeCoreOptions) {
     this.agent = options.agent;
@@ -147,13 +148,20 @@ export class TerragonAgUiThreadRuntimeCore {
     return this._isLoading;
   }
 
-  __internal_load(): Promise<void> {
-    if (this._loadPromise) return this._loadPromise;
+  __internal_load(loadKey = "default"): Promise<void> {
+    if (this._loadPromise && this._loadKey === loadKey) {
+      return this._loadPromise;
+    }
+    if (this._isLoading && this._loadPromise) {
+      return this._loadPromise;
+    }
 
     const promise = this.history?.load() ?? Promise.resolve(null);
 
+    this._loadKey = loadKey;
     this._isLoading = true;
 
+    let loadFailed = false;
     this._loadPromise = promise
       .then(async (repo) => {
         if (!repo) return;
@@ -167,6 +175,7 @@ export class TerragonAgUiThreadRuntimeCore {
         }
       })
       .catch((error: unknown) => {
+        loadFailed = true;
         this.logger.error?.("[agui] failed to load history", error);
         this.onError?.(
           error instanceof Error ? error : new Error(String(error)),
@@ -174,6 +183,10 @@ export class TerragonAgUiThreadRuntimeCore {
       })
       .finally(() => {
         this._isLoading = false;
+        if (loadFailed) {
+          this._loadPromise = undefined;
+          this._loadKey = undefined;
+        }
         this.notifyUpdate();
       });
 

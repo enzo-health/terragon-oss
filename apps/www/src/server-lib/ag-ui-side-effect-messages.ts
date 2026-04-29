@@ -395,6 +395,7 @@ type HistoryBuilderState = {
     NonNullable<Extract<Message, { role: "assistant" }>["toolCalls"]>[number]
   >;
   toolParentById: Map<string, string>;
+  unresolvedToolCallIds: Set<string>;
   lastAssistantId: string | null;
   lastSeqOffset: number;
 };
@@ -406,6 +407,7 @@ function createHistoryBuilderState(): HistoryBuilderState {
     assistantById: new Map(),
     toolCallById: new Map(),
     toolParentById: new Map(),
+    unresolvedToolCallIds: new Set(),
     lastAssistantId: null,
     lastSeqOffset: -1,
   };
@@ -443,6 +445,16 @@ function applyHistoryEvent(
         return true;
       }
       return false;
+    case EventType.RUN_FINISHED:
+      return finishUnresolvedHistoryToolCalls(
+        state,
+        "Tool call ended without a result.",
+      );
+    case EventType.RUN_ERROR:
+      return finishUnresolvedHistoryToolCalls(
+        state,
+        historyRunErrorMessage(event),
+      );
     default:
       return false;
   }
@@ -467,6 +479,7 @@ function applyMessagesSnapshot(
       state.assistantById.clear();
       state.toolCallById.clear();
       state.toolParentById.clear();
+      state.unresolvedToolCallIds.clear();
       state.lastAssistantId = null;
       continue;
     }
@@ -485,6 +498,10 @@ function indexHistoryMessage(
   state: HistoryBuilderState,
   message: Message,
 ): void {
+  if (message.role === "tool") {
+    state.unresolvedToolCallIds.delete(message.toolCallId);
+    return;
+  }
   if (message.role !== "assistant") {
     return;
   }
@@ -493,6 +510,7 @@ function indexHistoryMessage(
   for (const toolCall of message.toolCalls ?? []) {
     state.toolCallById.set(toolCall.id, toolCall);
     state.toolParentById.set(toolCall.id, message.id);
+    state.unresolvedToolCallIds.add(toolCall.id);
   }
 }
 
@@ -547,10 +565,10 @@ function appendTextHistoryMessage(
 }
 
 function finishTextHistoryMessage(
-  _state: HistoryBuilderState,
-  _event: TextMessageEndEvent,
+  state: HistoryBuilderState,
+  event: TextMessageEndEvent,
 ): boolean {
-  return false;
+  return state.assistantById.has(event.messageId);
 }
 
 function startHistoryToolCall(
@@ -585,6 +603,7 @@ function startHistoryToolCall(
   parent.toolCalls = [...toolCalls, toolCall];
   state.toolCallById.set(event.toolCallId, toolCall);
   state.toolParentById.set(event.toolCallId, parentMessageId);
+  state.unresolvedToolCallIds.add(event.toolCallId);
   return true;
 }
 
@@ -604,10 +623,10 @@ function appendHistoryToolArgs(
 }
 
 function finishHistoryToolCall(
-  _state: HistoryBuilderState,
-  _event: ToolCallEndEvent,
+  state: HistoryBuilderState,
+  event: ToolCallEndEvent,
 ): boolean {
-  return false;
+  return state.toolCallById.has(event.toolCallId);
 }
 
 function addHistoryToolResult(
@@ -626,7 +645,34 @@ function addHistoryToolResult(
     content: content ?? "",
     ...(failed ? { error: content ?? "Tool call failed" } : {}),
   });
+  state.unresolvedToolCallIds.delete(event.toolCallId);
   return true;
+}
+
+function finishUnresolvedHistoryToolCalls(
+  state: HistoryBuilderState,
+  content: string,
+): boolean {
+  let changed = false;
+  for (const toolCallId of state.unresolvedToolCallIds) {
+    state.items.push({
+      id: `${toolCallId}:unresolved-result`,
+      role: "tool",
+      toolCallId,
+      content,
+      error: content,
+    });
+    changed = true;
+  }
+  state.unresolvedToolCallIds.clear();
+  return changed || state.items.length > 0;
+}
+
+function historyRunErrorMessage(event: BaseEvent): string {
+  const message = Reflect.get(event, "message");
+  return typeof message === "string" && message.length > 0
+    ? message
+    : "Run ended before this tool returned a result.";
 }
 
 function isFailedToolResultEvent(event: ToolCallResultEvent): boolean {

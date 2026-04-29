@@ -87,17 +87,15 @@ export class TerragonRunAggregator {
         break;
       }
       case EventType.RUN_FINISHED: {
-        const hasUnresolvedToolCalls = Array.from(this.toolCalls.values()).some(
-          (tc) => tc.result === undefined,
-        );
-
-        this.status = hasUnresolvedToolCalls
-          ? { type: "requires-action", reason: "tool-calls" }
-          : { type: "complete", reason: "unknown" };
+        this.finishUnresolvedToolCalls("Tool call ended without a result.");
+        this.status = { type: "complete", reason: "unknown" };
         this.emit(this.lastTargetMessageId);
         break;
       }
       case "RUN_ERROR": {
+        this.finishUnresolvedToolCalls(
+          event.message ?? "Run ended before this tool returned a result.",
+        );
         this.status = {
           type: "incomplete",
           reason: "error",
@@ -107,6 +105,9 @@ export class TerragonRunAggregator {
         break;
       }
       case "RUN_CANCELLED": {
+        this.finishUnresolvedToolCalls(
+          "Run was cancelled before this tool returned a result.",
+        );
         this.status = { type: "incomplete", reason: "cancelled" };
         this.emit(this.lastTargetMessageId);
         break;
@@ -395,6 +396,14 @@ export class TerragonRunAggregator {
     }
     entry.result = this.tryParseJSON(content);
     entry.isError = isError;
+  }
+
+  private finishUnresolvedToolCalls(content: string): void {
+    for (const entry of this.toolCalls.values()) {
+      if (entry.result !== undefined) continue;
+      entry.result = content;
+      entry.isError = true;
+    }
   }
 
   private tryParseJSON(value: string): unknown {

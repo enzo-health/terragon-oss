@@ -48,7 +48,7 @@ export function TerragonTranscriptSurface({
   lifecycleMessages,
   isRuntimeHydrating,
   messages,
-  localMessages,
+  localMessages = [],
   runtimeMessageProjectionById,
   latestAgentMessageIndex,
   chatAgent,

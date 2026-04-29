@@ -152,7 +152,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 <div ref={transcriptRef} className="min-h-full flex flex-col">
                   <TerragonThreadErrorBoundary
                     threadStatus={effectiveThreadStatus}
-                    handleRetry={handleRetry}
                     isReadOnly={isReadOnly}
                   >
                     <TerragonThread

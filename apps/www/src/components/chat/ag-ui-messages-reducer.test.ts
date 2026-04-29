@@ -271,6 +271,40 @@ describe("agUiMessagesReducer", () => {
       expect(parts[0]).toMatchObject({ status: "error", result: "boom" });
     });
 
+    it("RUN_FINISHED marks unresolved tool parts as error", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Task",
+        } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: "t1" } as BaseEvent,
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "m1",
+          delta: "Text after the tool call",
+        } as BaseEvent,
+        { type: EventType.RUN_FINISHED, runId: "run-1" } as BaseEvent,
+      ]);
+
+      const parts = (next.messages[0] as { parts: Array<{ type: string }> })
+        .parts;
+      expect(parts).toEqual([
+        {
+          type: "tool",
+          id: "t1",
+          agent: "claudeCode",
+          name: "Task",
+          parameters: {},
+          status: "error",
+          parts: [],
+          result: "Tool call ended without a result.",
+        },
+        { type: "text", text: "Text after the tool call" },
+      ]);
+    });
+
     it("TOOL_CALL_ARGS accumulates incremental JSON chunks", () => {
       const next = apply(mkState(), [
         { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,

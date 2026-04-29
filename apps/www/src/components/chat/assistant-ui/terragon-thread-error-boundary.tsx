@@ -6,7 +6,6 @@ import { ChatError } from "../chat-error";
 
 type TerragonThreadErrorBoundaryProps = {
   threadStatus: ThreadStatus | null;
-  handleRetry?: () => Promise<void>;
   isReadOnly?: boolean;
   children: ReactNode;
 };
@@ -29,13 +28,13 @@ export class TerragonThreadErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("TerragonThread crashed:", error, info);
+    if (typeof globalThis.reportError === "function") {
+      globalThis.reportError(error);
+    }
   }
 
   private handleRetry = async (): Promise<void> => {
     this.setState({ error: null });
-    if (this.props.handleRetry) {
-      await this.props.handleRetry();
-    }
   };
 
   render(): ReactNode {

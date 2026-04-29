@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EventType } from "@ag-ui/core";
-import { agUiMessagesToThreadMessages } from "./ag-ui-history-adapter";
+import {
+  agUiMessagesToThreadMessages,
+  createAgUiHistoryAdapter,
+} from "./ag-ui-history-adapter";
 import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
 
 describe("agUiMessagesToThreadMessages", () => {
@@ -38,6 +41,40 @@ describe("agUiMessagesToThreadMessages", () => {
       type: "tool-call",
       toolCallId: "tool-1",
       result: "permission denied",
+      isError: true,
+    });
+  });
+
+  it("marks unresolved idle-history tool calls as errored", async () => {
+    const adapter = createAgUiHistoryAdapter(
+      () => [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Task",
+                arguments: "{}",
+              },
+            },
+          ],
+        },
+      ],
+      { resumeOnLoad: false },
+    );
+
+    const repository = await adapter.load();
+    const message = repository.messages[0]?.message;
+    expect(message?.role).toBe("assistant");
+    const part = message?.role === "assistant" ? message.content[0] : null;
+    expect(part).toMatchObject({
+      type: "tool-call",
+      toolCallId: "tool-1",
+      result: "Tool call ended without a result.",
       isError: true,
     });
   });

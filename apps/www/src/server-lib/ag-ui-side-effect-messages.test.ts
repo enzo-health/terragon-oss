@@ -262,6 +262,63 @@ describe("ag-ui-side-effect-messages", () => {
     });
   });
 
+  it("synthesizes failed tool results for unresolved tool calls on run finish", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "tool-1",
+        toolCallName: "Task",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_END,
+        timestamp: 3,
+        toolCallId: "tool-1",
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Task",
+                arguments: "",
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-1:unresolved-result",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "Tool call ended without a result.",
+          error: "Tool call ended without a result.",
+        },
+      ],
+      lastSeqOffset: 3,
+    });
+  });
+
   it("attaches nested tool starts that reference a parent tool id to the assistant message", () => {
     const events = [
       {
@@ -416,11 +473,11 @@ describe("ag-ui-side-effect-messages", () => {
           },
         },
       ],
-      lastSeqOffset: 7,
+      lastSeqOffset: 8,
     });
   });
 
-  it("does not advance durable history cursor for trailing message or tool end events", () => {
+  it("advances durable history cursor through represented message and tool end events", () => {
     const textHistory = getDurableAgUiHistoryItemsFromEvents([
       {
         type: EventType.TEXT_MESSAGE_START,
@@ -440,7 +497,7 @@ describe("ag-ui-side-effect-messages", () => {
         messageId: "assistant-1",
       },
     ] satisfies BaseEvent[]);
-    expect(textHistory.lastSeqOffset).toBe(1);
+    expect(textHistory.lastSeqOffset).toBe(2);
 
     const toolHistory = getDurableAgUiHistoryItemsFromEvents([
       {
@@ -456,7 +513,28 @@ describe("ag-ui-side-effect-messages", () => {
         toolCallId: "tool-1",
       },
     ] satisfies BaseEvent[]);
-    expect(toolHistory.lastSeqOffset).toBe(0);
+    expect(toolHistory.lastSeqOffset).toBe(1);
+  });
+
+  it("does not advance durable history cursor through an active run start alone", () => {
+    const history = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "start here" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[]);
+
+    expect(history).toEqual({
+      items: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeqOffset: 0,
+    });
   });
 
   it("does not persist when an append batch has no user or system messages", async () => {

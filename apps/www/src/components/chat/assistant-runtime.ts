@@ -37,6 +37,8 @@ export function useTerragonRuntime({
   onError,
   onCancel,
   showThinking = true,
+  resumeOnLoad = true,
+  historyLoadKey,
 }: {
   agent: HttpAgent;
   historyMessages?: readonly AgUiMessage[];
@@ -49,22 +51,27 @@ export function useTerragonRuntime({
    * agent does. Defaults to `true` for backward compatibility.
    */
   showThinking?: boolean;
+  resumeOnLoad?: boolean;
+  historyLoadKey?: string;
 }): AssistantRuntime {
   const history = useMemo(
     () =>
-      createAgUiHistoryAdapter(async () => {
-        try {
-          return await (loadHistoryMessages?.() ?? historyMessages);
-        } catch (error) {
-          const normalizedError =
-            error instanceof Error
-              ? error
-              : new Error(`History load failed: ${String(error)}`);
-          onError?.(normalizedError);
-          return historyMessages;
-        }
-      }),
-    [historyMessages, loadHistoryMessages, onError],
+      createAgUiHistoryAdapter(
+        async () => {
+          try {
+            return await (loadHistoryMessages?.() ?? historyMessages);
+          } catch (error) {
+            const normalizedError =
+              error instanceof Error
+                ? error
+                : new Error(`History load failed: ${String(error)}`);
+            onError?.(normalizedError);
+            return historyMessages;
+          }
+        },
+        { resumeOnLoad },
+      ),
+    [historyMessages, loadHistoryMessages, onError, resumeOnLoad],
   );
 
   const runtimeOptions = useMemo<UseTerragonAgUiRuntimeOptions>(
@@ -97,8 +104,9 @@ export function useTerragonRuntime({
       adapters: {
         history,
       },
+      historyLoadKey,
     }),
-    [agent, history, onCancel, onError, showThinking],
+    [agent, history, historyLoadKey, onCancel, onError, showThinking],
   );
 
   return useTerragonAgUiRuntime(runtimeOptions);

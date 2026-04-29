@@ -42,6 +42,7 @@ export type UseTerragonAgUiRuntimeOptions = {
   showThinking?: boolean;
   onError?: (e: Error) => void;
   onCancel?: () => void;
+  historyLoadKey?: string;
   adapters?: {
     attachments?: RuntimeAdapters["attachments"];
     speech?: StoreAdapters["speech"];
@@ -221,8 +222,8 @@ export function useTerragonAgUiRuntime(
   }, [core, runtime]);
 
   useEffect(() => {
-    void core.__internal_load();
-  }, [core]);
+    void core.__internal_load(options.historyLoadKey);
+  }, [core, options.historyLoadKey]);
 
   return runtime;
 }

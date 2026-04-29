@@ -81,6 +81,8 @@ export type AgUiEventEnvelope<
   ? AgUiEventEnvelopeIdentity
   : Partial<AgUiEventEnvelopeIdentity>) & {
   seq: number;
+  projectionIndex?: number;
+  projectionCount?: number;
   runId: string;
   threadChatId: string;
   payload: TEvent;
@@ -258,6 +260,8 @@ export function readAgUiPayload(row: AgUiReadableRow): BaseEvent | null {
 function toAgUiEventEnvelope({
   row,
   payload,
+  projectionIndex,
+  projectionCount,
 }: {
   row: Pick<
     AgentEventLogRow,
@@ -270,10 +274,14 @@ function toAgUiEventEnvelope({
     | "timestamp"
   >;
   payload: BaseEvent;
+  projectionIndex?: number;
+  projectionCount?: number;
 }): AgUiEventEnvelope<BaseEvent, "full"> {
   return {
     eventId: row.eventId,
     seq: row.seq,
+    projectionIndex,
+    projectionCount,
     runId: row.runId,
     threadId: row.threadId,
     threadChatId: row.threadChatId,
@@ -290,7 +298,12 @@ export function readAgUiEnvelope(
   if (payload === null) {
     return null;
   }
-  return toAgUiEventEnvelope({ row, payload });
+  return toAgUiEventEnvelope({
+    row,
+    payload,
+    projectionIndex: 0,
+    projectionCount: 1,
+  });
 }
 
 /**
@@ -337,7 +350,14 @@ export function readAllAgUiEnvelopes(
   >,
 ): Array<AgUiEventEnvelope<BaseEvent, "full">> {
   const payloads = readAllAgUiPayloads(row);
-  return payloads.map((payload) => toAgUiEventEnvelope({ row, payload }));
+  return payloads.map((payload, projectionIndex) =>
+    toAgUiEventEnvelope({
+      row,
+      payload,
+      projectionIndex,
+      projectionCount: payloads.length,
+    }),
+  );
 }
 
 function toIdempotencyKey(envelope: BaseEventEnvelope): string {
@@ -1018,10 +1038,10 @@ export async function getAgUiEventsForRun({
 /**
  * Return the runId of the most recent **well-formed** run for a thread chat,
  * or null if the thread chat has no eligible runs. "Well-formed" means the
- * run's first (minimum-seq) event is `RUN_STARTED`; legacy runs whose first
- * event is `TEXT_MESSAGE_CONTENT` (etc.) predate the START/END-bracketing
- * writer and are intentionally skipped — the strict replay route would emit
- * `RUN_ERROR` for them, so the UI treats those transcripts as empty.
+ * run has a `RUN_STARTED` event. Some runtime transports can persist the
+ * start marker shortly after the first text delta; the SSE route repairs that
+ * order during replay, so those runs are still eligible. Legacy runs with no
+ * `RUN_STARTED` marker are intentionally skipped.
  *
  * Ordering: among eligible runs, pick the one with the greatest max(seq) in
  * the thread chat, matching the previous "latest by seq" semantic.
@@ -1044,25 +1064,29 @@ export async function getLatestRunIdForThreadChat({
   threadChatId: string;
 }): Promise<RunId | null> {
   try {
-    // Find each run's (min_seq, max_seq) within the thread chat, then keep
-    // only those whose min-seq row starts a run. This accepts both AG-UI
-    // native rows (`RUN_STARTED`) and canonical rows (`run-started`).
+    // Find each run's max(seq) within the thread chat, then keep only runs
+    // that contain a start marker. This accepts both AG-UI native rows
+    // (`RUN_STARTED`) and canonical rows (`run-started`), including runs where
+    // the marker was persisted after early text deltas.
     const result = await db.execute<{ run_id: string }>(sql`
       WITH run_bounds AS (
         SELECT
           ${schema.agentEventLog.runId} AS run_id,
-          MIN(${schema.agentEventLog.seq}) AS min_seq,
           MAX(${schema.agentEventLog.seq}) AS max_seq
         FROM ${schema.agentEventLog}
         WHERE ${schema.agentEventLog.threadChatId} = ${threadChatId}
         GROUP BY ${schema.agentEventLog.runId}
+      ),
+      started_runs AS (
+        SELECT DISTINCT ${schema.agentEventLog.runId} AS run_id
+        FROM ${schema.agentEventLog}
+        WHERE
+          ${schema.agentEventLog.threadChatId} = ${threadChatId}
+          AND ${schema.agentEventLog.eventType} IN ('RUN_STARTED', 'run-started')
       )
       SELECT rb.run_id
       FROM run_bounds rb
-      JOIN ${schema.agentEventLog} ael
-        ON ael.run_id = rb.run_id
-        AND ael.seq = rb.min_seq
-      WHERE ael.event_type IN ('RUN_STARTED', 'run-started')
+      JOIN started_runs sr ON sr.run_id = rb.run_id
       ORDER BY rb.max_seq DESC
       LIMIT 1
     `);
