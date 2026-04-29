@@ -138,7 +138,7 @@ describe("mapCanonicalEventToAgui", () => {
       });
     });
 
-    it("sets parentMessageId when parentToolUseId is present", () => {
+    it("does not map parentToolUseId to assistant-ui parentMessageId", () => {
       const event: CanonicalToolCallStartEvent = {
         ...baseEnvelope,
         category: "tool_lifecycle",
@@ -153,8 +153,8 @@ describe("mapCanonicalEventToAgui", () => {
 
       expect(result[0]).toMatchObject({
         type: EventType.TOOL_CALL_START,
-        parentMessageId: "parent-tool-1",
       });
+      expect(result[0]).not.toHaveProperty("parentMessageId");
     });
 
     it("handles empty parameters object", () => {

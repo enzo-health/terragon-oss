@@ -242,6 +242,50 @@ describe("ag-ui-side-effect-messages", () => {
     });
   });
 
+  it("attaches nested tool starts that reference a parent tool id to the assistant message", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "parent-tool",
+        toolCallName: "Task",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 3,
+        toolCallId: "nested-tool",
+        toolCallName: "Task",
+        parentMessageId: "parent-tool",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events).items).toEqual([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "parent-tool",
+            type: "function",
+            function: { name: "Task", arguments: "" },
+          },
+          {
+            id: "nested-tool",
+            type: "function",
+            function: { name: "Task", arguments: "" },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("builds durable runtime-owned transcript history from AG UI history/live events", () => {
     const events = [
       {

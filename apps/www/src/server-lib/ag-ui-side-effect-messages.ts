@@ -549,8 +549,13 @@ function startHistoryToolCall(
   state: HistoryBuilderState,
   event: ToolCallStartEvent,
 ): boolean {
+  const resolvedParentMessageId = event.parentMessageId
+    ? state.assistantById.has(event.parentMessageId)
+      ? event.parentMessageId
+      : state.toolParentById.get(event.parentMessageId)
+    : undefined;
   const parentMessageId =
-    event.parentMessageId ??
+    resolvedParentMessageId ??
     state.lastAssistantId ??
     `${event.toolCallId}:assistant`;
   const parent = ensureAssistantHistoryMessage(state, parentMessageId);

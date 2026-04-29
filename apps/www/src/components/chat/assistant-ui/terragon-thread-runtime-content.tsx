@@ -149,7 +149,9 @@ export function TerragonThreadRuntimeContent({
     return -1;
   }, [messages]);
 
-  const hasAgentMessages = latestAgentMessageIndex >= 0;
+  const hasRenderableAgentParts = messages.some(
+    (message) => message.role === "agent" && message.parts.length > 0,
+  );
 
   const hasPendingToolCall = useMemo(() => {
     const latestRuntimeAgentMessage = [...runtimeMessages]
@@ -179,11 +181,11 @@ export function TerragonThreadRuntimeContent({
   const hasSandboxError = isSandboxErrorType(errorType ?? null);
   const baseShowWorking =
     isAgentWorking &&
-    !hasPendingToolCall &&
+    (!hasPendingToolCall || !hasRenderableAgentParts) &&
     !hasSandboxError &&
     !shouldSuppressPreStartLifecycleFooter({
       threadStatus,
-      hasAgentMessages,
+      hasAgentMessages: hasRenderableAgentParts,
     });
 
   const footerFreshness = useMemo(

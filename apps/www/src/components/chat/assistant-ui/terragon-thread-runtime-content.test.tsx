@@ -24,6 +24,7 @@ const transcriptSurfaceProps = vi.hoisted(
     [] as Array<{
       messages: UIMessage[];
       isRuntimeHydrating: boolean;
+      showWorkingMessage: boolean;
     }>,
 );
 
@@ -39,6 +40,7 @@ vi.mock("./terragon-transcript-surface", async () => {
     TerragonTranscriptSurface: (props: {
       messages: UIMessage[];
       isRuntimeHydrating: boolean;
+      showWorkingMessage: boolean;
     }) => {
       transcriptSurfaceProps.push(props);
       return React.createElement(
@@ -264,5 +266,61 @@ describe("TerragonThreadRuntimeContent", () => {
     expect(container!.textContent).not.toContain(
       "DB threadViewModel.messages must not render",
     );
+  });
+
+  it("keeps the working indicator visible when no agent row has rendered content yet", () => {
+    runtimeState.thread.messages = [
+      {
+        id: "runtime-user-1",
+        role: "user",
+        createdAt: new Date(0),
+        content: [{ type: "text", text: "Run setup" }],
+        attachments: [],
+        metadata: { custom: {} },
+      },
+      {
+        id: "assistant-placeholder",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [],
+        status: { type: "running" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+    const messagesRef = { current: [] as UIMessage[] };
+
+    mount(
+      createElement(TerragonThreadRuntimeContent, {
+        lifecycleMessages: [],
+        threadStatus: "booting",
+        thread: makeThreadWithDbTranscriptSentinel(),
+        latestGitDiffTimestamp: null,
+        isAgentWorking: true,
+        artifactDescriptors: [],
+        onOpenArtifact: vi.fn(),
+        toolProps: {
+          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messagesRef,
+          githubRepoFullName: "acme/app",
+          repoBaseBranchName: "main",
+          branchName: "feature/runtime-contract",
+        },
+        hasCheckpoint: false,
+        chatAgent: "codex",
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        reattemptQueueAt: null,
+        threadChatId: "chat-1",
+      }),
+    );
+
+    expect(transcriptSurfaceProps[0]?.showWorkingMessage).toBe(true);
   });
 });

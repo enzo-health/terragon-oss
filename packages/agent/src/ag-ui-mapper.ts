@@ -153,9 +153,6 @@ function mapToolCallStart(
     timestamp,
     toolCallId: event.toolCallId,
     toolCallName: event.name,
-    ...(event.parentToolUseId
-      ? { parentMessageId: event.parentToolUseId }
-      : {}),
   };
 
   // Serialize args as a single ARGS chunk. Daemons that support progressive

@@ -420,6 +420,90 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
     ).toBe(false);
   });
 
+  it("keeps nested tool-call parent ids on the current assistant message", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallStartEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "parent-tool",
+              toolCallName: "Task",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallStartEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "nested-tool",
+              toolCallName: "Task",
+              parentMessageId: "parent-tool",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load();
+
+    const assistants = core
+      .getMessages()
+      .filter((message) => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    const toolParts =
+      assistants[0]?.role === "assistant"
+        ? assistants[0].content.filter((part) => part.type === "tool-call")
+        : [];
+    expect(toolParts.map((part) => part.toolCallId)).toEqual([
+      "parent-tool",
+      "nested-tool",
+    ]);
+  });
+
   it("projects live stream and durable history into identical assistant-ui parts", async () => {
     const input = {
       threadId: "thread-1",

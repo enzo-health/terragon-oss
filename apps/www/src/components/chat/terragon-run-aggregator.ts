@@ -318,6 +318,13 @@ export class TerragonRunAggregator {
     ) {
       this.partOrder.push({ kind: "tool-call", toolCallId: id });
     }
+    const parentTool = parentMessageId
+      ? this.toolCalls.get(parentMessageId)
+      : undefined;
+    const resolvedParentMessageId =
+      parentTool?.parentMessageId ??
+      parentMessageId ??
+      this.lastTargetMessageId;
     const state: ToolCallState = {
       toolCallId: id,
       toolCallName: name ?? "tool",
@@ -326,9 +333,9 @@ export class TerragonRunAggregator {
       result: undefined,
       isError: undefined,
     };
-    if (parentMessageId) {
-      state.parentMessageId = parentMessageId;
-      this.lastTargetMessageId = parentMessageId;
+    if (resolvedParentMessageId) {
+      state.parentMessageId = resolvedParentMessageId;
+      this.lastTargetMessageId = resolvedParentMessageId;
     }
     this.toolCalls.set(id, state);
   }
