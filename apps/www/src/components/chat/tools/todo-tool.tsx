@@ -39,7 +39,7 @@ function TodoProgressBar({ todos }: { todos: { status: string }[] }) {
     <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
       <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
-          className="h-full bg-green-500 rounded-full transition-all"
+          className="h-full bg-success rounded-full transition-[width] duration-300 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>

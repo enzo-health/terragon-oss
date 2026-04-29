@@ -316,7 +316,7 @@ describe("AG-UI replayer integration", () => {
 
   it("folds a full mixed event stream into the expected message shape", async () => {
     // One assistant turn: text → tool call → tool result → more text →
-    // rich CUSTOM diff part. Mirrors the shape of a typical
+    // FileChange diff tool result. Mirrors the shape of a typical
     // claude-code-standard-turn JSONL recording after mapper expansion.
     const events = [
       textStart("m1"),
@@ -329,12 +329,27 @@ describe("AG-UI replayer integration", () => {
       textStart("m2"),
       textContent("m2", "Done."),
       textEnd("m2"),
-      customRichPart("diff", "m2", {
-        type: "diff",
-        filePath: "src/middleware/auth.ts",
-        oldContent: "old",
-        newContent: "new",
-      }),
+      toolCallStart("m2:diff:0", "FileChange", 0, "m2"),
+      toolCallArgs(
+        "m2:diff:0",
+        JSON.stringify({
+          files: [{ path: "src/middleware/auth.ts", action: "modified" }],
+        }),
+      ),
+      toolCallEnd("m2:diff:0"),
+      toolCallResult(
+        "m2:diff:0",
+        JSON.stringify({
+          type: "terragon.diff",
+          part: {
+            type: "diff",
+            filePath: "src/middleware/auth.ts",
+            oldContent: "old",
+            newContent: "new",
+            status: "applied",
+          },
+        }),
+      ),
     ];
 
     const { messages, snapshots } = await replayAgUi(events);
@@ -350,9 +365,14 @@ describe("AG-UI replayer integration", () => {
     expect(first.parts.map((p) => p.type)).toEqual(["text", "tool"]);
     expect(first.parts[1]).toMatchObject({ status: "completed" });
 
-    // m2 has text + diff rich part
+    // m2 has text + FileChange tool part
     expect(second.id).toBe("m2");
-    expect(second.parts.map((p) => p.type)).toEqual(["text", "diff"]);
+    expect(second.parts.map((p) => p.type)).toEqual(["text", "tool"]);
+    expect(second.parts[1]).toMatchObject({
+      type: "tool",
+      name: "FileChange",
+      status: "completed",
+    });
 
     // Snapshots grow monotonically — after the 2nd event we already have
     // some text on m1; we should never see a shrink or lost message id.

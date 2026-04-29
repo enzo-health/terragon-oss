@@ -178,29 +178,29 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         onPermissionModeChange={setPermissionMode}
       />
       <CredentialsWarning selectedModel={selectedModel} />
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between w-full gap-4 px-2">
+      {/* Repo + tool belt row: full opacity at full scale. The previous
+          opacity-80 + scale-95 made the toolbelt icons read as orphaned
+          chrome. They're functional toggles — they deserve presence. */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between w-full gap-3 px-2">
         <RepoBranchSelector
           selectedRepoFullName={repoFullName || null}
           selectedBranch={branchName || null}
           onChange={onRepoBranchChange}
         />
-
-        <div className="opacity-80 scale-95 origin-right">
-          <PromptBoxToolBelt
-            showSkipSetup={true}
-            skipSetupValue={skipSetup}
-            onSkipSetupChange={setSkipSetup}
-            skipSetupDisabled={!repoFullName}
-            showCheckpoint={true}
-            checkpointValue={disableGitCheckpointing}
-            onCheckpointChange={setDisableGitCheckpointing}
-            checkpointDisabled={!repoFullName}
-            showCreateNewBranchOption={true}
-            createNewBranchValue={createNewBranch}
-            onCreateNewBranchChange={setCreateNewBranch}
-            createNewBranchDisabled={!repoFullName}
-          />
-        </div>
+        <PromptBoxToolBelt
+          showSkipSetup={true}
+          skipSetupValue={skipSetup}
+          onSkipSetupChange={setSkipSetup}
+          skipSetupDisabled={!repoFullName}
+          showCheckpoint={true}
+          checkpointValue={disableGitCheckpointing}
+          onCheckpointChange={setDisableGitCheckpointing}
+          checkpointDisabled={!repoFullName}
+          showCreateNewBranchOption={true}
+          createNewBranchValue={createNewBranch}
+          onCreateNewBranchChange={setCreateNewBranch}
+          createNewBranchDisabled={!repoFullName}
+        />
       </div>
     </div>
   );

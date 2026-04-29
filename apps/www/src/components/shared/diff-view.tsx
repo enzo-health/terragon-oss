@@ -173,7 +173,7 @@ export function HighlightedDiffView({
   return (
     <div
       className={cn(
-        "overflow-auto rounded border dark:border-neutral-800",
+        "overflow-auto rounded border dark:border-border",
         containerClassName,
       )}
     >

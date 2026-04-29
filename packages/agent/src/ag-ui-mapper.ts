@@ -31,7 +31,6 @@ import type {
   ToolCallResultEvent as CanonicalToolCallResultEvent,
   ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   ToolCallStartEvent as CanonicalToolCallStartEvent,
-  UnknownProviderEvent,
 } from "./canonical-events";
 
 /**
@@ -65,7 +64,7 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
     case "reasoning-message":
       return mapReasoningMessage(event, timestamp);
     case "permission-request":
-      return [mapPermissionRequest(event, timestamp)];
+      return mapPermissionRequest(event, timestamp);
     case "permission-response":
       return [mapPermissionResponse(event, timestamp)];
     case "artifact-reference":
@@ -73,7 +72,7 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
     case "meta":
       return [mapCanonicalMeta(event, timestamp)];
     case "unknown-provider-event":
-      return [mapUnknownProviderEvent(event, timestamp)];
+      return [];
     default: {
       const _exhaustiveCheck: never = event;
       return _exhaustiveCheck;
@@ -154,9 +153,6 @@ function mapToolCallStart(
     timestamp,
     toolCallId: event.toolCallId,
     toolCallName: event.name,
-    ...(event.parentToolUseId
-      ? { parentMessageId: event.parentToolUseId }
-      : {}),
   };
 
   // Serialize args as a single ARGS chunk. Daemons that support progressive
@@ -246,33 +242,49 @@ function mapReasoningMessage(
 function mapPermissionRequest(
   event: PermissionRequestEvent,
   timestamp: number,
-): CustomEvent {
-  return {
-    type: EventType.CUSTOM,
+): BaseEvent[] {
+  const toolCallId = event.permissionRequestId;
+  const start: ToolCallStartEvent = {
+    type: EventType.TOOL_CALL_START,
     timestamp,
-    name: "permission-request",
-    value: {
-      permissionRequestId: event.permissionRequestId,
-      toolCallId: event.toolCallId ?? null,
-      title: event.title,
-      description: event.description ?? null,
-      options: event.options,
-    },
+    toolCallId,
+    toolCallName: "PermissionRequest",
   };
+  const args: ToolCallArgsEvent = {
+    type: EventType.TOOL_CALL_ARGS,
+    timestamp,
+    toolCallId,
+    delta: JSON.stringify({
+      tool_name: event.title,
+      description: event.description ?? event.title,
+      options: event.options.map((option) => ({
+        kind: option,
+        name: option === "approve" ? "Approve" : "Deny",
+        optionId: option === "approve" ? "approved" : "denied",
+      })),
+    }),
+  };
+  const end: ToolCallEndEvent = {
+    type: EventType.TOOL_CALL_END,
+    timestamp,
+    toolCallId,
+  };
+  return [start, args, end];
 }
 
 function mapPermissionResponse(
   event: PermissionResponseEvent,
   timestamp: number,
-): CustomEvent {
+): ToolCallResultEvent {
   return {
-    type: EventType.CUSTOM,
+    type: EventType.TOOL_CALL_RESULT,
     timestamp,
-    name: "permission-response",
-    value: {
-      permissionRequestId: event.permissionRequestId,
-      response: event.response,
-    },
+    messageId: event.permissionRequestId,
+    toolCallId: event.permissionRequestId,
+    content:
+      event.response === "approved"
+        ? "Permission granted"
+        : "Permission denied",
   };
 }
 
@@ -304,23 +316,6 @@ function mapCanonicalMeta(
     name: event.name,
     value: {
       ...event.value,
-    },
-  };
-}
-
-function mapUnknownProviderEvent(
-  event: UnknownProviderEvent,
-  timestamp: number,
-): CustomEvent {
-  return {
-    type: EventType.CUSTOM,
-    timestamp,
-    name: "terragon.quarantine.unknown-provider-event",
-    value: {
-      provider: event.provider,
-      reason: event.reason,
-      rawEventType: event.rawEventType ?? null,
-      redactedPayload: event.redactedPayload,
     },
   };
 }
@@ -427,6 +422,22 @@ export function mapRunErrorToAgui(
  */
 export type DBAgentMessagePartLike = { type: string } & Record<string, unknown>;
 
+const DIFF_TOOL_RESULT_TYPE = "terragon.diff";
+
+type DiffPartLike = DBAgentMessagePartLike & {
+  type: "diff";
+  filePath: string;
+  oldContent?: string;
+  newContent: string;
+  unifiedDiff?: string;
+  status: "pending" | "applied" | "rejected";
+};
+
+type DiffToolResultPayload = {
+  type: typeof DIFF_TOOL_RESULT_TYPE;
+  part: DiffPartLike;
+};
+
 /**
  * Part-types that are already expressed via canonical events (assistant-message
  * text, tool-call-start/result) and therefore must NOT be re-emitted here. Kept
@@ -438,11 +449,7 @@ const SKIPPED_AGENT_PART_TYPES = new Set<string>([
   "tool-result",
 ]);
 
-/**
- * Stable prefix for the CUSTOM event `name` field. The frontend consumer
- * (Task 6B) keys off this prefix to route parts to the right renderer.
- */
-const CUSTOM_PART_NAME_PREFIX = "terragon.part.";
+const DATA_PART_EVENT_NAME = "terragon.data-part";
 
 /**
  * Map a `DBAgentMessage.parts` array to the AG-UI events that represent the
@@ -451,15 +458,16 @@ const CUSTOM_PART_NAME_PREFIX = "terragon.part.";
  *   - `assistant-message` canonical events cover `text` parts.
  *   - `tool-call-start` / `tool-call-result` canonical events cover `tool-use`
  *     and `tool-result` parts.
- *   - Everything else (thinking, terminal, diff, image, audio, plan, ...) is
+ *   - Tool-created `diff` parts are synthesized as standard `FileChange`
+ *     TOOL_CALL_* events so they render through assistant-ui's Tool UI.
+ *   - Everything else (thinking, terminal, image, audio, plan, ...) is
  *     NOT represented in canonical events today, so it needs first-class
  *     AG-UI events or the frontend can't reconstruct the full UI state.
  *
- * Thinking parts expand to REASONING_MESSAGE_START + CONTENT + END. All other
- * rich variants expand to a single CUSTOM event whose `name` is
- * `terragon.part.<type>` and whose `value` carries `{ messageId, partIndex,
- * part }`. Carrying the original part object intact lets the frontend
- * renderer consume it without a second round-trip.
+ * Thinking parts expand to REASONING_MESSAGE_START + CONTENT + END. Standalone
+ * visual variants expand to a single CUSTOM data-part event whose `value`
+ * carries `{ messageId, partIndex, name, data }`, matching assistant-ui's
+ * DataMessagePart shape at the frontend boundary.
  *
  * The returned events are NOT timestamped per-event; callers pick a single
  * timestamp for the whole message (matching the existing mapper convention).
@@ -510,19 +518,94 @@ export function dbAgentMessagePartsToAgUi(
       continue;
     }
 
+    if (isDiffPart(part)) {
+      events.push(
+        ...mapDiffPartToToolEvents(messageId, partIndex, part, timestamp),
+      );
+      continue;
+    }
+
     const custom: CustomEvent = {
       type: EventType.CUSTOM,
       timestamp,
-      name: `${CUSTOM_PART_NAME_PREFIX}${part.type}`,
+      name: DATA_PART_EVENT_NAME,
       value: {
         messageId,
         partIndex,
-        part,
+        name: `terragon.${part.type}`,
+        data: part,
       },
     };
     events.push(custom);
   }
   return events;
+}
+
+function isDiffPart(part: DBAgentMessagePartLike): part is DiffPartLike {
+  return (
+    part.type === "diff" &&
+    typeof part.filePath === "string" &&
+    typeof part.newContent === "string" &&
+    (part.oldContent === undefined || typeof part.oldContent === "string") &&
+    (part.unifiedDiff === undefined || typeof part.unifiedDiff === "string") &&
+    (part.status === "pending" ||
+      part.status === "applied" ||
+      part.status === "rejected")
+  );
+}
+
+function mapDiffPartToToolEvents(
+  messageId: string,
+  partIndex: number,
+  part: DiffPartLike,
+  timestamp: number,
+): BaseEvent[] {
+  const toolCallId = `${messageId}:diff:${partIndex}`;
+  const args = {
+    files: [{ path: part.filePath, action: diffAction(part) }],
+  };
+  const resultPayload: DiffToolResultPayload = {
+    type: DIFF_TOOL_RESULT_TYPE,
+    part,
+  };
+
+  const start: ToolCallStartEvent = {
+    type: EventType.TOOL_CALL_START,
+    timestamp,
+    toolCallId,
+    toolCallName: "FileChange",
+    parentMessageId: messageId,
+  };
+  const argsEvent: ToolCallArgsEvent = {
+    type: EventType.TOOL_CALL_ARGS,
+    timestamp,
+    toolCallId,
+    delta: JSON.stringify(args),
+  };
+  const end: ToolCallEndEvent = {
+    type: EventType.TOOL_CALL_END,
+    timestamp,
+    toolCallId,
+  };
+  const result: ToolCallResultEvent = {
+    type: EventType.TOOL_CALL_RESULT,
+    timestamp,
+    messageId: toolCallId,
+    toolCallId,
+    content: JSON.stringify(resultPayload),
+  };
+
+  return [start, argsEvent, end, result];
+}
+
+function diffAction(part: DiffPartLike): "created" | "deleted" | "modified" {
+  if (part.unifiedDiff?.includes("--- /dev/null")) return "created";
+  if (part.unifiedDiff?.includes("+++ /dev/null")) return "deleted";
+  if (part.oldContent === undefined || part.oldContent.length === 0) {
+    return "created";
+  }
+  if (part.newContent.length === 0) return "deleted";
+  return "modified";
 }
 
 // ---------------------------------------------------------------------------

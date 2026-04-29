@@ -550,7 +550,7 @@ export function AddContextButton({
         <Popover.Portal>
           <Popover.Content
             className={cn(
-              "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden transition-all duration-200",
+              "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden transition-[width] duration-200",
               view === "menu" ? "w-[200px]" : "w-[320px]",
             )}
             sideOffset={5}

@@ -14,6 +14,7 @@ import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "./process-follow-up-queue";
+import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
@@ -40,6 +41,17 @@ export async function followUpInternal({
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
+  if (isAgentWorking(threadChat.status)) {
+    await queueFollowUpInternal({
+      userId,
+      threadId,
+      threadChatId: threadChat.id,
+      messages: [message],
+      appendOrReplace: "append",
+      source,
+    });
+    return;
+  }
   getPostHogServer().capture({
     distinctId: userId,
     event: "follow_up",
@@ -65,11 +77,21 @@ export async function followUpInternal({
       },
     });
   if (!didUpdateStatus) {
+    const didQueueForActiveRun = await queueFollowUpIfThreadIsActive({
+      userId,
+      threadId,
+      threadChatId: threadChat.id,
+      message,
+      source,
+    });
+    if (didQueueForActiveRun) {
+      return;
+    }
     throw new Error("Failed to update thread");
   }
   if (updatedStatus === "scheduled") {
     const uploadedMessage = await uploadUserMessageImages({ userId, message });
-    await updateThreadChat({
+    const { chatSequence } = await updateThreadChat({
       db,
       userId,
       threadId,
@@ -77,6 +99,15 @@ export async function followUpInternal({
       updates: {
         appendMessages: [uploadedMessage],
       },
+    });
+    await persistSideEffectAgUiMessages({
+      db,
+      threadId,
+      threadChatId: threadChat.id,
+      messages: [uploadedMessage],
+      source: "scheduled-follow-up-user-prompt",
+      chatSequence,
+      runId: `pre-run:${threadChat.id}:scheduled-follow-up-user-prompt:${chatSequence ?? "unknown"}`,
     });
     return;
   }
@@ -103,6 +134,39 @@ export async function followUpInternal({
       isNewThread: !thread?.codesandboxId,
     }),
   );
+}
+
+async function queueFollowUpIfThreadIsActive({
+  userId,
+  threadId,
+  threadChatId,
+  message,
+  source,
+}: {
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  message: DBUserMessage;
+  source: "www" | "github";
+}): Promise<boolean> {
+  const latestThreadChat = await getThreadChat({
+    db,
+    threadId,
+    userId,
+    threadChatId,
+  });
+  if (!latestThreadChat || !isAgentWorking(latestThreadChat.status)) {
+    return false;
+  }
+  await queueFollowUpInternal({
+    userId,
+    threadId,
+    threadChatId: latestThreadChat.id,
+    messages: [message],
+    appendOrReplace: "append",
+    source,
+  });
+  return true;
 }
 
 export async function queueFollowUpInternal({

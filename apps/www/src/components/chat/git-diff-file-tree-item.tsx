@@ -30,8 +30,8 @@ export function FileTreeItem({
     <div>
       <div
         className={cn(
-          "flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded",
-          isSelected && "bg-neutral-200 dark:bg-neutral-700",
+          "flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-muted rounded transition-colors",
+          isSelected && "bg-accent text-accent-foreground",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         role="button"

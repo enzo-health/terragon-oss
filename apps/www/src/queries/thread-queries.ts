@@ -15,6 +15,8 @@ import {
   UseInfiniteQueryOptions,
   InfiniteData,
   useInfiniteQuery,
+  skipToken,
+  type SkipToken,
 } from "@tanstack/react-query";
 import { unwrapResult } from "@/lib/server-actions";
 
@@ -86,13 +88,34 @@ export function threadShellQueryOptions(threadId: string) {
   });
 }
 
-export function threadChatQueryOptions({
-  threadId,
-  threadChatId,
-}: {
+// Function overloads narrow the return type so callers that pass concrete
+// params get the strongly-typed query options (queryFn: () => Promise<...>),
+// while the skipToken overload gets the skip-shape. This matters because
+// `queryClient.fetchQuery(...)` and `useQuery(...)` reject a `symbol` queryFn
+// when it appears in a union — the unique-symbol overload only resolves on a
+// pure skipToken, not a widened symbol.
+export function threadChatQueryOptions(params: {
   threadId: string;
   threadChatId: string;
-}) {
+}): ReturnType<typeof getServerActionQueryOptions<ThreadPageChat>>;
+export function threadChatQueryOptions(params: SkipToken): {
+  queryKey: readonly ["threads", "chat", "__skip__"];
+  queryFn: SkipToken;
+};
+export function threadChatQueryOptions(
+  params: { threadId: string; threadChatId: string } | SkipToken,
+) {
+  // Pass `skipToken` (from @tanstack/react-query) when the threadChatId is
+  // not yet known. React Query treats `queryFn: skipToken` as "do not run",
+  // which is the typed replacement for the old `enabled: false` + sentinel
+  // queryKey hack.
+  if (params === skipToken) {
+    return {
+      queryKey: ["threads", "chat", "__skip__"] as const,
+      queryFn: skipToken,
+    };
+  }
+  const { threadId, threadChatId } = params;
   return getServerActionQueryOptions<ThreadPageChat>({
     queryKey: threadQueryKeys.chat(threadId, threadChatId),
     queryFn: async () => {

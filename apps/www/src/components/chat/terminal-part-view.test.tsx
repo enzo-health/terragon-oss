@@ -40,7 +40,7 @@ describe("TerminalPartView", () => {
       chunks: [{ streamSeq: 0, kind: "stderr", text: "fatal error" }],
     });
     const html = renderToStaticMarkup(<TerminalPartView part={part} />);
-    expect(html).toContain("text-red-400");
+    expect(html).toContain("text-error");
   });
 
   it("renders interaction with blue styling class", () => {
@@ -48,7 +48,7 @@ describe("TerminalPartView", () => {
       chunks: [{ streamSeq: 0, kind: "interaction", text: "yes" }],
     });
     const html = renderToStaticMarkup(<TerminalPartView part={part} />);
-    expect(html).toContain("text-blue-400");
+    expect(html).toContain("text-coral");
   });
 
   it("shows empty state when no chunks", () => {

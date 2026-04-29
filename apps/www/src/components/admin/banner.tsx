@@ -158,8 +158,8 @@ export function BannerAdmin() {
                     formData.variant === "default"
                       ? "bg-muted text-muted-foreground border border-border"
                       : formData.variant === "warning"
-                        ? "bg-yellow-50 text-yellow-900 border border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-200 dark:border-yellow-800"
-                        : "bg-red-50 text-red-900 border border-red-200 dark:bg-red-900/20 dark:text-red-200 dark:border-red-800"
+                        ? "bg-warning/10 text-warning border border-warning/30"
+                        : "bg-error/10 text-error border border-error/30"
                   }`}
                 >
                   {formData.message}

@@ -3,7 +3,6 @@ import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ThreadInfoFull } from "@terragon/shared";
 import {
-  ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -11,6 +10,7 @@ import {
   FileDiff,
 } from "lucide-react";
 import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
+import { cn } from "@/lib/utils";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
@@ -110,7 +110,7 @@ export const GitDiffPart = memo(function GitDiffPart({
   const allExpanded = diffInstances.every((_, idx) => expandedFiles[idx]);
 
   return (
-    <div className="flex flex-col border border-border rounded-md bg-muted/50">
+    <div className="flex flex-col rounded-lg bg-surface-soft">
       <div
         className="flex flex-row items-center cursor-pointer select-none justify-between p-2"
         role="button"
@@ -128,18 +128,19 @@ export const GitDiffPart = memo(function GitDiffPart({
         <div className="flex items-center gap-3 min-w-0 overflow-hidden flex-1">
           <div className="flex items-center gap-2 flex-shrink-0">
             <div className="shrink-0">
-              {isExpanded ? (
-                <ChevronDown className="size-4" />
-              ) : (
-                <ChevronRight className="size-4" />
-              )}
+              <ChevronRight
+                className={cn(
+                  "size-4 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
+                  isExpanded && "rotate-90",
+                )}
+              />
             </div>
             <FileDiff className="size-4 flex-shrink-0" />
             <h2 className="text-sm font-medium whitespace-nowrap">
               Files Changed
             </h2>
             {diffStats.files > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 text-xs font-medium rounded-full bg-neutral-300 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-200 flex-shrink-0">
+              <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 text-xs font-medium rounded-full bg-muted text-muted-foreground flex-shrink-0 tabular-nums">
                 {diffStats.files}
               </span>
             )}
@@ -147,12 +148,12 @@ export const GitDiffPart = memo(function GitDiffPart({
           {(diffStats.additions > 0 || diffStats.deletions > 0) && (
             <div className="flex items-center gap-2 text-xs font-medium flex-shrink-0 min-w-0">
               {diffStats.additions > 0 && (
-                <span className="flex items-center gap-1 text-green-600 dark:text-green-400 whitespace-nowrap">
+                <span className="flex items-center gap-1 text-[var(--diff-added-fg)] whitespace-nowrap">
                   <span>+{diffStats.additions}</span>
                 </span>
               )}
               {diffStats.deletions > 0 && (
-                <span className="flex items-center gap-1 text-red-600 dark:text-red-400 whitespace-nowrap">
+                <span className="flex items-center gap-1 text-[var(--diff-removed-fg)] whitespace-nowrap">
                   <span>-{diffStats.deletions}</span>
                 </span>
               )}

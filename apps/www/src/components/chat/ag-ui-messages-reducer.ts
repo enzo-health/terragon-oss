@@ -22,11 +22,11 @@
  * - `TOOL_CALL_ARGS { toolCallId, delta }`        → accumulate JSON chunk
  * - `TOOL_CALL_END { toolCallId }`                → parse accumulated args
  * - `TOOL_CALL_RESULT { toolCallId, content }`    → completed/error
- * - `CUSTOM { name: "terragon.part.<type>", value: { messageId, partIndex, part } }`
+ * - `CUSTOM { name: "terragon.data-part", value: { messageId, partIndex, name, data } }`
  * - `MESSAGES_SNAPSHOT { messages }`              → append daemon-owned snapshot messages
  *
- * Other events (RUN_STARTED, RUN_FINISHED, etc.) are ignored — they affect
- * run-state tracking which lives outside the UIMessage projection.
+ * RUN_FINISHED / RUN_ERROR close any still-pending tool calls so terminal
+ * transcripts do not render indefinite in-progress tool rows.
  *
  * # Ordering tolerance
  *
@@ -52,6 +52,7 @@ import type {
   UIMessage,
   UIPart,
 } from "@terragon/shared";
+import { terragonDataPartFromCustomEvent } from "./ag-ui-custom-parts";
 import type { UIPartExtended } from "./ui-parts-extended";
 
 export type AgUiMessagesState = {
@@ -86,7 +87,6 @@ export type AgUiMessagesState = {
   >;
 };
 
-const CUSTOM_PART_PREFIX = "terragon.part.";
 const REASONING_MARKER = ":thinking:";
 type ToolProgressChunk = { seq: number; text: string };
 type ToolStatus = "started" | "in_progress" | "completed" | "failed";
@@ -285,13 +285,10 @@ export function agUiMessagesReducer(
     }
 
     case EventType.CUSTOM: {
-      const name = getField<string>(event, "name");
-      if (!name || !name.startsWith(CUSTOM_PART_PREFIX)) return state;
-      const value = getField<unknown>(event, "value");
-      if (!value || typeof value !== "object") return state;
-      const messageId = getField<string>(value, "messageId");
-      const part = getField<unknown>(value, "part");
-      if (!messageId || !part || typeof part !== "object") return state;
+      const dataPart = terragonDataPartFromCustomEvent(event);
+      if (!dataPart) return state;
+      const messageId = dataPart.data.messageId;
+      const part = dataPart.data.data;
       if (!isRenderablePart(part)) return state;
       const normalizedPart = normalizeRenderablePart(part);
       const { messages, changed } = insertRichPart(
@@ -317,6 +314,25 @@ export function agUiMessagesReducer(
       return changed ? { ...state, messages } : state;
     }
 
+    case EventType.RUN_FINISHED: {
+      const { messages, changed } = failPendingToolParts(
+        state.messages,
+        "Tool call ended without a result.",
+      );
+      return changed ? { ...state, messages } : state;
+    }
+
+    case EventType.RUN_ERROR: {
+      const errorMessage =
+        getField<string>(event, "message") ??
+        "Run ended before this tool returned a result.";
+      const { messages, changed } = failPendingToolParts(
+        state.messages,
+        errorMessage,
+      );
+      return changed ? { ...state, messages } : state;
+    }
+
     case EventType.TEXT_MESSAGE_CHUNK:
     case EventType.THINKING_TEXT_MESSAGE_START:
     case EventType.THINKING_TEXT_MESSAGE_CONTENT:
@@ -329,8 +345,6 @@ export function agUiMessagesReducer(
     case EventType.ACTIVITY_DELTA:
     case EventType.RAW:
     case EventType.RUN_STARTED:
-    case EventType.RUN_FINISHED:
-    case EventType.RUN_ERROR:
     case EventType.STEP_STARTED:
     case EventType.STEP_FINISHED:
     case EventType.REASONING_START:
@@ -573,6 +587,31 @@ function completeToolPart(
     } as UIPart;
     changed = true;
     return { ...m, parts: nextParts };
+  });
+  return { messages: next, changed };
+}
+
+function failPendingToolParts(
+  messages: UIMessage[],
+  result: string,
+): { messages: UIMessage[]; changed: boolean } {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.role !== "agent") return message;
+    let changedMessage = false;
+    const parts = message.parts.map((part) => {
+      if (part.type !== "tool" || part.status !== "pending") {
+        return part;
+      }
+      changed = true;
+      changedMessage = true;
+      return {
+        ...part,
+        status: "error",
+        result,
+      } as UIPart;
+    });
+    return changedMessage ? { ...message, parts } : message;
   });
   return { messages: next, changed };
 }

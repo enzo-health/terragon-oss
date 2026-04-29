@@ -1,11 +1,20 @@
 import React from "react";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MetaChip, type MetaChipVariant } from "./meta-chip";
 import type { ThreadMetaSnapshot } from "./use-thread-meta-events";
 
 export interface McpServerHealthChipProps {
   mcpServerStatus: ThreadMetaSnapshot["mcpServerStatus"];
 }
+
+const VARIANT_BY_STATUS: Record<
+  "loading" | "ready" | "error",
+  MetaChipVariant
+> = {
+  loading: "neutral",
+  ready: "success",
+  error: "danger",
+};
 
 function SingleServerChip({
   name,
@@ -14,29 +23,25 @@ function SingleServerChip({
   name: string;
   status: "loading" | "ready" | "error";
 }) {
+  const icon =
+    status === "loading" ? (
+      <Loader2 className="size-3 animate-spin" />
+    ) : status === "ready" ? (
+      <CheckCircle className="size-3" />
+    ) : (
+      <XCircle className="size-3" />
+    );
+
   return (
-    <div
+    <MetaChip
       data-testid={`mcp-chip-${name}`}
       data-state={status}
+      variant={VARIANT_BY_STATUS[status]}
       title={`MCP server: ${name} (${status})`}
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-        {
-          "border-border text-muted-foreground": status === "loading",
-          "border-green-400 text-green-600": status === "ready",
-          "border-red-400 text-red-600 bg-red-500/5": status === "error",
-        },
-      )}
+      icon={icon}
     >
-      {status === "loading" ? (
-        <Loader2 className="size-3 animate-spin" />
-      ) : status === "ready" ? (
-        <CheckCircle className="size-3" />
-      ) : (
-        <XCircle className="size-3" />
-      )}
       MCP: {name}
-    </div>
+    </MetaChip>
   );
 }
 

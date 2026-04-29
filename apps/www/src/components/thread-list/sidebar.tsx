@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { SquarePen, PanelLeftClose } from "lucide-react";
 import { ThreadListHeader } from "./main";
 import { ThreadListContentsClient } from "./thread-list-contents-client";
@@ -21,6 +22,11 @@ export function ThreadListSidebar() {
     isThreadListCollapsed,
     setThreadListCollapsed,
   } = useCollapsibleThreadList();
+  const pathname = usePathname();
+  // The "+ New Task" link nav-routes to /dashboard. When the user IS on
+  // /dashboard, the link is dead chrome competing with the main canvas's
+  // primary affordance. Hide it on dashboard so the canvas owns "create".
+  const isOnDashboard = pathname === "/dashboard";
 
   const [viewFilter, setViewFilter] = useState<"active" | "archived">("active");
 
@@ -43,13 +49,21 @@ export function ThreadListSidebar() {
         <div
           className={cn("px-3 py-2.5 flex items-center gap-2", headerClassName)}
         >
-          <Link
-            href="/dashboard"
-            className="flex-1 flex items-center gap-2 rounded-md py-1.5 px-3 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
-          >
-            <SquarePen className="h-3.5 w-3.5 opacity-60" />
-            <span>New Task</span>
-          </Link>
+          {isOnDashboard ? (
+            // On dashboard the canvas owns "create"; this row becomes
+            // a panel title instead of a duplicate CTA.
+            <span className="flex-1 flex items-center gap-2 px-3 text-caption font-medium text-foreground">
+              Your tasks
+            </span>
+          ) : (
+            <Link
+              href="/dashboard"
+              className="flex-1 flex items-center gap-2 rounded-md py-1.5 px-3 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
+            >
+              <SquarePen className="h-3.5 w-3.5 opacity-60" />
+              <span>New Task</span>
+            </Link>
+          )}
           {canCollapseThreadList && (
             <Button
               variant="ghost"

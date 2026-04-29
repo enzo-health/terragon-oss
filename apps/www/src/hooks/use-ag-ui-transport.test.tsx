@@ -311,6 +311,46 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
+  it("preserves the history fromSeq cursor while no runId has been captured", async () => {
+    const { captured, rerender, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: "c1", runId: null },
+    });
+    const agent = requireAgent(captured.at(-1)!);
+    agent.url = "/api/ag-ui/t1?threadChatId=c1&fromSeq=42";
+
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1" },
+    });
+
+    expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("preserves the history fromSeq cursor after a synthetic runId is captured", async () => {
+    const { captured, rerender, root, container } = await renderHarness({
+      args: { threadId: "t1", threadChatId: "c1", runId: null },
+    });
+    const agent = requireAgent(captured.at(-1)!);
+    agent.url = "/api/ag-ui/t1?threadChatId=c1&fromSeq=42";
+
+    await rerender({
+      args: { threadId: "t1", threadChatId: "c1", runId: "run-xyz" },
+    });
+
+    expect(agent.url).toBe(
+      "/api/ag-ui/t1?threadChatId=c1&fromSeq=42&runId=run-xyz",
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("returns null when threadChatId is null", async () => {
     const { captured, root, container } = await renderHarness({
       args: { threadId: "t1", threadChatId: null },

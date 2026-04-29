@@ -103,4 +103,26 @@ describe("redis", { timeout: 60_000 }, () => {
 
     throw lastError;
   });
+
+  it("stream commands work through the local TCP fallback", async () => {
+    const key = `stream:${nanoid()}`;
+    const entryId = (await redis.xadd(key, "*", {
+      event: "one",
+      count: 1,
+    })) as string;
+
+    expect(typeof entryId).toBe("string");
+
+    const read = await redis.xread(key, "0-0", { count: 1, blockMS: 1_000 });
+    expect(read).toEqual([[key, [[entryId, ["event", "one", "count", "1"]]]]]);
+
+    const range = (await redis.xrevrange(key, "+", "-", 1)) as Record<
+      string,
+      Record<string, string>
+    >;
+    expect(range[entryId]).toEqual({
+      event: "one",
+      count: "1",
+    });
+  });
 });

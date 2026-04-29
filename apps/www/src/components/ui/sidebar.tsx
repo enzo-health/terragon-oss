@@ -26,7 +26,11 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "11.25rem";
+// 14rem (224px) — fits the longest label "Documentation" (13ch) plus icon
+// (1rem) + gap (0.75rem) + horizontal padding (1.75rem) + safe margin.
+// 11.25rem (180px) clipped "Environments", "Documentation", and the user
+// name on every viewport.
+const SIDEBAR_WIDTH = "14rem";
 const SIDEBAR_WIDTH_MOBILE = "17rem";
 const SIDEBAR_WIDTH_ICON = "3.5rem";
 
@@ -276,7 +280,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
       onClick={toggleSidebar}
       title="Toggle Sidebar"
       className={cn(
-        "hover:after:bg-sidebar-border absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] sm:flex",
+        "absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-colors ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
         "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
         "hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full",
@@ -465,7 +469,14 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button group/menu-button relative flex w-full items-center gap-3 overflow-hidden rounded-md px-3.5 py-2.5 text-left text-[13px] font-medium tracking-[-0.01em] text-sidebar-foreground/80 outline-hidden ring-sidebar-ring transition-[background-color,color,box-shadow,transform,opacity] duration-200 ease-[var(--ease-standard)] hover:bg-sidebar-accent/80 hover:text-sidebar-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent/60 data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:justify-center! group-data-[collapsible=icon]:gap-0! group-data-[collapsible=icon]:rounded-md! group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:[&>span:last-child]:hidden [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+  // Active state: three signals working together (Stripe/Linear pattern):
+  //   1. Surface step (sidebar-accent fill, was 60% opacity which was invisible)
+  //   2. Foreground color shift (text + icon to coral-active for AA contrast)
+  //   3. Leading bar (2px coral, before:) — the third signal that confirms
+  //      "you are here" at a glance even from the corner of the eye.
+  // The bar is rendered as an absolutely-positioned ::before pseudo so it
+  // doesn't shift the menu button's layout when the active state toggles.
+  "peer/menu-button group/menu-button relative flex w-full items-center gap-3 overflow-hidden rounded-md px-3.5 py-2.5 text-left text-[13px] font-medium tracking-[-0.01em] text-sidebar-foreground/80 outline-hidden ring-sidebar-ring transition-[background-color,color,box-shadow,transform,opacity] duration-200 ease-[var(--ease-standard)] hover:bg-sidebar-accent/80 hover:text-sidebar-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 before:pointer-events-none before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[2px] before:-translate-y-1/2 before:rounded-r-full before:bg-sidebar-primary before:opacity-0 before:transition-opacity before:duration-200 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-primary data-[active=true]:[&>svg]:text-sidebar-primary data-[active=true]:before:opacity-100 data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:justify-center! group-data-[collapsible=icon]:gap-0! group-data-[collapsible=icon]:rounded-md! group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:[&>span:last-child]:hidden [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
     variants: {
       variant: {

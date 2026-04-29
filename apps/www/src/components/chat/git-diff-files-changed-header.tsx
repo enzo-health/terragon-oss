@@ -43,12 +43,10 @@ export function FilesChangedHeader({
         {(additions > 0 || deletions > 0) && (
           <div className="flex items-center gap-1.5 text-[11px] font-medium flex-shrink-0">
             {additions > 0 && (
-              <span className="text-green-600 dark:text-green-400">
-                +{additions}
-              </span>
+              <span className="text-[var(--diff-added-fg)]">+{additions}</span>
             )}
             {deletions > 0 && (
-              <span className="text-red-600 dark:text-red-400">
+              <span className="text-[var(--diff-removed-fg)]">
                 -{deletions}
               </span>
             )}

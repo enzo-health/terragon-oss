@@ -138,7 +138,7 @@ export const PRStatusPill = memo(function PRStatusPill({
   return (
     <div
       title={getTitle()}
-      className="flex items-center gap-1.5 cursor-pointer bg-white border border-border/40 shadow-inset-edge px-2 py-0.5 rounded-full transition-all duration-200 hover:shadow-card hover:scale-[1.02]"
+      className="flex items-center gap-1.5 cursor-pointer bg-card border border-border/40 shadow-inset-edge px-2 py-0.5 rounded-full transition-[box-shadow,transform,border-color] duration-200 hover:shadow-card hover:scale-[1.02] active:scale-[0.98]"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

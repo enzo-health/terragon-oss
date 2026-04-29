@@ -56,6 +56,7 @@ import {
   persistAndPublishAgUiEvents,
   publishPersistedAgUiEvents,
 } from "@/server-lib/ag-ui-publisher";
+import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 
@@ -1166,16 +1167,6 @@ export async function POST(request: Request) {
     }
     terminalFenceOutcome = terminalFenceResult.status;
     runContext = terminalFenceResult.runContext;
-    if (terminalFenceOutcome === "duplicate") {
-      return jsonTerminalAckResponse({
-        status: 202,
-        deduplicated: true,
-        reason: "run_terminal_ignored",
-        runId: runContext.runId,
-        acknowledgedEventId: terminalEventIdForAck,
-        acknowledgedSeq: terminalSeqForAck,
-      });
-    }
   }
 
   const terminalCanonicalEvents =
@@ -1325,22 +1316,16 @@ export async function POST(request: Request) {
     }
   }
 
-  if (
-    daemonRunStatusFromMessages !== "processing" &&
-    terminalCanonicalEventsForPersistence
-  ) {
-    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
-      canonicalEvents: terminalCanonicalEventsForPersistence,
-      canPersistCanonicalEvents,
-      runId: runContext.runId,
-      threadId,
-      threadChatId,
-      publishLive: false,
-    });
-    if (terminalCanonicalPersistence.response) {
-      return terminalCanonicalPersistence.response;
-    }
-  }
+  // Terminal canonical events (RUN_FINISHED / RUN_ERROR) are persisted
+  // AFTER handleDaemonEvent + rich-part persistence below so they acquire a
+  // higher per-thread-chat seq than any side-effect MESSAGES_SNAPSHOT or
+  // rich-part rows written for this same batch. Replay is ordered by seq
+  // ASC, and AG-UI's client-side verifyEvents forbids any event after
+  // RUN_ERROR / RUN_FINISHED — out-of-order seq would surface as
+  // "Cannot send event type 'MESSAGES_SNAPSHOT': The run has already
+  // errored with 'RUN_ERROR'" on reconnect. Live publish at the bottom of
+  // the route also reads from `terminalCanonicalPersistence.summary`, so
+  // the persist call still happens before the broadcast loop.
 
   // Heartbeat shortcut: empty messages skip message/event persistence,
   // envelope validation, and run-context status transitions.
@@ -1471,6 +1456,7 @@ export async function POST(request: Request) {
       status: "processing",
     });
   }
+  let skipLegacyRuntimeTranscriptPersistence = false;
   try {
     const isCanonicalOnlyTerminalBatch =
       canonicalTerminal != null &&
@@ -1479,29 +1465,32 @@ export async function POST(request: Request) {
     const hasNativeRuntimeEvents =
       (canonicalEvents != null && canonicalEvents.length > 0) ||
       (deltas != null && deltas.length > 0);
-    const skipLegacyRuntimeTranscriptPersistence =
-      canPersistCanonicalEvents &&
-      envelopeV2 != null &&
-      canonicalTerminal == null &&
-      hasNativeRuntimeEvents;
-    result = isCanonicalOnlyTerminalBatch
-      ? {
-          success: true,
-          threadChatMessageSeq: null,
-          terminalRecoveryQueued: false,
-        }
-      : await handleDaemonEvent({
-          messages,
-          threadId,
-          threadChatId,
-          userId,
-          timezone,
-          contextUsage: computedContextUsage ?? null,
-          runId: authoritativeRunId,
-          runContext,
-          deferTerminalTransitionToRoute: fenceTerminalTransition,
-          skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
-        });
+    skipLegacyRuntimeTranscriptPersistence =
+      canPersistCanonicalEvents && envelopeV2 != null && hasNativeRuntimeEvents;
+    const shouldSkipDuplicateTerminalProjection =
+      terminalFenceOutcome === "duplicate" &&
+      !messages.some((message) => message.type === "assistant") &&
+      (!deltas || deltas.length === 0);
+    if (shouldSkipDuplicateTerminalProjection || isCanonicalOnlyTerminalBatch) {
+      result = {
+        success: true,
+        threadChatMessageSeq: null,
+        terminalRecoveryQueued: false,
+      };
+    } else {
+      result = await handleDaemonEvent({
+        messages,
+        threadId,
+        threadChatId,
+        userId,
+        timezone,
+        contextUsage: computedContextUsage ?? null,
+        runId: authoritativeRunId,
+        runContext,
+        deferTerminalTransitionToRoute: fenceTerminalTransition,
+        skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
+      });
+    }
   } catch (error) {
     console.error(
       "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
@@ -1576,11 +1565,25 @@ export async function POST(request: Request) {
           rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
         });
       } catch (error) {
-        // Rich-part emission is best-effort: the DBMessages themselves are
-        // already committed via handleDaemonEvent, and the frontend
-        // fallback-reads from thread chat if the AG-UI stream misses
-        // something. Log and continue rather than 500 (which would force
-        // the daemon to retry the whole POST and duplicate side effects).
+        if (skipLegacyRuntimeTranscriptPersistence) {
+          console.error(
+            "[daemon-event] AG-UI rich-part persistence failed for native-runtime batch",
+            {
+              threadId,
+              threadChatId,
+              runId: authoritativeRunId,
+              error,
+            },
+          );
+          return Response.json(
+            { error: "daemon_event_ag_ui_rich_part_persist_failed" },
+            { status: 500 },
+          );
+        }
+
+        // Rich-part emission remains best-effort only for legacy transcript
+        // batches, where the DBMessages are still durably available to the
+        // legacy snapshot fallback.
         console.warn("[daemon-event] AG-UI rich-part persistence failed", {
           threadId,
           threadChatId,
@@ -1715,12 +1718,22 @@ export async function POST(request: Request) {
       const terminalStatusForTransition = result.terminalRecoveryQueued
         ? ("completed" as const)
         : resolvedStatus;
+      const terminalThread =
+        terminalStatusForTransition === "completed"
+          ? await getThreadMinimal({ db, threadId, userId })
+          : null;
+      const shouldSkipCheckpoint =
+        terminalStatusForTransition === "stopped" ||
+        (terminalStatusForTransition === "completed" &&
+          !!terminalThread?.disableGitCheckpointing);
       const eventType =
         terminalStatusForTransition === "stopped"
           ? ("assistant.message_stop" as const)
           : terminalStatusForTransition === "failed"
             ? ("assistant.message_error" as const)
-            : ("assistant.message_done" as const);
+            : shouldSkipCheckpoint
+              ? ("assistant.message_done_skip_checkpoint" as const)
+              : ("assistant.message_done" as const);
 
       const transitionResult = await updateThreadChatWithTransition({
         userId,
@@ -1737,24 +1750,56 @@ export async function POST(request: Request) {
         skipBroadcast: true,
       });
 
+      let latestThreadChatAfterTransition:
+        | Awaited<ReturnType<typeof getThreadChat>>
+        | undefined;
       if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
-        const latest = await getThreadChat({
+        latestThreadChatAfterTransition = await getThreadChat({
           db,
           userId,
           threadId,
           threadChatId,
         });
-        if (!latest || latest.status !== transitionResult.updatedStatus) {
+        if (
+          !latestThreadChatAfterTransition ||
+          latestThreadChatAfterTransition.status !==
+            transitionResult.updatedStatus
+        ) {
           return Response.json(
             {
               success: false,
               error: "daemon_event_terminal_thread_chat_cas_failed",
               expectedStatus: transitionResult.updatedStatus,
-              actualStatus: latest?.status ?? null,
+              actualStatus: latestThreadChatAfterTransition?.status ?? null,
             },
             { status: 409 },
           );
         }
+      }
+      const checkpointReadyStatus =
+        eventType === "assistant.message_done"
+          ? "working-done"
+          : eventType === "assistant.message_error"
+            ? "working-error"
+            : null;
+      if (
+        checkpointReadyStatus !== null &&
+        !transitionResult.didUpdateStatus &&
+        latestThreadChatAfterTransition === undefined
+      ) {
+        latestThreadChatAfterTransition = await getThreadChat({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+        });
+      }
+      const shouldQueueCheckpoint =
+        checkpointReadyStatus !== null &&
+        (transitionResult.didUpdateStatus ||
+          latestThreadChatAfterTransition?.status === checkpointReadyStatus);
+      if (shouldQueueCheckpoint) {
+        waitUntil(checkpointThread({ userId, threadId, threadChatId }));
       }
 
       await deactivateAcceptedTerminalRun({
@@ -1873,6 +1918,27 @@ export async function POST(request: Request) {
     }
   }
 
+  // Deferred terminal-event persistence (see note above the heartbeat
+  // shortcut). At this point handleDaemonEvent has already written any
+  // side-effect MESSAGES_SNAPSHOT / rich-part rows, so the terminal marker
+  // is guaranteed to receive a higher seq and replay in the correct order.
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    terminalCanonicalEventsForPersistence
+  ) {
+    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
+      canonicalEvents: terminalCanonicalEventsForPersistence,
+      canPersistCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+      publishLive: false,
+    });
+    if (terminalCanonicalPersistence.response) {
+      return terminalCanonicalPersistence.response;
+    }
+  }
+
   if (
     daemonRunStatusFromMessages !== "processing" &&
     (canonicalPersistence.summary.persistedEvents.length > 0 ||
@@ -1894,7 +1960,20 @@ export async function POST(request: Request) {
     }
   }
 
+  const shouldReturnDuplicateTerminalIgnored =
+    terminalFenceOutcome === "duplicate" &&
+    !messages.some((message) => message.type === "assistant") &&
+    (!deltas || deltas.length === 0);
+
   return jsonTerminalAckResponse({
+    ...(shouldReturnDuplicateTerminalIgnored
+      ? {
+          status: 202,
+          deduplicated: true as const,
+          reason: "run_terminal_ignored",
+          runId: runContext.runId,
+        }
+      : {}),
     acknowledgedEventId: terminalEventIdForAck ?? envelopeV2?.eventId ?? null,
     acknowledgedSeq: terminalSeqForAck ?? envelopeV2?.seq ?? null,
   });

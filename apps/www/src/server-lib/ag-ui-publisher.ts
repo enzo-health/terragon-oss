@@ -212,17 +212,29 @@ export async function publishPersistedAgUiEvents(
 ): Promise<void> {
   const { threadChatId } = params;
   const persistedEnvelopes = params.persistedEnvelopes ?? [];
-  const persistedEvents = params.persistedEvents;
-  const insertedEventIds = params.insertedEventIds;
+  const publishEntries = params.persistedEvents.map((event, index) => ({
+    event,
+    envelope: persistedEnvelopes[index],
+    eventId: params.insertedEventIds[index],
+    index,
+  }));
+  publishEntries.sort((left, right) => {
+    if (!left.envelope || !right.envelope) {
+      return left.index - right.index;
+    }
+    return left.envelope.seq - right.envelope.seq;
+  });
+  const insertedEventIds = publishEntries
+    .map((entry) => entry.eventId)
+    .filter((eventId): eventId is string => eventId !== undefined);
 
-  if (persistedEvents.length === 0) {
+  if (publishEntries.length === 0) {
     return;
   }
 
   const streamKey = agUiStreamKey(threadChatId);
-  for (let i = 0; i < persistedEvents.length; i++) {
-    const event = persistedEvents[i]!;
-    const envelope = persistedEnvelopes[i];
+  for (let i = 0; i < publishEntries.length; i++) {
+    const { event, envelope } = publishEntries[i]!;
     try {
       const data =
         envelope === undefined
@@ -240,7 +252,7 @@ export async function publishPersistedAgUiEvents(
           streamKey,
           eventType: String(event.type),
           publishedCount: i,
-          remainingCount: persistedEvents.length - i,
+          remainingCount: publishEntries.length - i,
           insertedEventIdRange:
             insertedEventIds.length > 0
               ? {

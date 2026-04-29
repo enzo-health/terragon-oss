@@ -14,7 +14,7 @@ export function MediaArtifactRenderer({
         <img
           src={mediaPart.image_url}
           alt="Artifact preview"
-          className="max-h-full max-w-full rounded-xl border bg-background object-contain shadow-sm"
+          className="max-h-full max-w-full rounded-xl bg-background object-contain shadow-sm image-outline"
         />
       </div>
     );

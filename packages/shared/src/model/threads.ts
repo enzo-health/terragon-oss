@@ -707,8 +707,15 @@ export async function createThread({
   threadValues: Omit<ThreadInsert, "userId">;
   initialChatValues: Omit<ThreadChatInsert, "userId" | "threadId">;
 }): Promise<{ threadId: string; threadChatId: string }> {
+  const replaceMessages = initialChatValues.replaceMessages;
+  const rawInitialChatValues = { ...initialChatValues };
+  delete rawInitialChatValues.appendMessages;
+  delete rawInitialChatValues.replaceMessages;
+  delete rawInitialChatValues.replaceQueuedMessages;
+  delete rawInitialChatValues.appendQueuedMessages;
+  delete rawInitialChatValues.appendAndResetQueuedMessages;
   const initialChatInsert: Omit<ThreadChatInsert, "userId" | "threadId"> = {
-    ...initialChatValues,
+    ...rawInitialChatValues,
     agentVersion: AGENT_VERSION,
   };
   const { threadId, threadChatId } = await db.transaction(async (tx) => {
@@ -729,6 +736,9 @@ export async function createThread({
       userId,
       threadId,
       ...initialChatInsert,
+      ...(replaceMessages
+        ? { messages: sanitizeForJson(replaceMessages) }
+        : {}),
     };
     const [threadChatInsertResult] = await tx
       .insert(schema.threadChat)

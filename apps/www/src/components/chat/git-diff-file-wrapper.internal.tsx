@@ -5,7 +5,7 @@ import {
   type DiffLineAnnotation,
   type DiffLineEventBaseProps,
 } from "@pierre/diffs/react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ImageDiffView } from "@/components/chat/image-diff-view";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
@@ -130,11 +130,12 @@ export function FileDiffWrapper({
         }}
       >
         <div className="flex items-center min-w-0 gap-2">
-          {expanded ? (
-            <ChevronDown className="w-4 h-4 flex-shrink-0" />
-          ) : (
-            <ChevronRight className="w-4 h-4 flex-shrink-0" />
-          )}
+          <ChevronRight
+            className={cn(
+              "w-4 h-4 flex-shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
+              expanded && "rotate-90",
+            )}
+          />
           {getFileIcon(parsedFile.changeType, isImage)}
           <span className="truncate-start">{parsedFile.fileName}</span>
         </div>
@@ -142,12 +143,12 @@ export function FileDiffWrapper({
           {showLineCounts ? (
             <>
               {parsedFile.additions > 0 && (
-                <span className="text-green-600 dark:text-green-400 text-xs font-medium">
+                <span className="text-[var(--diff-added-fg)] text-xs font-medium">
                   +{parsedFile.additions}
                 </span>
               )}
               {parsedFile.deletions > 0 && (
-                <span className="text-red-600 dark:text-red-400 text-xs font-medium">
+                <span className="text-[var(--diff-removed-fg)] text-xs font-medium">
                   -{parsedFile.deletions}
                 </span>
               )}
@@ -155,13 +156,13 @@ export function FileDiffWrapper({
           ) : isImage ? (
             <span className="text-xs font-medium">
               {parsedFile.changeType === "added" ? (
-                <span className="text-green-600 dark:text-green-400">
+                <span className="text-[var(--diff-added-fg)]">
                   {parsedFile.newFileSize !== undefined
                     ? `+${formatBytes(parsedFile.newFileSize)}`
                     : "New image"}
                 </span>
               ) : parsedFile.changeType === "deleted" ? (
-                <span className="text-red-600 dark:text-red-400">
+                <span className="text-[var(--diff-removed-fg)]">
                   {parsedFile.oldFileSize !== undefined
                     ? `-${formatBytes(parsedFile.oldFileSize)}`
                     : "Deleted image"}

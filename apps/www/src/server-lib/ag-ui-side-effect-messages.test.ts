@@ -19,6 +19,8 @@ vi.mock("@/lib/redis", () => ({
 }));
 
 const {
+  getDurableAgUiHistoryItemsFromEvents,
+  getNativeAgUiHistoryMessagesFromEvents,
   getLatestNativeAgUiSnapshotMessage,
   getNativeAgUiTranscriptForThreadChat,
   hasInvalidTokenRetrySideEffectMarker,
@@ -137,6 +139,404 @@ describe("ag-ui-side-effect-messages", () => {
     });
   });
 
+  it("builds side-effect snapshot history from durable user/system snapshot events only", () => {
+    const events = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [
+          { id: "user-1", role: "user", content: "Initial prompt" },
+          {
+            id: "side-effect-system:invalid-token-retry",
+            role: "system",
+            content: "Retrying after invalid token",
+          },
+        ],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 3,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 4,
+        messageId: "assistant-1",
+        delta: "Assistant replay comes from SSE",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 5,
+        messageId: "assistant-1",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getNativeAgUiHistoryMessagesFromEvents(events)).toEqual([
+      { id: "user-1", role: "user", content: "Initial prompt" },
+      {
+        id: "side-effect-system:invalid-token-retry",
+        role: "system",
+        content: "Retrying after invalid token",
+      },
+    ]);
+  });
+
+  it("deduplicates repeated snapshot message ids in durable history", () => {
+    const events = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 2,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      lastSeqOffset: 0,
+    });
+  });
+
+  it("preserves failed tool results in durable assistant-ui history", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        timestamp: 3,
+        messageId: "tool-result-1",
+        toolCallId: "tool-1",
+        content: "permission denied",
+        isError: true,
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: "",
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-result-1",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "permission denied",
+          error: "permission denied",
+        },
+      ],
+      lastSeqOffset: 2,
+    });
+  });
+
+  it("synthesizes failed tool results for unresolved tool calls on run finish", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "tool-1",
+        toolCallName: "Task",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_END,
+        timestamp: 3,
+        toolCallId: "tool-1",
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Task",
+                arguments: "",
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-1:unresolved-result",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "Tool call ended without a result.",
+          error: "Tool call ended without a result.",
+        },
+      ],
+      lastSeqOffset: 3,
+    });
+  });
+
+  it("attaches nested tool starts that reference a parent tool id to the assistant message", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "parent-tool",
+        toolCallName: "Task",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 3,
+        toolCallId: "nested-tool",
+        toolCallName: "Task",
+        parentMessageId: "parent-tool",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events).items).toEqual([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "parent-tool",
+            type: "function",
+            function: { name: "Task", arguments: "" },
+          },
+          {
+            id: "nested-tool",
+            type: "function",
+            function: { name: "Task", arguments: "" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("builds durable runtime-owned transcript history from AG UI history/live events", () => {
+    const events = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 3,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 4,
+        messageId: "assistant-1",
+        delta: "Assistant transcript",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 5,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        timestamp: 6,
+        toolCallId: "tool-1",
+        delta: '{"command":"pnpm test"}',
+      },
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        timestamp: 7,
+        messageId: "tool-result-1",
+        toolCallId: "tool-1",
+        content: "passed",
+      },
+      {
+        type: EventType.CUSTOM,
+        timestamp: 8,
+        name: "terragon.data-part",
+        value: {
+          messageId: "assistant-1",
+          partIndex: 1,
+          name: "terragon.terminal",
+          data: {
+            type: "terminal",
+            sandboxId: "sandbox-1",
+            terminalId: "terminal-1",
+            chunks: [],
+          },
+        },
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 9,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [
+        { id: "user-1", role: "user", content: "Initial prompt" },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Assistant transcript",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: '{"command":"pnpm test"}',
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-result-1",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "passed",
+        },
+        {
+          type: EventType.CUSTOM,
+          timestamp: 8,
+          name: "terragon.data-part",
+          value: {
+            messageId: "assistant-1",
+            partIndex: 1,
+            name: "terragon.terminal",
+            data: {
+              type: "terminal",
+              sandboxId: "sandbox-1",
+              terminalId: "terminal-1",
+              chunks: [],
+            },
+          },
+        },
+      ],
+      lastSeqOffset: 8,
+    });
+  });
+
+  it("advances durable history cursor through represented message and tool end events", () => {
+    const textHistory = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "Visible history",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "assistant-1",
+      },
+    ] satisfies BaseEvent[]);
+    expect(textHistory.lastSeqOffset).toBe(2);
+
+    const toolHistory = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 1,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_END,
+        timestamp: 2,
+        toolCallId: "tool-1",
+      },
+    ] satisfies BaseEvent[]);
+    expect(toolHistory.lastSeqOffset).toBe(1);
+  });
+
+  it("does not advance durable history cursor through an active run start alone", () => {
+    const history = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "start here" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[]);
+
+    expect(history).toEqual({
+      items: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeqOffset: 0,
+    });
+  });
+
   it("does not persist when an append batch has no user or system messages", async () => {
     await persistSideEffectAgUiMessages({
       db: {} as never,
@@ -163,8 +563,8 @@ describe("ag-ui-side-effect-messages", () => {
       messages: [
         {
           type: "system",
-          message_type: "follow-up-retry-failed",
-          parts: [{ type: "text", text: "Retry failed" }],
+          message_type: "fix-github-checks",
+          parts: [{ type: "text", text: "Fix GitHub checks" }],
         },
       ],
       source: "unit-test",
@@ -230,9 +630,9 @@ describe("ag-ui-side-effect-messages", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.eventId).toMatch(/^side-effect:invalid-token-retry:7:/);
     expect(rows[0]?.payloadJson).toMatchObject({
-      type: EventType.CUSTOM,
-      name: "terragon.side-effect.invalid-token-retry",
-      value: {
+      type: EventType.RAW,
+      source: "terragon.side-effect.invalid-token-retry",
+      event: {
         reason: "oauth-token-revoked",
         threadId,
         threadChatId,

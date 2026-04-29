@@ -1,9 +1,16 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import {
+  type BaseEvent,
+  EventType,
+  type Message,
+  type MessagesSnapshotEvent,
+} from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
+import type { DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
   agUiStreamKey,
+  getAgUiEventEnvelopesForRun,
   getAgUiEventEnvelopesForThreadChat,
   getLatestRunIdForThreadChat,
   isTerminalAgentRunStatus,
@@ -14,6 +21,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
+import {
+  dbMessagesToNativeAgUiSnapshotMessages,
+  type DurableAgUiHistoryItem,
+  getDurableAgUiHistoryItemsFromEvents,
+} from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
@@ -51,12 +63,157 @@ type AgUiStreamEntry = {
   id: string;
   seq: number | null;
   event: BaseEvent | null;
+  identity?: ReplayIdentity;
 };
 
 type ReplayEntry = {
   seq: number | null;
   event: BaseEvent;
+  identity?: ReplayIdentity;
 };
+
+type ReplayIdentity = {
+  runId?: string;
+  eventId?: string;
+  idempotencyKey?: string;
+  seq?: number;
+  projectionIndex?: number;
+  projectionCount?: number;
+};
+
+type ReplayCursor = {
+  seq: number;
+  projectionIndex: number | null;
+};
+
+type AgUiUserMessage = Extract<Message, { role: "user" }>;
+
+function isAgUiUserMessage(
+  item: DurableAgUiHistoryItem,
+): item is AgUiUserMessage {
+  return Reflect.get(item, "role") === "user";
+}
+
+function agUiMessageContentText(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      if (part === null || typeof part !== "object") {
+        return "";
+      }
+      const type = Reflect.get(part, "type");
+      const text = Reflect.get(part, "text");
+      return type === "text" && typeof text === "string" ? text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function mergeMissingDbUserMessagesIntoHistory({
+  historyItems,
+  dbMessages,
+  fallbackUserPrompt,
+}: {
+  historyItems: DurableAgUiHistoryItem[];
+  dbMessages: readonly DBMessage[];
+  fallbackUserPrompt?: string | null;
+}): DurableAgUiHistoryItem[] {
+  const historyUserMessages = historyItems.filter(isAgUiUserMessage);
+  const historyUserIndicesBySignature = new Map<string, number[]>();
+  historyItems.forEach((item, index) => {
+    if (!isAgUiUserMessage(item)) {
+      return;
+    }
+    const signature = agUiUserMessageSignature(item);
+    const indices = historyUserIndicesBySignature.get(signature) ?? [];
+    indices.push(index);
+    historyUserIndicesBySignature.set(signature, indices);
+  });
+
+  const missingBeforeIndex = new Map<number, AgUiUserMessage[]>();
+  const missingAfterIndex = new Map<number, AgUiUserMessage[]>();
+  const pendingMissingUserMessages: AgUiUserMessage[] = [];
+  let lastMatchedHistoryIndex: number | null = null;
+
+  for (const message of dbMessagesToNativeAgUiSnapshotMessages(dbMessages)) {
+    if (!isAgUiUserMessage(message)) {
+      continue;
+    }
+    const content = agUiMessageContentText(message.content);
+    if (content.length === 0) {
+      continue;
+    }
+    const matchingHistoryIndices = historyUserIndicesBySignature.get(
+      agUiUserMessageSignature(message),
+    );
+    const matchingHistoryIndex = matchingHistoryIndices?.shift();
+    if (matchingHistoryIndex === undefined) {
+      pendingMissingUserMessages.push(message);
+      continue;
+    }
+    if (pendingMissingUserMessages.length > 0) {
+      missingBeforeIndex.set(matchingHistoryIndex, [
+        ...(missingBeforeIndex.get(matchingHistoryIndex) ?? []),
+        ...pendingMissingUserMessages.splice(0),
+      ]);
+    }
+    lastMatchedHistoryIndex = matchingHistoryIndex;
+  }
+
+  if (
+    pendingMissingUserMessages.length > 0 &&
+    lastMatchedHistoryIndex !== null
+  ) {
+    missingAfterIndex.set(lastMatchedHistoryIndex, [
+      ...(missingAfterIndex.get(lastMatchedHistoryIndex) ?? []),
+      ...pendingMissingUserMessages.splice(0),
+    ]);
+  }
+
+  const fallbackContent = fallbackUserPrompt?.trim() ?? "";
+  const fallbackUserMessages: AgUiUserMessage[] =
+    pendingMissingUserMessages.length === 0 &&
+    historyUserMessages.length === 0 &&
+    fallbackContent.length > 0
+      ? [
+          {
+            id: "thread-title-user-prompt",
+            role: "user",
+            content: fallbackContent,
+            name: "terragon-user:source=thread-title",
+          },
+        ]
+      : [];
+
+  const prependedMessages = [
+    ...pendingMissingUserMessages,
+    ...fallbackUserMessages,
+  ];
+  if (
+    prependedMessages.length === 0 &&
+    missingBeforeIndex.size === 0 &&
+    missingAfterIndex.size === 0
+  ) {
+    return historyItems;
+  }
+
+  const merged: DurableAgUiHistoryItem[] = [...prependedMessages];
+  historyItems.forEach((item, index) => {
+    merged.push(...(missingBeforeIndex.get(index) ?? []), item);
+    merged.push(...(missingAfterIndex.get(index) ?? []));
+  });
+  return merged;
+}
+
+function agUiUserMessageSignature(message: AgUiUserMessage): string {
+  return agUiMessageContentText(message.content);
+}
 
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) {
@@ -78,8 +235,70 @@ function stableSerialize(value: unknown): string {
   return `{${serializedEntries.join(",")}}`;
 }
 
-function getReplayDedupeKey(event: BaseEvent): string {
-  return stableSerialize(event);
+const NO_STRUCTURAL_DEDUPE_EVENT_TYPES = new Set<string>([
+  EventType.TEXT_MESSAGE_CONTENT,
+  EventType.REASONING_MESSAGE_CONTENT,
+  EventType.TOOL_CALL_ARGS,
+]);
+
+function getStringEventField(event: BaseEvent, field: string): string | null {
+  const value = Reflect.get(event, field);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function getIntegerEventField(event: BaseEvent, field: string): number | null {
+  const value = Reflect.get(event, field);
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
+}
+
+function getReplayDedupeKey(
+  event: BaseEvent,
+  identity?: ReplayIdentity,
+): string | null {
+  const runId = identity?.runId ?? getStringEventField(event, "runId");
+  if (
+    runId &&
+    (event.type === EventType.RUN_STARTED ||
+      event.type === EventType.RUN_FINISHED ||
+      event.type === EventType.RUN_ERROR)
+  ) {
+    return `run-lifecycle:${runId}:${event.type}`;
+  }
+
+  const eventId = identity?.eventId ?? getStringEventField(event, "eventId");
+  if (runId && eventId) {
+    return `run-event:${runId}:${eventId}`;
+  }
+  if (eventId) {
+    return `event:${eventId}`;
+  }
+
+  const idempotencyKey =
+    identity?.idempotencyKey ?? getStringEventField(event, "idempotencyKey");
+  if (runId && idempotencyKey) {
+    return `run-idempotency:${runId}:${idempotencyKey}`;
+  }
+  if (idempotencyKey) {
+    return `idempotency:${idempotencyKey}`;
+  }
+
+  const seq = identity?.seq ?? getIntegerEventField(event, "seq");
+  if (runId && seq !== null) {
+    return `run-seq:${runId}:${seq}`;
+  }
+
+  const messageId = getStringEventField(event, "messageId");
+  const deltaSeq = getIntegerEventField(event, "deltaSeq");
+  if (messageId && deltaSeq !== null) {
+    return `message-delta:${event.type}:${messageId}:${deltaSeq}`;
+  }
+
+  if (NO_STRUCTURAL_DEDUPE_EVENT_TYPES.has(event.type)) {
+    return null;
+  }
+  return `event:${stableSerialize(event)}`;
 }
 
 const STREAM_LOG_PREFIX = "[ag-ui][stream]";
@@ -212,9 +431,20 @@ function readNumberField(value: object, field: string): number | null {
   return Number.isSafeInteger(candidate) ? candidate : null;
 }
 
+function readStringFieldOrUndefined(
+  value: object,
+  field: string,
+): string | undefined {
+  const candidate = Reflect.get(value, field);
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : undefined;
+}
+
 function parseStreamPayload(value: unknown): {
   seq: number | null;
   event: BaseEvent | null;
+  identity?: ReplayIdentity;
 } {
   if (isValidKnownAgUiEvent(value)) {
     return { seq: null, event: value };
@@ -227,7 +457,16 @@ function parseStreamPayload(value: unknown): {
   const seq = readNumberField(value, "seq");
   const payload = Reflect.get(value, "payload");
   if (isValidKnownAgUiEvent(payload)) {
-    return { seq, event: payload };
+    return {
+      seq,
+      event: payload,
+      identity: {
+        runId: readStringFieldOrUndefined(value, "runId"),
+        eventId: readStringFieldOrUndefined(value, "eventId"),
+        idempotencyKey: readStringFieldOrUndefined(value, "idempotencyKey"),
+        ...(seq !== null ? { seq } : {}),
+      },
+    };
   }
 
   const event = Reflect.get(value, "event");
@@ -269,7 +508,12 @@ function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
     try {
       const parsed: unknown = JSON.parse(serialized);
       const payload = parseStreamPayload(parsed);
-      entries.push({ id, seq: payload.seq, event: payload.event });
+      entries.push({
+        id,
+        seq: payload.seq,
+        event: payload.event,
+        ...(payload.identity ? { identity: payload.identity } : {}),
+      });
     } catch (err) {
       console.warn("[ag-ui] malformed stream entry", { id, err });
       entries.push({ id, seq: null, event: null });
@@ -282,6 +526,10 @@ function readEventField(rawFields: unknown): string | null {
   if (!Array.isArray(rawFields)) {
     // Upstash sometimes returns an object shape already parsed.
     if (rawFields && typeof rawFields === "object") {
+      const envelope = Reflect.get(rawFields, "envelope");
+      if (typeof envelope === "string") {
+        return envelope;
+      }
       const value = Reflect.get(rawFields, "event");
       return typeof value === "string" ? value : null;
     }
@@ -309,7 +557,7 @@ function encodeSseComment(comment: string): Uint8Array {
   return ENCODER.encode(`: ${comment}\n\n`);
 }
 
-function parseSeqCursor(value: string | null): number | null {
+function parseReplayCursor(value: string | null): ReplayCursor | null {
   if (value === null || value.trim().length === 0) {
     return null;
   }
@@ -317,29 +565,262 @@ function parseSeqCursor(value: string | null): number | null {
   const normalized = trimmed.startsWith("seq:")
     ? trimmed.slice("seq:".length)
     : trimmed;
-  const seq = Number(normalized);
-  return Number.isSafeInteger(seq) && seq >= 0 ? seq : null;
+  const [seqValue, projectionIndexValue] = normalized.split(":");
+  const seq = Number(seqValue);
+  if (!Number.isSafeInteger(seq) || seq < -1) {
+    return null;
+  }
+  if (projectionIndexValue === undefined) {
+    return { seq, projectionIndex: null };
+  }
+  const projectionIndex = Number(projectionIndexValue);
+  return Number.isSafeInteger(projectionIndex) && projectionIndex >= 0
+    ? { seq, projectionIndex }
+    : null;
 }
 
-function resolveReplayCursor(request: NextRequest): number | null {
-  const fromSeq = parseSeqCursor(request.nextUrl.searchParams.get("fromSeq"));
-  if (fromSeq !== null) {
-    return fromSeq;
+function resolveReplayCursor(request: NextRequest): ReplayCursor | null {
+  const lastEventId = parseReplayCursor(request.headers.get("last-event-id"));
+  if (lastEventId !== null) {
+    return lastEventId;
   }
-  return parseSeqCursor(request.headers.get("last-event-id"));
+  return parseReplayCursor(request.nextUrl.searchParams.get("fromSeq"));
+}
+
+function replayQueryAfterSeq(cursor: ReplayCursor | null): number | undefined {
+  if (cursor === null) {
+    return undefined;
+  }
+  return cursor.projectionIndex === null ? cursor.seq : cursor.seq - 1;
+}
+
+function shouldReplayEnvelope(
+  entry: Pick<AgUiEventEnvelope, "seq" | "projectionIndex">,
+  cursor: ReplayCursor | null,
+): boolean {
+  if (cursor === null) {
+    return true;
+  }
+  if (entry.seq > cursor.seq) {
+    return true;
+  }
+  if (entry.seq < cursor.seq || cursor.projectionIndex === null) {
+    return false;
+  }
+  return (entry.projectionIndex ?? 0) > cursor.projectionIndex;
 }
 
 function toReplayEntries(
   envelopes: AgUiEventEnvelope[],
-  cursorSeq: number | null,
+  cursor: ReplayCursor | null,
 ): ReplayEntry[] {
-  return envelopes
-    .filter((entry) => cursorSeq === null || entry.seq > cursorSeq)
-    .map((entry) => ({ seq: entry.seq, event: entry.payload }));
+  return dropEventsAfterTerminalUntilNextRun(
+    repairDelayedRunStartedOrdering(
+      envelopes
+        .filter((entry) => shouldReplayEnvelope(entry, cursor))
+        .map((entry) => ({
+          seq: entry.seq,
+          event: entry.payload,
+          identity: {
+            runId: entry.runId,
+            eventId: entry.eventId,
+            idempotencyKey: entry.idempotencyKey,
+            seq: entry.seq,
+            projectionIndex: entry.projectionIndex,
+            projectionCount: entry.projectionCount,
+          },
+        })),
+    ),
+    { keepInterRunUserAndSystemSnapshots: false },
+  );
 }
 
-function sseIdForSeq(seq: number | null): string | undefined {
-  return seq === null ? undefined : String(seq);
+function getReplayEntryRunId(entry: ReplayEntry): string | null {
+  return entry.identity?.runId ?? getStringEventField(entry.event, "runId");
+}
+
+function repairDelayedRunStartedOrdering(
+  entries: ReplayEntry[],
+): ReplayEntry[] {
+  const repaired: ReplayEntry[] = [];
+  let index = 0;
+
+  while (index < entries.length) {
+    const runId = getReplayEntryRunId(entries[index]!);
+    if (runId === null) {
+      repaired.push(entries[index]!);
+      index += 1;
+      continue;
+    }
+
+    const runEntries: ReplayEntry[] = [];
+    while (
+      index < entries.length &&
+      getReplayEntryRunId(entries[index]!) === runId
+    ) {
+      runEntries.push(entries[index]!);
+      index += 1;
+    }
+    repaired.push(...repairSingleRunStartedOrdering(runEntries));
+  }
+
+  return repaired;
+}
+
+function repairSingleRunStartedOrdering(entries: ReplayEntry[]): ReplayEntry[] {
+  const firstRunStartedIndex = entries.findIndex(
+    (entry) => entry.event.type === EventType.RUN_STARTED,
+  );
+  if (firstRunStartedIndex <= 0) {
+    return firstRunStartedIndex === 0
+      ? dropDuplicateRunStarted(entries)
+      : entries;
+  }
+
+  const leadingSnapshots: ReplayEntry[] = [];
+  let firstNonSnapshotIndex = 0;
+  while (
+    firstNonSnapshotIndex < entries.length &&
+    entries[firstNonSnapshotIndex]!.event.type === EventType.MESSAGES_SNAPSHOT
+  ) {
+    leadingSnapshots.push(entries[firstNonSnapshotIndex]!);
+    firstNonSnapshotIndex += 1;
+  }
+
+  const firstRunStarted = entries[firstRunStartedIndex]!;
+  const rest = entries.filter(
+    (entry, entryIndex) =>
+      entryIndex >= firstNonSnapshotIndex &&
+      entry.event.type !== EventType.RUN_STARTED,
+  );
+
+  return [...leadingSnapshots, firstRunStarted, ...rest];
+}
+
+function dropDuplicateRunStarted(entries: ReplayEntry[]): ReplayEntry[] {
+  let hasRunStarted = false;
+  return entries.filter((entry) => {
+    if (entry.event.type !== EventType.RUN_STARTED) {
+      return true;
+    }
+    if (hasRunStarted) {
+      return false;
+    }
+    hasRunStarted = true;
+    return true;
+  });
+}
+
+function toReplayEntriesWithoutTerminalFilter(
+  envelopes: AgUiEventEnvelope[],
+  cursor: ReplayCursor | null,
+): ReplayEntry[] {
+  return repairDelayedRunStartedOrdering(
+    envelopes
+      .filter((entry) => shouldReplayEnvelope(entry, cursor))
+      .map((entry) => ({
+        seq: entry.seq,
+        event: entry.payload,
+        identity: {
+          runId: entry.runId,
+          eventId: entry.eventId,
+          idempotencyKey: entry.idempotencyKey,
+          seq: entry.seq,
+          projectionIndex: entry.projectionIndex,
+          projectionCount: entry.projectionCount,
+        },
+      })),
+  );
+}
+
+function dropEventsAfterTerminalUntilNextRun(
+  entries: ReplayEntry[],
+  options: { keepInterRunUserAndSystemSnapshots: boolean } = {
+    keepInterRunUserAndSystemSnapshots: false,
+  },
+): ReplayEntry[] {
+  const filtered: ReplayEntry[] = [];
+  let sawTerminal = false;
+
+  for (const entry of entries) {
+    if (entry.event.type === EventType.RUN_STARTED) {
+      sawTerminal = false;
+      filtered.push(entry);
+      continue;
+    }
+    if (sawTerminal) {
+      if (
+        options.keepInterRunUserAndSystemSnapshots &&
+        isUserOrSystemMessagesSnapshot(entry.event)
+      ) {
+        filtered.push(entry);
+      }
+      continue;
+    }
+    filtered.push(entry);
+    if (isTerminalRunEventType(entry.event.type)) {
+      sawTerminal = true;
+    }
+  }
+
+  return filtered;
+}
+
+function isUserOrSystemMessagesSnapshot(event: BaseEvent): boolean {
+  if (event.type !== EventType.MESSAGES_SNAPSHOT) {
+    return false;
+  }
+  const { messages } = event as MessagesSnapshotEvent;
+  return (
+    messages.length > 0 &&
+    messages.every(
+      (message) => message.role === "user" || message.role === "system",
+    )
+  );
+}
+
+function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
+  historyOnlyLastSeq: number | null;
+  replayEnvelopes: AgUiEventEnvelope[];
+} {
+  const firstRunEventIndex = envelopes.findIndex(
+    (entry) => entry.payload.type !== EventType.MESSAGES_SNAPSHOT,
+  );
+  if (firstRunEventIndex <= 0) {
+    return { historyOnlyLastSeq: null, replayEnvelopes: envelopes };
+  }
+  const lastHistoryOnlyEnvelope = envelopes[firstRunEventIndex - 1];
+  return {
+    historyOnlyLastSeq: lastHistoryOnlyEnvelope?.seq ?? null,
+    replayEnvelopes: envelopes.slice(firstRunEventIndex),
+  };
+}
+
+function sseIdForReplayEntry(
+  seq: number | null,
+  identity?: ReplayIdentity,
+): string | undefined {
+  if (seq === null) {
+    return undefined;
+  }
+  if (identity?.projectionCount !== undefined && identity.projectionCount > 1) {
+    return `${seq}:${identity.projectionIndex ?? 0}`;
+  }
+  return String(seq);
+}
+
+function buildResumeRunStartedEvent({
+  threadId,
+  runId,
+}: {
+  threadId: string;
+  runId: string;
+}): BaseEvent {
+  return {
+    type: EventType.RUN_STARTED,
+    threadId,
+    runId,
+  };
 }
 
 /**
@@ -379,7 +860,9 @@ export async function GET(
   const { threadId } = await context.params;
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const runIdParam = request.nextUrl.searchParams.get("runId");
-  const replayCursorSeq = resolveReplayCursor(request);
+  const replayCursor = resolveReplayCursor(request);
+  const replayCursorSeq = replayCursor?.seq ?? null;
+  const shouldFrameRunAgentResume = request.method === "POST";
 
   if (!threadChatId) {
     return NextResponse.json(
@@ -393,7 +876,11 @@ export async function GET(
   // who owns thread-A could pass threadChatId pointing at someone else's
   // chat. Return 404 on mismatch to avoid leaking existence.
   const ownership = await db
-    .select({ id: schema.threadChat.id })
+    .select({
+      id: schema.threadChat.id,
+      messages: schema.threadChat.messages,
+      threadName: schema.thread.name,
+    })
     .from(schema.threadChat)
     .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
     .where(
@@ -409,6 +896,32 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  if (request.nextUrl.searchParams.get("history") === "messages") {
+    const envelopes = await getAgUiEventEnvelopesForThreadChat({
+      db,
+      threadChatId,
+    });
+    const historyEntries = dropEventsAfterTerminalUntilNextRun(
+      toReplayEntriesWithoutTerminalFilter(envelopes, null),
+      { keepInterRunUserAndSystemSnapshots: true },
+    );
+    const historyEvents = historyEntries.map((entry) => entry.event);
+    const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
+    const messages = mergeMissingDbUserMessagesIntoHistory({
+      historyItems: history.items,
+      dbMessages: ownership[0]?.messages ?? [],
+      fallbackUserPrompt: ownership[0]?.threadName,
+    });
+    const includedCursor =
+      history.lastSeqOffset >= 0
+        ? historyEntries[history.lastSeqOffset]?.seq
+        : undefined;
+    return NextResponse.json({
+      messages,
+      lastSeq: includedCursor ?? -1,
+    });
+  }
+
   const streamKey = agUiStreamKey(threadChatId);
 
   // Capture the live-tail cursor BEFORE the DB replay so in-flight events
@@ -421,13 +934,16 @@ export async function GET(
 
   // Resolve the effective runId:
   //  - If the client supplied `?runId=X`, use it verbatim (reconnect path).
+  //  - If the client supplied only a seq cursor, replay from that cursor
+  //    thread-chat-wide. This is the history-adapter resume path; binding it
+  //    to a guessed latest run can strand terminal events for delayed-start
+  //    runs behind an unrelated older run.
   //  - Otherwise the connect is fresh; default to the thread chat's latest
   //    run. Clients that land on an empty thread chat (no runs yet) get a
-  //    live-tailing stream with no history — the first RUN_STARTED written
-  //    by a new daemon-event will naturally be the first event on the wire,
-  //    no synthesis required.
+  //    live-tailing stream with no history — the first RUN_STARTED written by
+  //    a new daemon-event will naturally be the first event on the wire.
   let resolvedRunId: string | null = runIdParam;
-  if (resolvedRunId === null) {
+  if (resolvedRunId === null && replayCursorSeq === null) {
     try {
       resolvedRunId = await getLatestRunIdForThreadChat({
         db,
@@ -526,15 +1042,281 @@ export async function GET(
         once: true,
       });
       const replayedEventDedupeKeys = new Set<string>();
+      let lastDeliveredSeq = replayCursorSeq;
+      let hasEmittedAgUiDataEvent = false;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
       enqueue(encodeSseComment(BASELINE_SNAPSHOT_COMMENT));
+
+      const rememberReplayedEventDedupeKeys = (
+        event: BaseEvent,
+        identity?: ReplayIdentity,
+      ) => {
+        const dedupeKey = getReplayDedupeKey(event, identity);
+        if (dedupeKey !== null) {
+          replayedEventDedupeKeys.add(dedupeKey);
+        }
+        if (identity !== undefined) {
+          const structuralDedupeKey = getReplayDedupeKey(event);
+          if (structuralDedupeKey !== null) {
+            replayedEventDedupeKeys.add(structuralDedupeKey);
+          }
+        }
+      };
+
+      const consumeReplayedEventDedupeKey = (
+        event: BaseEvent,
+        identity?: ReplayIdentity,
+      ): boolean => {
+        const dedupeKey = getReplayDedupeKey(event, identity);
+        if (dedupeKey !== null && replayedEventDedupeKeys.has(dedupeKey)) {
+          replayedEventDedupeKeys.delete(dedupeKey);
+          return true;
+        }
+        if (identity !== undefined) {
+          const structuralDedupeKey = getReplayDedupeKey(event);
+          if (
+            structuralDedupeKey !== null &&
+            replayedEventDedupeKeys.has(structuralDedupeKey)
+          ) {
+            replayedEventDedupeKeys.delete(structuralDedupeKey);
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const ensurePostResumeStartsWithRun = (
+        event: BaseEvent,
+        identity?: ReplayIdentity,
+      ): boolean => {
+        if (
+          !shouldFrameRunAgentResume ||
+          hasEmittedAgUiDataEvent ||
+          event.type === EventType.RUN_STARTED ||
+          event.type === EventType.RUN_ERROR
+        ) {
+          return true;
+        }
+
+        const resumeRunId =
+          resolvedRunId ??
+          identity?.runId ??
+          getStringEventField(event, "runId");
+        if (resumeRunId === null) {
+          console.error(
+            "[ag-ui] cursored resume cannot infer run id before first live event",
+            {
+              threadId,
+              threadChatId,
+              firstType: event.type,
+            },
+          );
+          const errorEvent = mapRunErrorToAgui(
+            `Thread chat ${threadChatId} resume log is malformed: first event has no run id`,
+            "replay_failed",
+          );
+          hasEmittedAgUiDataEvent = true;
+          enqueue(encodeSseEvent(errorEvent));
+          close("malformed_replay");
+          return false;
+        }
+
+        resolvedRunId = resumeRunId;
+        const runStartedEvent = buildResumeRunStartedEvent({
+          threadId,
+          runId: resumeRunId,
+        });
+        rememberReplayedEventDedupeKeys(runStartedEvent);
+        hasEmittedAgUiDataEvent = true;
+        enqueue(encodeSseEvent(runStartedEvent));
+        return true;
+      };
+
+      const emitAgUiEvent = (
+        event: BaseEvent,
+        seq: number | null,
+        identity?: ReplayIdentity,
+      ): boolean => {
+        if (!ensurePostResumeStartsWithRun(event, identity)) {
+          return false;
+        }
+        hasEmittedAgUiDataEvent = true;
+        enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
+        return true;
+      };
+
+      const emitReplayEntry = (entry: ReplayEntry): boolean => {
+        if (!isValidKnownAgUiEvent(entry.event)) {
+          console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
+            threadId,
+            threadChatId,
+            runId: resolvedRunId,
+            eventType: Reflect.get(entry.event, "type"),
+            seq: entry.seq,
+          });
+          const errorEvent = mapRunErrorToAgui(
+            `Run ${resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
+            "replay_failed",
+          );
+          emitAgUiEvent(errorEvent, null);
+          close("malformed_replay");
+          return false;
+        }
+
+        diagnostics.replayCount += 1;
+        rememberReplayedEventDedupeKeys(entry.event, entry.identity);
+        if (entry.seq !== null) {
+          lastDeliveredSeq =
+            lastDeliveredSeq === null
+              ? entry.seq
+              : Math.max(lastDeliveredSeq, entry.seq);
+        }
+        return emitAgUiEvent(entry.event, entry.seq, entry.identity);
+      };
+
+      const frameResumeReplayEntries = (
+        replayEntries: ReplayEntry[],
+      ): boolean => {
+        if (
+          replayCursorSeq === null ||
+          !shouldFrameRunAgentResume ||
+          replayEntries.length === 0
+        ) {
+          return true;
+        }
+
+        while (replayEntries[0]?.event.type === EventType.MESSAGES_SNAPSHOT) {
+          const [entry] = replayEntries.splice(0, 1);
+          if (entry?.seq !== null && entry?.seq !== undefined) {
+            lastDeliveredSeq =
+              lastDeliveredSeq === null
+                ? entry.seq
+                : Math.max(lastDeliveredSeq, entry.seq);
+          }
+        }
+
+        if (
+          replayEntries.length === 0 ||
+          replayEntries[0]?.event.type === EventType.RUN_STARTED
+        ) {
+          return true;
+        }
+
+        const resumeRunId =
+          resolvedRunId ??
+          (replayEntries[0] ? getReplayEntryRunId(replayEntries[0]) : null);
+        if (resumeRunId === null) {
+          console.error(
+            "[ag-ui] cursored resume cannot infer run id for synthetic RUN_STARTED",
+            {
+              threadId,
+              threadChatId,
+              firstType: replayEntries[0]?.event.type,
+            },
+          );
+          const errorEvent = mapRunErrorToAgui(
+            `Thread chat ${threadChatId} resume log is malformed: first event has no run id`,
+            "replay_failed",
+          );
+          enqueue(encodeSseEvent(errorEvent));
+          close("malformed_replay");
+          return false;
+        }
+
+        resolvedRunId = resumeRunId;
+        replayEntries.unshift({
+          seq: null,
+          event: buildResumeRunStartedEvent({
+            threadId,
+            runId: resumeRunId,
+          }),
+        });
+        let syntheticFrameIsTerminal = false;
+        for (let index = 1; index < replayEntries.length; index += 1) {
+          const entry = replayEntries[index]!;
+          const entryRunId = getReplayEntryRunId(entry);
+          if (
+            entry.event.type === EventType.RUN_STARTED &&
+            entryRunId === resumeRunId
+          ) {
+            replayEntries.splice(index, 1);
+            index -= 1;
+            continue;
+          }
+          if (
+            !syntheticFrameIsTerminal &&
+            entry.event.type === EventType.RUN_STARTED &&
+            entryRunId !== null &&
+            entryRunId !== resumeRunId
+          ) {
+            replayEntries.splice(index, 0, {
+              seq: null,
+              event: {
+                type: EventType.RUN_FINISHED,
+                threadId,
+                runId: resumeRunId,
+              },
+            });
+            syntheticFrameIsTerminal = true;
+            index += 1;
+            continue;
+          }
+          if (
+            entryRunId === resumeRunId &&
+            isTerminalRunEventType(entry.event.type)
+          ) {
+            syntheticFrameIsTerminal = true;
+          }
+        }
+        return true;
+      };
+
+      const replayDurableEventsAfterCursor = async (): Promise<boolean> => {
+        let replayEnvelopes: AgUiEventEnvelope[];
+        try {
+          replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
+            db,
+            threadChatId,
+            afterSeq: lastDeliveredSeq ?? undefined,
+          });
+        } catch (error) {
+          console.warn(
+            "[ag-ui] durable catch-up replay failed during live-tail; continuing",
+            { threadId, threadChatId, runId: resolvedRunId },
+            error,
+          );
+          return false;
+        }
+
+        if (replayEnvelopes.length === 0) {
+          return false;
+        }
+
+        const replayEntries = toReplayEntries(replayEnvelopes, null);
+        if (!frameResumeReplayEntries(replayEntries)) {
+          return true;
+        }
+        let emittedReplayEntry = false;
+        for (const entry of replayEntries) {
+          if (!emitReplayEntry(entry)) {
+            return true;
+          }
+          emittedReplayEntry = true;
+          if (isTerminalRunEventType(entry.event.type)) {
+            close("terminal_event");
+            return true;
+          }
+        }
+        return emittedReplayEntry;
+      };
 
       // Shared live-tail helper: block-polls Redis starting from the cursor
       // captured before the DB replay. Used after both the run-replay path
       // (for active runs still in progress) and the no-history path (for
       // empty thread chats awaiting their first RUN_STARTED).
       const liveTail = async (params?: { runId?: string; userId?: string }) => {
+        let liveTailParams = params;
         const localRedisHttpMode = isLocalRedisHttpMode();
         keepaliveTimer = setInterval(() => {
           enqueue(encodeSseComment("keepalive"));
@@ -544,27 +1326,34 @@ export async function GET(
           phase: "idle" | "xread_error",
           cause?: unknown,
         ): Promise<boolean> => {
-          if (!params?.runId || !params.userId) {
+          if (!liveTailParams?.runId || !liveTailParams.userId) {
             return false;
           }
           try {
             const runContext = await getAgentRunContextByRunId({
               db,
-              runId: params.runId,
-              userId: params.userId,
+              runId: liveTailParams.runId,
+              userId: liveTailParams.userId,
             });
             if (
               runContext !== null &&
               isTerminalAgentRunStatus(runContext.status)
             ) {
+              const replayedDurableEvents =
+                await replayDurableEventsAfterCursor();
+              if (replayedDurableEvents) {
+                return true;
+              }
               const terminalEvent = buildRunTerminalAgUi({
                 threadId,
-                runId: params.runId,
+                runId: liveTailParams.runId,
                 daemonRunStatus: runContext.status,
                 errorMessage: runContext.failureTerminalReason ?? null,
                 errorCode: runContext.failureCategory ?? null,
               });
-              enqueue(encodeSseEvent(terminalEvent));
+              if (!emitAgUiEvent(terminalEvent, null)) {
+                return true;
+              }
               close(
                 phase === "idle"
                   ? "durable_terminal_idle"
@@ -575,11 +1364,44 @@ export async function GET(
           } catch (error) {
             console.warn(
               "[ag-ui] durable run status check failed during live-tail; continuing",
-              { phase, threadId, threadChatId, runId: params.runId },
+              { phase, threadId, threadChatId, runId: liveTailParams.runId },
               cause ?? error,
             );
           }
           return false;
+        };
+
+        const maybeDiscoverRunFromDurableLog = async (): Promise<boolean> => {
+          if (liveTailParams?.runId) {
+            return false;
+          }
+          let latestRunId: string | null = null;
+          try {
+            latestRunId = await getLatestRunIdForThreadChat({
+              db,
+              threadChatId,
+            });
+          } catch (error) {
+            console.warn(
+              "[ag-ui] latest-run discovery failed during empty live-tail; continuing",
+              { threadId, threadChatId },
+              error,
+            );
+            return false;
+          }
+          if (latestRunId === null) {
+            return false;
+          }
+
+          resolvedRunId = latestRunId;
+          const replayed = await replayDurableEventsAfterCursor();
+          if (!closed) {
+            liveTailParams = {
+              runId: latestRunId,
+              userId: session.user.id,
+            };
+          }
+          return replayed;
         };
 
         let lastId = initialLastId;
@@ -605,13 +1427,15 @@ export async function GET(
             const entries = parseStreamEntries(raw);
             if (entries.length === 0) {
               consecutiveEmpty++;
-              if (params?.runId && params.userId) {
-                emptyPollsSinceTerminalCheck++;
-                if (
-                  emptyPollsSinceTerminalCheck >=
-                  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
-                ) {
-                  emptyPollsSinceTerminalCheck = 0;
+              emptyPollsSinceTerminalCheck++;
+              if (
+                emptyPollsSinceTerminalCheck >=
+                TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+              ) {
+                emptyPollsSinceTerminalCheck = 0;
+                if (!liveTailParams?.runId) {
+                  await maybeDiscoverRunFromDurableLog();
+                } else if (liveTailParams.userId) {
                   if (await maybeEmitTerminalFromDurable("idle")) {
                     break;
                   }
@@ -625,8 +1449,13 @@ export async function GET(
                 if (entry.event != null) {
                   if (
                     entry.seq !== null &&
-                    replayCursorSeq !== null &&
-                    entry.seq <= replayCursorSeq
+                    !shouldReplayEnvelope(
+                      {
+                        seq: entry.seq,
+                        projectionIndex: entry.identity?.projectionIndex,
+                      },
+                      replayCursor,
+                    )
                   ) {
                     diagnostics.dedupeCount += 1;
                     continue;
@@ -634,13 +1463,21 @@ export async function GET(
                   // Replay and live-tail intentionally overlap during connect so
                   // we do not drop events written mid-replay. Skip the first
                   // matching live event if it was already emitted from replay.
-                  const dedupeKey = getReplayDedupeKey(entry.event);
-                  if (replayedEventDedupeKeys.has(dedupeKey)) {
-                    replayedEventDedupeKeys.delete(dedupeKey);
+                  if (
+                    consumeReplayedEventDedupeKey(entry.event, entry.identity)
+                  ) {
                     diagnostics.dedupeCount += 1;
                     continue;
                   }
-                  enqueue(encodeSseEvent(entry.event, sseIdForSeq(entry.seq)));
+                  if (entry.seq !== null) {
+                    lastDeliveredSeq =
+                      lastDeliveredSeq === null
+                        ? entry.seq
+                        : Math.max(lastDeliveredSeq, entry.seq);
+                  }
+                  if (!emitAgUiEvent(entry.event, entry.seq, entry.identity)) {
+                    return;
+                  }
                   if (isTerminalRunEventType(entry.event.type)) {
                     close("terminal_event");
                     return;
@@ -673,13 +1510,15 @@ export async function GET(
                 error,
               );
             }
-            if (params?.runId && params.userId) {
-              emptyPollsSinceTerminalCheck++;
-              if (
-                emptyPollsSinceTerminalCheck >=
-                TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
-              ) {
-                emptyPollsSinceTerminalCheck = 0;
+            emptyPollsSinceTerminalCheck++;
+            if (
+              emptyPollsSinceTerminalCheck >=
+              TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS
+            ) {
+              emptyPollsSinceTerminalCheck = 0;
+              if (!liveTailParams?.runId) {
+                await maybeDiscoverRunFromDurableLog();
+              } else if (liveTailParams.userId) {
                 if (await maybeEmitTerminalFromDurable("xread_error", error)) {
                   break;
                 }
@@ -698,8 +1537,19 @@ export async function GET(
       // connections before the first real event lands, then live-tail.
       // -----------------------------------------------------------------
       if (resolvedRunId === null) {
+        const replayed =
+          replayCursorSeq !== null
+            ? await replayDurableEventsAfterCursor()
+            : false;
+        if (closed || replayed) {
+          return;
+        }
         enqueue(encodeSseComment("awaiting-first-run"));
-        await liveTail();
+        await liveTail(
+          resolvedRunId !== null
+            ? { runId: resolvedRunId, userId: session.user.id }
+            : undefined,
+        );
         return;
       }
 
@@ -707,15 +1557,22 @@ export async function GET(
       // Path B: replay the thread chat's full AG-UI event log, then
       // live-tail if the latest/explicit run is still active. Replay is
       // threadChat-scoped so reconnects can hydrate prior runs without
-      // going back through the legacy DB-message transcript path.
+      // going back through the DB-message transcript path.
       // -----------------------------------------------------------------
       let replayEnvelopes: AgUiEventEnvelope[];
       try {
-        replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
-          db,
-          threadChatId,
-          afterSeq: replayCursorSeq ?? undefined,
-        });
+        replayEnvelopes =
+          resolvedRunId !== null && replayCursorSeq === null
+            ? await getAgUiEventEnvelopesForRun({
+                db,
+                runId: resolvedRunId,
+                threadChatId,
+              })
+            : await getAgUiEventEnvelopesForThreadChat({
+                db,
+                threadChatId,
+                afterSeq: replayQueryAfterSeq(replayCursor),
+              });
       } catch (error) {
         console.error(
           "[ag-ui] threadChat replay failed",
@@ -761,6 +1618,14 @@ export async function GET(
           terminalRunContext !== null &&
           !isTerminalAgentRunStatus(terminalRunContext.status)
         ) {
+          if (shouldFrameRunAgentResume) {
+            const runStartedEvent = buildResumeRunStartedEvent({
+              threadId,
+              runId: resolvedRunId,
+            });
+            rememberReplayedEventDedupeKeys(runStartedEvent);
+            emitAgUiEvent(runStartedEvent, null);
+          }
           await liveTail({ runId: resolvedRunId, userId: session.user.id });
           return;
         }
@@ -806,22 +1671,45 @@ export async function GET(
         syntheticTerminalEntry = { seq: null, event: terminalEvent };
       }
 
+      const historyPrefix =
+        replayCursorSeq === null
+          ? splitHistoryOnlyPrefix(replayEnvelopes)
+          : { historyOnlyLastSeq: null, replayEnvelopes };
+      const streamReplayEnvelopes = historyPrefix.replayEnvelopes;
+      if (historyPrefix.historyOnlyLastSeq !== null) {
+        lastDeliveredSeq =
+          lastDeliveredSeq === null
+            ? historyPrefix.historyOnlyLastSeq
+            : Math.max(lastDeliveredSeq, historyPrefix.historyOnlyLastSeq);
+      }
+
+      if (replayCursorSeq === null && streamReplayEnvelopes.length === 0) {
+        enqueue(encodeSseComment("awaiting-first-run"));
+        await liveTail();
+        return;
+      }
+
+      const replayEntries = toReplayEntries(
+        streamReplayEnvelopes,
+        replayCursor,
+      );
+
       if (replayCursorSeq === null) {
         // Contract: a complete thread-chat replay MUST start with
-        // RUN_STARTED. Cursored reconnects may legitimately start in the
-        // middle of a run.
-        if (replayEnvelopes[0]?.payload.type !== EventType.RUN_STARTED) {
+        // RUN_STARTED after any history-only message snapshots. Cursored
+        // reconnects may legitimately start in the middle of a run.
+        if (replayEntries[0]?.event.type !== EventType.RUN_STARTED) {
           console.error(
             "[ag-ui] threadChat replay: first event was not RUN_STARTED",
             {
               threadId,
               threadChatId,
               runId: resolvedRunId,
-              firstType: replayEnvelopes[0]?.payload.type,
+              firstType: replayEntries[0]?.event.type,
             },
           );
           const errorEvent = mapRunErrorToAgui(
-            `Thread chat ${threadChatId} log is malformed: first event is ${replayEnvelopes[0]?.payload.type ?? "empty"}, expected RUN_STARTED`,
+            `Thread chat ${threadChatId} log is malformed: first event is ${replayEntries[0]?.event.type ?? "empty"}, expected RUN_STARTED`,
             "replay_failed",
           );
           enqueue(encodeSseEvent(errorEvent));
@@ -830,7 +1718,12 @@ export async function GET(
         }
       }
 
-      const replayEntries = toReplayEntries(replayEnvelopes, null);
+      if (
+        replayCursorSeq !== null &&
+        !frameResumeReplayEntries(replayEntries)
+      ) {
+        return;
+      }
       if (syntheticTerminalEntry !== null) {
         replayEntries.push(syntheticTerminalEntry);
       }
@@ -839,25 +1732,9 @@ export async function GET(
         resolvedRunHasTerminalEvent || syntheticTerminalEntry !== null;
 
       for (const entry of replayEntries) {
-        if (!isValidKnownAgUiEvent(entry.event)) {
-          console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
-            threadId,
-            threadChatId,
-            runId: resolvedRunId,
-            eventType: Reflect.get(entry.event, "type"),
-            seq: entry.seq,
-          });
-          const errorEvent = mapRunErrorToAgui(
-            `Run ${resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
-            "replay_failed",
-          );
-          enqueue(encodeSseEvent(errorEvent));
-          close("malformed_replay");
+        if (!emitReplayEntry(entry)) {
           return;
         }
-        diagnostics.replayCount += 1;
-        replayedEventDedupeKeys.add(getReplayDedupeKey(entry.event));
-        enqueue(encodeSseEvent(entry.event, sseIdForSeq(entry.seq)));
       }
 
       if (isRunComplete) {

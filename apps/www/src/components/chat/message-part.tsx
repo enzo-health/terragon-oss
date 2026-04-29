@@ -1,35 +1,16 @@
 import { memo, useMemo } from "react";
-import {
-  AllToolParts,
-  UIPart,
-  UIImagePart,
-  UIPdfPart,
-  UITextFilePart,
-  UIRichTextPart,
-} from "@terragon/shared";
+import { UIPart } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
   extractProposedPlanText,
 } from "@terragon/shared/db/artifact-descriptors";
-import { TextPart } from "./text-part";
-import { ImagePart } from "./image-part";
-import { PdfPart } from "./pdf-part";
-import { TextFilePart } from "./text-file-part";
-import { ToolPart, ToolPartProps } from "./tool-part";
-import { RichTextPart } from "./rich-text-part";
-import { ThinkingPart } from "./thinking-part";
-import { assertNever } from "@terragon/shared/utils";
+import { ToolPartProps } from "./tool-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import type { UIPartExtended } from "./ui-parts-extended";
-import { AudioPartView } from "./audio-part-view";
-import { ResourceLinkView } from "./resource-link-view";
-import { TerminalPartView } from "./terminal-part-view";
-import { DiffPartView } from "./diff-part";
-import { AutoApprovalReviewCard } from "./auto-approval-review-card";
-import { PlanPartView } from "./plan-part";
-import { ServerToolUseView } from "./server-tool-use-view";
-import { WebSearchResultView } from "./web-search-result-view";
-import { DelegationItemCard } from "./delegation-item-card";
+import {
+  type PartRegistryContext,
+  renderPartFromRegistry,
+} from "./parts/part-registry";
 
 export interface MessagePartProps {
   part: UIPart;
@@ -67,10 +48,12 @@ export const MessagePart = memo(function MessagePart({
       findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
     [artifactDescriptors, part],
   );
-  const handleOpenArtifact =
-    artifactDescriptor && onOpenArtifact
-      ? () => onOpenArtifact(artifactDescriptor.id)
-      : undefined;
+  const handleOpenArtifact = useMemo(() => {
+    if (!artifactDescriptor || !onOpenArtifact) return undefined;
+    return () => {
+      onOpenArtifact(artifactDescriptor.id);
+    };
+  }, [artifactDescriptor, onOpenArtifact]);
 
   // Find the plan artifact descriptor matching this specific text part's plan content.
   // When multiple parts have identical plan text across messages,
@@ -110,128 +93,36 @@ export const MessagePart = memo(function MessagePart({
     };
   }, [planArtifactDescriptor, onOpenArtifact]);
 
-  // Cast to extended union so the switch can handle rich part types emitted
-  // by dbAgentPartToUIPart in Sprint 5. The extra cases are www-local.
+  // Cast to the extended union so the registry sees all www-local variants
+  // (rich content emitted by dbAgentPartToUIPart in Sprint 5). The stub
+  // delegation variant now carries an explicit `type: "delegation-stub"`
+  // discriminator (split from the previous `"delegation"`-shaped union) so
+  // the registry handles it via its own entry — no more `"delegationId" in
+  // extendedPart` special-case here.
   const extendedPart = part as UIPartExtended;
 
-  switch (extendedPart.type) {
-    case "text": {
-      return (
-        <TextPart
-          text={extendedPart.text}
-          streaming={isLatest && isAgentWorking}
-          githubRepoFullName={githubRepoFullName}
-          branchName={branchName ?? undefined}
-          baseBranchName={baseBranchName}
-          hasCheckpoint={hasCheckpoint}
-          onOpenInArtifactWorkspace={handleOpenPlanArtifact}
-        />
-      );
-    }
-    case "thinking": {
-      return (
-        <ThinkingPart
-          thinking={extendedPart.thinking}
-          isLatest={isLatest}
-          isAgentWorking={isAgentWorking}
-        />
-      );
-    }
-    case "tool": {
-      const toolPart = extendedPart as AllToolParts;
-      return (
-        <ToolPart
-          toolPart={toolPart}
-          {...toolProps}
-          artifactDescriptors={artifactDescriptors}
-          onOpenArtifact={onOpenArtifact}
-        />
-      );
-    }
-    case "image": {
-      const imagePart = extendedPart as UIImagePart;
-      return (
-        <ImagePart
-          imageUrl={imagePart.image_url}
-          onClick={onClick}
-          onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
-      );
-    }
-    case "rich-text": {
-      const richTextPart = extendedPart as UIRichTextPart;
-      return (
-        <RichTextPart
-          richTextPart={richTextPart}
-          onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
-      );
-    }
-    case "pdf": {
-      const pdfPart = extendedPart as UIPdfPart;
-      return (
-        <PdfPart
-          pdfUrl={pdfPart.pdf_url}
-          filename={pdfPart.filename}
-          onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
-      );
-    }
-    case "text-file": {
-      const textFilePart = extendedPart as UITextFilePart;
-      return (
-        <TextFilePart
-          textFileUrl={textFilePart.file_url}
-          filename={textFilePart.filename}
-          mimeType={textFilePart.mime_type}
-          onOpenInArtifactWorkspace={handleOpenArtifact}
-        />
-      );
-    }
-    case "plan":
-      // Plan parts are rendered via the artifact workspace panel, not inline
-      return null;
-    // --- Extended rich content types (Sprint 5, www-local) ---
-    case "audio":
-      return <AudioPartView part={extendedPart} />;
-    case "resource-link":
-      return <ResourceLinkView part={extendedPart} />;
-    case "terminal":
-      return <TerminalPartView part={extendedPart} />;
-    case "diff":
-      return <DiffPartView part={extendedPart} />;
-    case "auto-approval-review":
-      return <AutoApprovalReviewCard part={extendedPart} />;
-    case "plan-structured":
-      return (
-        <PlanPartView part={{ type: "plan", entries: extendedPart.entries }} />
-      );
-    case "server-tool-use":
-      return <ServerToolUseView part={extendedPart} />;
-    case "web-search-result":
-      return <WebSearchResultView part={extendedPart} />;
-    case "delegation":
-      if ("delegationId" in extendedPart) {
-        return <DelegationItemCard delegation={extendedPart} />;
-      }
-      return (
-        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-          <div className="font-medium">
-            Delegated to {extendedPart.agentName}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {extendedPart.status}
-          </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm">
-            {extendedPart.message}
-          </p>
-        </div>
-      );
-    default:
-      // TypeScript exhaustiveness check — will error at compile time if a
-      // UIPartExtended variant is added without a corresponding case above.
-      assertNever(extendedPart);
-  }
+  const ctx: PartRegistryContext = {
+    isLatest,
+    isAgentWorking,
+    onClick,
+    toolProps,
+    artifactDescriptors,
+    onOpenArtifact,
+    artifactDescriptor,
+    onOpenInArtifactWorkspace: handleOpenArtifact,
+    onOpenPlanArtifact: handleOpenPlanArtifact,
+    githubRepoFullName,
+    branchName,
+    baseBranchName,
+    hasCheckpoint,
+  };
+
+  // Typed dispatch via the registry. The dispatcher lives in
+  // `parts/part-registry.ts` so it can isolate the runtime → static-typing
+  // bridge to a single point. Adding a new `UIPartExtended` variant without
+  // a registry entry breaks compilation in `part-registry.ts` via the
+  // exhaustiveness assertion there.
+  return renderPartFromRegistry(ctx, extendedPart);
 }, areMessagePartPropsEqual);
 
 function areMessagePartPropsEqual(
@@ -278,6 +169,6 @@ function areMessagePartPropsEqual(
     return false;
   }
 
-  const toolName = prevToolPart.name;
-  return toolName === "ExitPlanMode" ? true : true;
+  // Per-tool memoization logic could be added here in the future.
+  return true;
 }

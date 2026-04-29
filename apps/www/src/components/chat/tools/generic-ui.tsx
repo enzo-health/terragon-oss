@@ -81,8 +81,8 @@ export function GenericToolPart({
       <span className="h-5 flex items-center">
         <span
           className={cn("shrink-0 size-2 rounded-full inline-block", {
-            "bg-green-500": toolStatus === "completed",
-            "bg-red-500": toolStatus === "error",
+            "bg-success": toolStatus === "completed",
+            "bg-error": toolStatus === "error",
             "bg-muted-foreground animate-blink": toolStatus === "pending",
           })}
           aria-hidden="true"
@@ -143,7 +143,7 @@ export function GenericToolPartContent({
       className={cn(
         "grid grid-cols-[auto_1fr] gap-x-1.5 font-mono text-sm min-w-0 overflow-hidden",
         {
-          "text-red-700": toolStatus === "error",
+          "text-error": toolStatus === "error",
           "text-muted-foreground": toolStatus === "pending",
           "grid-cols-[auto]": singleColumn,
         },

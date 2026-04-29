@@ -59,8 +59,11 @@ export const CollapsibleAgentActivityGroup = memo(
           />
           <CollapsibleAgentActivityGroupLabel />
         </button>
+        {/* Color-block surface (no border) — one elevation step above the
+            canvas via surface-soft. The previous 15% muted bg + half-opacity
+            border read as a faded box rather than an intentional surface. */}
         {!isCollapsed && (
-          <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto border border-border/40 rounded-lg bg-muted/15 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex flex-col gap-2 p-4 max-h-[50dvh] overflow-y-auto rounded-lg bg-surface-soft animate-in fade-in slide-in-from-top-1 duration-200">
             {group.parts.map((part, partIndex) => {
               return (
                 <MessagePart

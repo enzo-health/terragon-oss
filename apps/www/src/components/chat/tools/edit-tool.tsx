@@ -56,10 +56,10 @@ function ToolPartEditResult({
       <GenericToolPartContentRow index={0}>
         <span>
           <span className="font-semibold">
-            <span className="text-green-700">
+            <span className="text-success">
               +{toolPart.parameters.new_string.split("\n").length}
             </span>{" "}
-            <span className="text-red-700">
+            <span className="text-error">
               -{toolPart.parameters.old_string.split("\n").length}
             </span>
           </span>{" "}

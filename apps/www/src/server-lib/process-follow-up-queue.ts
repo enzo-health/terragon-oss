@@ -176,6 +176,54 @@ type FollowUpDispatchPlan = {
   successReason: "dispatch_started_slash" | "dispatch_started_batch";
 };
 
+function combineQueuedMessagesForDispatch({
+  queuedMessages,
+  agent,
+  agentVersion,
+}: {
+  queuedMessages: readonly DBUserMessage[];
+  agent: Parameters<typeof getDefaultModelForAgent>[0]["agent"];
+  agentVersion: Parameters<typeof getDefaultModelForAgent>[0]["agentVersion"];
+}): StartAgentMessageParams["message"] {
+  if (queuedMessages.length === 0) {
+    return null;
+  }
+  if (queuedMessages.length === 1) {
+    const message = queuedMessages[0]!;
+    return {
+      ...message,
+      model:
+        message.model ??
+        getDefaultModelForAgent({
+          agent,
+          agentVersion,
+        }),
+    };
+  }
+  return {
+    type: "user",
+    model:
+      queuedMessages.at(-1)?.model ??
+      getDefaultModelForAgent({
+        agent,
+        agentVersion,
+      }),
+    permissionMode: queuedMessages.at(-1)?.permissionMode,
+    timestamp: queuedMessages.at(-1)?.timestamp,
+    parts: queuedMessages.flatMap((queuedMessage, index) =>
+      index === 0
+        ? queuedMessage.parts
+        : [
+            {
+              type: "text" as const,
+              text: "\n\n---\n\n",
+            },
+            ...queuedMessage.parts,
+          ],
+    ),
+  };
+}
+
 async function launchFollowUpDispatch(
   plan: FollowUpDispatchPlan,
 ): Promise<FollowUpQueueProcessingResult> {
@@ -769,8 +817,6 @@ export async function maybeProcessFollowUpQueue({
     const noopResult = await checkNoopBusy({ threadId, threadChatId, userId });
     if (noopResult) return noopResult;
   }
-  if (didUpdateStatus) {
-  }
   console.log("Processing follow-up", {
     threadId,
     threadChatId,
@@ -782,6 +828,11 @@ export async function maybeProcessFollowUpQueue({
       branchName: threadBranchName,
       threadId,
       threadChatId,
+      message: combineQueuedMessagesForDispatch({
+        queuedMessages: queuedMessagesSnapshot,
+        agent: runnableThreadChat.agent,
+        agentVersion: runnableThreadChat.agentVersion,
+      }),
       successReason: "dispatch_started_batch",
     });
   } catch (error) {

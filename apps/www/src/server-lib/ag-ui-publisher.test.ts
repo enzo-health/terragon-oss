@@ -33,6 +33,7 @@ const {
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
   metaEventsToAgUiEvents,
+  publishPersistedAgUiEvents,
   serializeAgUiTransportEnvelope,
 } = await import("./ag-ui-publisher");
 
@@ -91,7 +92,6 @@ async function fetchRowsForThreadChat(threadChatId: string) {
 
 describe("ag-ui-publisher", () => {
   beforeEach(async () => {
-    await db.delete(schema.agentEventLog);
     vi.clearAllMocks();
     redisMocks.xadd.mockResolvedValue("1-0");
   });
@@ -350,7 +350,7 @@ describe("ag-ui-publisher", () => {
     expect(parsed.payload.threadChatId).toBeUndefined();
   });
 
-  it("publishes quarantined provider payloads only through the redacted AG-UI payload inside the envelope", async () => {
+  it("keeps quarantined provider payloads out of the AG UI publish path", async () => {
     const fixture = await createRunFixture();
     const rows = canonicalEventsToAgUiRows([
       {
@@ -373,6 +373,8 @@ describe("ag-ui-publisher", () => {
       },
     ]);
 
+    expect(rows).toEqual([]);
+
     const result = await persistAndPublishAgUiEvents({
       db,
       runId: fixture.runId,
@@ -381,38 +383,8 @@ describe("ag-ui-publisher", () => {
       rows,
     });
 
-    expect(result.persistedEnvelopes).toHaveLength(1);
-    expect(result.persistedEnvelopes[0]).toMatchObject({
-      eventId: "ce-quarantine-1:CUSTOM:0",
-      runId: fixture.runId,
-      threadId: fixture.threadId,
-      threadChatId: fixture.threadChatId,
-      payload: {
-        type: EventType.CUSTOM,
-        name: "terragon.quarantine.unknown-provider-event",
-        value: {
-          provider: "codex-app-server",
-          rawEventType: "provider.experimental",
-          reason: "unsupported provider payload",
-          redactedPayload: {
-            preview: "[redacted]",
-            token: "[redacted]",
-          },
-        },
-      },
-    });
-
-    const data = redisMocks.xadd.mock.calls[0]![2] as {
-      event: string;
-      envelope: string;
-    };
-    expect(data.event).not.toContain("secret");
-    expect(data.envelope).not.toContain("secret");
-    const envelope = JSON.parse(data.envelope);
-    expect(envelope.payload.value.redactedPayload).toEqual({
-      preview: "[redacted]",
-      token: "[redacted]",
-    });
+    expect(result.persistedEnvelopes).toEqual([]);
+    expect(redisMocks.xadd).not.toHaveBeenCalled();
   });
 
   it("XADD failure halts further publishes and logs at error severity (C2 policy)", async () => {
@@ -550,12 +522,18 @@ describe("ag-ui-publisher", () => {
     expect(customRow).toBeTruthy();
     const customPayload = customRow!.payloadJson as unknown as {
       name: string;
-      value: { messageId: string; partIndex: number; part: { type: string } };
+      value: {
+        messageId: string;
+        partIndex: number;
+        name: string;
+        data: { type: string };
+      };
     };
-    expect(customPayload.name).toBe("terragon.part.terminal");
+    expect(customPayload.name).toBe("terragon.data-part");
     expect(customPayload.value.messageId).toBe(messageId);
     expect(customPayload.value.partIndex).toBe(2);
-    expect(customPayload.value.part.type).toBe("terminal");
+    expect(customPayload.value.name).toBe("terragon.terminal");
+    expect(customPayload.value.data.type).toBe("terminal");
   });
 
   it("rich-part rows: republishing the same batch is idempotent (dedupe on eventId)", async () => {
@@ -988,6 +966,64 @@ describe("ag-ui-publisher", () => {
       persistedEnvelopes: [],
     });
     expect(redisMocks.xadd).not.toHaveBeenCalled();
+  });
+
+  it("publishes transport envelopes in durable seq order", async () => {
+    const fixture = await createRunFixture();
+    const textEnd = makeTextEndEvent("m-seq");
+    const runFinished = {
+      type: EventType.RUN_FINISHED,
+      timestamp: 1_700_000_000,
+      threadId: fixture.threadId,
+      runId: fixture.runId,
+    } as BaseEvent;
+
+    await publishPersistedAgUiEvents({
+      threadChatId: fixture.threadChatId,
+      persistedEvents: [runFinished, textEnd],
+      insertedEventIds: ["finish", "end"],
+      persistedEnvelopes: [
+        {
+          eventId: "finish",
+          seq: 12,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:finish`,
+          payload: runFinished,
+        },
+        {
+          eventId: "end",
+          seq: 11,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:end`,
+          payload: textEnd,
+        },
+      ],
+    });
+
+    expect(redisMocks.xadd).toHaveBeenCalledTimes(2);
+    const firstData = redisMocks.xadd.mock.calls[0]?.[2] as {
+      event: string;
+      envelope: string;
+    };
+    const secondData = redisMocks.xadd.mock.calls[1]?.[2] as {
+      event: string;
+      envelope: string;
+    };
+
+    expect(JSON.parse(firstData.event)).toMatchObject({
+      type: EventType.TEXT_MESSAGE_END,
+    });
+    expect(JSON.parse(firstData.envelope)).toMatchObject({ seq: 11 });
+    expect(JSON.parse(secondData.event)).toMatchObject({
+      type: EventType.RUN_FINISHED,
+    });
+    expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 12 });
   });
 
   // -------------------------------------------------------------------

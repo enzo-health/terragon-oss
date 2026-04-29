@@ -5,8 +5,15 @@ import {
   type BaseEvent,
   type Message,
   type MessagesSnapshotEvent,
+  type RawEvent,
+  type TextMessageChunkEvent,
   type TextMessageContentEvent,
+  type TextMessageEndEvent,
   type TextMessageStartEvent,
+  type ToolCallArgsEvent,
+  type ToolCallEndEvent,
+  type ToolCallResultEvent,
+  type ToolCallStartEvent,
 } from "@ag-ui/core";
 import type {
   DBMessage,
@@ -41,6 +48,8 @@ export type NativeAgUiTranscript = {
   messageCount: number;
 };
 
+export type DurableAgUiHistoryItem = Message | CustomEvent;
+
 type NativeAgUiSnapshotSystemMessageType =
   | DBSystemMessage["message_type"]
   | "error"
@@ -56,13 +65,25 @@ export type NativeAgUiSnapshotMessage =
     };
 
 type NativeAgUiSideEffectSystemMessageType =
+  | "cancel-schedule"
   | "compact-result"
-  | "invalid-token-retry";
+  | "invalid-token-retry"
+  | "retry-git-commit-and-push"
+  | "generic-retry"
+  | "clear-context"
+  | "agent-error-retry"
+  | "follow-up-retry-failed";
 
 const NATIVE_AG_UI_SIDE_EFFECT_SYSTEM_MESSAGE_TYPES =
   new Set<NativeAgUiSideEffectSystemMessageType>([
+    "cancel-schedule",
     "compact-result",
     "invalid-token-retry",
+    "retry-git-commit-and-push",
+    "generic-retry",
+    "clear-context",
+    "agent-error-retry",
+    "follow-up-retry-failed",
   ]);
 
 export async function persistSideEffectAgUiMessages({
@@ -74,7 +95,7 @@ export async function persistSideEffectAgUiMessages({
   chatSequence,
   runId,
 }: PersistSideEffectAgUiMessagesParams): Promise<void> {
-  const agUiMessages = sideEffectDbMessagesToSnapshotMessages(messages);
+  const agUiMessages = dbMessagesToNativeAgUiSnapshotMessages(messages);
   if (agUiMessages.length === 0) {
     return;
   }
@@ -144,14 +165,14 @@ export async function persistInvalidTokenRetrySideEffectMarker({
     threadId,
     threadChatId,
   };
-  const event: CustomEvent = {
-    type: EventType.CUSTOM,
+  const event: RawEvent = {
+    type: EventType.RAW,
     timestamp: timestamp.getTime(),
-    name: INVALID_TOKEN_RETRY_MARKER_NAME,
-    value,
+    source: INVALID_TOKEN_RETRY_MARKER_NAME,
+    event: value,
   };
   const contentHash = stableHash({
-    name: INVALID_TOKEN_RETRY_MARKER_NAME,
+    source: INVALID_TOKEN_RETRY_MARKER_NAME,
     value,
   });
   const sequenceKey =
@@ -188,8 +209,8 @@ export async function hasInvalidTokenRetrySideEffectMarker({
     .where(
       and(
         eq(schema.agentEventLog.threadChatId, threadChatId),
-        eq(schema.agentEventLog.eventType, EventType.CUSTOM),
-        sql`${schema.agentEventLog.payloadJson}->>'name' = ${INVALID_TOKEN_RETRY_MARKER_NAME}`,
+        eq(schema.agentEventLog.eventType, EventType.RAW),
+        sql`${schema.agentEventLog.payloadJson}->>'source' = ${INVALID_TOKEN_RETRY_MARKER_NAME}`,
       ),
     )
     .limit(1);
@@ -230,7 +251,7 @@ async function resolveSideEffectRunId({
   return null;
 }
 
-function sideEffectDbMessagesToSnapshotMessages(
+export function dbMessagesToNativeAgUiSnapshotMessages(
   messages: readonly DBMessage[],
 ): Message[] {
   const out: Message[] = [];
@@ -323,6 +344,373 @@ export async function getNativeAgUiTranscriptForThreadChat({
     history: lines.join("\n\n"),
     messageCount,
   };
+}
+
+export function getNativeAgUiHistoryMessagesFromEvents(
+  events: readonly BaseEvent[],
+): Message[] {
+  const messages: Message[] = [];
+
+  for (const event of events) {
+    if (event.type !== EventType.MESSAGES_SNAPSHOT) {
+      continue;
+    }
+
+    for (const message of (event as MessagesSnapshotEvent).messages) {
+      if (isContextResetMessage(message)) {
+        messages.length = 0;
+      }
+      if (message.role === "user" || message.role === "system") {
+        messages.push(message);
+      }
+    }
+  }
+
+  return messages;
+}
+
+export function getDurableAgUiHistoryItemsFromEvents(
+  events: readonly BaseEvent[],
+): { items: DurableAgUiHistoryItem[]; lastSeqOffset: number } {
+  const state = createHistoryBuilderState();
+
+  events.forEach((event, index) => {
+    if (applyHistoryEvent(state, event)) {
+      state.lastSeqOffset = index;
+    }
+  });
+
+  return {
+    items: state.items,
+    lastSeqOffset: state.lastSeqOffset,
+  };
+}
+
+type HistoryBuilderState = {
+  items: DurableAgUiHistoryItem[];
+  itemIds: Set<string>;
+  assistantById: Map<string, Extract<Message, { role: "assistant" }>>;
+  toolCallById: Map<
+    string,
+    NonNullable<Extract<Message, { role: "assistant" }>["toolCalls"]>[number]
+  >;
+  toolParentById: Map<string, string>;
+  unresolvedToolCallIds: Set<string>;
+  lastAssistantId: string | null;
+  lastSeqOffset: number;
+};
+
+function createHistoryBuilderState(): HistoryBuilderState {
+  return {
+    items: [],
+    itemIds: new Set(),
+    assistantById: new Map(),
+    toolCallById: new Map(),
+    toolParentById: new Map(),
+    unresolvedToolCallIds: new Set(),
+    lastAssistantId: null,
+    lastSeqOffset: -1,
+  };
+}
+
+function applyHistoryEvent(
+  state: HistoryBuilderState,
+  event: BaseEvent,
+): boolean {
+  switch (event.type) {
+    case EventType.MESSAGES_SNAPSHOT:
+      return applyMessagesSnapshot(state, event as MessagesSnapshotEvent);
+    case EventType.TEXT_MESSAGE_START:
+      return startTextHistoryMessage(state, event as TextMessageStartEvent);
+    case EventType.TEXT_MESSAGE_CONTENT:
+    case EventType.TEXT_MESSAGE_CHUNK:
+      return appendTextHistoryMessage(
+        state,
+        event as TextMessageContentEvent | TextMessageChunkEvent,
+      );
+    case EventType.TEXT_MESSAGE_END:
+      return finishTextHistoryMessage(state, event as TextMessageEndEvent);
+    case EventType.TOOL_CALL_START:
+      return startHistoryToolCall(state, event as ToolCallStartEvent);
+    case EventType.TOOL_CALL_ARGS:
+    case EventType.TOOL_CALL_CHUNK:
+      return appendHistoryToolArgs(state, event as ToolCallArgsEvent);
+    case EventType.TOOL_CALL_END:
+      return finishHistoryToolCall(state, event as ToolCallEndEvent);
+    case EventType.TOOL_CALL_RESULT:
+      return addHistoryToolResult(state, event as ToolCallResultEvent);
+    case EventType.CUSTOM:
+      if (isTerragonCustomPartEvent(event)) {
+        state.items.push(event);
+        return true;
+      }
+      return false;
+    case EventType.RUN_FINISHED:
+      return finishUnresolvedHistoryToolCalls(
+        state,
+        "Tool call ended without a result.",
+      );
+    case EventType.RUN_ERROR:
+      return finishUnresolvedHistoryToolCalls(
+        state,
+        historyRunErrorMessage(event),
+      );
+    default:
+      return false;
+  }
+}
+
+function applyMessagesSnapshot(
+  state: HistoryBuilderState,
+  event: MessagesSnapshotEvent,
+): boolean {
+  let changed = false;
+  for (const message of event.messages) {
+    if (isContextResetMessage(message)) {
+      changed =
+        changed ||
+        state.items.length > 0 ||
+        state.assistantById.size > 0 ||
+        state.toolCallById.size > 0 ||
+        state.toolParentById.size > 0 ||
+        state.lastAssistantId !== null;
+      state.items.length = 0;
+      state.itemIds.clear();
+      state.assistantById.clear();
+      state.toolCallById.clear();
+      state.toolParentById.clear();
+      state.unresolvedToolCallIds.clear();
+      state.lastAssistantId = null;
+      continue;
+    }
+    if (state.itemIds.has(message.id)) {
+      continue;
+    }
+    state.items.push(message);
+    state.itemIds.add(message.id);
+    indexHistoryMessage(state, message);
+    changed = true;
+  }
+  return changed;
+}
+
+function indexHistoryMessage(
+  state: HistoryBuilderState,
+  message: Message,
+): void {
+  if (message.role === "tool") {
+    state.unresolvedToolCallIds.delete(message.toolCallId);
+    return;
+  }
+  if (message.role !== "assistant") {
+    return;
+  }
+  state.assistantById.set(message.id, message);
+  state.lastAssistantId = message.id;
+  for (const toolCall of message.toolCalls ?? []) {
+    state.toolCallById.set(toolCall.id, toolCall);
+    state.toolParentById.set(toolCall.id, message.id);
+    state.unresolvedToolCallIds.add(toolCall.id);
+  }
+}
+
+function ensureAssistantHistoryMessage(
+  state: HistoryBuilderState,
+  messageId: string,
+): Extract<Message, { role: "assistant" }> {
+  const existing = state.assistantById.get(messageId);
+  if (existing) {
+    return existing;
+  }
+
+  const message: Extract<Message, { role: "assistant" }> = {
+    id: messageId,
+    role: "assistant",
+    content: "",
+  };
+  state.items.push(message);
+  state.itemIds.add(messageId);
+  state.assistantById.set(messageId, message);
+  state.lastAssistantId = messageId;
+  return message;
+}
+
+function startTextHistoryMessage(
+  state: HistoryBuilderState,
+  event: TextMessageStartEvent,
+): boolean {
+  if (event.role !== "assistant") {
+    return false;
+  }
+  if (state.assistantById.has(event.messageId)) {
+    return false;
+  }
+  ensureAssistantHistoryMessage(state, event.messageId);
+  return true;
+}
+
+function appendTextHistoryMessage(
+  state: HistoryBuilderState,
+  event: TextMessageContentEvent | TextMessageChunkEvent,
+): boolean {
+  if (!event.delta) {
+    return false;
+  }
+  if (!event.messageId) {
+    return false;
+  }
+  const message = ensureAssistantHistoryMessage(state, event.messageId);
+  message.content = `${message.content ?? ""}${event.delta}`;
+  return true;
+}
+
+function finishTextHistoryMessage(
+  state: HistoryBuilderState,
+  event: TextMessageEndEvent,
+): boolean {
+  return state.assistantById.has(event.messageId);
+}
+
+function startHistoryToolCall(
+  state: HistoryBuilderState,
+  event: ToolCallStartEvent,
+): boolean {
+  const resolvedParentMessageId = event.parentMessageId
+    ? state.assistantById.has(event.parentMessageId)
+      ? event.parentMessageId
+      : state.toolParentById.get(event.parentMessageId)
+    : undefined;
+  const parentMessageId =
+    resolvedParentMessageId ??
+    state.lastAssistantId ??
+    `${event.toolCallId}:assistant`;
+  const parent = ensureAssistantHistoryMessage(state, parentMessageId);
+  const toolCalls = parent.toolCalls ?? [];
+  const existing = toolCalls.find(
+    (toolCall) => toolCall.id === event.toolCallId,
+  );
+  if (existing) {
+    return false;
+  }
+  const toolCall = {
+    id: event.toolCallId,
+    type: "function" as const,
+    function: {
+      name: event.toolCallName,
+      arguments: "",
+    },
+  };
+  parent.toolCalls = [...toolCalls, toolCall];
+  state.toolCallById.set(event.toolCallId, toolCall);
+  state.toolParentById.set(event.toolCallId, parentMessageId);
+  state.unresolvedToolCallIds.add(event.toolCallId);
+  return true;
+}
+
+function appendHistoryToolArgs(
+  state: HistoryBuilderState,
+  event: ToolCallArgsEvent,
+): boolean {
+  if (!event.delta) {
+    return false;
+  }
+  const toolCall = state.toolCallById.get(event.toolCallId);
+  if (!toolCall) {
+    return false;
+  }
+  toolCall.function.arguments = `${toolCall.function.arguments}${event.delta}`;
+  return true;
+}
+
+function finishHistoryToolCall(
+  state: HistoryBuilderState,
+  event: ToolCallEndEvent,
+): boolean {
+  return state.toolCallById.has(event.toolCallId);
+}
+
+function addHistoryToolResult(
+  state: HistoryBuilderState,
+  event: ToolCallResultEvent,
+): boolean {
+  const content =
+    typeof event.content === "string"
+      ? event.content
+      : JSON.stringify(event.content);
+  const failed = isFailedToolResultEvent(event);
+  state.items.push({
+    id: event.messageId,
+    role: "tool",
+    toolCallId: event.toolCallId,
+    content: content ?? "",
+    ...(failed ? { error: content ?? "Tool call failed" } : {}),
+  });
+  state.unresolvedToolCallIds.delete(event.toolCallId);
+  return true;
+}
+
+function finishUnresolvedHistoryToolCalls(
+  state: HistoryBuilderState,
+  content: string,
+): boolean {
+  let changed = false;
+  for (const toolCallId of state.unresolvedToolCallIds) {
+    state.items.push({
+      id: `${toolCallId}:unresolved-result`,
+      role: "tool",
+      toolCallId,
+      content,
+      error: content,
+    });
+    changed = true;
+  }
+  state.unresolvedToolCallIds.clear();
+  return changed || state.items.length > 0;
+}
+
+function historyRunErrorMessage(event: BaseEvent): string {
+  const message = Reflect.get(event, "message");
+  return typeof message === "string" && message.length > 0
+    ? message
+    : "Run ended before this tool returned a result.";
+}
+
+function isFailedToolResultEvent(event: ToolCallResultEvent): boolean {
+  const role = Reflect.get(event, "role");
+  const isError = Reflect.get(event, "isError");
+  const status = Reflect.get(event, "status");
+  const error = Reflect.get(event, "error");
+  return (
+    role === "tool" ||
+    isError === true ||
+    status === "error" ||
+    typeof error === "string"
+  );
+}
+
+function isTerragonCustomPartEvent(event: BaseEvent): event is CustomEvent {
+  const name = Reflect.get(event, "name");
+  return (
+    event.type === EventType.CUSTOM &&
+    typeof name === "string" &&
+    name === "terragon.data-part"
+  );
+}
+
+export async function getNativeAgUiHistoryMessagesForThreadChat({
+  db,
+  threadChatId,
+}: {
+  db: Pick<DB, "query">;
+  threadChatId: string;
+}): Promise<Message[]> {
+  const envelopes = await getAgUiEventEnvelopesForThreadChat({
+    db,
+    threadChatId,
+  });
+  return getNativeAgUiHistoryMessagesFromEvents(
+    envelopes.map((envelope) => envelope.payload),
+  );
 }
 
 export async function hasNativeAgUiUserMessage({

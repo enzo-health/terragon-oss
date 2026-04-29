@@ -1,6 +1,6 @@
 import React from "react";
 import { Coins } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MetaChip } from "./meta-chip";
 import type { ThreadMetaSnapshot } from "./use-thread-meta-events";
 
 export interface UsageChipProps {
@@ -21,19 +21,14 @@ export function UsageChip({ tokenUsage }: UsageChipProps) {
   const isWarning = tokenUsage.outputTokens > 80_000;
 
   return (
-    <div
+    <MetaChip
       data-testid="usage-chip"
       data-state={isWarning ? "warning" : "active"}
+      variant={isWarning ? "warning" : "active"}
       title={`Input: ${tokenUsage.inputTokens}, Cached: ${tokenUsage.cachedInputTokens}, Output: ${tokenUsage.outputTokens}`}
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-        isWarning
-          ? "border-amber-400 text-amber-600 bg-amber-500/5"
-          : "border-border text-muted-foreground",
-      )}
+      icon={<Coins className="size-3" />}
     >
-      <Coins className="size-3" />
       {formatTokens(total)}
-    </div>
+    </MetaChip>
   );
 }

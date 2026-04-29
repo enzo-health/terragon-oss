@@ -28,23 +28,23 @@ export function SystemMessage({
   const getLabel = () => {
     switch (message.message_type) {
       case "retry-git-commit-and-push":
-        return "Git commit and push failed. Retrying...";
+        return "Retrying push after git failure";
       case "generic-retry":
-        return "Retrying...";
+        return "Retrying";
       case "invalid-token-retry":
-        return "Authentication token might have expired. Retrying...";
+        return "Auth token expired, retrying";
       case "clear-context":
-        return "Conversation context cleared.";
+        return "Context cleared";
       case "compact-result":
-        return "Conversation context compacted.";
+        return "Context compacted";
       case "cancel-schedule":
-        return "Scheduled task cancelled.";
+        return "Schedule cancelled";
       case "fix-github-checks":
-        return "Fixing GitHub Checks...";
+        return "Fixing GitHub checks";
       case "agent-error-retry":
-        return "An error occurred. Automatically retrying...";
+        return "Retrying after error";
       case "follow-up-retry-failed":
-        return "Follow-up processing failed.";
+        return "Follow-up failed";
       case "stop":
       case "git-diff":
         return "";
@@ -60,16 +60,15 @@ export function SystemMessage({
       case "fix-github-checks":
       case "generic-retry":
       case "invalid-token-retry":
-        return "bg-red-500";
+      case "agent-error-retry":
+      case "follow-up-retry-failed":
+        // Semantic destructive — uses theme token, dark-mode safe
+        return "bg-error";
       case "clear-context":
       case "compact-result":
-        return "bg-green-500";
+        return "bg-emerald-500 dark:bg-emerald-400";
       case "cancel-schedule":
         return "bg-muted-foreground";
-      case "agent-error-retry":
-        return "bg-red-500";
-      case "follow-up-retry-failed":
-        return "bg-red-500";
       case "stop":
       case "git-diff":
         return "";
@@ -130,9 +129,9 @@ export function SystemMessage({
           </span>
         </div>
         {!isCollapsed && showMoreButton && (
-          <div className="max-h-[200px] overflow-auto border border-border/30 rounded-xl p-3 bg-white/50 shadow-inset-edge">
+          <div className="max-h-[200px] overflow-auto rounded-xl p-3 bg-muted/40 dark:bg-muted/30 shadow-inset-edge">
             <pre className="whitespace-pre-wrap text-[11px] font-mono leading-relaxed text-muted-foreground/80">
-              {message.parts.map((part, partIndex) => {
+              {message.parts.map((part) => {
                 return part.text;
               })}
             </pre>

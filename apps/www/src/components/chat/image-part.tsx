@@ -13,6 +13,7 @@ export function ImagePart({
   onClick?: () => void;
   onOpenInArtifactWorkspace?: () => void;
 }) {
+  const altText = alt || "Image";
   return (
     <div className="w-fit space-y-2">
       {onOpenInArtifactWorkspace && (
@@ -29,14 +30,30 @@ export function ImagePart({
           </Button>
         </div>
       )}
-      <img
-        src={imageUrl}
-        alt={alt || "Image"}
-        className={`max-w-[200px] ${onClick ? "cursor-pointer" : ""}`}
-        loading="lazy"
-        decoding="async"
-        onClick={onClick}
-      />
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={`View image: ${altText}`}
+          className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-150 active:scale-[0.98]"
+        >
+          <img
+            src={imageUrl}
+            alt={altText}
+            className="max-w-[200px] rounded-lg image-outline"
+            loading="lazy"
+            decoding="async"
+          />
+        </button>
+      ) : (
+        <img
+          src={imageUrl}
+          alt={altText}
+          className="max-w-[200px] rounded-lg image-outline"
+          loading="lazy"
+          decoding="async"
+        />
+      )}
     </div>
   );
 }

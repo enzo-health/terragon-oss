@@ -1,8 +1,17 @@
 import { env } from "@terragon/env/apps-www";
 import { Redis } from "@upstash/redis";
+import type { Socket } from "node:net";
 
 const LOCAL_REDIS_HTTP_MODE_PORTS = new Set(["8079", "18079"]);
 const LOCAL_REDIS_HTTP_TRANSPORT_PORTS = new Set(["8079", "18079"]);
+const LOCAL_REDIS_HTTP_TO_TCP_PORT: Record<string, number> = {
+  "8079": 6379,
+  "18079": 16379,
+};
+
+type RespValue = string | number | null | RespValue[];
+type RespParseResult = { value: RespValue; offset: number };
+type LocalRedisTcpEndpoint = { host: string; port: number };
 
 function isLocalRedisHttpUrl(redisUrl: string | undefined): boolean {
   if (!redisUrl) {
@@ -204,6 +213,281 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function getLocalRedisTcpEndpoint(): LocalRedisTcpEndpoint | null {
+  const redisUrl = getEffectiveRedisUrl();
+  if (!isLocalRedisHttpUrl(redisUrl)) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+    const port = LOCAL_REDIS_HTTP_TO_TCP_PORT[parsed.port];
+    if (port === undefined) {
+      return null;
+    }
+    return { host: parsed.hostname, port };
+  } catch {
+    return null;
+  }
+}
+
+function encodeRespArray(args: string[]): Buffer {
+  const chunks = [`*${args.length}\r\n`];
+  for (const arg of args) {
+    chunks.push(`$${Buffer.byteLength(arg)}\r\n${arg}\r\n`);
+  }
+  return Buffer.from(chunks.join(""));
+}
+
+function findLineEnd(buffer: Buffer, offset: number): number {
+  for (let index = offset; index < buffer.length - 1; index += 1) {
+    if (buffer[index] === 13 && buffer[index + 1] === 10) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function parseResp(buffer: Buffer, offset = 0): RespParseResult | null {
+  if (offset >= buffer.length) {
+    return null;
+  }
+
+  const prefix = String.fromCharCode(buffer[offset]!);
+  const lineEnd = findLineEnd(buffer, offset + 1);
+  if (lineEnd === -1) {
+    return null;
+  }
+  const line = buffer.subarray(offset + 1, lineEnd).toString("utf8");
+  const nextOffset = lineEnd + 2;
+
+  if (prefix === "+" || prefix === ":") {
+    return {
+      value: prefix === ":" ? Number(line) : line,
+      offset: nextOffset,
+    };
+  }
+
+  if (prefix === "-") {
+    throw new Error(line);
+  }
+
+  if (prefix === "$") {
+    const byteLength = Number(line);
+    if (byteLength === -1) {
+      return { value: null, offset: nextOffset };
+    }
+    const valueEnd = nextOffset + byteLength;
+    if (buffer.length < valueEnd + 2) {
+      return null;
+    }
+    return {
+      value: buffer.subarray(nextOffset, valueEnd).toString("utf8"),
+      offset: valueEnd + 2,
+    };
+  }
+
+  if (prefix === "*") {
+    const itemCount = Number(line);
+    if (itemCount === -1) {
+      return { value: null, offset: nextOffset };
+    }
+    const values: RespValue[] = [];
+    let currentOffset = nextOffset;
+    for (let index = 0; index < itemCount; index += 1) {
+      const parsed = parseResp(buffer, currentOffset);
+      if (parsed === null) {
+        return null;
+      }
+      values.push(parsed.value);
+      currentOffset = parsed.offset;
+    }
+    return { value: values, offset: currentOffset };
+  }
+
+  throw new Error(`Unsupported Redis RESP prefix: ${prefix}`);
+}
+
+async function executeLocalRedisCommand(
+  endpoint: LocalRedisTcpEndpoint,
+  args: string[],
+  timeoutMs: number,
+): Promise<RespValue> {
+  const { createConnection } = await import("node:net");
+
+  return await new Promise<RespValue>((resolve, reject) => {
+    const socket: Socket = createConnection(endpoint);
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(new Error("Local redis stream command timeout"));
+    }, timeoutMs);
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.end();
+      callback();
+    };
+
+    socket.on("connect", () => {
+      socket.write(encodeRespArray(args));
+    });
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      try {
+        const parsed = parseResp(Buffer.concat(chunks));
+        if (parsed !== null) {
+          settle(() => resolve(parsed.value));
+        }
+      } catch (error) {
+        settle(() => reject(error));
+      }
+    });
+    socket.on("error", (error) => {
+      settle(() => reject(error));
+    });
+    socket.on("end", () => {
+      if (!settled) {
+        const parsed = parseResp(Buffer.concat(chunks));
+        settle(() => resolve(parsed?.value ?? null));
+      }
+    });
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function localRedisFieldsFromValue(value: unknown): string[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  return Object.entries(value).flatMap(([field, fieldValue]) => [
+    field,
+    typeof fieldValue === "string" ? fieldValue : JSON.stringify(fieldValue),
+  ]);
+}
+
+function localRedisXreadCommandArgs(args: unknown[]): string[] | null {
+  const [streamKey, lastId, options] = args;
+  if (typeof streamKey !== "string" || typeof lastId !== "string") {
+    return null;
+  }
+  const command = ["XREAD"];
+  if (isRecord(options)) {
+    const count = Reflect.get(options, "count");
+    const blockMS = Reflect.get(options, "blockMS");
+    if (typeof count === "number" && Number.isFinite(count)) {
+      command.push("COUNT", String(count));
+    }
+    if (typeof blockMS === "number" && Number.isFinite(blockMS)) {
+      command.push("BLOCK", String(blockMS));
+    }
+  }
+  command.push("STREAMS", streamKey, lastId);
+  return command;
+}
+
+function xrevrangeObjectFromResp(value: RespValue): Record<string, unknown> {
+  if (!Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, Record<string, string>> = {};
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length < 2) {
+      continue;
+    }
+    const [id, fields] = entry;
+    if (typeof id !== "string" || !Array.isArray(fields)) {
+      continue;
+    }
+    const fieldMap: Record<string, string> = {};
+    for (let index = 0; index < fields.length - 1; index += 2) {
+      const field = fields[index];
+      const fieldValue = fields[index + 1];
+      if (typeof field === "string" && typeof fieldValue === "string") {
+        fieldMap[field] = fieldValue;
+      }
+    }
+    out[id] = fieldMap;
+  }
+  return out;
+}
+
+function isLocalRedisStreamCommand(commandName: string): boolean {
+  const normalized = commandName.toLowerCase();
+  return (
+    normalized === "xadd" ||
+    normalized === "xread" ||
+    normalized === "xrevrange"
+  );
+}
+
+function localRedisStreamCommandArgs(
+  commandName: string,
+  args: unknown[],
+): string[] | null {
+  const normalized = commandName.toLowerCase();
+  if (normalized === "xadd") {
+    const [streamKey, id, fields] = args;
+    if (typeof streamKey !== "string" || typeof id !== "string") {
+      return null;
+    }
+    const fieldArgs = localRedisFieldsFromValue(fields);
+    if (fieldArgs.length === 0) {
+      return null;
+    }
+    return ["XADD", streamKey, id, ...fieldArgs];
+  }
+
+  if (normalized === "xread") {
+    return localRedisXreadCommandArgs(args);
+  }
+
+  if (normalized === "xrevrange") {
+    const [streamKey, start, end, count] = args;
+    if (
+      typeof streamKey !== "string" ||
+      typeof start !== "string" ||
+      typeof end !== "string"
+    ) {
+      return null;
+    }
+    const command = ["XREVRANGE", streamKey, start, end];
+    if (typeof count === "number" && Number.isFinite(count)) {
+      command.push("COUNT", String(count));
+    }
+    return command;
+  }
+
+  return null;
+}
+
+async function executeLocalRedisStreamCommand(
+  commandName: string,
+  args: unknown[],
+): Promise<unknown> {
+  const endpoint = getLocalRedisTcpEndpoint();
+  const command = localRedisStreamCommandArgs(commandName, args);
+  if (endpoint === null || command === null) {
+    return undefined;
+  }
+  const value = await executeLocalRedisCommand(
+    endpoint,
+    command,
+    getLocalHttpCommandTimeoutMs(commandName, args),
+  );
+  return commandName.toLowerCase() === "xrevrange"
+    ? xrevrangeObjectFromResp(value)
+    : value;
+}
+
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -297,6 +581,9 @@ function createResilientRedisClient(client: Redis): Redis {
           const [patternArg] = args;
           const pattern = typeof patternArg === "string" ? patternArg : "*";
           return Promise.resolve(getObservedKeysMatchingPattern(pattern));
+        }
+        if (localHttpMode && isLocalRedisStreamCommand(commandName)) {
+          return executeLocalRedisStreamCommand(commandName, args);
         }
         trackRedisKeyUsage(commandName, args, localHttpMode);
 

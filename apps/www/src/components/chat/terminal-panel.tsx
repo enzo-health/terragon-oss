@@ -24,7 +24,10 @@ export function TerminalPanel({
   return (
     <div
       className={cn(
-        "absolute bottom-0 bg-background border border-b-0 rounded-t-lg z-50 flex flex-col transition-all duration-200 shadow-lg",
+        // Brand: code & terminal surfaces are always dark navy product chrome,
+        // regardless of light/dark theme. The cream-to-dark contrast is part of
+        // the visual rhythm.
+        "absolute bottom-0 bg-surface-dark text-on-dark border border-b-0 border-surface-dark-elevated rounded-t-lg z-50 flex flex-col shadow-lg origin-bottom-right transition-[opacity,transform] duration-200 ease-out",
         isMinimized
           ? "h-10 !w-[200px] right-2 sm:right-12"
           : "max-h-[80vh] sm:h-[640px] w-auto right-2 left-2 sm:w-[600px] sm:right-12 sm:left-auto",
@@ -33,8 +36,8 @@ export function TerminalPanel({
       {/* Terminal header */}
       <div
         className={cn(
-          "flex items-center justify-between h-10 bg-muted/50 rounded-t-lg p-2",
-          !isMinimized && "border-b",
+          "flex items-center justify-between h-10 bg-surface-dark-elevated rounded-t-lg p-2 text-on-dark",
+          !isMinimized && "border-b border-surface-dark-elevated",
         )}
         onClick={() => {
           if (isMinimized) {

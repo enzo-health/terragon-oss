@@ -9,6 +9,7 @@
  * packages/shared/src/db/ui-messages.ts and the local aliases removed.
  */
 import type {
+  AllToolParts,
   DBAudioPart,
   DBResourceLinkPart,
   DBTerminalPart,
@@ -44,15 +45,42 @@ export type UIServerToolUsePart = DBServerToolUsePart;
 /** Server-tool result passthrough (pairs with UIServerToolUsePart by id). */
 export type UIWebSearchResultPart = DBWebSearchResultPart;
 
-export type UIDelegationPart =
-  | DBDelegationMessage
-  | {
-      type: "delegation";
-      id: string;
-      agentName: string;
-      message: string;
-      status: "initiated" | "running" | "completed" | "failed" | string;
-    };
+/**
+ * Canonical full delegation payload — matches `DBDelegationMessage` from the
+ * wire. The registry's `delegation` entry narrows to this shape so its prop
+ * builder is sound (no unsafe cast at the dispatch boundary).
+ */
+export type UIDelegationPart = DBDelegationMessage;
+
+/**
+ * Minimal stub fallback for a delegation that hasn't yet been resolved to a
+ * full `DBDelegationMessage`. Carries a distinct `type: "delegation-stub"`
+ * discriminator so the registry dispatcher and the message-part renderer can
+ * branch on it explicitly rather than via `"delegationId" in part`. Producers
+ * that previously emitted `{ type: "delegation", agentName, status, message }`
+ * partials should emit `type: "delegation-stub"` so the union narrows
+ * cleanly at the dispatch boundary.
+ */
+export type UIDelegationStubPart = {
+  type: "delegation-stub";
+  id: string;
+  agentName: string;
+  message: string;
+  status: "initiated" | "running" | "completed" | "failed" | string;
+};
+
+/**
+ * UI tool part with daemon-side lifecycle fields that aren't on the shared
+ * `AllToolParts` union. The fields are carried from `DBToolCall` through
+ * `InternalToolPart` into the renderer; widening `AllToolParts` itself is a
+ * separate refactor. Centralized here so consumers (e.g. `tool-part.tsx`)
+ * can reference one type instead of redeclaring the intersection.
+ */
+export type UIToolPartWithLifecycle = AllToolParts & {
+  progressChunks?: Array<{ seq: number; text: string }>;
+  mcpMetadata?: { server: string; tool: string };
+  toolStatus?: string;
+};
 
 /**
  * Extended UIPart union that includes all rich content types.
@@ -68,4 +96,5 @@ export type UIPartExtended =
   | UIStructuredPlanPart
   | UIServerToolUsePart
   | UIWebSearchResultPart
-  | UIDelegationPart;
+  | UIDelegationPart
+  | UIDelegationStubPart;

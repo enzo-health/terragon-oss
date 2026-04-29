@@ -3,6 +3,7 @@ import {
   Automation,
   DBThreadContextMessage,
   DBUserMessage,
+  DBUserMessageWithModel,
   ThreadSource,
   ThreadSourceMetadata,
 } from "@terragon/shared";
@@ -35,6 +36,7 @@ import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { checkShadowBanTaskCreationRateLimit } from "@/lib/rate-limit";
 import { UserFacingError } from "@/lib/server-actions";
 import { getSandboxSizeForUser } from "@/lib/subscription-tiers";
+import { persistSideEffectAgUiMessages } from "@/server-lib/ag-ui-side-effect-messages";
 import { generateThreadName } from "@/server-lib/generate-thread-name";
 import { getThreadChatHistory } from "./compact";
 import { getDefaultModel } from "./default-ai-model";
@@ -132,6 +134,16 @@ export async function createNewThread({
   ]);
   const messageWithModel = { ...message, model: modelOrDefault };
   const agent = modelToAgent(messageWithModel.model);
+  const uploadedInitialMessage = saveAsDraft
+    ? null
+    : await uploadUserMessageImages({ userId, message: messageWithModel });
+  const uploadedInitialMessageWithModel: DBUserMessageWithModel | null =
+    uploadedInitialMessage
+      ? {
+          ...uploadedInitialMessage,
+          model: messageWithModel.model,
+        }
+      : null;
   // Track thread creation
   getPostHogServer().capture({
     distinctId: userId,
@@ -209,7 +221,15 @@ export async function createNewThread({
       agent,
       permissionMode: message.permissionMode || "allowAll",
       status: scheduleAt ? "scheduled" : saveAsDraft ? "draft" : "queued",
+      replaceMessages: uploadedInitialMessageWithModel
+        ? [uploadedInitialMessageWithModel]
+        : undefined,
     },
+  });
+  await persistInitialUserPromptAgUiSnapshot({
+    threadId,
+    threadChatId,
+    message: uploadedInitialMessageWithModel,
   });
 
   // If saving as draft, update the thread with the user message
@@ -264,10 +284,6 @@ export async function createNewThread({
     if (scheduleAt < Date.now()) {
       throw new UserFacingError("Schedule time must be in the future");
     }
-    const uploadedMessage = await uploadUserMessageImages({
-      userId,
-      message: messageWithModel,
-    });
     await updateThreadChat({
       db,
       userId,
@@ -275,7 +291,9 @@ export async function createNewThread({
       threadChatId,
       updates: {
         scheduleAt: new Date(scheduleAt),
-        appendMessages: [uploadedMessage],
+        appendMessages: uploadedInitialMessageWithModel
+          ? [uploadedInitialMessageWithModel]
+          : undefined,
       },
     });
     updateThreadMetadata();
@@ -308,7 +326,7 @@ export async function createNewThread({
     dispatchAgentMessage({
       db,
       userId,
-      message: messageWithModel,
+      message: uploadedInitialMessageWithModel ?? messageWithModel,
       threadContextMessage,
       threadId,
       threadChatId,
@@ -350,6 +368,29 @@ export async function generateAndUpdateThreadName({
       },
     });
   }
+}
+
+async function persistInitialUserPromptAgUiSnapshot({
+  threadId,
+  threadChatId,
+  message,
+}: {
+  threadId: string;
+  threadChatId: string;
+  message: DBUserMessageWithModel | null;
+}): Promise<void> {
+  if (!message) {
+    return;
+  }
+  await persistSideEffectAgUiMessages({
+    db,
+    threadId,
+    threadChatId,
+    messages: [message],
+    source: "initial-user-prompt",
+    chatSequence: 1,
+    runId: `pre-run:${threadChatId}:initial-user-prompt`,
+  });
 }
 
 function getThreadNameForAutomation({

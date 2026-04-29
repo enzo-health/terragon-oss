@@ -25,6 +25,7 @@ import {
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
+import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
 import { createGitDiffCheckpoint } from "@terragon/shared/utils/git-diff";
 import { sanitizeForJson } from "@terragon/shared/utils/sanitize-json";
 import { sql } from "drizzle-orm";
@@ -496,16 +497,19 @@ async function maybeAutoFixGitCommitAndPushError({
     threadId,
     threadChatId,
   });
-  const latestMessageType = latestPersistedSystemMessageType(
+  let latestMessageType = latestPersistedSystemMessageType(
     threadChat?.messages ?? [],
   );
   if (!latestMessageType) {
-    console.error("No system or user message found", {
-      userId,
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
       threadId,
       threadChatId,
+      fromThreadChatMessageSeq: 0,
     });
-    return false;
+    latestMessageType = latestPersistedSystemMessageType(
+      replayEntries.flatMap((entry) => entry.messages),
+    );
   }
   if (latestMessageType === "retry-git-commit-and-push") {
     console.log("Last system or user message is a retry message, ignoring.");

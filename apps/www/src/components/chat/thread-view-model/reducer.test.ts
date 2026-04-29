@@ -438,10 +438,11 @@ describe("ThreadViewModel reducer", () => {
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
         type: EventType.CUSTOM,
-        name: "terragon.part.image",
+        name: "terragon.data-part",
         value: {
           messageId: "m1",
-          part: { type: "image", image_url: 42 },
+          name: "terragon.image",
+          data: { type: "image", image_url: 42 },
         },
       },
     );
@@ -463,10 +464,11 @@ describe("ThreadViewModel reducer", () => {
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
         type: EventType.CUSTOM,
-        name: "terragon.part.terminal",
+        name: "terragon.data-part",
         value: {
           messageId: "m1",
-          part: { type: "terminal", sandboxId: 42, chunks: [] },
+          name: "terragon.terminal",
+          data: { type: "terminal", sandboxId: 42, chunks: [] },
         },
       },
     );
@@ -488,10 +490,12 @@ describe("ThreadViewModel reducer", () => {
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
         type: EventType.CUSTOM,
-        name: "terragon.part.plan",
+        name: "terragon.data-part",
         value: {
           messageId: "m1",
-          part: {
+          partIndex: 0,
+          name: "terragon.plan",
+          data: {
             type: "plan",
             entries: [
               {

@@ -4,54 +4,126 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.995 0 0);
-  --foreground: oklch(0.34 0.015 285);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.19 0.004 285);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.27 0.006 285);
-  --primary: oklch(0.6688 0.1174 50.1276);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.92 0.004 285);
-  --secondary-foreground: oklch(0.43 0.006 285);
-  --muted: oklch(0.93 0.004 285);
-  --muted-foreground: oklch(0.45 0.004 285);
-  --accent: oklch(0.92 0.004 285);
-  --accent-foreground: oklch(0.27 0.006 285);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.885 0.004 285);
-  --input: oklch(0.76 0.005 285);
-  --ring: oklch(0.6171 0.1375 39.0427);
-  --chart-1: oklch(0.5583 0.1276 42.9956);
-  --chart-2: oklch(0.6898 0.1581 290.4107);
-  --chart-3: oklch(0.88 0.01 285);
-  --chart-4: oklch(0.8822 0.0403 298.1792);
-  --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.967 0.001 285);
-  --sidebar-foreground: oklch(0.36 0.004 285);
-  --sidebar-primary: oklch(0.6171 0.1375 39.0427);
-  --sidebar-primary-foreground: oklch(0.9881 0 0);
-  --sidebar-accent: oklch(0.92 0.004 285);
-  --sidebar-accent-foreground: oklch(0.25 0.005 285);
-  --sidebar-border: oklch(0.87 0.004 285);
-  --sidebar-ring: oklch(0.6171 0.1375 39.0427);
-  --app-background: oklch(0.967 0.001 285);
+  /* === The 11-token system ===
+     One math rule for neutrals: oklch(L 0.010 80) — vary L only.
+     Hue 80 sits in the warm yellow-beige band (Anthropic editorial
+     territory). Chroma 0.010 is the goldilocks — visible on careful
+     inspection (brand cohesion) but reads neutral in normal use.
+     Lightness ladder is non-linear: tight gaps at the light end where
+     human eyes need 5–7% to perceive a step, wider gaps in the middle
+     where contrast does its real work. Reference: Bjango, Stripe,
+     Refactoring UI. */
+  --canvas: oklch(0.97 0.01 80); /* page floor */
+  --raised: oklch(
+    0.94 0.01 80
+  ); /* cards, prompt box, user bubbles — lifted from 0.92 for gentler card-on-canvas */
+  --hairline-strong: oklch(
+    0.885 0.01 80
+  ); /* NEW — dedicated border stop. Sits between raised and sunken so borders hold definition no matter which surface they sit on. */
+  --sunken: oklch(
+    0.905 0.01 80
+  ); /* hover surfaces, muted regions — lifted from 0.86. The old 11-point drop from canvas read as "press" not "hover". */
+  --neutral: oklch(
+    0.78 0.01 80
+  ); /* disabled fills, dividers — lifted from 0.70 (was hideously heavy on a cream canvas) */
+  --mid: oklch(0.5 0.01 80); /* secondary text */
+  --strong: oklch(
+    0.15 0.006 80
+  ); /* body text — matches Tailwind Stone-950, ~17:1 contrast on canvas */
+  --base: oklch(0.18 0.005 80); /* code/terminal surface, brand floor */
 
-  --warm-stone: rgba(245, 242, 239, 0.8);
-  --warm-gray: #71717a;
+  /* Brand accent + active variant. Coral-active is the WCAG-AA-passing
+     darker variant for foreground use on cream-tinted surfaces. */
+  --coral: oklch(0.62 0.115 39);
+  --coral-active: oklch(0.51 0.1 40);
+
+  /* Semantics — all anchored at L=0.62 except error which lifts to 0.55
+     for hue separation from coral primary (hue 39). Hues chosen to be
+     editorial-warm rather than SaaS-default: warning is terracotta
+     (not amber), success is sage (not emerald), error is clay-red
+     (hue 22, distinct from coral). */
+  --warning: oklch(0.62 0.095 54);
+  --success: oklch(
+    0.58 0.075 150
+  ); /* sage — slightly darker for semantic weight, between Tailwind Green-600 and Catppuccin Latte */
+  --error: oklch(0.55 0.16 22);
+  --info: oklch(
+    0.58 0.1 230
+  ); /* steel blue — moderate chroma so it doesn't feel cold against the warm-cream system. Used for delegation/info chips, neutral status indicators. */
+
+  /* === Legacy aliases ===
+     411 uses of --muted-foreground, 131 of --muted, 106 of --foreground,
+     etc. depend on these names. We keep the names but point them at the
+     11 canonical tokens. Phase 2 (later) renames the consumers; phase 1
+     (this commit) is value-only. */
+  --background: var(--canvas);
+  --foreground: var(--strong);
+  --card: var(--raised);
+  --card-foreground: var(--strong);
+  --popover: var(--raised);
+  --popover-foreground: var(--strong);
+  --primary: var(--coral);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: var(--sunken);
+  --secondary-foreground: var(--strong);
+  --muted: var(--sunken);
+  --muted-foreground: var(--mid);
+  --accent: var(--sunken);
+  --accent-foreground: var(--strong);
+  --destructive: var(--error);
+  --destructive-foreground: oklch(1 0 0);
+  --border: var(--hairline-strong);
+  --input: var(--hairline-strong);
+  --ring: var(--coral);
+  --chart-1: var(--coral);
+  --chart-2: var(--success);
+  --chart-3: var(--sunken);
+  --chart-4: var(--warning);
+  --chart-5: var(--coral-active);
+  --sidebar: var(--canvas);
+  --sidebar-foreground: var(--strong);
+  --sidebar-primary: var(--coral-active);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: var(--sunken);
+  --sidebar-accent-foreground: var(--strong);
+  --sidebar-border: var(--hairline-strong);
+  --sidebar-ring: var(--coral);
+  --app-background: var(--canvas);
+
+  /* Anchored brand surfaces — code, terminal, dark product chrome.
+     These don't theme-flip (the dark surface IS the brand value
+     #181715 regardless of mode). Kept as separate tokens because
+     they're a distinct concept from the cream ladder. */
+  --surface-dark: var(--base);
+  --surface-dark-soft: oklch(0.2 0.005 80);
+  --surface-dark-elevated: oklch(0.24 0.005 80);
+  --on-dark: var(--canvas);
+  --on-dark-soft: oklch(0.66 0.01 80);
+
+  /* Existing compatibility tokens — warm-stone is used in 4 places
+     (user bubble fallback, avatar fallback). Mixed from --raised so it
+     tracks any future shift in the ladder rather than drifting. */
+  --warm-stone: color-mix(in oklch, var(--raised) 70%, transparent);
+  --warm-gray: var(--mid);
 
   /* next/font/google injects --font-geist, --font-geist-mono
      onto <body> via the `geist.variable` class chain in layout.tsx. Do NOT
      redefine them here — the browser would otherwise fall back to literal
      "Geist" (which isn't installed) and then to system defaults like Roboto. */
   --font-sans:
-    var(--font-geist, ui-sans-serif), ui-sans-serif, system-ui, sans-serif;
+    var(--font-geist, ui-sans-serif), "Inter", ui-sans-serif, system-ui,
+    sans-serif;
   --font-mono:
-    var(--font-geist-mono, ui-monospace), SFMono-Regular, Menlo, Monaco,
-    Consolas, "Liberation Mono", "Courier New", monospace;
+    var(--font-geist-mono, ui-monospace), "JetBrains Mono", SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Display — Cormorant serif is OPT-IN for explicit brand moments only
+     (dashboard greeting, login hero, wordmark). Default headings render
+     in Geist; the serif is a deliberate editorial accent reserved for
+     places that earn the voice. Apply via the `font-display` utility,
+     not by relying on h1-h6 defaults. */
   --font-display:
-    var(--font-geist, ui-sans-serif), ui-sans-serif, system-ui, sans-serif;
+    var(--font-cormorant, "Cormorant Garamond"), "Tiempos Headline",
+    "EB Garamond", Garamond, "Times New Roman", serif;
 
   --radius: 0.75rem;
 
@@ -59,37 +131,38 @@
   --spacing: 0.25rem;
 
   --shadow-inset-edge: rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
-  --shadow-outline-ring: rgba(0, 0, 0, 0.06) 0px 0px 0px 1px;
+  /* Shadow scale — softened pass. The previous values had alphas in the
+     0.075–0.25 range which read as heavy on a warm cream surface. Cream
+     amplifies dark drop-shadows compared to neutral gray, so the same
+     alpha that looks subtle on a Stripe-style gray system reads as bold
+     here. Pulled all alphas down by ~30–40% and reduced blur radii to
+     match. The hierarchy (xs < sm < md < lg < xl < 2xl) is preserved. */
+  --shadow-outline-ring: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px;
   --shadow-card:
-    rgba(0, 0, 0, 0.04) 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 4px 4px,
-    rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
+    rgba(0, 0, 0, 0.025) 0px 1px 2px, rgba(0, 0, 0, 0.03) 0px 2px 6px,
+    rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
   --shadow-warm-lift:
-    rgba(78, 50, 23, 0.04) 0px 6px 16px,
-    rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
-  --shadow-premium:
-    0 0 0 1px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.05),
-    0 4px 6px -2px rgba(0, 0, 0, 0.02);
+    rgba(78, 50, 23, 0.03) 0px 4px 12px,
+    rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
 
-  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-2xs: 0 1px 2px 0px hsl(0 0% 0% / 0.03);
+  --shadow-xs: 0 1px 2px 0px hsl(0 0% 0% / 0.04);
   --shadow-sm:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+    0 1px 2px 0px hsl(0 0% 0% / 0.06), 0 1px 1px -1px hsl(0 0% 0% / 0.06);
   --shadow-base:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+    0 1px 3px 0px hsl(0 0% 0% / 0.06), 0 1px 2px -1px hsl(0 0% 0% / 0.06);
   --shadow-md:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+    0 2px 4px 0px hsl(0 0% 0% / 0.06), 0 1px 2px -1px hsl(0 0% 0% / 0.05);
   --shadow-lg:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+    0 4px 8px -1px hsl(0 0% 0% / 0.07), 0 2px 4px -2px hsl(0 0% 0% / 0.05);
   --shadow-xl:
-    0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
-  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+    0 8px 14px -2px hsl(0 0% 0% / 0.08), 0 4px 6px -3px hsl(0 0% 0% / 0.05);
+  --shadow-2xl: 0 12px 24px -4px hsl(0 0% 0% / 0.12);
 
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-900);
-  --info: var(--color-violet-500);
-  --info-foreground: var(--color-violet-900);
-  --warning: var(--color-yellow-500);
-  --warning-foreground: var(--color-yellow-900);
+  /* Diff colors (git diff view) — these stay as Tailwind palette values
+     because diff convention universally expects green-add / red-remove,
+     and the brand semantic --success (sage) / --error (clay) would feel
+     wrong here. Diff is a domain that legitimately wants pure red/green. */
   --diff-added-bg: color-mix(
     in srgb,
     var(--color-emerald-500) 10%,
@@ -126,46 +199,86 @@
 }
 
 .dark {
-  --background: oklch(0.2679 0.0036 106.6427);
-  --foreground: oklch(0.8074 0.0142 93.0137);
-  --card: oklch(0.2679 0.0036 106.6427);
-  --card-foreground: oklch(0.9818 0.0054 95.0986);
-  --popover: oklch(0.3085 0.0035 106.6039);
-  --popover-foreground: oklch(0.9211 0.004 106.4781);
-  --primary: oklch(0.6724 0.1308 38.7559);
+  /* Dark ladder: same hue/chroma rule (oklch L 0.010 80), but inverted
+     L values so the perceptual relationships hold across modes. The
+     "base" anchor stays at 0.18 (Anthropic brand floor #181715) instead
+     of pure inversion (0.03) — the brand wants warm-dark, not absolute. */
+  --canvas: oklch(0.13 0.01 80);
+  --raised: oklch(
+    0.175 0.01 80
+  ); /* slight pull-down from 0.18 so it separates from --base (the brand-anchored 0.18 code surface) */
+  --hairline-strong: oklch(
+    0.265 0.01 80
+  ); /* NEW — dedicated border stop, sits above sunken so borders read against any surface */
+  --sunken: oklch(
+    0.225 0.01 80
+  ); /* hover/muted surface — was 0.24, lowered slightly so hairline-strong has room above */
+  --neutral: oklch(
+    0.38 0.01 80
+  ); /* disabled fills, dividers — lifted from 0.35 to match light-mode shift */
+  --mid: oklch(0.65 0.01 80);
+  --strong: oklch(0.92 0.01 80);
+  --base: oklch(0.18 0.005 80);
+
+  /* Coral brightens slightly to maintain WCAG contrast on dark cream */
+  --coral: oklch(0.69 0.13 39);
+  --coral-active: oklch(0.55 0.11 40);
+
+  /* Semantics lift slightly on dark — same hue/chroma, +3 L */
+  --warning: oklch(0.65 0.1 54);
+  --success: oklch(0.68 0.08 150);
+  --error: oklch(0.62 0.17 22);
+  --info: oklch(0.68 0.11 230); /* steel blue, lifted for dark mode contrast */
+
+  /* Legacy aliases — same map as light, point to the inverted ladder */
+  --background: var(--canvas);
+  --foreground: var(--strong);
+  --card: var(--raised);
+  --card-foreground: var(--strong);
+  --popover: var(--raised);
+  --popover-foreground: var(--strong);
+  --primary: var(--coral);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.9818 0.0054 95.0986);
-  --secondary-foreground: oklch(0.3085 0.0035 106.6039);
-  --muted: oklch(0.2213 0.0038 106.707);
-  --muted-foreground: oklch(0.7713 0.0169 99.0657);
-  --accent: oklch(0.213 0.0078 95.4245);
-  --accent-foreground: oklch(0.9663 0.008 98.8792);
-  --destructive: oklch(0.6368 0.2078 25.3313);
+  --secondary: var(--sunken);
+  --secondary-foreground: var(--strong);
+  --muted: var(--sunken);
+  --muted-foreground: var(--mid);
+  --accent: var(--sunken);
+  --accent-foreground: var(--strong);
+  --destructive: var(--error);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.3618 0.0101 106.8928);
-  --input: oklch(0.4336 0.0113 100.2195);
-  --ring: oklch(0.6724 0.1308 38.7559);
-  --chart-1: oklch(0.5583 0.1276 42.9956);
-  --chart-2: oklch(0.6898 0.1581 290.4107);
-  --chart-3: oklch(0.213 0.0078 95.4245);
-  --chart-4: oklch(0.3074 0.0516 289.323);
-  --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.2357 0.0024 67.7077);
-  --sidebar-foreground: oklch(0.8074 0.0142 93.0137);
-  --sidebar-primary: oklch(0.6724 0.1308 38.7559);
+  --border: var(--hairline-strong);
+  --input: var(--hairline-strong);
+  --ring: var(--coral);
+  --chart-1: var(--coral);
+  --chart-2: var(--success);
+  --chart-3: var(--sunken);
+  --chart-4: var(--warning);
+  --chart-5: var(--coral-active);
+  --sidebar: var(--canvas);
+  --sidebar-foreground: var(--strong);
+  --sidebar-primary: var(--coral);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.2854 0.006 95);
-  --sidebar-accent-foreground: oklch(0.9074 0.0142 93.0137);
-  --sidebar-border: oklch(0.3618 0.0101 106.8928);
-  --sidebar-ring: oklch(0.6724 0.1308 38.7559);
-  --app-background: oklch(0.21 0.006 285);
+  --sidebar-accent: var(--sunken);
+  --sidebar-accent-foreground: var(--strong);
+  --sidebar-border: var(--hairline-strong);
+  --sidebar-ring: var(--coral);
+  --app-background: var(--canvas);
+
+  /* Brand-anchored dark surfaces stay constant — code/terminal are
+     navy regardless of theme. */
+  --surface-dark: var(--base);
+  --surface-dark-soft: oklch(0.2 0.005 80);
+  --surface-dark-elevated: oklch(0.24 0.005 80);
+  --on-dark: oklch(0.97 0.01 80);
+  --on-dark-soft: oklch(0.66 0.01 80);
 
   --invert: #ffffff;
   --invert-foreground: #000000;
   --diff-added-fg: var(--color-emerald-400);
   --diff-removed-fg: var(--color-red-400);
-  --warm-stone: rgba(30, 28, 26, 0.8);
-  --warm-gray: #a1a1aa;
+  --warm-stone: color-mix(in oklch, var(--raised) 70%, transparent);
+  --warm-gray: var(--mid);
 }
 
 @theme inline {
@@ -219,12 +332,21 @@
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
 
-  /* Type scale — produces text-display, text-title, text-lead, text-caption, text-micro utilities */
-  --text-display: 2.25rem;
-  --text-title: 1.375rem;
-  --text-lead: 0.9375rem;
-  --text-caption: 0.8125rem;
-  --text-micro: 0.625rem;
+  /* Type scale — internal-tool sizing. Tailwind's text-sm (14px) and
+     text-xs (12px) cover ~85% of body usage; these tokens are the
+     SEMANTIC scale for intentional moments above and below.
+     - micro:   labels, badges, tight chrome
+     - caption: secondary metadata, table cells
+     - lead:    emphasized body, intro paragraphs
+     - title:   section headers, dialog titles
+     - display: page heroes, dashboard greetings
+     Restraint over editorial scale: an internal tool rarely benefits
+     from 36px headers — those came from the marketing-page playbook. */
+  --text-micro: 0.6875rem; /* 11px (was 10 — 10 hits subpixel mush on most screens) */
+  --text-caption: 0.75rem; /* 12px (was 13 — aligned with Tailwind text-xs for token/utility consistency) */
+  --text-lead: 0.9375rem; /* 15px — KEEP, sits between text-sm and text-base */
+  --text-title: 1.25rem; /* 20px (was 22 — restraint for internal-tool section heads) */
+  --text-display: 1.75rem; /* 28px (was 36 — internal tool, not a marketing site) */
 
   /* Container scale — produces max-w-chat utility */
   --container-chat: var(--chat-max-width);
@@ -238,16 +360,57 @@
   --shadow-outline-ring: var(--shadow-outline-ring);
   --shadow-card: var(--shadow-card);
   --shadow-warm-lift: var(--shadow-warm-lift);
-  --shadow-premium: var(--shadow-premium);
 
   --color-invert-foreground: var(--invert-foreground);
   --color-invert: var(--invert);
-  --color-warning-foreground: var(--warning-foreground);
+
+  /* === Canonical 11-token registrations ===
+     These produce Tailwind utilities like bg-canvas, text-strong, bg-base,
+     border-sunken, text-warning, bg-coral, etc. The legacy tokens (above)
+     also flow through, so existing class names keep working during the
+     phased migration. */
+  --color-canvas: var(--canvas);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-neutral: var(--neutral);
+  --color-mid: var(--mid);
+  --color-strong: var(--strong);
+  --color-base: var(--base);
+  --color-coral: var(--coral);
+  --color-coral-active: var(--coral-active);
   --color-warning: var(--warning);
-  --color-info-foreground: var(--info-foreground);
-  --color-info: var(--info);
-  --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
+  --color-error: var(--error);
+  --color-info: var(--info);
+
+  /* Brand-anchored dark surfaces (code/terminal) and on-dark text */
+  --color-surface-dark: var(--surface-dark);
+  --color-surface-dark-soft: var(--surface-dark-soft);
+  --color-surface-dark-elevated: var(--surface-dark-elevated);
+  --color-on-dark: var(--on-dark);
+  --color-on-dark-soft: var(--on-dark-soft);
+
+  /* Hairline tokens. --hairline-strong is the dedicated border stop (sits
+     above sunken, below raised). The legacy --hairline / --hairline-soft
+     aliases are kept for the ~10 components using them as explicit bg
+     utilities; they now point at the dedicated hairline value too so
+     borders hold definition regardless of which surface they sit on. */
+  --color-hairline-strong: var(--hairline-strong);
+  --color-hairline: var(--hairline-strong);
+  --color-hairline-soft: var(--sunken);
+  /* Surface aliases for two pre-existing silent-failure utilities:
+     bg-surface-cream-strong (recommended-tasks) and bg-surface-soft
+     (git-diff). Tailwind v4 silently emits nothing for unregistered
+     tokens — these stub the utilities to the correct ladder stops. */
+  --color-surface-cream-strong: var(--sunken);
+  --color-surface-soft: var(--raised);
+  /* Disabled fill for buttons / inputs / chips. The button base class
+     references `disabled:bg-disabled` — without this registration that
+     utility silently emits nothing and the variant's bg leaks through,
+     which combined with disabled:opacity-50 produced unreadable text on
+     a washed-coral background. Pointed at --neutral (the ladder stop
+     between sunken and mid) for a clearly-disabled tone in both modes. */
+  --color-disabled: var(--neutral);
 }
 @layer base {
   * {
@@ -272,15 +435,62 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* Headings: Geist by default, weight-mapped per level. Internal tool
+     conviction — clarity over editorial voice. The serif (--font-display)
+     is opt-in for explicit brand moments via the `font-display` utility.
+     Geist's optical work means we don't need the heavy negative tracking
+     Cormorant required; -0.015em is enough for tight headlines. */
   h1,
   h2,
   h3,
   h4,
   h5,
   h6 {
-    font-family: var(--font-display);
+    font-family: var(--font-sans);
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1,
+      "ss01" 1;
+    text-wrap: balance;
+    color: var(--foreground);
+  }
+  h1 {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  h2 {
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+  }
+  h3 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  h4,
+  h5,
+  h6 {
     font-weight: 500;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.005em;
+    line-height: 1.25;
+  }
+
+  /* Prevent layout shift on numbers that update at runtime
+     (token counts, timers, rate-limit gauges). Opt-in via attribute. */
+  [data-stream-counter],
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Subtle 1px outline for images. Use pure black/white at low alpha
+     so the edge doesn't pick up a tinted neutral and read as dirt. */
+  .image-outline {
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+  }
+  .dark .image-outline {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   }
 
   .dark body {

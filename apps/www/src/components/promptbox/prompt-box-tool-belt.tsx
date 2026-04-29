@@ -91,8 +91,10 @@ export function PromptBoxToolBelt({
     return null;
   }
 
+  // Tight grouping (gap-0.5 = 2px) reads as one toolbar unit while still
+  // letting the eye separate the icons; gap-0 made them visually fuse.
   return (
-    <div className="flex items-center gap-0">
+    <div className="flex items-center gap-0.5">
       {showSkipArchive && (
         <Button
           variant="ghost"

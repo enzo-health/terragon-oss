@@ -138,7 +138,7 @@ describe("mapCanonicalEventToAgui", () => {
       });
     });
 
-    it("sets parentMessageId when parentToolUseId is present", () => {
+    it("does not map parentToolUseId to assistant-ui parentMessageId", () => {
       const event: CanonicalToolCallStartEvent = {
         ...baseEnvelope,
         category: "tool_lifecycle",
@@ -153,8 +153,8 @@ describe("mapCanonicalEventToAgui", () => {
 
       expect(result[0]).toMatchObject({
         type: EventType.TOOL_CALL_START,
-        parentMessageId: "parent-tool-1",
       });
+      expect(result[0]).not.toHaveProperty("parentMessageId");
     });
 
     it("handles empty parameters object", () => {
@@ -264,7 +264,7 @@ describe("mapCanonicalEventToAgui", () => {
   });
 
   describe("custom projection events", () => {
-    it("maps permission requests to CUSTOM events", () => {
+    it("maps permission requests to PermissionRequest tool-call events", () => {
       const event: PermissionRequestEvent = {
         ...baseEnvelope,
         category: "permission",
@@ -277,20 +277,29 @@ describe("mapCanonicalEventToAgui", () => {
 
       const result = mapCanonicalEventToAgui(event);
 
-      expect(result).toHaveLength(1);
+      expect(result.map((entry) => entry.type)).toEqual([
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+      ]);
       expect(result[0]).toMatchObject({
-        type: EventType.CUSTOM,
-        name: "permission-request",
-        value: {
-          permissionRequestId: "permission-1",
-          toolCallId: "tc-1",
-          title: "Run command?",
-          options: ["approve", "deny"],
-        },
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "permission-1",
+        toolCallName: "PermissionRequest",
+      });
+      expect(result[0]).not.toHaveProperty("parentMessageId");
+      const argsEvent = result[1] as unknown as { delta: string };
+      expect(JSON.parse(argsEvent.delta)).toEqual({
+        tool_name: "Run command?",
+        description: "Run command?",
+        options: [
+          { kind: "approve", name: "Approve", optionId: "approved" },
+          { kind: "deny", name: "Deny", optionId: "denied" },
+        ],
       });
     });
 
-    it("maps permission responses to CUSTOM events", () => {
+    it("maps permission responses to PermissionRequest tool results", () => {
       const event: PermissionResponseEvent = {
         ...baseEnvelope,
         category: "permission",
@@ -303,12 +312,10 @@ describe("mapCanonicalEventToAgui", () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
-        type: EventType.CUSTOM,
-        name: "permission-response",
-        value: {
-          permissionRequestId: "permission-1",
-          response: "approved",
-        },
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: "permission-1",
+        toolCallId: "permission-1",
+        content: "Permission granted",
       });
     });
 
@@ -362,7 +369,7 @@ describe("mapCanonicalEventToAgui", () => {
   });
 
   describe("unknown-provider-event", () => {
-    it("maps quarantined provider payloads to replayable custom diagnostics", () => {
+    it("keeps quarantined provider payloads out of the AG UI stream", () => {
       const event: UnknownProviderEvent = {
         ...baseEnvelope,
         category: "quarantine",
@@ -374,17 +381,7 @@ describe("mapCanonicalEventToAgui", () => {
 
       const result = mapCanonicalEventToAgui(event);
 
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        type: EventType.CUSTOM,
-        name: "terragon.quarantine.unknown-provider-event",
-        value: {
-          provider: "acp",
-          reason: "unsupported event kind",
-          rawEventType: null,
-          redactedPayload: { token: "[REDACTED]" },
-        },
-      });
+      expect(result).toEqual([]);
     });
   });
 });
@@ -580,7 +577,7 @@ describe("dbAgentMessagePartsToAgUi", () => {
     ]);
   });
 
-  it("encodes a terminal part as a CUSTOM event with name terragon.part.terminal", () => {
+  it("encodes a terminal part as a typed data-part CUSTOM event", () => {
     const terminalPart = {
       type: "terminal",
       sandboxId: "sb-1",
@@ -591,17 +588,57 @@ describe("dbAgentMessagePartsToAgUi", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       type: EventType.CUSTOM,
-      name: "terragon.part.terminal",
+      name: "terragon.data-part",
       timestamp: TS,
       value: {
         messageId: MSG,
         partIndex: 0,
-        part: terminalPart,
+        name: "terragon.terminal",
+        data: terminalPart,
       },
     });
   });
 
-  it("emits CUSTOM events in order across a mixed part array, preserving partIndex", () => {
+  it("encodes a diff part as a FileChange tool call with structured result payload", () => {
+    const diff = {
+      type: "diff",
+      filePath: "src/button.tsx",
+      oldContent: "old",
+      newContent: "new",
+      unifiedDiff:
+        "--- a/src/button.tsx\n+++ b/src/button.tsx\n@@ -1 +1 @@\n-old\n+new",
+      status: "applied",
+    } as const;
+
+    const result = dbAgentMessagePartsToAgUi(MSG, [diff], TS);
+
+    expect(result.map((event) => event.type)).toEqual([
+      EventType.TOOL_CALL_START,
+      EventType.TOOL_CALL_ARGS,
+      EventType.TOOL_CALL_END,
+      EventType.TOOL_CALL_RESULT,
+    ]);
+    expect(result[0]).toMatchObject({
+      type: EventType.TOOL_CALL_START,
+      timestamp: TS,
+      toolCallId: "m-agent-1:diff:0",
+      toolCallName: "FileChange",
+      parentMessageId: MSG,
+    });
+
+    const argsEvent = result[1] as unknown as { delta: string };
+    expect(JSON.parse(argsEvent.delta)).toEqual({
+      files: [{ path: "src/button.tsx", action: "modified" }],
+    });
+
+    const resultEvent = result[3] as unknown as { content: string };
+    expect(JSON.parse(resultEvent.content)).toEqual({
+      type: "terragon.diff",
+      part: diff,
+    });
+  });
+
+  it("emits rich events in order across a mixed part array, preserving source order", () => {
     const thinking = { type: "thinking", thinking: "brief" };
     const terminal = {
       type: "terminal",
@@ -632,20 +669,26 @@ describe("dbAgentMessagePartsToAgUi", () => {
     //   1: thinking -> 3 reasoning events
     //   2: text -> skipped
     //   3: terminal -> 1 custom event (partIndex: 3)
-    //   4: diff -> 1 custom event (partIndex: 4)
-    expect(result).toHaveLength(5);
+    //   4: diff -> 4 tool-call events
+    expect(result).toHaveLength(8);
     expect(result[0]?.type).toBe(EventType.REASONING_MESSAGE_START);
     expect(result[1]?.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
     expect(result[2]?.type).toBe(EventType.REASONING_MESSAGE_END);
     expect(result[3]).toMatchObject({
       type: EventType.CUSTOM,
-      name: "terragon.part.terminal",
-      value: { messageId: MSG, partIndex: 3, part: terminal },
+      name: "terragon.data-part",
+      value: {
+        messageId: MSG,
+        partIndex: 3,
+        name: "terragon.terminal",
+        data: terminal,
+      },
     });
     expect(result[4]).toMatchObject({
-      type: EventType.CUSTOM,
-      name: "terragon.part.diff",
-      value: { messageId: MSG, partIndex: 4, part: diff },
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "m-agent-1:diff:4",
+      toolCallName: "FileChange",
+      parentMessageId: MSG,
     });
   });
 
@@ -653,10 +696,6 @@ describe("dbAgentMessagePartsToAgUi", () => {
     [
       "terminal",
       { type: "terminal", sandboxId: "s", terminalId: "t", chunks: [] },
-    ],
-    [
-      "diff",
-      { type: "diff", filePath: "a", newContent: "b", status: "pending" },
     ],
     [
       "image",
@@ -698,15 +737,20 @@ describe("dbAgentMessagePartsToAgUi", () => {
     ],
     ["rich-text", { type: "rich-text", nodes: [{ type: "text", text: "x" }] }],
   ])(
-    "wraps %s as CUSTOM terragon.part.%s with full part in value",
+    "wraps %s as typed data-part CUSTOM with full data in value",
     (name, part) => {
       const result = dbAgentMessagePartsToAgUi(MSG, [part], TS);
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
         type: EventType.CUSTOM,
-        name: `terragon.part.${name}`,
+        name: "terragon.data-part",
         timestamp: TS,
-        value: { messageId: MSG, partIndex: 0, part },
+        value: {
+          messageId: MSG,
+          partIndex: 0,
+          name: `terragon.${name}`,
+          data: part,
+        },
       });
     },
   );
