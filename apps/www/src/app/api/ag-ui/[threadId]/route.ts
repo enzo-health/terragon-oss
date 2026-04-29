@@ -4,6 +4,7 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
   agUiStreamKey,
+  getAgUiEventEnvelopesForRun,
   getAgUiEventEnvelopesForThreadChat,
   getLatestRunIdForThreadChat,
   isTerminalAgentRunStatus,
@@ -52,11 +53,20 @@ type AgUiStreamEntry = {
   id: string;
   seq: number | null;
   event: BaseEvent | null;
+  identity?: ReplayIdentity;
 };
 
 type ReplayEntry = {
   seq: number | null;
   event: BaseEvent;
+  identity?: ReplayIdentity;
+};
+
+type ReplayIdentity = {
+  runId?: string;
+  eventId?: string;
+  idempotencyKey?: string;
+  seq?: number;
 };
 
 function stableSerialize(value: unknown): string {
@@ -79,8 +89,61 @@ function stableSerialize(value: unknown): string {
   return `{${serializedEntries.join(",")}}`;
 }
 
-function getReplayDedupeKey(event: BaseEvent): string {
-  return stableSerialize(event);
+const NO_STRUCTURAL_DEDUPE_EVENT_TYPES = new Set<string>([
+  EventType.TEXT_MESSAGE_CONTENT,
+  EventType.REASONING_MESSAGE_CONTENT,
+  EventType.TOOL_CALL_ARGS,
+]);
+
+function getStringEventField(event: BaseEvent, field: string): string | null {
+  const value = Reflect.get(event, field);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function getIntegerEventField(event: BaseEvent, field: string): number | null {
+  const value = Reflect.get(event, field);
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
+}
+
+function getReplayDedupeKey(
+  event: BaseEvent,
+  identity?: ReplayIdentity,
+): string | null {
+  const runId = identity?.runId ?? getStringEventField(event, "runId");
+  const eventId = identity?.eventId ?? getStringEventField(event, "eventId");
+  if (runId && eventId) {
+    return `run-event:${runId}:${eventId}`;
+  }
+  if (eventId) {
+    return `event:${eventId}`;
+  }
+
+  const idempotencyKey =
+    identity?.idempotencyKey ?? getStringEventField(event, "idempotencyKey");
+  if (runId && idempotencyKey) {
+    return `run-idempotency:${runId}:${idempotencyKey}`;
+  }
+  if (idempotencyKey) {
+    return `idempotency:${idempotencyKey}`;
+  }
+
+  const seq = identity?.seq ?? getIntegerEventField(event, "seq");
+  if (runId && seq !== null) {
+    return `run-seq:${runId}:${seq}`;
+  }
+
+  const messageId = getStringEventField(event, "messageId");
+  const deltaSeq = getIntegerEventField(event, "deltaSeq");
+  if (messageId && deltaSeq !== null) {
+    return `message-delta:${event.type}:${messageId}:${deltaSeq}`;
+  }
+
+  if (NO_STRUCTURAL_DEDUPE_EVENT_TYPES.has(event.type)) {
+    return null;
+  }
+  return `event:${stableSerialize(event)}`;
 }
 
 const STREAM_LOG_PREFIX = "[ag-ui][stream]";
@@ -213,9 +276,20 @@ function readNumberField(value: object, field: string): number | null {
   return Number.isSafeInteger(candidate) ? candidate : null;
 }
 
+function readStringFieldOrUndefined(
+  value: object,
+  field: string,
+): string | undefined {
+  const candidate = Reflect.get(value, field);
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : undefined;
+}
+
 function parseStreamPayload(value: unknown): {
   seq: number | null;
   event: BaseEvent | null;
+  identity?: ReplayIdentity;
 } {
   if (isValidKnownAgUiEvent(value)) {
     return { seq: null, event: value };
@@ -228,7 +302,16 @@ function parseStreamPayload(value: unknown): {
   const seq = readNumberField(value, "seq");
   const payload = Reflect.get(value, "payload");
   if (isValidKnownAgUiEvent(payload)) {
-    return { seq, event: payload };
+    return {
+      seq,
+      event: payload,
+      identity: {
+        runId: readStringFieldOrUndefined(value, "runId"),
+        eventId: readStringFieldOrUndefined(value, "eventId"),
+        idempotencyKey: readStringFieldOrUndefined(value, "idempotencyKey"),
+        ...(seq !== null ? { seq } : {}),
+      },
+    };
   }
 
   const event = Reflect.get(value, "event");
@@ -270,7 +353,12 @@ function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
     try {
       const parsed: unknown = JSON.parse(serialized);
       const payload = parseStreamPayload(parsed);
-      entries.push({ id, seq: payload.seq, event: payload.event });
+      entries.push({
+        id,
+        seq: payload.seq,
+        event: payload.event,
+        ...(payload.identity ? { identity: payload.identity } : {}),
+      });
     } catch (err) {
       console.warn("[ag-ui] malformed stream entry", { id, err });
       entries.push({ id, seq: null, event: null });
@@ -283,6 +371,10 @@ function readEventField(rawFields: unknown): string | null {
   if (!Array.isArray(rawFields)) {
     // Upstash sometimes returns an object shape already parsed.
     if (rawFields && typeof rawFields === "object") {
+      const envelope = Reflect.get(rawFields, "envelope");
+      if (typeof envelope === "string") {
+        return envelope;
+      }
       const value = Reflect.get(rawFields, "event");
       return typeof value === "string" ? value : null;
     }
@@ -336,7 +428,16 @@ function toReplayEntries(
 ): ReplayEntry[] {
   return envelopes
     .filter((entry) => cursorSeq === null || entry.seq > cursorSeq)
-    .map((entry) => ({ seq: entry.seq, event: entry.payload }));
+    .map((entry) => ({
+      seq: entry.seq,
+      event: entry.payload,
+      identity: {
+        runId: entry.runId,
+        eventId: entry.eventId,
+        idempotencyKey: entry.idempotencyKey,
+        seq: entry.seq,
+      },
+    }));
 }
 
 function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
@@ -358,6 +459,20 @@ function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
 
 function sseIdForSeq(seq: number | null): string | undefined {
   return seq === null ? undefined : String(seq);
+}
+
+function buildResumeRunStartedEvent({
+  threadId,
+  runId,
+}: {
+  threadId: string;
+  runId: string;
+}): BaseEvent {
+  return {
+    type: EventType.RUN_STARTED,
+    threadId,
+    runId,
+  };
 }
 
 /**
@@ -398,6 +513,7 @@ export async function GET(
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const runIdParam = request.nextUrl.searchParams.get("runId");
   const replayCursorSeq = resolveReplayCursor(request);
+  const shouldFrameRunAgentResume = request.method === "POST";
 
   if (!threadChatId) {
     return NextResponse.json(
@@ -586,7 +702,16 @@ export async function GET(
         }
 
         diagnostics.replayCount += 1;
-        replayedEventDedupeKeys.add(getReplayDedupeKey(entry.event));
+        const dedupeKey = getReplayDedupeKey(entry.event, entry.identity);
+        if (dedupeKey !== null) {
+          replayedEventDedupeKeys.add(dedupeKey);
+        }
+        if (entry.identity !== undefined) {
+          const structuralDedupeKey = getReplayDedupeKey(entry.event);
+          if (structuralDedupeKey !== null) {
+            replayedEventDedupeKeys.add(structuralDedupeKey);
+          }
+        }
         if (entry.seq !== null) {
           lastDeliveredSeq =
             lastDeliveredSeq === null
@@ -771,8 +896,14 @@ export async function GET(
                   // Replay and live-tail intentionally overlap during connect so
                   // we do not drop events written mid-replay. Skip the first
                   // matching live event if it was already emitted from replay.
-                  const dedupeKey = getReplayDedupeKey(entry.event);
-                  if (replayedEventDedupeKeys.has(dedupeKey)) {
+                  const dedupeKey = getReplayDedupeKey(
+                    entry.event,
+                    entry.identity,
+                  );
+                  if (
+                    dedupeKey !== null &&
+                    replayedEventDedupeKeys.has(dedupeKey)
+                  ) {
                     replayedEventDedupeKeys.delete(dedupeKey);
                     diagnostics.dedupeCount += 1;
                     continue;
@@ -859,11 +990,18 @@ export async function GET(
       // -----------------------------------------------------------------
       let replayEnvelopes: AgUiEventEnvelope[];
       try {
-        replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
-          db,
-          threadChatId,
-          afterSeq: replayCursorSeq ?? undefined,
-        });
+        replayEnvelopes =
+          shouldFrameRunAgentResume && resolvedRunId !== null
+            ? await getAgUiEventEnvelopesForRun({
+                db,
+                runId: resolvedRunId,
+                threadChatId,
+              })
+            : await getAgUiEventEnvelopesForThreadChat({
+                db,
+                threadChatId,
+                afterSeq: replayCursorSeq ?? undefined,
+              });
       } catch (error) {
         console.error(
           "[ag-ui] threadChat replay failed",
@@ -909,6 +1047,16 @@ export async function GET(
           terminalRunContext !== null &&
           !isTerminalAgentRunStatus(terminalRunContext.status)
         ) {
+          if (shouldFrameRunAgentResume) {
+            enqueue(
+              encodeSseEvent(
+                buildResumeRunStartedEvent({
+                  threadId,
+                  runId: resolvedRunId,
+                }),
+              ),
+            );
+          }
           await liveTail({ runId: resolvedRunId, userId: session.user.id });
           return;
         }
@@ -997,6 +1145,17 @@ export async function GET(
       }
 
       const replayEntries = toReplayEntries(streamReplayEnvelopes, null);
+      if (
+        replayCursorSeq !== null &&
+        shouldFrameRunAgentResume &&
+        resolvedRunId !== null &&
+        replayEntries[0]?.event.type !== EventType.RUN_STARTED
+      ) {
+        replayEntries.unshift({
+          seq: null,
+          event: buildResumeRunStartedEvent({ threadId, runId: resolvedRunId }),
+        });
+      }
       if (syntheticTerminalEntry !== null) {
         replayEntries.push(syntheticTerminalEntry);
       }

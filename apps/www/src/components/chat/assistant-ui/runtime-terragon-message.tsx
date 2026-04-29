@@ -3,6 +3,7 @@
 import { MessagePrimitive } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { AgentMetaFooter } from "../chat-message-agent-meta-footer";
 import { MessageToolbar } from "../chat-message-toolbar";
@@ -20,7 +21,7 @@ type RuntimeTerragonMessageProps = {
   agent: AIAgent;
 };
 
-export function RuntimeTerragonMessage({
+export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
   message,
   messageIndex,
   isLatestMessage,
@@ -89,4 +90,4 @@ export function RuntimeTerragonMessage({
       />
     </div>
   );
-}
+});

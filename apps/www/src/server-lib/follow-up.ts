@@ -14,6 +14,7 @@ import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "./process-follow-up-queue";
+import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
@@ -69,7 +70,7 @@ export async function followUpInternal({
   }
   if (updatedStatus === "scheduled") {
     const uploadedMessage = await uploadUserMessageImages({ userId, message });
-    await updateThreadChat({
+    const { chatSequence } = await updateThreadChat({
       db,
       userId,
       threadId,
@@ -77,6 +78,15 @@ export async function followUpInternal({
       updates: {
         appendMessages: [uploadedMessage],
       },
+    });
+    await persistSideEffectAgUiMessages({
+      db,
+      threadId,
+      threadChatId: threadChat.id,
+      messages: [uploadedMessage],
+      source: "scheduled-follow-up-user-prompt",
+      chatSequence,
+      runId: `pre-run:${threadChat.id}:scheduled-follow-up-user-prompt:${chatSequence ?? "unknown"}`,
     });
     return;
   }

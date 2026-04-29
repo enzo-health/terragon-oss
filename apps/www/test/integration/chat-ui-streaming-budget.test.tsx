@@ -26,8 +26,12 @@
  * blow past the bound; if not, the numbers will document the current budget.
  */
 
-import type { HttpAgent } from "@ag-ui/client";
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import {
+  HttpAgent,
+  type AgentSubscriber,
+  type AgentSubscriberParams,
+} from "@ag-ui/client";
+import { type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   DBMessage,
@@ -37,6 +41,7 @@ import type {
 import { act, createElement, Profiler, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { dbMessagesToAgUiMessages } from "@/components/chat/db-messages-to-ag-ui";
 
 // ---------------------------------------------------------------------------
 // Mocks — these MUST come before any imports that transitively touch them.
@@ -52,32 +57,91 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
 // access to the agent via `getFakeAgent()` and push synthetic events via
 // `__pushEvent`.
 type FakeAgent = {
-  subscribers: Array<(params: { event: BaseEvent }) => void>;
-  subscribe: (s: { onEvent?: (params: { event: BaseEvent }) => void }) => {
+  subscribers: Array<(event: BaseEvent) => void>;
+  subscribe: (s: AgentSubscriber) => {
     unsubscribe: () => void;
   };
+  runAgent: (
+    input: Parameters<HttpAgent["runAgent"]>[0],
+    subscriber: AgentSubscriber,
+  ) => Promise<void>;
   __pushEvent: (event: BaseEvent) => void;
 };
 
 const fakeAgentRegistry = new Map<string, FakeAgent>();
 
+function createRunAgentInput(
+  input: Parameters<HttpAgent["runAgent"]>[0],
+): RunAgentInput {
+  return {
+    threadId: "streaming-budget-thread",
+    runId: input?.runId ?? "streaming-budget-run",
+    state: {},
+    messages: [],
+    tools: input?.tools ?? [],
+    context: input?.context ?? [],
+    forwardedProps: input?.forwardedProps ?? {},
+  };
+}
+
+function createSubscriberParams({
+  agent,
+  input,
+}: {
+  agent: HttpAgent;
+  input: RunAgentInput;
+}): AgentSubscriberParams {
+  return {
+    messages: input.messages,
+    state: input.state,
+    agent,
+    input,
+  };
+}
+
 function createFakeAgent(): FakeAgent {
+  const subscriberAgent = new HttpAgent({ url: "/test-ag-ui" });
   const fake: FakeAgent = {
     subscribers: [],
     subscribe: (s) => {
       const handler = s.onEvent;
-      if (handler) fake.subscribers.push(handler);
+      const dispatch = handler
+        ? (event: BaseEvent) => {
+            const input = createRunAgentInput(undefined);
+            return handler({
+              ...createSubscriberParams({ agent: subscriberAgent, input }),
+              event,
+            });
+          }
+        : undefined;
+      if (dispatch) fake.subscribers.push(dispatch);
       return {
         unsubscribe: () => {
-          if (handler) {
-            const idx = fake.subscribers.indexOf(handler);
+          if (dispatch) {
+            const idx = fake.subscribers.indexOf(dispatch);
             if (idx >= 0) fake.subscribers.splice(idx, 1);
           }
         },
       };
     },
+    runAgent: async (input, subscriber) => {
+      const runInput = createRunAgentInput(input);
+      fake.subscribers.push((event) => {
+        const params = createSubscriberParams({
+          agent: subscriberAgent,
+          input: runInput,
+        });
+        subscriber.onEvent?.({ ...params, event });
+        if (
+          event.type === EventType.RUN_FINISHED ||
+          event.type === EventType.RUN_ERROR
+        ) {
+          subscriber.onRunFinalized?.(params);
+        }
+      });
+    },
     __pushEvent: (event) => {
-      for (const sub of [...fake.subscribers]) sub({ event });
+      for (const sub of [...fake.subscribers]) sub(event);
     },
   };
   return fake;
@@ -433,6 +497,22 @@ function pushEvent(event: BaseEvent) {
 beforeEach(() => {
   resetCommitCounters();
   fakeAgentRegistry.clear();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      const projectedMessages = mockChatState.current?.projectedMessages ?? [];
+      return new Response(
+        JSON.stringify({
+          messages: dbMessagesToAgUiMessages(projectedMessages as DBMessage[]),
+          lastSeq: -1,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }),
+  );
 });
 
 afterEach(() => {
@@ -449,6 +529,7 @@ afterEach(() => {
   mockShellState.current = null;
   mockChatState.current = null;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 // ---------------------------------------------------------------------------
@@ -531,10 +612,13 @@ describe("ChatUI streaming render budget", () => {
       deltaTotalCommits,
     });
 
-    // Bound: ~100 hook calls for the streaming row + at most 1 rerender
-    // per existing row as the new message first appears. 5 history rows
-    // + 1 streaming row; 100 events → ≤ 100 + 5.
-    expect(deltaHookCalls).toBeLessThanOrEqual(100 + initialMessages.length);
+    // Bound: the harness intentionally feeds both the Terragon view-model
+    // subscriber and the assistant-ui runtime subscriber. That is roughly
+    // two row hook calls per streamed event, plus a few historical rows when
+    // the new streaming message first appears.
+    expect(deltaHookCalls).toBeLessThanOrEqual(
+      2 * 100 + initialMessages.length + 10,
+    );
     // All-subtree commit ceiling. Observed baseline: ~3 commits/delta
     // (~299 for 100 events). Bound is set well above baseline so the test
     // catches an order-of-magnitude regression (e.g. effect loop adding
@@ -610,14 +694,16 @@ describe("ChatUI streaming render budget", () => {
       steadyDeltaCommits,
     });
 
-    // Streaming row is 1 UIMessage. If historical rows correctly bail out,
-    // every delta produces exactly 1 hook call (the streaming row). 50
-    // deltas → 50 hook calls. We give slack for any global wrappers that
-    // might also consume the hook.
+    // Streaming row is 1 UIMessage, but the test harness drives both the
+    // Terragon view model and the assistant-ui runtime bridge. If historical
+    // rows correctly bail out, every delta produces roughly 2 hook calls
+    // against the streaming row. We give slack for global wrappers.
     //
     // If this exceeds `50 * (history.length + 1)` it strongly suggests a
     // memo bail-out regression — every row rerendering per delta.
-    expect(steadyDeltaHookCalls).toBeLessThanOrEqual(50 + historical.length);
+    expect(steadyDeltaHookCalls).toBeLessThanOrEqual(
+      2 * 50 + historical.length + 10,
+    );
     // Steady-state commit budget. Observed: ~152 commits for 50 deltas
     // (~3/delta, same as Test 1). Set ceiling above baseline to catch
     // regressions.

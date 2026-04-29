@@ -65,13 +65,25 @@ export type NativeAgUiSnapshotMessage =
     };
 
 type NativeAgUiSideEffectSystemMessageType =
+  | "cancel-schedule"
   | "compact-result"
-  | "invalid-token-retry";
+  | "invalid-token-retry"
+  | "retry-git-commit-and-push"
+  | "generic-retry"
+  | "clear-context"
+  | "agent-error-retry"
+  | "follow-up-retry-failed";
 
 const NATIVE_AG_UI_SIDE_EFFECT_SYSTEM_MESSAGE_TYPES =
   new Set<NativeAgUiSideEffectSystemMessageType>([
+    "cancel-schedule",
     "compact-result",
     "invalid-token-retry",
+    "retry-git-commit-and-push",
+    "generic-retry",
+    "clear-context",
+    "agent-error-retry",
+    "follow-up-retry-failed",
   ]);
 
 export async function persistSideEffectAgUiMessages({

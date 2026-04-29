@@ -680,12 +680,13 @@ export async function startAgentMessage({
               fromThreadChatMessageSeq: 0,
             })
           ).flatMap((entry) => entry.messages);
+          const explicitMessageToSend = message ?? promotedQueuedMessageToSend;
           let userMessageToSend = getUserMessageToSend({
             messages:
-              replayMessages.length > 0
-                ? replayMessagesForDispatch(replayMessages)
-                : [],
-            currentMessage: message ?? promotedQueuedMessageToSend,
+              explicitMessageToSend || replayMessages.length === 0
+                ? null
+                : replayMessagesForDispatch(replayMessages),
+            currentMessage: explicitMessageToSend,
           });
           if (!userMessageToSend) {
             const latestNativeMessage =

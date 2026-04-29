@@ -216,6 +216,130 @@ export type ToolPartProps = {
   onOpenArtifact?: (artifactId: string) => void;
 };
 
+export function renderToolPartContent(
+  rawToolPart: AllToolParts,
+  renderCtx: ToolRenderContext,
+): ReactNode {
+  const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
+  const renderedTool = renderToolPart(rawToolPart, renderCtx);
+
+  const artifactParts = toolPart.parts.filter(isArtifactPart);
+
+  // Extended lifecycle fields carried from DBToolCall via InternalToolPart.
+  // These live on the daemon-side `DBToolCall` (db-message.ts) but are not on
+  // the UI `AllToolParts` union — `UIToolPartWithLifecycle` (ui-parts-extended.ts)
+  // is the minimum-surface bridge until the UI union is widened.
+  const extendedPart = toolPart as UIToolPartWithLifecycle;
+  const progressChunks = extendedPart.progressChunks;
+  const mcpMetadata = extendedPart.mcpMetadata;
+  const isInProgress =
+    extendedPart.toolStatus === "in_progress" && toolPart.status === "pending";
+
+  // Show MCP server badge for mcp__ prefixed tools or when mcpMetadata present
+  const mcpServer =
+    mcpMetadata?.server ??
+    (() => {
+      const match = toolPart.name.match(/^mcp__([^_]+)__/);
+      return match ? match[1] : null;
+    })();
+
+  const hasExtras = !!mcpServer || !!progressChunks?.length || isInProgress;
+
+  const extraContent = (
+    <>
+      {mcpServer && (
+        <Badge
+          variant="outline"
+          className="text-[10px] px-1.5 py-0 font-mono"
+          data-testid="mcp-badge"
+        >
+          MCP: {mcpServer}
+        </Badge>
+      )}
+      {progressChunks && progressChunks.length > 0 && (
+        <ProgressChunks chunks={progressChunks} />
+      )}
+      {isInProgress && !progressChunks?.length && (
+        <span className="text-xs text-muted-foreground animate-pulse">
+          {getToolVerb(toolPart.name, "pending")}
+        </span>
+      )}
+    </>
+  );
+
+  if (artifactParts.length === 0 && !hasExtras) {
+    return renderedTool;
+  }
+
+  if (artifactParts.length === 0) {
+    return (
+      <div className="flex flex-col gap-1">
+        {renderedTool}
+        {extraContent}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {renderedTool}
+      {extraContent}
+      <div className="flex flex-col gap-2 pl-4">
+        {artifactParts.map((part, index) => {
+          const artifactDescriptor = findArtifactDescriptorForPart({
+            artifacts: renderCtx.artifactDescriptors,
+            part,
+          });
+          const handleOpenArtifact =
+            artifactDescriptor && renderCtx.onOpenArtifact
+              ? () => renderCtx.onOpenArtifact?.(artifactDescriptor.id)
+              : undefined;
+
+          switch (part.type) {
+            case "rich-text":
+              return (
+                <RichTextPart
+                  key={artifactDescriptor?.id ?? index}
+                  richTextPart={part}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
+                />
+              );
+            case "text-file":
+              return (
+                <TextFilePart
+                  key={artifactDescriptor?.id ?? index}
+                  textFileUrl={part.file_url}
+                  filename={part.filename}
+                  mimeType={part.mime_type}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
+                />
+              );
+            case "pdf":
+              return (
+                <PdfPart
+                  key={artifactDescriptor?.id ?? index}
+                  pdfUrl={part.pdf_url}
+                  filename={part.filename}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
+                />
+              );
+            case "image":
+              return (
+                <ImagePart
+                  key={artifactDescriptor?.id ?? index}
+                  imageUrl={part.image_url}
+                  onOpenInArtifactWorkspace={handleOpenArtifact}
+                />
+              );
+            default:
+              return null;
+          }
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function renderToolPart(
   rawToolPart: AllToolParts,
   renderCtx: ToolRenderContext,
@@ -249,8 +373,6 @@ const ToolPart = memo(function ToolPart({
   artifactDescriptors = [],
   onOpenArtifact,
 }: ToolPartProps) {
-  const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
-
   // Stable recursive renderer. Deps mirror the props compared by
   // `areToolPartPropsEqual` below — when those are referentially stable across
   // renders, this callback identity is too, so memoized children of `TaskTool`
@@ -327,123 +449,7 @@ const ToolPart = memo(function ToolPart({
     ],
   );
 
-  const renderedTool = renderToolPart(rawToolPart, renderCtx);
-
-  const artifactParts = toolPart.parts.filter(isArtifactPart);
-
-  // Extended lifecycle fields carried from DBToolCall via InternalToolPart.
-  // These live on the daemon-side `DBToolCall` (db-message.ts) but are not on
-  // the UI `AllToolParts` union — `UIToolPartWithLifecycle` (ui-parts-extended.ts)
-  // is the minimum-surface bridge until the UI union is widened.
-  const extendedPart = toolPart as UIToolPartWithLifecycle;
-  const progressChunks = extendedPart.progressChunks;
-  const mcpMetadata = extendedPart.mcpMetadata;
-  const isInProgress =
-    extendedPart.toolStatus === "in_progress" && toolPart.status === "pending";
-
-  // Show MCP server badge for mcp__ prefixed tools or when mcpMetadata present
-  const mcpServer =
-    mcpMetadata?.server ??
-    (() => {
-      const match = toolPart.name.match(/^mcp__([^_]+)__/);
-      return match ? match[1] : null;
-    })();
-
-  const hasExtras = !!mcpServer || !!progressChunks?.length || isInProgress;
-
-  if (artifactParts.length === 0 && !hasExtras) {
-    return renderedTool;
-  }
-
-  const extraContent = (
-    <>
-      {mcpServer && (
-        <Badge
-          variant="outline"
-          className="text-[10px] px-1.5 py-0 font-mono"
-          data-testid="mcp-badge"
-        >
-          MCP: {mcpServer}
-        </Badge>
-      )}
-      {progressChunks && progressChunks.length > 0 && (
-        <ProgressChunks chunks={progressChunks} />
-      )}
-      {isInProgress && !progressChunks?.length && (
-        <span className="text-xs text-muted-foreground animate-pulse">
-          {getToolVerb(toolPart.name, "pending")}
-        </span>
-      )}
-    </>
-  );
-
-  if (artifactParts.length === 0) {
-    return (
-      <div className="flex flex-col gap-1">
-        {renderedTool}
-        {extraContent}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {renderedTool}
-      {extraContent}
-      <div className="flex flex-col gap-2 pl-4">
-        {artifactParts.map((part, index) => {
-          const artifactDescriptor = findArtifactDescriptorForPart({
-            artifacts: artifactDescriptors,
-            part,
-          });
-          const handleOpenArtifact =
-            artifactDescriptor && onOpenArtifact
-              ? () => onOpenArtifact(artifactDescriptor.id)
-              : undefined;
-
-          switch (part.type) {
-            case "rich-text":
-              return (
-                <RichTextPart
-                  key={artifactDescriptor?.id ?? index}
-                  richTextPart={part}
-                  onOpenInArtifactWorkspace={handleOpenArtifact}
-                />
-              );
-            case "text-file":
-              return (
-                <TextFilePart
-                  key={artifactDescriptor?.id ?? index}
-                  textFileUrl={part.file_url}
-                  filename={part.filename}
-                  mimeType={part.mime_type}
-                  onOpenInArtifactWorkspace={handleOpenArtifact}
-                />
-              );
-            case "pdf":
-              return (
-                <PdfPart
-                  key={artifactDescriptor?.id ?? index}
-                  pdfUrl={part.pdf_url}
-                  filename={part.filename}
-                  onOpenInArtifactWorkspace={handleOpenArtifact}
-                />
-              );
-            case "image":
-              return (
-                <ImagePart
-                  key={artifactDescriptor?.id ?? index}
-                  imageUrl={part.image_url}
-                  onOpenInArtifactWorkspace={handleOpenArtifact}
-                />
-              );
-            default:
-              return null;
-          }
-        })}
-      </div>
-    </div>
-  );
+  return renderToolPartContent(rawToolPart, renderCtx);
 }, areToolPartPropsEqual);
 
 function areToolPartPropsEqual(

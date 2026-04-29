@@ -4,6 +4,7 @@ import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { DBSystemMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
+import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
 
 export async function sendSystemMessage({
   userId,
@@ -25,7 +26,7 @@ export async function sendSystemMessage({
       messageType: message.message_type,
     },
   });
-  const { didUpdateStatus, updatedStatus } =
+  const { didUpdateStatus, updatedStatus, chatSequence } =
     await updateThreadChatWithTransition({
       userId,
       threadId,
@@ -40,6 +41,17 @@ export async function sendSystemMessage({
   if (!didUpdateStatus) {
     throw new Error("Failed to update thread");
   }
+  await persistSideEffectAgUiMessages({
+    db,
+    threadId,
+    threadChatId,
+    messages: [message],
+    source: `system-message:${message.message_type}`,
+    chatSequence,
+    runId: `pre-run:${threadChatId}:system-message:${message.message_type}:${
+      chatSequence ?? "unknown"
+    }`,
+  });
   if (updatedStatus === "working" || updatedStatus === "queued") {
     waitUntil(
       dispatchAgentMessage({

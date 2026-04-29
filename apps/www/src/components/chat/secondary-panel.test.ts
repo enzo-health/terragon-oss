@@ -10,7 +10,7 @@ import {
   resolveActiveArtifactId,
 } from "./secondary-panel";
 import { ImagePart } from "./image-part";
-import { ToolPart } from "./tool-part";
+import { renderToolPartContent } from "./tool-part";
 
 describe("secondary-panel artifact shell helpers", () => {
   it("falls back to the first artifact when the active id is missing", () => {
@@ -215,10 +215,18 @@ describe("secondary-panel artifact shell helpers", () => {
     } satisfies ArtifactDescriptor;
     const onOpenArtifact = vi.fn();
 
-    const toolTree = (ToolPart as unknown as { type: Function }).type({
-      toolPart,
+    const toolTree = renderToolPartContent(toolPart, {
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messagesRef: { current: [] },
+      isReadOnly: false,
+      childThreads: [],
+      githubRepoFullName: "acme/app",
+      repoBaseBranchName: "main",
+      branchName: "feature/test",
       artifactDescriptors: [artifactDescriptor],
       onOpenArtifact,
+      renderChildToolPart: () => null,
     });
 
     const renderedImagePart = findReactElementByType<{

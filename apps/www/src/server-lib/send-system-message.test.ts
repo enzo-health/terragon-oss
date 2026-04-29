@@ -5,6 +5,10 @@ const transitionMocks = vi.hoisted(() => ({
   updateThreadChatWithTransition: vi.fn(),
 }));
 
+const sideEffectMocks = vi.hoisted(() => ({
+  persistSideEffectAgUiMessages: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => ({
   db: { label: "db" },
 }));
@@ -16,6 +20,10 @@ vi.mock("@/agent/msg/startAgentMessage", () => ({
 vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition:
     transitionMocks.updateThreadChatWithTransition,
+}));
+
+vi.mock("./ag-ui-side-effect-messages", () => ({
+  persistSideEffectAgUiMessages: sideEffectMocks.persistSideEffectAgUiMessages,
 }));
 
 vi.mock("@/lib/posthog-server", () => ({
@@ -63,5 +71,14 @@ describe("sendSystemMessage", () => {
         }),
       }),
     );
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith({
+      db: { label: "db" },
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messages: [retryMessage],
+      source: "system-message:retry-git-commit-and-push",
+      chatSequence: 12,
+      runId: "pre-run:chat-1:system-message:retry-git-commit-and-push:12",
+    });
   });
 });

@@ -421,8 +421,8 @@ describe("ag-ui-side-effect-messages", () => {
       messages: [
         {
           type: "system",
-          message_type: "follow-up-retry-failed",
-          parts: [{ type: "text", text: "Retry failed" }],
+          message_type: "fix-github-checks",
+          parts: [{ type: "text", text: "Fix GitHub checks" }],
         },
       ],
       source: "unit-test",

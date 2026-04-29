@@ -23,7 +23,7 @@ import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
 import { projectRuntimeOwnedRows } from "./runtime-row-projection";
-import { projectRuntimeTranscriptMessages } from "./runtime-transcript-adapter";
+import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
   type TerragonThreadContext,
@@ -94,13 +94,17 @@ export function TerragonThreadRuntimeContent({
 }: TerragonThreadRuntimeContentProps) {
   const runtimeMessages = useAuiState((state) => state.thread.messages);
   const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
+  const runtimeTranscriptProjector = useMemo(
+    () => createRuntimeTranscriptProjector(),
+    [],
+  );
   const projectedTranscript = useMemo(
     () =>
-      projectRuntimeTranscriptMessages({
+      runtimeTranscriptProjector({
         runtimeMessages,
         agent: chatAgent,
       }),
-    [chatAgent, runtimeMessages],
+    [chatAgent, runtimeMessages, runtimeTranscriptProjector],
   );
   const transcriptProjection = useMemo(
     () =>

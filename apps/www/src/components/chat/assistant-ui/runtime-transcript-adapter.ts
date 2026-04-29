@@ -25,6 +25,15 @@ type RuntimeTranscriptProjection = {
   source: "runtime";
   messages: UIMessage[];
 };
+type RuntimeProjectionCacheEntry = {
+  signature: string;
+  agent: AIAgent;
+  projected: UIMessage | null;
+};
+type RuntimeTranscriptProjector = (params: {
+  runtimeMessages: readonly ThreadMessage[];
+  agent: AIAgent;
+}) => RuntimeTranscriptProjection;
 
 type JSONPrimitive = string | number | boolean | null;
 type JSONValue = JSONPrimitive | JSONValue[] | { [key: string]: JSONValue };
@@ -422,6 +431,45 @@ function runtimeMessageToUIMessage(
     case "system":
       return null;
   }
+}
+
+function runtimeMessageSignature(message: ThreadMessage): string {
+  return JSON.stringify({
+    role: message.role,
+    content: message.content,
+  });
+}
+
+export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
+  const cache = new Map<string, RuntimeProjectionCacheEntry>();
+
+  return ({ runtimeMessages, agent }) => {
+    const projectedMessages: UIMessage[] = [];
+    const liveIds = new Set<string>();
+
+    for (const message of runtimeMessages) {
+      liveIds.add(message.id);
+      const signature = runtimeMessageSignature(message);
+      const cached = cache.get(message.id);
+      const projected =
+        cached?.signature === signature && cached.agent === agent
+          ? cached.projected
+          : runtimeMessageToUIMessage(message, agent);
+
+      cache.set(message.id, { signature, agent, projected });
+      if (projected !== null) {
+        projectedMessages.push(projected);
+      }
+    }
+
+    for (const cachedId of cache.keys()) {
+      if (!liveIds.has(cachedId)) {
+        cache.delete(cachedId);
+      }
+    }
+
+    return { source: "runtime", messages: projectedMessages };
+  };
 }
 
 export function projectRuntimeTranscriptMessages(params: {

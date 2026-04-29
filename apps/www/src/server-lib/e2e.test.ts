@@ -114,6 +114,9 @@ const queueFollowUp = async ({
 describe("end-to-end", { timeout: 60_000 }, () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.mocked(gitCommitAndPushBranch).mockResolvedValue({
+      branchName: "test-branch",
+    });
     // Ensure all threads are complete so we don't mess other tests.
     await db.update(schema.thread).set({
       status: "complete",
