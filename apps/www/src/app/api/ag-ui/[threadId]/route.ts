@@ -873,6 +873,11 @@ export async function GET(
               runContext !== null &&
               isTerminalAgentRunStatus(runContext.status)
             ) {
+              const replayedDurableEvents =
+                await replayDurableEventsAfterCursor();
+              if (replayedDurableEvents) {
+                return true;
+              }
               const terminalEvent = buildRunTerminalAgUi({
                 threadId,
                 runId: liveTailParams.runId,

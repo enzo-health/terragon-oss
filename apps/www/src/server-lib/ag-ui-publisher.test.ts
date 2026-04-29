@@ -33,6 +33,7 @@ const {
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
   metaEventsToAgUiEvents,
+  publishPersistedAgUiEvents,
   serializeAgUiTransportEnvelope,
 } = await import("./ag-ui-publisher");
 
@@ -966,6 +967,64 @@ describe("ag-ui-publisher", () => {
       persistedEnvelopes: [],
     });
     expect(redisMocks.xadd).not.toHaveBeenCalled();
+  });
+
+  it("publishes transport envelopes in durable seq order", async () => {
+    const fixture = await createRunFixture();
+    const textEnd = makeTextEndEvent("m-seq");
+    const runFinished = {
+      type: EventType.RUN_FINISHED,
+      timestamp: 1_700_000_000,
+      threadId: fixture.threadId,
+      runId: fixture.runId,
+    } as BaseEvent;
+
+    await publishPersistedAgUiEvents({
+      threadChatId: fixture.threadChatId,
+      persistedEvents: [runFinished, textEnd],
+      insertedEventIds: ["finish", "end"],
+      persistedEnvelopes: [
+        {
+          eventId: "finish",
+          seq: 12,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:finish`,
+          payload: runFinished,
+        },
+        {
+          eventId: "end",
+          seq: 11,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:end`,
+          payload: textEnd,
+        },
+      ],
+    });
+
+    expect(redisMocks.xadd).toHaveBeenCalledTimes(2);
+    const firstData = redisMocks.xadd.mock.calls[0]?.[2] as {
+      event: string;
+      envelope: string;
+    };
+    const secondData = redisMocks.xadd.mock.calls[1]?.[2] as {
+      event: string;
+      envelope: string;
+    };
+
+    expect(JSON.parse(firstData.event)).toMatchObject({
+      type: EventType.TEXT_MESSAGE_END,
+    });
+    expect(JSON.parse(firstData.envelope)).toMatchObject({ seq: 11 });
+    expect(JSON.parse(secondData.event)).toMatchObject({
+      type: EventType.RUN_FINISHED,
+    });
+    expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 12 });
   });
 
   // -------------------------------------------------------------------

@@ -1291,6 +1291,89 @@ describe("ag-ui SSE route", () => {
     expect(redisMocks.xread).toHaveBeenCalled();
   });
 
+  it("replays durable END rows before terminal fallback when live-tail is idle", async () => {
+    const initialEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-terminal-catchup",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "message-open",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 3,
+        messageId: "message-open",
+        delta: "hello",
+      } as BaseEvent,
+    ];
+    const terminalEvents: BaseEvent[] = [
+      ...initialEvents,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 4,
+        messageId: "message-open",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 5,
+        threadId: "thread-1",
+        runId: "run-terminal-catchup",
+      } as BaseEvent,
+    ];
+    const envelopes = terminalEvents.map((payload, seq) => ({
+      eventId: `event-${seq}`,
+      seq,
+      runId: readRunId(payload),
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      timestamp: String(seq + 1),
+      idempotencyKey: `event-${seq}`,
+      payload,
+    }));
+    vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
+      async ({ afterSeq }) => {
+        const visibleEnvelopes =
+          afterSeq === undefined ? envelopes.slice(0, 3) : envelopes;
+        return visibleEnvelopes.filter(
+          (entry) => afterSeq === undefined || entry.seq > afterSeq,
+        );
+      },
+    );
+    vi.mocked(getAgentRunContextByRunId)
+      .mockResolvedValueOnce(
+        makeRunContext({ runId: "run-terminal-catchup", status: "processing" }),
+      )
+      .mockResolvedValueOnce(
+        makeRunContext({ runId: "run-terminal-catchup", status: "completed" }),
+      );
+
+    redisMocks.xread.mockResolvedValue(null);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-terminal-catchup",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const events = await readReplayBurst(response, 5);
+
+    expect(events.map((event) => event.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_END,
+      EventType.RUN_FINISHED,
+    ]);
+  });
+
   it("closes the stream after receiving a terminal marker via XREAD", async () => {
     const runEvents: BaseEvent[] = [
       {
