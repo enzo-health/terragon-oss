@@ -1,4 +1,4 @@
-import type { Message as AgUiMessage } from "@ag-ui/core";
+import { type Message as AgUiMessage } from "@ag-ui/core";
 import type {
   CompleteAttachment,
   FileMessagePart,
@@ -14,23 +14,22 @@ import type {
   ThreadUserMessagePart,
   ToolCallMessagePart,
 } from "@assistant-ui/react";
+import {
+  applyCustomPartEvent,
+  isReadonlyJSONObject,
+  type ReadonlyJSONObject,
+  type TerragonCustomPartEvent,
+} from "./ag-ui-custom-parts";
 
 type AgUiInputContent = Extract<AgUiMessage, { role: "user" }>["content"];
 type AgUiInputPart = Extract<AgUiInputContent, readonly unknown[]>[number];
 type AgUiToolCall = NonNullable<
   Extract<AgUiMessage, { role: "assistant" }>["toolCalls"]
 >[number];
-type ReadonlyJSONValue =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly ReadonlyJSONValue[]
-  | ReadonlyJSONObject;
-type ReadonlyJSONObject = { readonly [key: string]: ReadonlyJSONValue };
+type AgUiHistoryItem = AgUiMessage | TerragonCustomPartEvent;
 export type AgUiHistoryLoader = () =>
-  | readonly AgUiMessage[]
-  | Promise<readonly AgUiMessage[]>;
+  | readonly AgUiHistoryItem[]
+  | Promise<readonly AgUiHistoryItem[]>;
 
 const HISTORY_CREATED_AT = new Date(0);
 const COMPLETE_STATUS = {
@@ -112,33 +111,95 @@ function userContentParts(content: AgUiInputContent): ThreadUserMessagePart[] {
   return parts.length > 0 ? parts : [textPart("")];
 }
 
-function isReadonlyJSONValue(value: unknown): value is ReadonlyJSONValue {
-  if (value === null) {
-    return true;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasStringProperty(
+  value: Record<string, unknown>,
+  key: string,
+): boolean {
+  return typeof value[key] === "string";
+}
+
+function isAgUiInputPart(value: unknown): value is AgUiInputPart {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
   }
 
-  switch (typeof value) {
-    case "string":
-    case "number":
-    case "boolean":
-      return true;
-    case "object":
-      if (Array.isArray(value)) {
-        return value.every(isReadonlyJSONValue);
-      }
-      return isReadonlyJSONObject(value);
+  if (value.type === "text") {
+    return typeof value.text === "string";
+  }
+
+  if (value.type === "image") {
+    const source = value.source;
+    return (
+      isRecord(source) &&
+      typeof source.type === "string" &&
+      typeof source.value === "string" &&
+      (source.type !== "data" || typeof source.mimeType === "string")
+    );
+  }
+
+  if (value.type === "binary") {
+    return (
+      typeof value.mimeType === "string" &&
+      (typeof value.data === "string" ||
+        typeof value.url === "string" ||
+        typeof value.id === "string")
+    );
+  }
+
+  return false;
+}
+
+function isAgUiInputContent(value: unknown): value is AgUiInputContent {
+  return (
+    typeof value === "string" ||
+    (Array.isArray(value) && value.every(isAgUiInputPart))
+  );
+}
+
+function isAgUiToolCall(value: unknown): value is AgUiToolCall {
+  if (!isRecord(value) || value.type !== "function") {
+    return false;
+  }
+
+  const functionValue = value.function;
+  return (
+    hasStringProperty(value, "id") &&
+    isRecord(functionValue) &&
+    hasStringProperty(functionValue, "name") &&
+    hasStringProperty(functionValue, "arguments")
+  );
+}
+
+function isAgUiMessage(value: AgUiHistoryItem): value is AgUiMessage {
+  if (!isRecord(value) || !hasStringProperty(value, "id")) {
+    return false;
+  }
+
+  switch (value.role) {
+    case "user":
+      return "content" in value && isAgUiInputContent(value.content);
+    case "system":
+      return hasStringProperty(value, "content");
+    case "assistant":
+      return (
+        (value.content === undefined || typeof value.content === "string") &&
+        (value.toolCalls === undefined ||
+          (Array.isArray(value.toolCalls) &&
+            value.toolCalls.every(isAgUiToolCall)))
+      );
+    case "tool":
+      return (
+        hasStringProperty(value, "toolCallId") &&
+        hasStringProperty(value, "content") &&
+        (value.error === undefined || typeof value.error === "string")
+      );
     default:
       return false;
   }
-}
-
-function isReadonlyJSONObject(value: unknown): value is ReadonlyJSONObject {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every(isReadonlyJSONValue)
-  );
 }
 
 function parseToolArgs(argsText: string): ReadonlyJSONObject {
@@ -210,11 +271,40 @@ function assistantMessage(
   } satisfies ThreadAssistantMessage;
 }
 
+function upsertAssistantMessage(params: {
+  messages: ThreadMessage[];
+  message: Extract<AgUiMessage, { role: "assistant" }>;
+}): void {
+  const { messages, message } = params;
+  const incoming = assistantMessage(message);
+  const existingIndex = messages.findIndex(
+    (candidate) =>
+      candidate.role === "assistant" && candidate.id === incoming.id,
+  );
+  if (existingIndex === -1) {
+    messages.push(incoming);
+    return;
+  }
+
+  const existing = messages[existingIndex];
+  if (!existing || existing.role !== "assistant") {
+    messages.push(incoming);
+    return;
+  }
+
+  messages[existingIndex] = {
+    ...existing,
+    content: [...existing.content, ...incoming.content],
+    status: incoming.status,
+  };
+}
+
 function applyToolResult(params: {
   messages: ThreadMessage[];
   message: Extract<AgUiMessage, { role: "tool" }>;
 }): boolean {
   const { messages, message } = params;
+  const isError = isFailedToolMessage(message);
   for (
     let messageIndex = messages.length - 1;
     messageIndex >= 0;
@@ -239,7 +329,7 @@ function applyToolResult(params: {
     nextContent[partIndex] = {
       ...toolPart,
       result: message.content,
-      ...(message.error ? { isError: true } : {}),
+      ...(isError ? { isError: true } : {}),
     };
     messages[messageIndex] = {
       ...candidate,
@@ -250,12 +340,35 @@ function applyToolResult(params: {
   return false;
 }
 
+function isFailedToolMessage(
+  message: Extract<AgUiMessage, { role: "tool" }>,
+): boolean {
+  const isError = Reflect.get(message, "isError");
+  const status = Reflect.get(message, "status");
+  const error = Reflect.get(message, "error");
+  return isError === true || status === "error" || typeof error === "string";
+}
+
 export function agUiMessagesToThreadMessages(
-  agUiMessages: readonly AgUiMessage[],
+  agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
 
-  for (const message of agUiMessages) {
+  for (const item of agUiMessages) {
+    if (!isAgUiMessage(item)) {
+      applyCustomPartEvent({
+        messages,
+        event: item,
+        createAssistantMessage: (messageId) =>
+          assistantMessage({
+            id: messageId,
+            role: "assistant",
+            content: "",
+          }),
+      });
+      continue;
+    }
+    const message = item;
     switch (message.role) {
       case "user":
         messages.push(userMessage(message));
@@ -264,7 +377,7 @@ export function agUiMessagesToThreadMessages(
         messages.push(systemMessage(message));
         break;
       case "assistant":
-        messages.push(assistantMessage(message));
+        upsertAssistantMessage({ messages, message });
         break;
       case "tool":
         if (!applyToolResult({ messages, message })) {

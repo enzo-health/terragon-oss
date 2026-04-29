@@ -361,17 +361,18 @@ describe("agUiMessagesReducer", () => {
     });
   });
 
-  describe("CUSTOM terragon.part events", () => {
-    it("CUSTOM terragon.part.terminal appends the part to the matching assistant message", () => {
+  describe("CUSTOM terragon.data-part events", () => {
+    it("CUSTOM terragon.data-part appends the data to the matching assistant message", () => {
       const next = apply(mkState(), [
         { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
         {
           type: EventType.CUSTOM,
-          name: "terragon.part.terminal",
+          name: "terragon.data-part",
           value: {
             messageId: "m1",
             partIndex: 1,
-            part: {
+            name: "terragon.terminal",
+            data: {
               type: "terminal",
               terminal: { command: "ls", output: "README.md\n" },
             },
@@ -384,15 +385,21 @@ describe("agUiMessagesReducer", () => {
       expect(parts[0]!.type).toBe("terminal");
     });
 
-    it("CUSTOM terragon.part.* creates the assistant message if it doesn't exist yet", () => {
+    it("CUSTOM terragon.data-part creates the assistant message if it doesn't exist yet", () => {
       const next = apply(mkState(), [
         {
           type: EventType.CUSTOM,
-          name: "terragon.part.diff",
+          name: "terragon.data-part",
           value: {
             messageId: "m-replay",
             partIndex: 0,
-            part: { type: "diff", diff: "diff-body" },
+            name: "terragon.terminal",
+            data: {
+              type: "terminal",
+              sandboxId: "sandbox-1",
+              terminalId: "terminal-1",
+              chunks: [],
+            },
           },
         } as BaseEvent,
       ]);
@@ -400,7 +407,7 @@ describe("agUiMessagesReducer", () => {
       expect(next.messages[0]!.id).toBe("m-replay");
       const parts = (next.messages[0] as { parts: Array<{ type: string }> })
         .parts;
-      expect(parts[0]!.type).toBe("diff");
+      expect(parts[0]!.type).toBe("terminal");
     });
 
     it("CUSTOM with unknown name is ignored", () => {
@@ -413,12 +420,12 @@ describe("agUiMessagesReducer", () => {
       expect(next).toBe(state);
     });
 
-    it("CUSTOM terragon.part.* without a part value is ignored", () => {
+    it("CUSTOM terragon.data-part without data is ignored", () => {
       const state = mkState();
       const next = agUiMessagesReducer(state, {
         type: EventType.CUSTOM,
-        name: "terragon.part.image",
-        value: { messageId: "m1", partIndex: 0 },
+        name: "terragon.data-part",
+        value: { messageId: "m1", partIndex: 0, name: "terragon.image" },
       } as BaseEvent);
       expect(next).toBe(state);
     });
@@ -463,11 +470,12 @@ describe("agUiMessagesReducer", () => {
       const state = mkState();
       const customEvent = {
         type: EventType.CUSTOM,
-        name: "terragon.part.auto-approval-review",
+        name: "terragon.data-part",
         value: {
           messageId: "m1",
           partIndex: 0,
-          part: {
+          name: "terragon.auto-approval-review",
+          data: {
             type: "auto-approval-review",
             id: "review-1",
             decision: "approved",

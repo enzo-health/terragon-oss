@@ -12,6 +12,7 @@ import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
 } from "../ag-ui-messages-reducer";
+import { terragonDataPartFromCustomEvent } from "../ag-ui-custom-parts";
 import {
   getAgUiEventDedupeKey,
   isCanonicalEventMessageId,
@@ -761,14 +762,17 @@ function getQuarantineEntry(
     return null;
   }
   const name = getStringField(event, "name");
-  if (!name?.startsWith("terragon.part.")) {
+  if (name !== "terragon.data-part") {
     return null;
   }
   const value = getObjectField(event, "value");
   const messageId = getStringField(value, "messageId") ?? undefined;
-  const part = getObjectField(value, "part");
-  const partType = getStringField(part, "type") ?? undefined;
-  if (messageId && part && isRenderablePartShape(part)) {
+  const dataPart = terragonDataPartFromCustomEvent(event);
+  const part = dataPart ? dataPart.data.data : getObjectField(value, "data");
+  const partType = part
+    ? (getStringField(part, "type") ?? undefined)
+    : undefined;
+  if (dataPart && part && isRenderablePartShape(part)) {
     return null;
   }
   return {
@@ -1200,7 +1204,9 @@ function getNumberField(value: unknown, field: string): number | null {
     : null;
 }
 
-function isRenderablePartShape(value: Record<string, unknown>): boolean {
+function isRenderablePartShape(
+  value: Readonly<Record<string, unknown>>,
+): boolean {
   const type = getStringField(value, "type");
   switch (type) {
     case "text":

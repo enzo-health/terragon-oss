@@ -403,15 +403,17 @@ describe("agent-event-log", () => {
       EventType.REASONING_MESSAGE_START,
       EventType.REASONING_MESSAGE_CONTENT,
       EventType.REASONING_MESSAGE_END,
-      EventType.CUSTOM,
-      EventType.CUSTOM,
+      EventType.TOOL_CALL_START,
+      EventType.TOOL_CALL_ARGS,
+      EventType.TOOL_CALL_END,
+      EventType.TOOL_CALL_RESULT,
       EventType.CUSTOM,
       EventType.CUSTOM,
       EventType.RUN_FINISHED,
     ]);
   });
 
-  it("stores quarantined unknown provider events with replayable AG-UI diagnostics", async () => {
+  it("stores quarantined unknown provider events without replaying them through AG UI", async () => {
     const fixture = await createRunFixture();
     const runStarted = createRunStartedEvent({ ...fixture, seq: 0 });
     const quarantine = createUnknownProviderEvent({ ...fixture, seq: 1 });
@@ -438,27 +440,13 @@ describe("agent-event-log", () => {
     if (!quarantinedRow) {
       throw new Error("expected quarantined event row");
     }
-    expect(readAllAgUiEnvelopes(quarantinedRow)).toEqual([
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          type: EventType.CUSTOM,
-          name: "terragon.quarantine.unknown-provider-event",
-          value: expect.objectContaining({
-            provider: "codex-app-server",
-            reason: "unsupported provider payload",
-            rawEventType: "provider.experimental",
-            redactedPayload: { preview: "[redacted]" },
-          }),
-        }),
-      }),
-    ]);
+    expect(readAllAgUiEnvelopes(quarantinedRow)).toEqual([]);
     const agUiEvents = await getAgUiEventsForRun({
       db,
       runId: fixture.runId,
     });
     expect(agUiEvents.map((event) => event.type)).toEqual([
       EventType.RUN_STARTED,
-      EventType.CUSTOM,
     ]);
   });
 
@@ -842,6 +830,67 @@ describe("agent-event-log", () => {
             type: "agent",
             parts: [{ type: "text", text: "hello" }],
           }),
+        ],
+      },
+    ]);
+  });
+
+  it("clears prior replay messages when a compact-result snapshot is replayed", async () => {
+    const fixture = await createRunFixture();
+    const events = [
+      createRunStartedEvent({ ...fixture, seq: 0 }),
+      createAssistantMessageEvent({ ...fixture, seq: 1 }),
+    ];
+    await appendCanonicalEventsBatch({ db, events });
+    await assignThreadChatMessageSeqToCanonicalEvents({
+      db,
+      eventIds: events.map((event) => event.eventId),
+      threadChatMessageSeq: 1,
+    });
+    await db.insert(schema.agentEventLog).values({
+      eventId: newId("side-effect"),
+      runId: fixture.runId,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      seq: 100,
+      eventType: EventType.MESSAGES_SNAPSHOT,
+      category: EventType.MESSAGES_SNAPSHOT,
+      payloadJson: {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "side-effect-system:compact-result-1-abcdef123456",
+            role: "system",
+            content: "Context compacted",
+          },
+          {
+            id: "post-compact-user",
+            role: "user",
+            content: "post-compact prompt",
+          },
+        ],
+      },
+      idempotencyKey: newId("side-effect-key"),
+      timestamp: new Date(),
+      threadChatMessageSeq: 2,
+    });
+
+    const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
+      db,
+      threadId: fixture.threadId,
+      threadChatId: fixture.threadChatId,
+      fromThreadChatMessageSeq: 0,
+    });
+
+    expect(replayEntries).toEqual([
+      {
+        seq: 2,
+        messages: [
+          {
+            type: "system",
+            message_type: "compact-result",
+            parts: [{ type: "text", text: "Context compacted" }],
+          },
         ],
       },
     ]);

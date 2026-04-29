@@ -782,6 +782,32 @@ function agUiSnapshotToReplayMessages(payload: unknown): DBMessage[] {
   });
 }
 
+function isContextResetReplayMessage(message: DBMessage): boolean {
+  return message.type === "system" && message.message_type === "compact-result";
+}
+
+function applyContextResetToReplayEntries(
+  entries: ThreadReplayEntry[],
+): ThreadReplayEntry[] {
+  const resetEntries: ThreadReplayEntry[] = [];
+
+  for (const entry of entries) {
+    let messagesForEntry: DBMessage[] = [];
+    for (const message of entry.messages) {
+      if (isContextResetReplayMessage(message)) {
+        resetEntries.length = 0;
+        messagesForEntry = [];
+      }
+      messagesForEntry.push(message);
+    }
+    if (messagesForEntry.length > 0) {
+      resetEntries.push({ seq: entry.seq, messages: messagesForEntry });
+    }
+  }
+
+  return resetEntries;
+}
+
 export async function getThreadReplayEntriesFromCanonicalEvents({
   db,
   threadId,
@@ -858,7 +884,7 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
     entries.push({ seq: activeSeq, messages: activeMessages });
   }
 
-  return entries
+  const mergedEntries = entries
     .sort((left, right) => left.seq - right.seq)
     .reduce<ThreadReplayEntry[]>((merged, entry) => {
       const previous = merged.at(-1);
@@ -881,6 +907,8 @@ export async function getThreadReplayEntriesFromCanonicalEvents({
         return 0;
       }),
     }));
+
+  return applyContextResetToReplayEntries(mergedEntries);
 }
 
 /**

@@ -110,30 +110,49 @@ export function useInvalidateCreditBalanceOnAgentIdle({
 
 /**
  * If the URL hash is `#message-N`, scroll the matching message into view
- * once after the first non-empty render. Runs at most once per mount.
+ * once after the first non-empty render for each reset key/hash pair.
  */
 export function useScrollToHashMessageOnce({
   messages,
+  resetKey,
 }: {
   messages: ReadonlyArray<unknown>;
+  resetKey: string;
 }) {
-  const hasScrolledRef = useRef(false);
+  const scrolledKeyRef = useRef<string | null>(null);
+  const pendingKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (hasScrolledRef.current || !messages.length || !window.location.hash)
+    if (!messages.length || !window.location.hash) {
       return;
+    }
     const hash = window.location.hash.slice(1);
+    const scrolledKey = `${resetKey}:${hash}`;
+    if (
+      scrolledKeyRef.current === scrolledKey ||
+      pendingKeyRef.current === scrolledKey
+    ) {
+      return;
+    }
     const match = hash.match(/^message-(\d+)$/);
     if (!match || !match[1]) return;
     const targetIndex = parseInt(match[1], 10);
     if (targetIndex < 0 || targetIndex >= messages.length) return;
-    setTimeout(() => {
+    pendingKeyRef.current = scrolledKey;
+    const timeoutId = window.setTimeout(() => {
+      pendingKeyRef.current = null;
       const targetElement = document.querySelector(
         `[data-message-index="${targetIndex}"]`,
       );
       if (targetElement) {
         targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+        scrolledKeyRef.current = scrolledKey;
       }
     }, 100);
-    hasScrolledRef.current = true;
-  }, [messages]);
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (pendingKeyRef.current === scrolledKey) {
+        pendingKeyRef.current = null;
+      }
+    };
+  }, [messages, resetKey]);
 }

@@ -8,6 +8,7 @@
  * registry must be updated in lockstep.
  */
 import { describe, expect, it } from "vitest";
+import { TOOL_NAMES, isToolName } from "./tool-registry";
 import type { ToolName, ToolRegistry } from "./tool-registry";
 
 // Runtime fixture: every tool name the registry currently keys. Order is
@@ -50,6 +51,15 @@ const _exhaustive: [_AssertRuntimeCoversToolName, _AssertRuntimeHasNoExtras] = [
 void _exhaustive;
 
 describe("ToolRegistry", () => {
+  it("exports the canonical runtime tool-name list", () => {
+    expect([...TOOL_NAMES].sort()).toEqual([...RUNTIME_TOOL_NAMES].sort());
+  });
+
+  it("narrows known tool names at runtime", () => {
+    expect(isToolName("Bash")).toBe(true);
+    expect(isToolName("mcp__linear__create_issue")).toBe(false);
+  });
+
   it("fixture covers exactly 21 tool names", () => {
     expect(RUNTIME_TOOL_NAMES).toHaveLength(21);
   });

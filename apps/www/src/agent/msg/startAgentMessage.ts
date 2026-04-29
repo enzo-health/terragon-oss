@@ -58,7 +58,10 @@ import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import { compactThreadChat, tryAutoCompactThread } from "@/server-lib/compact";
-import { getLatestNativeAgUiSnapshotMessage } from "@/server-lib/ag-ui-side-effect-messages";
+import {
+  getLatestNativeAgUiSnapshotMessage,
+  persistSideEffectAgUiMessages,
+} from "@/server-lib/ag-ui-side-effect-messages";
 import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
@@ -287,6 +290,28 @@ export async function startAgentMessage({
         : null;
       const currentMessageAppend =
         !isNewThread && uploadedMessage ? [uploadedMessage] : undefined;
+      const persistUserPromptAgUiSnapshot = async ({
+        chatSequence,
+        runId,
+        source,
+      }: {
+        chatSequence?: number;
+        runId: string;
+        source: string;
+      }): Promise<void> => {
+        if (!currentMessageAppend || chatSequence === undefined) {
+          return;
+        }
+        await persistSideEffectAgUiMessages({
+          db,
+          threadId,
+          threadChatId,
+          messages: currentMessageAppend,
+          source,
+          chatSequence,
+          runId,
+        });
+      };
 
       let threadContextPromise: Promise<void> | null = null;
       const getThreadContextPromise = (): Promise<void> | null => {
@@ -353,7 +378,7 @@ export async function startAgentMessage({
           if (contextPromise) {
             await contextPromise;
           }
-          await updateThreadChatWithTransition({
+          const queuedTransition = await updateThreadChatWithTransition({
             userId,
             threadId,
             threadChatId,
@@ -363,6 +388,11 @@ export async function startAgentMessage({
               errorMessageInfo: null,
               appendMessages: currentMessageAppend,
             },
+          });
+          await persistUserPromptAgUiSnapshot({
+            chatSequence: queuedTransition.chatSequence,
+            runId: `pre-run:${threadChatId}:concurrency-limit-user-prompt`,
+            source: "concurrency-limit-user-prompt",
           });
           return;
         }
@@ -393,7 +423,7 @@ export async function startAgentMessage({
           if (contextPromise) {
             await contextPromise;
           }
-          await updateThreadChatWithTransition({
+          const queuedTransition = await updateThreadChatWithTransition({
             userId,
             threadId,
             threadChatId,
@@ -405,13 +435,18 @@ export async function startAgentMessage({
               appendMessages: currentMessageAppend,
             },
           });
+          await persistUserPromptAgUiSnapshot({
+            chatSequence: queuedTransition.chatSequence,
+            runId: `pre-run:${threadChatId}:sandbox-rate-limit-user-prompt`,
+            source: "sandbox-rate-limit-user-prompt",
+          });
           return;
         }
       }
 
       getThreadContextPromise();
 
-      await updateThreadChatWithTransition({
+      const bootTransition = await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId,
@@ -902,6 +937,11 @@ export async function startAgentMessage({
             status: "pending",
             tokenNonce,
             daemonTokenKeyId: null,
+          });
+          await persistUserPromptAgUiSnapshot({
+            chatSequence: bootTransition.chatSequence,
+            runId,
+            source: "follow-up-user-prompt",
           });
 
           try {

@@ -25,7 +25,12 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
   transcribeAudio: vi.fn(),
 }));
 
-import { TerragonThreadErrorBoundary } from "./terragon-thread";
+import {
+  resolveTerragonThreadErrorProps,
+  TerragonThreadErrorBoundary,
+} from "./terragon-thread";
+import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
+import { createInitialThreadMetaSnapshot } from "../thread-view-model/snapshot-adapter";
 
 function Boom(): never {
   throw new Error("boom-from-child");
@@ -112,5 +117,84 @@ describe("TerragonThreadErrorBoundary", () => {
 
     expect(container!.querySelector('[data-testid="ok"]')).not.toBeNull();
     expect(container!.innerHTML).toContain("happy path");
+  });
+});
+
+describe("TerragonTranscriptSurface", () => {
+  it("renders a non-transcript hydration state while runtime history is loading", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: true,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "user",
+            parts: [{ type: "text", text: "DB fallback should not render" }],
+          },
+        ],
+        runtimeMessageProjectionById: new Map(),
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        showWorkingMessage: false,
+        threadStatus: null,
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Loading task history");
+    expect(container!.textContent).not.toContain(
+      "DB fallback should not render",
+    );
+  });
+
+  it("renders a visible history-load error instead of a blank transcript", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [],
+        runtimeMessageProjectionById: new Map(),
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        showWorkingMessage: false,
+        threadStatus: null,
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+        errorType: "history-load",
+        errorInfo: "Failed to load task history",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Failed to load task history");
+  });
+});
+
+describe("resolveTerragonThreadErrorProps", () => {
+  it("keeps caller error props paired ahead of history-load failures", () => {
+    expect(
+      resolveTerragonThreadErrorProps({
+        callerError: "Sandbox failed",
+        callerErrorType: "sandbox",
+        historyLoadError: "History failed",
+      }),
+    ).toEqual({ errorType: "sandbox" });
+  });
+
+  it("uses history-load error type and info only without a caller error", () => {
+    expect(
+      resolveTerragonThreadErrorProps({
+        callerError: null,
+        historyLoadError: "History failed",
+      }),
+    ).toEqual({
+      errorType: "history-load",
+      errorInfo: "History failed",
+    });
   });
 });

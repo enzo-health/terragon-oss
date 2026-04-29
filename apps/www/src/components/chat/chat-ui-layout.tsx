@@ -1,7 +1,6 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
-import type { Message as AgUiMessage } from "@ag-ui/core";
 import { AIAgent } from "@terragon/agent/types";
 import {
   DBUserMessage,
@@ -17,6 +16,7 @@ import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
 import { stopThread } from "@/server-actions/stop-thread";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
+import type { AgUiHistoryMessagesResult } from "./ag-ui-history-types";
 import {
   TerragonThread,
   TerragonThreadErrorBoundary,
@@ -76,7 +76,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   const {
     threadViewModel,
     loadAgUiHistoryMessages,
-    messages,
     queuedMessages,
     artifactDescriptors,
     effectiveThreadStatus,
@@ -158,7 +157,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                     <TerragonThread
                       agent={agent}
                       loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-                      messages={messages}
                       lifecycleMessages={threadViewModel.lifecycleMessages}
                       threadStatus={effectiveThreadStatus}
                       thread={threadWithViewModelStatus}
@@ -311,8 +309,7 @@ export type ChatUICoreData = {
  */
 export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
-  loadAgUiHistoryMessages: () => Promise<readonly AgUiMessage[]>;
-  messages: ThreadViewModelController["messages"];
+  loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   queuedMessages: DBUserMessage[] | null;
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];

@@ -20,7 +20,11 @@ import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
 import { getToolVerb } from "./tools/utils";
-import type { ToolArgs, ToolName } from "./tools/tool-registry";
+import {
+  isToolName,
+  type ToolArgs,
+  type ToolName,
+} from "./tools/tool-registry";
 import { Badge } from "@/components/ui/badge";
 import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
@@ -37,7 +41,7 @@ import type { UIToolPartWithLifecycle } from "./ui-parts-extended";
  * ignore this. Carried as one struct so the dispatch table below stays a
  * uniform `Record<ToolName, RenderFn>`.
  */
-type ToolRenderContext = {
+export type ToolRenderContext = {
   threadId: string;
   threadChatId: string;
   messagesRef: { current: UIMessage[] };
@@ -180,11 +184,6 @@ const renderUnknownTool = (tp: AllToolParts): ReactNode => (
   <DefaultTool toolPart={tp} />
 );
 
-/** Type predicate: narrows an arbitrary string to `ToolName` by membership in `TOOL_DISPATCH`. */
-function isToolName(name: string): name is ToolName {
-  return name in TOOL_DISPATCH;
-}
-
 /**
  * Hoisted predicate-typed filter: a discriminated-union narrower for the
  * artifact-bearing UI part variants. Defined at module scope so the closure
@@ -216,6 +215,24 @@ export type ToolPartProps = {
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 };
+
+export function renderToolPart(
+  rawToolPart: AllToolParts,
+  renderCtx: ToolRenderContext,
+): ReactNode {
+  const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
+  // `isToolName` proves membership in `TOOL_DISPATCH`, but TS still sees the
+  // looked-up entry as a contravariant union of `ToolRenderer<N>` for each N
+  // in `ToolName` — and the intersected parameter type collapses to `never`.
+  // Widen at the dispatch boundary once via a typed alias; the runtime
+  // discriminator is `toolPart.name` matching the registry key, so the
+  // dispatch is sound. Mirrors the pattern in `renderPartFromRegistry`.
+  type DispatchFn = (tp: AllToolParts, ctx: ToolRenderContext) => ReactNode;
+  const renderer: DispatchFn = isToolName(toolPart.name)
+    ? (TOOL_DISPATCH[toolPart.name] as DispatchFn)
+    : renderUnknownTool;
+  return renderer(toolPart, renderCtx);
+}
 
 const ToolPart = memo(function ToolPart({
   toolPart: rawToolPart,
@@ -310,17 +327,7 @@ const ToolPart = memo(function ToolPart({
     ],
   );
 
-  // `isToolName` proves membership in `TOOL_DISPATCH`, but TS still sees the
-  // looked-up entry as a contravariant union of `ToolRenderer<N>` for each N
-  // in `ToolName` — and the intersected parameter type collapses to `never`.
-  // Widen at the dispatch boundary once via a typed alias; the runtime
-  // discriminator is `toolPart.name` matching the registry key, so the
-  // dispatch is sound. Mirrors the pattern in `renderPartFromRegistry`.
-  type DispatchFn = (tp: AllToolParts, ctx: ToolRenderContext) => ReactNode;
-  const renderer: DispatchFn = isToolName(toolPart.name)
-    ? (TOOL_DISPATCH[toolPart.name] as DispatchFn)
-    : renderUnknownTool;
-  const renderedTool = renderer(toolPart, renderCtx);
+  const renderedTool = renderToolPart(rawToolPart, renderCtx);
 
   const artifactParts = toolPart.parts.filter(isArtifactPart);
 

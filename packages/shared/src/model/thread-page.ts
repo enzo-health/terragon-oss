@@ -531,8 +531,7 @@ export async function getThreadPageChatWithPermissions({
   if (!threadChat) {
     return undefined;
   }
-  const { messages: legacyMessagesRaw, ...threadChatWithoutMessages } =
-    threadChat;
+  const { messages: _dbMessagesRaw, ...threadChatWithoutMessages } = threadChat;
 
   const isCanonicalProjection = await hasCanonicalReplayProjection({
     db,
@@ -540,12 +539,7 @@ export async function getThreadPageChatWithPermissions({
     threadChatId,
   });
 
-  const legacyMessages = (legacyMessagesRaw ?? []).filter(
-    (message) => message.type === "user",
-  );
-  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [
-    ...legacyMessages,
-  ];
+  let projectedMessages: NonNullable<ThreadPageChat["projectedMessages"]> = [];
   if (isCanonicalProjection) {
     const replayEntries = await getThreadReplayEntriesFromCanonicalEvents({
       db,
@@ -553,10 +547,7 @@ export async function getThreadPageChatWithPermissions({
       threadChatId,
       fromThreadChatMessageSeq: 0,
     });
-    projectedMessages = [
-      ...legacyMessages,
-      ...replayEntries.flatMap((entry) => entry.messages),
-    ];
+    projectedMessages = replayEntries.flatMap((entry) => entry.messages);
   }
 
   return {

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Message as AgUiMessage } from "@ag-ui/core";
+import { EventType, type Message as AgUiMessage } from "@ag-ui/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureAgent } from "@terragon/agent/utils";
 import {
@@ -8,6 +8,7 @@ import {
   ThreadErrorMessage,
   ThreadInfoFull,
   ThreadStatus,
+  UIMessage,
 } from "@terragon/shared";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +22,11 @@ import {
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
+import type {
+  AgUiHistoryItem,
+  AgUiHistoryMessagesResult,
+} from "./ag-ui-history-types";
+import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
 import {
   ChatUILayout,
   type ChatUICoreData,
@@ -47,7 +53,6 @@ import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
   useInvalidateCreditBalanceOnAgentIdle,
-  useScrollToHashMessageOnce,
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
 import {
@@ -67,21 +72,57 @@ function isAgUiHistoryMessage(value: unknown): value is AgUiMessage {
   const id = value.id;
   const role = value.role;
   const content = value.content;
+  if (typeof id !== "string") {
+    return false;
+  }
+  if (role === "user") {
+    return typeof content === "string" || Array.isArray(content);
+  }
+  if (role === "system") {
+    return typeof content === "string";
+  }
+  if (role === "assistant") {
+    return content === undefined || typeof content === "string";
+  }
+  if (role === "tool") {
+    return typeof value.toolCallId === "string" && typeof content === "string";
+  }
+  return false;
+}
+
+function isTerragonCustomPartEvent(
+  value: unknown,
+): value is TerragonCustomPartEvent {
   return (
-    typeof id === "string" &&
-    (role === "user" || role === "system") &&
-    (typeof content === "string" || Array.isArray(content))
+    isRecord(value) &&
+    value.type === EventType.CUSTOM &&
+    typeof value.name === "string" &&
+    value.name === "terragon.data-part"
   );
 }
 
-function parseAgUiHistoryMessagesResponse(value: unknown): AgUiMessage[] {
+function isAgUiHistoryItem(value: unknown): value is AgUiHistoryItem {
+  return isAgUiHistoryMessage(value) || isTerragonCustomPartEvent(value);
+}
+
+function parseAgUiHistoryMessagesResponse(
+  value: unknown,
+): AgUiHistoryMessagesResult {
   if (!isRecord(value) || !Array.isArray(value.messages)) {
     throw new Error("Invalid AG UI history response");
   }
-  if (!value.messages.every(isAgUiHistoryMessage)) {
-    throw new Error("Invalid AG UI history message");
+  if (!value.messages.every(isAgUiHistoryItem)) {
+    throw new Error("Invalid AG UI history item");
   }
-  return value.messages;
+  const lastSeq = value.lastSeq;
+  if (
+    typeof lastSeq !== "number" ||
+    !Number.isSafeInteger(lastSeq) ||
+    lastSeq < -1
+  ) {
+    throw new Error("Invalid AG UI history cursor");
+  }
+  return { messages: value.messages, lastSeq };
 }
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
@@ -222,9 +263,7 @@ function ChatUIContent() {
     agent,
     snapshot: threadViewSnapshot,
   });
-  const messages = threadViewModel.messages;
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
 
@@ -239,7 +278,7 @@ function ChatUIContent() {
     () => ({
       threadId,
       threadChatId: threadViewModel.threadChatId,
-      messagesRef,
+      messagesRef: runtimeMessagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads: shell.childThreads ?? [],
@@ -302,8 +341,6 @@ function ChatUIContent() {
       }
     }
   }, []);
-  useScrollToHashMessageOnce({ messages });
-
   const { handleRetry, isRetrying } = useRetryThreadMutation({
     threadId,
     threadChatId,
@@ -380,7 +417,6 @@ function ChatUIContent() {
     () => ({
       threadViewModel,
       loadAgUiHistoryMessages,
-      messages,
       queuedMessages,
       artifactDescriptors,
       effectiveThreadStatus,
@@ -396,7 +432,6 @@ function ChatUIContent() {
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
-      messages,
       queuedMessages,
       threadViewModel,
       toolProps,

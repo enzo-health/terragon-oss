@@ -232,17 +232,23 @@ function makeRunContext(
   };
 }
 
-function mockAgUiEventEnvelopesForThreadChat(events: BaseEvent[]): void {
-  const envelopes = events.map((payload, seq) => ({
-    eventId: `event-${seq}`,
-    seq,
-    runId: readRunId(payload),
-    threadId: "thread-1",
-    threadChatId: "chat-1",
-    timestamp: String(seq + 1),
-    idempotencyKey: `event-${seq}`,
-    payload,
-  }));
+function mockAgUiEventEnvelopesForThreadChat(
+  events: BaseEvent[],
+  seqs?: number[],
+): void {
+  const envelopes = events.map((payload, index) => {
+    const seq = seqs?.[index] ?? index;
+    return {
+      eventId: `event-${seq}`,
+      seq,
+      runId: readRunId(payload),
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      timestamp: String(index + 1),
+      idempotencyKey: `event-${seq}`,
+      payload,
+    };
+  });
   vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
     async ({ afterSeq }) =>
       envelopes.filter(
@@ -344,6 +350,271 @@ describe("ag-ui SSE route", () => {
     });
   });
 
+  it("returns native history messages with the durable replay cursor", async () => {
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "start here",
+        },
+      ],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "start here",
+        },
+      ],
+      lastSeq: 42,
+    });
+  });
+
+  it("returns runtime-owned assistant text, tool calls, tool results, and custom parts in history", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [
+          {
+            id: "user-1",
+            role: "user",
+            content: "start here",
+          },
+        ],
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 3,
+        messageId: "assistant-1",
+        delta: "I will inspect it.",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 4,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        timestamp: 5,
+        toolCallId: "tool-1",
+        delta: '{"command":"pnpm test"}',
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        timestamp: 6,
+        messageId: "tool-result-1",
+        toolCallId: "tool-1",
+        content: "passed",
+      } as BaseEvent,
+      {
+        type: EventType.CUSTOM,
+        timestamp: 7,
+        name: "terragon.data-part",
+        value: {
+          messageId: "assistant-1",
+          partIndex: 1,
+          name: "terragon.terminal",
+          data: {
+            type: "terminal",
+            sandboxId: "sandbox-1",
+            terminalId: "terminal-1",
+            chunks: [],
+          },
+        },
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(
+      runEvents,
+      [10, 20, 30, 40, 50, 60, 70],
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "start here",
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "I will inspect it.",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: '{"command":"pnpm test"}',
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-result-1",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "passed",
+        },
+        {
+          type: EventType.CUSTOM,
+          timestamp: 7,
+          name: "terragon.data-part",
+          value: {
+            messageId: "assistant-1",
+            partIndex: 1,
+            name: "terragon.terminal",
+            data: {
+              type: "terminal",
+              sandboxId: "sandbox-1",
+              terminalId: "terminal-1",
+              chunks: [],
+            },
+          },
+        },
+      ],
+      lastSeq: 70,
+    });
+  });
+
+  it("does not advance the history cursor past omitted non-history events", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "Visible history",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 3,
+        threadId: "chat-1",
+        runId: "run-1",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [11, 21, 31]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Visible history",
+        },
+      ],
+      lastSeq: 21,
+    });
+  });
+
+  it("does not advance the history cursor past trailing visible-history end events", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "Visible history",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "assistant-1",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 4,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_END,
+        timestamp: 5,
+        toolCallId: "tool-1",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [101, 111, 121, 131, 141]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Visible history",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: "",
+              },
+            },
+          ],
+        },
+      ],
+      lastSeq: 131,
+    });
+  });
+
   it("streams the full run event log without synthesis when replay starts with RUN_STARTED", async () => {
     const runEvents: BaseEvent[] = [
       {
@@ -390,6 +661,45 @@ describe("ag-ui SSE route", () => {
       (e) => e.type === EventType.RUN_STARTED,
     ).length;
     expect(runStartedCount).toBe(1);
+  });
+
+  it("drops leading MESSAGES_SNAPSHOT rows before full replay RUN_STARTED", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 0,
+        messages: [],
+      } as BaseEvent,
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [],
+      } as BaseEvent,
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-snapshot-prefix",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 3,
+        threadId: "thread-1",
+        runId: "run-snapshot-prefix",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-snapshot-prefix",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 2);
+    expect(received).toEqual(runEvents.slice(2));
   });
 
   it("emits the baseline snapshot marker frame before replay deltas", async () => {
@@ -1439,6 +1749,47 @@ describe("ag-ui SSE route", () => {
       id: null,
       event: null,
     });
+  });
+
+  it("replays snapshots after a history cursor even before the first run starts", async () => {
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [
+        {
+          id: "user-gap",
+          role: "user",
+          content: "written between history and stream",
+        },
+      ],
+    } as BaseEvent;
+    vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
+      async ({ afterSeq }) =>
+        [
+          {
+            eventId: "event-gap",
+            seq: 1,
+            runId: "pre-run",
+            threadId: "thread-new",
+            threadChatId: "chat-empty",
+            timestamp: "1",
+            idempotencyKey: "event-gap",
+            payload: snapshotEvent,
+          },
+        ].filter((entry) => afterSeq === undefined || entry.seq > afterSeq),
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-new?threadChatId=chat-empty&fromSeq=-1",
+      ),
+      makeContext("thread-new"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 1);
+    expect(received).toEqual([snapshotEvent]);
   });
 
   it("treats a missing getLatestRunIdForThreadChat as an empty-thread case (defensive)", async () => {

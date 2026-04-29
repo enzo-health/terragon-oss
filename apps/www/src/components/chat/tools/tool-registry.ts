@@ -14,11 +14,10 @@
  *   re-derive here instead of duplicating per-tool param literals — when the daemon
  *   adds a tool, updating `AllToolParts` flows to this registry automatically.
  *
- * - `result` is the daemon's tool-result payload. Today every completed tool call
- *   is persisted as `UICompletedToolPart.result: string` (ui-messages.ts:183) and
- *   each tool component reads that string directly. We type result as `string` to
- *   match the wire shape after daemon normalization. If individual tools start
- *   surfacing structured results to the UI, narrow per entry — do not widen the
+ * - `result` is the daemon's tool-result payload. Most completed tool calls are
+ *   persisted as `UICompletedToolPart.result: string` (ui-messages.ts:183), but
+ *   assistant-ui live tool calls can carry structured JSON before persistence.
+ *   Keep structured results scoped to individual entries — do not widen the
  *   whole map.
  *
  * Tools tracked here mirror the `switch (toolPart.name)` in
@@ -32,13 +31,27 @@
  *     `SuggestFollowupTask`. Both names route to the same component with the same
  *     args, so we mirror them in the registry.
  *
- * The trailing `UIToolPart<string, Record<string, any>>` arm of `AllToolParts` (the
- * "unknown tool" fallback rendered by `DefaultTool`) is intentionally NOT in the
- * registry: by definition there is no compile-time name for it. `DefaultTool`
- * accepts the raw `parameters` JSON.
+ * The trailing `UIToolPart<string, Record<string, unknown>>`-style arm of
+ * `AllToolParts` (the "unknown tool" fallback rendered by `DefaultTool`) is
+ * intentionally NOT in the registry: by definition there is no compile-time
+ * name for it. `DefaultTool` accepts the raw `parameters` JSON.
  */
 
 import type { AllToolParts } from "@terragon/shared";
+
+export const FILE_CHANGE_DIFF_RESULT_TYPE = "terragon.diff";
+
+export type FileChangeDiffToolResult = {
+  type: typeof FILE_CHANGE_DIFF_RESULT_TYPE;
+  part: {
+    type: "diff";
+    filePath: string;
+    oldContent?: string;
+    newContent: string;
+    unifiedDiff?: string;
+    status: "pending" | "applied" | "rejected";
+  };
+};
 
 type ToolPartByName<TName extends string> = Extract<
   AllToolParts,
@@ -78,7 +91,10 @@ export type ToolRegistry = {
   };
   ExitPlanMode: { args: ArgsOf<"ExitPlanMode">; result: string };
   PermissionRequest: { args: ArgsOf<"PermissionRequest">; result: string };
-  FileChange: { args: ArgsOf<"FileChange">; result: string };
+  FileChange: {
+    args: ArgsOf<"FileChange">;
+    result: string | FileChangeDiffToolResult;
+  };
   /**
    * Codex MCP wrapper. Daemon emits `{ server, tool, ...rest }` as parameters; the
    * renderer rewrites the name to `mcp__server__tool` before dispatching to
@@ -93,11 +109,46 @@ export type ToolRegistry = {
 
 export type ToolName = keyof ToolRegistry;
 export type ToolArgs<T extends ToolName> = ToolRegistry[T]["args"];
-/**
- * Every entry in `ToolRegistry` resolves to `result: string` (see file header
- * for rationale: daemon normalizes tool results to strings before persisting).
- * A generic `ToolResult<T>` would be a structural no-op that just resolves to
- * `string` for every `T`, so we expose the constant alias instead. Narrow per
- * entry if a specific tool ever surfaces structured results.
- */
-export type ToolResult = string;
+export type ToolResult<T extends ToolName = ToolName> =
+  ToolRegistry[T]["result"];
+
+export const TOOL_NAMES = [
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "Grep",
+  "Glob",
+  "LS",
+  "Bash",
+  "TodoRead",
+  "TodoWrite",
+  "NotebookRead",
+  "NotebookEdit",
+  "Task",
+  "WebFetch",
+  "WebSearch",
+  "SuggestFollowupTask",
+  "mcp__terry__SuggestFollowupTask",
+  "ExitPlanMode",
+  "PermissionRequest",
+  "FileChange",
+  "MCPTool",
+] as const satisfies readonly ToolName[];
+
+type _AssertToolNamesCoverRegistry =
+  ToolName extends (typeof TOOL_NAMES)[number] ? true : never;
+type _AssertToolNamesHaveNoExtras = (typeof TOOL_NAMES)[number] extends ToolName
+  ? true
+  : never;
+const _toolNamesAreExhaustive: [
+  _AssertToolNamesCoverRegistry,
+  _AssertToolNamesHaveNoExtras,
+] = [true, true];
+void _toolNamesAreExhaustive;
+
+const TOOL_NAME_SET: ReadonlySet<string> = new Set(TOOL_NAMES);
+
+export function isToolName(name: string): name is ToolName {
+  return TOOL_NAME_SET.has(name);
+}

@@ -284,12 +284,14 @@ export function toolCallStart(
   toolCallId: string,
   toolCallName: string,
   timestamp = 0,
+  parentMessageId?: string,
 ): BaseEvent {
   return {
     type: EventType.TOOL_CALL_START,
     timestamp,
     toolCallId,
     toolCallName,
+    ...(parentMessageId ? { parentMessageId } : {}),
   } as BaseEvent;
 }
 
@@ -355,7 +357,12 @@ export function customRichPart(
   return {
     type: EventType.CUSTOM,
     timestamp,
-    name: `terragon.part.${partType}`,
-    value: { messageId, partIndex, part },
+    name: "terragon.data-part",
+    value: {
+      messageId,
+      partIndex,
+      name: `terragon.${partType}`,
+      data: part,
+    },
   } as BaseEvent;
 }

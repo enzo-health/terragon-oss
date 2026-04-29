@@ -19,7 +19,7 @@ function newId(prefix: string): string {
 }
 
 describe("getThreadPageChatWithPermissions", () => {
-  it("returns durable user messages when no canonical replay exists", async () => {
+  it("returns an empty projection when no canonical AG UI replay exists", async () => {
     const { user } = await createTestUser({ db });
     const { threadId, threadChatId } = await createTestThread({
       db,
@@ -46,13 +46,8 @@ describe("getThreadPageChatWithPermissions", () => {
     });
 
     expect(threadChat).not.toHaveProperty("messages");
-    expect(threadChat?.projectedMessages).toEqual([
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "legacy prompt" }],
-      },
-    ]);
+    expect(threadChat?.projectedMessages).toEqual([]);
+    expect(threadChat?.messageCount).toBe(0);
   });
 
   it("hydrates projectedMessages from AG UI side-effect snapshots without assistant replay", async () => {
@@ -100,7 +95,7 @@ describe("getThreadPageChatWithPermissions", () => {
     expect(threadChat?.messageCount).toBe(1);
   });
 
-  it("hydrates projectedMessages from canonical replay when replay rows exist", async () => {
+  it("ignores thread_chat messages once AG UI replay projection exists", async () => {
     const { user } = await createTestUser({ db });
     const { threadId, threadChatId } = await createTestThread({
       db,
@@ -113,12 +108,119 @@ describe("getThreadPageChatWithPermissions", () => {
           {
             type: "user",
             model: null,
-            parts: [{ type: "text", text: "legacy user prompt" }],
+            parts: [{ type: "text", text: "ignored thread_chat prompt" }],
           },
+        ],
+      })
+      .where(eq(schema.threadChat.id, threadChatId));
+
+    await db.insert(schema.agentEventLog).values({
+      eventId: newId("side-effect"),
+      runId: newId("run"),
+      threadId,
+      threadChatId,
+      seq: 0,
+      eventType: EventType.MESSAGES_SNAPSHOT,
+      category: EventType.MESSAGES_SNAPSHOT,
+      payloadJson: {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [{ id: "user-1", role: "user", content: "ag-ui prompt" }],
+      },
+      idempotencyKey: newId("side-effect-key"),
+      timestamp: new Date(),
+      threadChatMessageSeq: 1,
+    });
+
+    const threadChat = await getThreadPageChatWithPermissions({
+      db,
+      threadId,
+      threadChatId,
+      userId: user.id,
+    });
+
+    expect(threadChat?.projectedMessages).toEqual([
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "ag-ui prompt" }],
+      },
+    ]);
+    expect(threadChat?.messageCount).toBe(1);
+  });
+
+  it("does not prepend thread_chat prompts before a compact-result snapshot", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+    });
+    await db
+      .update(schema.threadChat)
+      .set({
+        messages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "ignored pre-compact prompt" }],
+          },
+        ],
+      })
+      .where(eq(schema.threadChat.id, threadChatId));
+
+    await db.insert(schema.agentEventLog).values({
+      eventId: newId("side-effect"),
+      runId: newId("run"),
+      threadId,
+      threadChatId,
+      seq: 0,
+      eventType: EventType.MESSAGES_SNAPSHOT,
+      category: EventType.MESSAGES_SNAPSHOT,
+      payloadJson: {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "side-effect-system:compact-result-1-abcdef123456",
+            role: "system",
+            content: "Context compacted",
+          },
+        ],
+      },
+      idempotencyKey: newId("side-effect-key"),
+      timestamp: new Date(),
+      threadChatMessageSeq: 1,
+    });
+
+    const threadChat = await getThreadPageChatWithPermissions({
+      db,
+      threadId,
+      threadChatId,
+      userId: user.id,
+    });
+
+    expect(threadChat?.projectedMessages).toEqual([
+      {
+        type: "system",
+        message_type: "compact-result",
+        parts: [{ type: "text", text: "Context compacted" }],
+      },
+    ]);
+    expect(threadChat?.messageCount).toBe(1);
+  });
+
+  it("hydrates projectedMessages from canonical replay when replay rows exist", async () => {
+    const { user } = await createTestUser({ db });
+    const { threadId, threadChatId } = await createTestThread({
+      db,
+      userId: user.id,
+    });
+    await db
+      .update(schema.threadChat)
+      .set({
+        messages: [
           {
             type: "agent",
             parent_tool_use_id: null,
-            parts: [{ type: "text", text: "legacy assistant reply" }],
+            parts: [{ type: "text", text: "ignored thread_chat assistant" }],
           },
         ],
       })
@@ -177,17 +279,12 @@ describe("getThreadPageChatWithPermissions", () => {
     expect(threadChat).not.toHaveProperty("messages");
     expect(threadChat?.projectedMessages).toEqual([
       {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "legacy user prompt" }],
-      },
-      {
         type: "agent",
         parent_tool_use_id: null,
         parts: [{ type: "text", text: "canonical assistant reply" }],
       },
     ]);
-    expect(threadChat?.messageCount).toBe(2);
+    expect(threadChat?.messageCount).toBe(1);
   });
 
   it("returns an empty projection when canonical replay schema is unavailable", async () => {
@@ -226,13 +323,8 @@ describe("getThreadPageChatWithPermissions", () => {
       });
 
       expect(threadChat).not.toHaveProperty("messages");
-      expect(threadChat?.projectedMessages).toEqual([
-        {
-          type: "user",
-          model: null,
-          parts: [{ type: "text", text: "legacy prompt" }],
-        },
-      ]);
+      expect(threadChat?.projectedMessages).toEqual([]);
+      expect(threadChat?.messageCount).toBe(0);
     } finally {
       findFirstSpy.mockRestore();
     }

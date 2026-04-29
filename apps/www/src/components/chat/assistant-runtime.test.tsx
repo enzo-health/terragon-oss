@@ -1,20 +1,31 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { HttpAgent } from "@ag-ui/client";
-import type { Message as AgUiMessage } from "@ag-ui/core";
-import type { UseAgUiRuntimeOptions } from "@assistant-ui/react-ag-ui";
+import type { AgentSubscriber, HttpAgent } from "@ag-ui/client";
+import type { ThreadAssistantMessagePart } from "@assistant-ui/react";
+import {
+  EventType,
+  type Message as AgUiMessage,
+  type RunAgentInput,
+} from "@ag-ui/core";
+import type { UseTerragonAgUiRuntimeOptions } from "./use-terragon-ag-ui-runtime";
 
-const useAgUiRuntimeSpy = vi.fn();
+const useTerragonAgUiRuntimeSpy = vi.fn();
 
-vi.mock("@assistant-ui/react-ag-ui", () => ({
-  useAgUiRuntime: (options: unknown) => {
-    useAgUiRuntimeSpy(options);
+vi.mock("./use-terragon-ag-ui-runtime", () => ({
+  useTerragonAgUiRuntime: (options: unknown) => {
+    useTerragonAgUiRuntimeSpy(options);
     return { __mock: true } as unknown;
   },
 }));
 
 import { useTerragonRuntime } from "./assistant-runtime";
+import {
+  agUiMessagesToThreadMessages,
+  createAgUiHistoryAdapter,
+} from "./ag-ui-history-adapter";
+import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
+import { TerragonAgUiThreadRuntimeCore } from "./terragon-ag-ui-runtime-core";
 
 function HookHarness({
   args,
@@ -25,16 +36,39 @@ function HookHarness({
   return <div />;
 }
 
+function normalizeToolCallPartForComparison(
+  part: ThreadAssistantMessagePart,
+): unknown {
+  if (part.type !== "tool-call") return part;
+  const {
+    parentId: _parentId,
+    result,
+    ...rest
+  } = part as Extract<ThreadAssistantMessagePart, { type: "tool-call" }> & {
+    parentId?: string;
+    result?: unknown;
+  };
+  void _parentId;
+  return {
+    ...rest,
+    ...(result !== undefined
+      ? {
+          result: typeof result === "string" ? result : JSON.stringify(result),
+        }
+      : {}),
+  };
+}
+
 describe("useTerragonRuntime", () => {
   beforeEach(() => {
-    useAgUiRuntimeSpy.mockClear();
+    useTerragonAgUiRuntimeSpy.mockClear();
   });
 
-  it("forwards agent + showThinking:true to useAgUiRuntime", () => {
+  it("forwards agent + showThinking:true to useTerragonAgUiRuntime", () => {
     const agent = {} as HttpAgent;
     renderToStaticMarkup(<HookHarness args={{ agent }} />);
-    expect(useAgUiRuntimeSpy).toHaveBeenCalledTimes(1);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    expect(useTerragonAgUiRuntimeSpy).toHaveBeenCalledTimes(1);
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       agent: HttpAgent;
       showThinking: boolean;
     };
@@ -46,7 +80,7 @@ describe("useTerragonRuntime", () => {
     const agent = {} as HttpAgent;
     const onError = vi.fn();
     renderToStaticMarkup(<HookHarness args={{ agent, onError }} />);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       onError?: (e: Error) => void;
     };
     expect(opts.onError).toBe(onError);
@@ -56,7 +90,7 @@ describe("useTerragonRuntime", () => {
     const agent = {} as HttpAgent;
     const onCancel = vi.fn().mockResolvedValue(undefined);
     renderToStaticMarkup(<HookHarness args={{ agent, onCancel }} />);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       onCancel?: () => void;
     };
     expect(typeof opts.onCancel).toBe("function");
@@ -67,7 +101,7 @@ describe("useTerragonRuntime", () => {
   it("omits onCancel/onError when not provided", () => {
     const agent = {} as HttpAgent;
     renderToStaticMarkup(<HookHarness args={{ agent }} />);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       onCancel?: unknown;
       onError?: unknown;
     };
@@ -75,10 +109,10 @@ describe("useTerragonRuntime", () => {
     expect(opts.onError).toBeUndefined();
   });
 
-  it("passes showThinking=false through to useAgUiRuntime when provided", () => {
+  it("passes showThinking=false through to useTerragonAgUiRuntime when provided", () => {
     const agent = {} as HttpAgent;
     renderToStaticMarkup(<HookHarness args={{ agent, showThinking: false }} />);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       showThinking: boolean;
     };
     expect(opts.showThinking).toBe(false);
@@ -87,7 +121,7 @@ describe("useTerragonRuntime", () => {
   it("defaults showThinking to true when omitted", () => {
     const agent = {} as HttpAgent;
     renderToStaticMarkup(<HookHarness args={{ agent }} />);
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as {
+    const opts = useTerragonAgUiRuntimeSpy.mock.calls[0]?.[0] as {
       showThinking: boolean;
     };
     expect(opts.showThinking).toBe(true);
@@ -102,7 +136,8 @@ describe("useTerragonRuntime", () => {
 
     renderToStaticMarkup(<HookHarness args={{ agent, historyMessages }} />);
 
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as UseAgUiRuntimeOptions;
+    const opts = useTerragonAgUiRuntimeSpy.mock
+      .calls[0]?.[0] as UseTerragonAgUiRuntimeOptions;
     const repo = await opts.adapters?.history?.load();
 
     expect(repo?.unstable_resume).toBe(true);
@@ -138,7 +173,8 @@ describe("useTerragonRuntime", () => {
       />,
     );
 
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as UseAgUiRuntimeOptions;
+    const opts = useTerragonAgUiRuntimeSpy.mock
+      .calls[0]?.[0] as UseTerragonAgUiRuntimeOptions;
     const repo = await opts.adapters?.history?.load();
 
     expect(loadHistoryMessages).toHaveBeenCalledTimes(1);
@@ -146,6 +182,35 @@ describe("useTerragonRuntime", () => {
     expect(repo?.messages.map((item) => item.message.id)).toEqual([
       "fresh-user-1",
     ]);
+  });
+
+  it("falls back to seeded history and reports when the durable loader fails", async () => {
+    const agent = {} as HttpAgent;
+    const onError = vi.fn();
+    const loadHistoryMessages = vi.fn(async () => {
+      throw new Error("database unavailable");
+    });
+
+    renderToStaticMarkup(
+      <HookHarness
+        args={{
+          agent,
+          historyMessages: [
+            { id: "fallback-user-1", role: "user", content: "Fallback" },
+          ],
+          loadHistoryMessages,
+          onError,
+        }}
+      />,
+    );
+
+    const opts = useTerragonAgUiRuntimeSpy.mock
+      .calls[0]?.[0] as UseTerragonAgUiRuntimeOptions;
+    const repo = await opts.adapters?.history?.load();
+
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    expect(repo?.unstable_resume).toBe(true);
+    expect(repo?.headId).toBe("fallback-user-1");
   });
 
   it("merges AG-UI tool results into assistant history tool calls", async () => {
@@ -173,7 +238,8 @@ describe("useTerragonRuntime", () => {
 
     renderToStaticMarkup(<HookHarness args={{ agent, historyMessages }} />);
 
-    const opts = useAgUiRuntimeSpy.mock.calls[0]?.[0] as UseAgUiRuntimeOptions;
+    const opts = useTerragonAgUiRuntimeSpy.mock
+      .calls[0]?.[0] as UseTerragonAgUiRuntimeOptions;
     const repo = await opts.adapters?.history?.load();
     const assistant = repo?.messages[0]?.message;
     const toolPart = assistant?.content[0];
@@ -186,5 +252,494 @@ describe("useTerragonRuntime", () => {
     expect(toolPart.toolName).toBe("read_file");
     expect(toolPart.args).toEqual({ path: "a.ts" });
     expect(toolPart.result).toBe("file contents");
+  });
+});
+
+describe("TerragonAgUiThreadRuntimeCore", () => {
+  it("keeps runtime messages empty while async history is still loading", async () => {
+    let resolveHistory: (messages: AgUiMessage[]) => void = () => {};
+    const historyPromise = new Promise<AgUiMessage[]>((resolve) => {
+      resolveHistory = resolve;
+    });
+    const notifyUpdate = vi.fn();
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(async () => ({ result: undefined, newMessages: [] })),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => historyPromise),
+      notifyUpdate,
+    });
+
+    const loadPromise = core.__internal_load();
+
+    expect(core.isLoading).toBe(true);
+    expect(core.getMessages()).toEqual([]);
+
+    resolveHistory([{ id: "user-1", role: "user", content: "Loaded" }]);
+    await loadPromise;
+
+    expect(core.isLoading).toBe(false);
+    expect(core.getMessages()[0]?.id).toBe("user-1");
+  });
+
+  it("keeps live CUSTOM terragon data-part events in runtime messages across later text updates", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const customEvent: TerragonCustomPartEvent = {
+      type: EventType.CUSTOM,
+      name: "terragon.data-part",
+      value: {
+        messageId: "assistant-live",
+        partIndex: 0,
+        name: "terragon.terminal",
+        data: {
+          type: "terminal",
+          sandboxId: "sandbox-1",
+          terminalId: "terminal-1",
+          chunks: [],
+        },
+      },
+    };
+
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onCustomEvent?.({
+            event: customEvent,
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onCustomEvent?.({
+            event: customEvent,
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageContentEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "assistant-live",
+              delta: "Streaming text",
+            },
+            textMessageBuffer: "",
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load();
+
+    const assistants = core
+      .getMessages()
+      .filter((message) => message.role === "assistant");
+    const assistant = assistants.find(
+      (message) => message.id === "assistant-live",
+    );
+
+    expect(assistant?.role).toBe("assistant");
+    const dataParts =
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "data")
+        : [];
+    const textParts =
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "text")
+        : [];
+
+    expect(assistants).toHaveLength(1);
+    expect(dataParts).toHaveLength(1);
+    expect(dataParts[0]).toMatchObject({
+      type: "data",
+      name: "terragon.terminal",
+      data: {
+        messageId: "assistant-live",
+        partIndex: 0,
+        name: "terragon.terminal",
+        data: {
+          type: "terminal",
+          sandboxId: "sandbox-1",
+          terminalId: "terminal-1",
+          chunks: [],
+        },
+      },
+    });
+    expect(textParts).toEqual([{ type: "text", text: "Streaming text" }]);
+    expect(
+      assistants
+        .filter((message) => message.id !== "assistant-live")
+        .flatMap((message) => message.content)
+        .some((part) => part.type === "data" || part.type === "text"),
+    ).toBe(false);
+  });
+
+  it("projects live stream and durable history into identical assistant-ui parts", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const diffToolArgs =
+      '{"files":[{"path":"apps/www/src/components/chat/example.ts","action":"modified"}]}';
+    const diffToolResult = JSON.stringify({
+      type: "terragon.diff",
+      part: {
+        type: "diff",
+        filePath: "apps/www/src/components/chat/example.ts",
+        oldContent: "export const value = false;\n",
+        newContent: "export const value = true;\n",
+        status: "applied",
+      },
+    });
+    const durableHistoryMessages = [
+      {
+        id: "assistant-live",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "diff-tool-1",
+            type: "function",
+            function: {
+              name: "FileChange",
+              arguments: diffToolArgs,
+            },
+          },
+        ],
+      },
+      {
+        id: "diff-tool-result-1",
+        role: "tool",
+        toolCallId: "diff-tool-1",
+        content: diffToolResult,
+      },
+      {
+        id: "assistant-live",
+        role: "assistant",
+        content: "Streaming text",
+        toolCalls: [
+          {
+            id: "tool-1",
+            type: "function",
+            function: {
+              name: "Bash",
+              arguments: '{"command":"pnpm test"}',
+            },
+          },
+        ],
+      },
+      {
+        id: "tool-result-1",
+        role: "tool",
+        toolCallId: "tool-1",
+        content: "permission denied",
+        error: "permission denied",
+      },
+    ] satisfies Parameters<typeof agUiMessagesToThreadMessages>[0];
+
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onToolCallStartEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "diff-tool-1",
+              toolCallName: "FileChange",
+              parentMessageId: "assistant-live",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallArgsEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: "diff-tool-1",
+              delta: diffToolArgs,
+            },
+            toolCallBuffer: diffToolArgs,
+            toolCallName: "FileChange",
+            partialToolCallArgs: {
+              files: [
+                {
+                  path: "apps/www/src/components/chat/example.ts",
+                  action: "modified",
+                },
+              ],
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallResultEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_RESULT,
+              messageId: "diff-tool-result-1",
+              toolCallId: "diff-tool-1",
+              content: diffToolResult,
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageContentEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "assistant-live",
+              delta: "Streaming text",
+            },
+            textMessageBuffer: "",
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageEndEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_END,
+              messageId: "assistant-live",
+            },
+            textMessageBuffer: "Streaming text",
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallStartEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tool-1",
+              toolCallName: "Bash",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallArgsEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: "tool-1",
+              delta: '{"command":"pnpm test"}',
+            },
+            toolCallBuffer: '{"command":"pnpm test"}',
+            toolCallName: "Bash",
+            partialToolCallArgs: { command: "pnpm test" },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallResultEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_RESULT,
+              messageId: "tool-result-1",
+              toolCallId: "tool-1",
+              content: "permission denied",
+              role: "tool",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load();
+
+    const liveAssistant = core
+      .getMessages()
+      .find((message) => message.role === "assistant");
+    const durableAssistant = agUiMessagesToThreadMessages(
+      durableHistoryMessages,
+    ).find((message) => message.role === "assistant");
+
+    expect(liveAssistant?.role).toBe("assistant");
+    expect(durableAssistant?.role).toBe("assistant");
+    expect(
+      liveAssistant?.role === "assistant"
+        ? liveAssistant.content.map(normalizeToolCallPartForComparison)
+        : null,
+    ).toEqual(
+      durableAssistant?.role === "assistant"
+        ? durableAssistant.content.map(normalizeToolCallPartForComparison)
+        : null,
+    );
+  });
+
+  it("marks failed live tool-call results as errored on the runtime part", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onToolCallStartEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tool-err",
+              toolCallName: "bash",
+              parentMessageId: "assistant-live",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallArgsEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId: "tool-err",
+              delta: '{"command":"false"}',
+            },
+            toolCallBuffer: '{"command":"false"}',
+            toolCallName: "bash",
+            partialToolCallArgs: { command: "false" },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onToolCallResultEvent?.({
+            event: {
+              type: EventType.TOOL_CALL_RESULT,
+              messageId: "tool-err",
+              toolCallId: "tool-err",
+              content: "permission denied",
+              role: "tool",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load();
+
+    const assistant = core
+      .getMessages()
+      .find((message) => message.role === "assistant");
+    expect(assistant?.id).toBe("assistant-live");
+    const toolPart =
+      assistant?.role === "assistant" ? assistant.content[0] : undefined;
+
+    expect(toolPart?.type).toBe("tool-call");
+    if (toolPart?.type !== "tool-call") {
+      throw new Error("expected tool-call part");
+    }
+    expect(toolPart.toolCallId).toBe("tool-err");
+    expect(toolPart.result).toBe("permission denied");
+    expect(toolPart.isError).toBe(true);
   });
 });

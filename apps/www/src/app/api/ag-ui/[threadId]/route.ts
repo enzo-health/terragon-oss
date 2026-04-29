@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
-import { getNativeAgUiHistoryMessagesForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
+import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
@@ -319,7 +319,7 @@ function parseSeqCursor(value: string | null): number | null {
     ? trimmed.slice("seq:".length)
     : trimmed;
   const seq = Number(normalized);
-  return Number.isSafeInteger(seq) && seq >= 0 ? seq : null;
+  return Number.isSafeInteger(seq) && seq >= -1 ? seq : null;
 }
 
 function resolveReplayCursor(request: NextRequest): number | null {
@@ -337,6 +337,23 @@ function toReplayEntries(
   return envelopes
     .filter((entry) => cursorSeq === null || entry.seq > cursorSeq)
     .map((entry) => ({ seq: entry.seq, event: entry.payload }));
+}
+
+function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
+  historyOnlyLastSeq: number | null;
+  replayEnvelopes: AgUiEventEnvelope[];
+} {
+  const firstRunEventIndex = envelopes.findIndex(
+    (entry) => entry.payload.type !== EventType.MESSAGES_SNAPSHOT,
+  );
+  if (firstRunEventIndex <= 0) {
+    return { historyOnlyLastSeq: null, replayEnvelopes: envelopes };
+  }
+  const lastHistoryOnlyEnvelope = envelopes[firstRunEventIndex - 1];
+  return {
+    historyOnlyLastSeq: lastHistoryOnlyEnvelope?.seq ?? null,
+    replayEnvelopes: envelopes.slice(firstRunEventIndex),
+  };
 }
 
 function sseIdForSeq(seq: number | null): string | undefined {
@@ -411,11 +428,21 @@ export async function GET(
   }
 
   if (request.nextUrl.searchParams.get("history") === "messages") {
-    const messages = await getNativeAgUiHistoryMessagesForThreadChat({
+    const envelopes = await getAgUiEventEnvelopesForThreadChat({
       db,
       threadChatId,
     });
-    return NextResponse.json({ messages });
+    const history = getDurableAgUiHistoryItemsFromEvents(
+      envelopes.map((envelope) => envelope.payload),
+    );
+    const includedCursor =
+      history.lastSeqOffset >= 0
+        ? envelopes[history.lastSeqOffset]?.seq
+        : undefined;
+    return NextResponse.json({
+      messages: history.items,
+      lastSeq: includedCursor ?? -1,
+    });
   }
 
   const streamKey = agUiStreamKey(threadChatId);
@@ -816,6 +843,9 @@ export async function GET(
       // connections before the first real event lands, then live-tail.
       // -----------------------------------------------------------------
       if (resolvedRunId === null) {
+        if (replayCursorSeq !== null) {
+          await replayDurableEventsAfterCursor();
+        }
         enqueue(encodeSseComment("awaiting-first-run"));
         await liveTail();
         return;
@@ -825,7 +855,7 @@ export async function GET(
       // Path B: replay the thread chat's full AG-UI event log, then
       // live-tail if the latest/explicit run is still active. Replay is
       // threadChat-scoped so reconnects can hydrate prior runs without
-      // going back through the legacy DB-message transcript path.
+      // going back through the DB-message transcript path.
       // -----------------------------------------------------------------
       let replayEnvelopes: AgUiEventEnvelope[];
       try {
@@ -924,22 +954,40 @@ export async function GET(
         syntheticTerminalEntry = { seq: null, event: terminalEvent };
       }
 
+      const historyPrefix =
+        replayCursorSeq === null
+          ? splitHistoryOnlyPrefix(replayEnvelopes)
+          : { historyOnlyLastSeq: null, replayEnvelopes };
+      const streamReplayEnvelopes = historyPrefix.replayEnvelopes;
+      if (historyPrefix.historyOnlyLastSeq !== null) {
+        lastDeliveredSeq =
+          lastDeliveredSeq === null
+            ? historyPrefix.historyOnlyLastSeq
+            : Math.max(lastDeliveredSeq, historyPrefix.historyOnlyLastSeq);
+      }
+
+      if (replayCursorSeq === null && streamReplayEnvelopes.length === 0) {
+        enqueue(encodeSseComment("awaiting-first-run"));
+        await liveTail();
+        return;
+      }
+
       if (replayCursorSeq === null) {
         // Contract: a complete thread-chat replay MUST start with
-        // RUN_STARTED. Cursored reconnects may legitimately start in the
-        // middle of a run.
-        if (replayEnvelopes[0]?.payload.type !== EventType.RUN_STARTED) {
+        // RUN_STARTED after any history-only message snapshots. Cursored
+        // reconnects may legitimately start in the middle of a run.
+        if (streamReplayEnvelopes[0]?.payload.type !== EventType.RUN_STARTED) {
           console.error(
             "[ag-ui] threadChat replay: first event was not RUN_STARTED",
             {
               threadId,
               threadChatId,
               runId: resolvedRunId,
-              firstType: replayEnvelopes[0]?.payload.type,
+              firstType: streamReplayEnvelopes[0]?.payload.type,
             },
           );
           const errorEvent = mapRunErrorToAgui(
-            `Thread chat ${threadChatId} log is malformed: first event is ${replayEnvelopes[0]?.payload.type ?? "empty"}, expected RUN_STARTED`,
+            `Thread chat ${threadChatId} log is malformed: first event is ${streamReplayEnvelopes[0]?.payload.type ?? "empty"}, expected RUN_STARTED`,
             "replay_failed",
           );
           enqueue(encodeSseEvent(errorEvent));
@@ -948,7 +996,7 @@ export async function GET(
         }
       }
 
-      const replayEntries = toReplayEntries(replayEnvelopes, null);
+      const replayEntries = toReplayEntries(streamReplayEnvelopes, null);
       if (syntheticTerminalEntry !== null) {
         replayEntries.push(syntheticTerminalEntry);
       }
