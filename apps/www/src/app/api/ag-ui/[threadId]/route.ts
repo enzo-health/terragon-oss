@@ -506,18 +506,44 @@ function toReplayEntries(
   envelopes: AgUiEventEnvelope[],
   cursorSeq: number | null,
 ): ReplayEntry[] {
-  return envelopes
-    .filter((entry) => cursorSeq === null || entry.seq > cursorSeq)
-    .map((entry) => ({
-      seq: entry.seq,
-      event: entry.payload,
-      identity: {
-        runId: entry.runId,
-        eventId: entry.eventId,
-        idempotencyKey: entry.idempotencyKey,
+  return dropEventsAfterTerminalUntilNextRun(
+    envelopes
+      .filter((entry) => cursorSeq === null || entry.seq > cursorSeq)
+      .map((entry) => ({
         seq: entry.seq,
-      },
-    }));
+        event: entry.payload,
+        identity: {
+          runId: entry.runId,
+          eventId: entry.eventId,
+          idempotencyKey: entry.idempotencyKey,
+          seq: entry.seq,
+        },
+      })),
+  );
+}
+
+function dropEventsAfterTerminalUntilNextRun(
+  entries: ReplayEntry[],
+): ReplayEntry[] {
+  const filtered: ReplayEntry[] = [];
+  let sawTerminal = false;
+
+  for (const entry of entries) {
+    if (entry.event.type === EventType.RUN_STARTED) {
+      sawTerminal = false;
+      filtered.push(entry);
+      continue;
+    }
+    if (sawTerminal) {
+      continue;
+    }
+    filtered.push(entry);
+    if (isTerminalRunEventType(entry.event.type)) {
+      sawTerminal = true;
+    }
+  }
+
+  return filtered;
 }
 
 function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
@@ -632,9 +658,13 @@ export async function GET(
       db,
       threadChatId,
     });
-    const history = getDurableAgUiHistoryItemsFromEvents(
-      envelopes.map((envelope) => envelope.payload),
-    );
+    const historyEvents = dropEventsAfterTerminalUntilNextRun(
+      envelopes.map((envelope) => ({
+        seq: envelope.seq,
+        event: envelope.payload,
+      })),
+    ).map((entry) => entry.event);
+    const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
     const messages = mergeMissingDbUserMessagesIntoHistory({
       historyItems: history.items,
       dbMessages: ownership[0]?.messages ?? [],

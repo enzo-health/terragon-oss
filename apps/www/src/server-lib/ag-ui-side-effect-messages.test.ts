@@ -188,6 +188,26 @@ describe("ag-ui-side-effect-messages", () => {
     ]);
   });
 
+  it("deduplicates repeated snapshot message ids in durable history", () => {
+    const events = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 2,
+        messages: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [{ id: "user-1", role: "user", content: "Initial prompt" }],
+      lastSeqOffset: 0,
+    });
+  });
+
   it("preserves failed tool results in durable assistant-ui history", () => {
     const events = [
       {

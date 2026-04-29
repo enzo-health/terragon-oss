@@ -817,8 +817,6 @@ export async function maybeProcessFollowUpQueue({
     const noopResult = await checkNoopBusy({ threadId, threadChatId, userId });
     if (noopResult) return noopResult;
   }
-  if (didUpdateStatus) {
-  }
   console.log("Processing follow-up", {
     threadId,
     threadChatId,

@@ -388,6 +388,7 @@ export function getDurableAgUiHistoryItemsFromEvents(
 
 type HistoryBuilderState = {
   items: DurableAgUiHistoryItem[];
+  itemIds: Set<string>;
   assistantById: Map<string, Extract<Message, { role: "assistant" }>>;
   toolCallById: Map<
     string,
@@ -401,6 +402,7 @@ type HistoryBuilderState = {
 function createHistoryBuilderState(): HistoryBuilderState {
   return {
     items: [],
+    itemIds: new Set(),
     assistantById: new Map(),
     toolCallById: new Map(),
     toolParentById: new Map(),
@@ -461,13 +463,18 @@ function applyMessagesSnapshot(
         state.toolParentById.size > 0 ||
         state.lastAssistantId !== null;
       state.items.length = 0;
+      state.itemIds.clear();
       state.assistantById.clear();
       state.toolCallById.clear();
       state.toolParentById.clear();
       state.lastAssistantId = null;
       continue;
     }
+    if (state.itemIds.has(message.id)) {
+      continue;
+    }
     state.items.push(message);
+    state.itemIds.add(message.id);
     indexHistoryMessage(state, message);
     changed = true;
   }
@@ -504,6 +511,7 @@ function ensureAssistantHistoryMessage(
     content: "",
   };
   state.items.push(message);
+  state.itemIds.add(messageId);
   state.assistantById.set(messageId, message);
   state.lastAssistantId = messageId;
   return message;

@@ -163,9 +163,17 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       }
       forceScrollToBottom();
       setError(null);
+      onOptimisticUserSubmit(userMessage, threadStatus ?? "working");
       updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
     },
-    [forceScrollToBottom, queuedMessages, setError, updateQueuedMessages],
+    [
+      forceScrollToBottom,
+      onOptimisticUserSubmit,
+      queuedMessages,
+      setError,
+      threadStatus,
+      updateQueuedMessages,
+    ],
   );
 
   return (

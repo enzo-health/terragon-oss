@@ -1163,6 +1163,47 @@ describe("ag-ui SSE route", () => {
     expect(redisMocks.xread).not.toHaveBeenCalled();
   });
 
+  it("does not replay message snapshots after a terminal run event", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "chat-1",
+        runId: "run-done",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 2,
+        threadId: "chat-1",
+        runId: "run-done",
+      } as BaseEvent,
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 3,
+        messages: [
+          {
+            id: "user-duplicate",
+            role: "user",
+            content: "queued after terminal",
+          },
+        ],
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-done",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 2);
+    expect(received).toEqual([runEvents[0], runEvents[1]]);
+    expect(redisMocks.xread).not.toHaveBeenCalled();
+  });
+
   it("live-tails via XREAD when the run is still active (no RUN_FINISHED yet)", async () => {
     const runEvents: BaseEvent[] = [
       {
