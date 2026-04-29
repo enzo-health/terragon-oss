@@ -184,6 +184,12 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(threadChat).toBeDefined();
     expect(threadChat!.status).toBe("booting");
+    await expect(
+      getLatestNativeAgUiSnapshotMessage({ db, threadChatId }),
+    ).resolves.toEqual({
+      role: "user",
+      content: "Hello, world!",
+    });
     expectSendDaemonMessageCalledWith({
       userId: user.id,
       threadId: thread!.id,

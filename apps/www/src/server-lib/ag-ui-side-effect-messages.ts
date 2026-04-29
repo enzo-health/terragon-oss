@@ -95,7 +95,7 @@ export async function persistSideEffectAgUiMessages({
   chatSequence,
   runId,
 }: PersistSideEffectAgUiMessagesParams): Promise<void> {
-  const agUiMessages = sideEffectDbMessagesToSnapshotMessages(messages);
+  const agUiMessages = dbMessagesToNativeAgUiSnapshotMessages(messages);
   if (agUiMessages.length === 0) {
     return;
   }
@@ -251,7 +251,7 @@ async function resolveSideEffectRunId({
   return null;
 }
 
-function sideEffectDbMessagesToSnapshotMessages(
+export function dbMessagesToNativeAgUiSnapshotMessages(
   messages: readonly DBMessage[],
 ): Message[] {
   const out: Message[] = [];

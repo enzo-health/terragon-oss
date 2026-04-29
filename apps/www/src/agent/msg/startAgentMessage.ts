@@ -288,6 +288,9 @@ export async function startAgentMessage({
       const uploadedMessage = message
         ? await uploadUserMessageImages({ userId, message })
         : null;
+      const userPromptSnapshotMessages = uploadedMessage
+        ? [uploadedMessage]
+        : undefined;
       const currentMessageAppend =
         !isNewThread && uploadedMessage ? [uploadedMessage] : undefined;
       const persistUserPromptAgUiSnapshot = async ({
@@ -299,14 +302,14 @@ export async function startAgentMessage({
         runId: string;
         source: string;
       }): Promise<void> => {
-        if (!currentMessageAppend || chatSequence === undefined) {
+        if (!userPromptSnapshotMessages || chatSequence === undefined) {
           return;
         }
         await persistSideEffectAgUiMessages({
           db,
           threadId,
           threadChatId,
-          messages: currentMessageAppend,
+          messages: userPromptSnapshotMessages,
           source,
           chatSequence,
           runId,
@@ -942,7 +945,9 @@ export async function startAgentMessage({
           await persistUserPromptAgUiSnapshot({
             chatSequence: bootTransition.chatSequence,
             runId,
-            source: "follow-up-user-prompt",
+            source: isNewThread
+              ? "initial-user-prompt"
+              : "follow-up-user-prompt",
           });
 
           try {

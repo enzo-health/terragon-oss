@@ -1,5 +1,6 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
+import type { DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
@@ -15,7 +16,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
-import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui-side-effect-messages";
+import {
+  dbMessagesToNativeAgUiSnapshotMessages,
+  type DurableAgUiHistoryItem,
+  getDurableAgUiHistoryItemsFromEvents,
+} from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export const runtime = "nodejs";
@@ -68,6 +73,81 @@ type ReplayIdentity = {
   idempotencyKey?: string;
   seq?: number;
 };
+
+type AgUiUserMessage = Extract<Message, { role: "user" }>;
+
+function isAgUiUserMessage(
+  item: DurableAgUiHistoryItem,
+): item is AgUiUserMessage {
+  return Reflect.get(item, "role") === "user";
+}
+
+function agUiMessageContentText(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      if (part === null || typeof part !== "object") {
+        return "";
+      }
+      const type = Reflect.get(part, "type");
+      const text = Reflect.get(part, "text");
+      return type === "text" && typeof text === "string" ? text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function mergeMissingDbUserMessagesIntoHistory({
+  historyItems,
+  dbMessages,
+  fallbackUserPrompt,
+}: {
+  historyItems: DurableAgUiHistoryItem[];
+  dbMessages: readonly DBMessage[];
+  fallbackUserPrompt?: string | null;
+}): DurableAgUiHistoryItem[] {
+  const existingUserTexts = new Set(
+    historyItems
+      .filter(isAgUiUserMessage)
+      .map((message) => agUiMessageContentText(message.content))
+      .filter((content) => content.length > 0),
+  );
+  const missingUserMessages = dbMessagesToNativeAgUiSnapshotMessages(dbMessages)
+    .filter(isAgUiUserMessage)
+    .filter((message) => {
+      const content = agUiMessageContentText(message.content);
+      if (content.length === 0 || existingUserTexts.has(content)) {
+        return false;
+      }
+      existingUserTexts.add(content);
+      return true;
+    });
+  const fallbackContent = fallbackUserPrompt?.trim() ?? "";
+  const fallbackUserMessages: AgUiUserMessage[] =
+    missingUserMessages.length === 0 &&
+    existingUserTexts.size === 0 &&
+    fallbackContent.length > 0
+      ? [
+          {
+            id: "thread-title-user-prompt",
+            role: "user",
+            content: fallbackContent,
+            name: "terragon-user:source=thread-title",
+          },
+        ]
+      : [];
+  const userMessages = [...missingUserMessages, ...fallbackUserMessages];
+
+  return userMessages.length === 0
+    ? historyItems
+    : [...userMessages, ...historyItems];
+}
 
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) {
@@ -527,7 +607,11 @@ export async function GET(
   // who owns thread-A could pass threadChatId pointing at someone else's
   // chat. Return 404 on mismatch to avoid leaking existence.
   const ownership = await db
-    .select({ id: schema.threadChat.id })
+    .select({
+      id: schema.threadChat.id,
+      messages: schema.threadChat.messages,
+      threadName: schema.thread.name,
+    })
     .from(schema.threadChat)
     .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
     .where(
@@ -551,12 +635,17 @@ export async function GET(
     const history = getDurableAgUiHistoryItemsFromEvents(
       envelopes.map((envelope) => envelope.payload),
     );
+    const messages = mergeMissingDbUserMessagesIntoHistory({
+      historyItems: history.items,
+      dbMessages: ownership[0]?.messages ?? [],
+      fallbackUserPrompt: ownership[0]?.threadName,
+    });
     const includedCursor =
       history.lastSeqOffset >= 0
         ? envelopes[history.lastSeqOffset]?.seq
         : undefined;
     return NextResponse.json({
-      messages: history.items,
+      messages,
       lastSeq: includedCursor ?? -1,
     });
   }

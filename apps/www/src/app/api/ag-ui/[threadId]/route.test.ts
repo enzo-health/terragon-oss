@@ -290,7 +290,9 @@ describe("ag-ui SSE route", () => {
       },
     } as Awaited<ReturnType<typeof getSessionOrNull>>);
     // Default: ownership join returns one row (authorized).
-    dbMocks.limit.mockResolvedValue([{ id: "chat-1" }]);
+    dbMocks.limit.mockResolvedValue([
+      { id: "chat-1", messages: [], threadName: null },
+    ]);
     mockAgUiEventEnvelopesForThreadChat([]);
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(null);
@@ -548,6 +550,165 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 21,
+    });
+  });
+
+  it("seeds missing db user messages into native history without moving the replay cursor", async () => {
+    dbMocks.limit.mockResolvedValue([
+      {
+        id: "chat-1",
+        messages: [
+          {
+            type: "user",
+            model: "sonnet",
+            parts: [{ type: "text", text: "initial prompt" }],
+            timestamp: "2026-04-29T00:00:00.000Z",
+          },
+        ],
+      },
+    ]);
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "Visible history",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 3,
+        threadId: "chat-1",
+        runId: "run-1",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [11, 21, 31]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: expect.stringMatching(/^side-effect-user-0-/),
+          role: "user",
+          content: "initial prompt",
+          name: "terragon-user:model=sonnet",
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Visible history",
+        },
+      ],
+      lastSeq: 21,
+    });
+  });
+
+  it("seeds the thread title when no user message was persisted anywhere", async () => {
+    dbMocks.limit.mockResolvedValue([
+      {
+        id: "chat-1",
+        messages: null,
+        threadName: "add a test to scheduling",
+      },
+    ]);
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "Visible history",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [11, 21]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "thread-title-user-prompt",
+          role: "user",
+          content: "add a test to scheduling",
+          name: "terragon-user:source=thread-title",
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Visible history",
+        },
+      ],
+      lastSeq: 21,
+    });
+  });
+
+  it("does not duplicate db user messages already present in native history", async () => {
+    dbMocks.limit.mockResolvedValue([
+      {
+        id: "chat-1",
+        messages: [
+          {
+            type: "user",
+            model: "sonnet",
+            parts: [{ type: "text", text: "start here" }],
+            timestamp: "2026-04-29T00:00:00.000Z",
+          },
+        ],
+      },
+    ]);
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "start here",
+        },
+      ],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          content: "start here",
+        },
+      ],
+      lastSeq: 42,
     });
   });
 
