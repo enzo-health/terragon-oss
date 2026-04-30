@@ -23,6 +23,9 @@ const editorJson: JSONContent = {
 const mocks = vi.hoisted(() => ({
   clearContent: vi.fn(),
   dispatch: vi.fn(),
+  appendFn: vi.fn(),
+  useThreadRuntimeReturn: null as { append: ReturnType<typeof vi.fn> } | null,
+  featureFlagValue: false,
 }));
 
 vi.mock("@/hooks/useTouchDevice", () => ({
@@ -37,6 +40,14 @@ vi.mock("@/hooks/use-selected-model", () => ({
     isMultiAgentMode: false,
     setIsMultiAgentMode: vi.fn(),
   }),
+}));
+
+vi.mock("@assistant-ui/react", () => ({
+  useThreadRuntime: () => mocks.useThreadRuntimeReturn,
+}));
+
+vi.mock("@/hooks/use-feature-flag", () => ({
+  useFeatureFlag: (_name: string) => mocks.featureFlagValue,
 }));
 
 vi.mock("@tiptap/react", async (importOriginal) => {
@@ -118,6 +129,192 @@ function Harness({
   };
   return null;
 }
+
+describe("usePromptBox composerRuntimeSubmit feature flag", () => {
+  it("calls handleSubmit (not runtime.append) when flag is off", async () => {
+    mocks.featureFlagValue = false;
+    mocks.appendFn.mockReset();
+    mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
+
+    const submittedMessages: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submittedMessages.push(userMessage);
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function FlagOffHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(FlagOffHarness));
+    });
+    await act(async () => {
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      await Promise.resolve();
+    });
+
+    expect(submittedMessages).toHaveLength(1);
+    expect(mocks.appendFn).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    mocks.featureFlagValue = false;
+  });
+
+  it("calls runtime.append (not handleSubmit) when flag is on and runtime is available", async () => {
+    mocks.featureFlagValue = true;
+    mocks.appendFn.mockReset();
+    mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
+
+    const submittedMessages: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submittedMessages.push(userMessage);
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function FlagOnHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(FlagOnHarness));
+    });
+    await act(async () => {
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      await Promise.resolve();
+    });
+
+    expect(submittedMessages).toHaveLength(0);
+    expect(mocks.appendFn).toHaveBeenCalledOnce();
+    const appendArg = mocks.appendFn.mock.calls[0]?.[0] as {
+      role: string;
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(appendArg.role).toBe("user");
+    expect(appendArg.content).toHaveLength(1);
+    expect(appendArg.content[0]?.type).toBe("text");
+    expect(appendArg.content[0]?.text).toBe("approve it");
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    mocks.featureFlagValue = false;
+    mocks.useThreadRuntimeReturn = null;
+  });
+
+  it("falls back to handleSubmit when flag is on but runtime is null", async () => {
+    mocks.featureFlagValue = true;
+    mocks.appendFn.mockReset();
+    mocks.useThreadRuntimeReturn = null;
+
+    const submittedMessages: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submittedMessages.push(userMessage);
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function NoRuntimeHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(NoRuntimeHarness));
+    });
+    await act(async () => {
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      await Promise.resolve();
+    });
+
+    expect(submittedMessages).toHaveLength(1);
+    expect(mocks.appendFn).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    mocks.featureFlagValue = false;
+    mocks.useThreadRuntimeReturn = null;
+  });
+});
 
 describe("usePromptBox permission mode", () => {
   it("uses local selection until the view-model prop changes, then uses the synced prop on submit", async () => {

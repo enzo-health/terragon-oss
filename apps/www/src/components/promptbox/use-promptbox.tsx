@@ -13,6 +13,9 @@ import {
 } from "@/lib/r2-file-upload-client";
 import { Attachment } from "@/lib/attachment-types";
 import StarterKit from "@tiptap/starter-kit";
+import { useThreadRuntime } from "@assistant-ui/react";
+import type { ThreadUserMessagePart } from "@assistant-ui/react";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import {
   FolderAwareMention,
   folderAwareMentionPluginKey,
@@ -29,6 +32,47 @@ import { TSubmitForm } from "./send-button";
 import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
 import { toast } from "sonner";
 import { getDynamicSlashCommands } from "./add-context-button";
+
+// ---------------------------------------------------------------------------
+// AG-UI content conversion
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert DBUserMessage parts to the content array expected by
+ * ThreadRuntime.append(). Only text and image parts have assistant-ui
+ * equivalents; other part types (pdf, text-file) are dropped.
+ *
+ * Note: The adapter (run-from-ag-ui.ts) reconstructs model and permissionMode
+ * from body.forwardedProps.terragon. The runtime core maps runConfig.custom to
+ * forwardedProps.runConfig (not forwardedProps.terragon), so those fields are
+ * not currently forwarded. They will be null/undefined in the POST body when
+ * this path is active. This is a known deviation for the initial flag-off
+ * rollout — tracked in the Wave 3 ADR.
+ */
+function dbPartsToAssistantUiContent(
+  parts: DBUserMessage["parts"],
+): ThreadUserMessagePart[] {
+  const result: ThreadUserMessagePart[] = [];
+  for (const part of parts) {
+    if (part.type === "rich-text") {
+      // Flatten rich-text nodes to a single text string.
+      const text = part.nodes
+        .map((node) => {
+          if (typeof node === "string") return node;
+          if ("text" in node && typeof node.text === "string") return node.text;
+          return "";
+        })
+        .join("");
+      if (text.length > 0) {
+        result.push({ type: "text", text });
+      }
+    } else if (part.type === "image") {
+      result.push({ type: "image", image: part.image_url });
+    }
+    // pdf, text-file: no assistant-ui equivalent — dropped
+  }
+  return result;
+}
 
 export type HandleSubmitArgs = {
   userMessage: DBUserMessage;
@@ -103,6 +147,10 @@ export function usePromptBox({
   supportsMultiAgentPromptSubmission,
 }: UsePromptBoxProps) {
   const isTouchDevice = useTouchDevice();
+  const useRuntimeSubmit = useFeatureFlag("composerRuntimeSubmit");
+  // useThreadRuntime() is null when the hook is rendered outside an
+  // AssistantRuntimeProvider (e.g., on the dashboard). We guard all usages.
+  const threadRuntime = useThreadRuntime({ optional: true });
   const { storedContent, attachedFiles, setStoredContent, setAttachedFiles } =
     useContentAndAttachedFiles({
       initialContent,
@@ -676,18 +724,49 @@ export function usePromptBox({
         if (clearContentBeforeSubmit) {
           clearContent();
         }
-        await handleSubmit({
-          userMessage: getUserMessage({
-            json,
-            model: selectedModel,
-            attachedFiles,
-          }),
-          selectedModels,
-          repoFullName: repoFullName ?? "",
-          branchName: branchName ?? "",
-          saveAsDraft,
-          scheduleAt,
+
+        const userMessage = getUserMessage({
+          json,
+          model: selectedModel,
+          attachedFiles,
         });
+
+        // Wave 3 runtime path: route through useThreadRuntime().append() so
+        // the AG-UI HttpAgent drives the POST to the backend adapter.
+        // Falls back to props.handleSubmit when the flag is off (default) or
+        // when no runtime is in context (dashboard, non-thread views).
+        //
+        // Deviation: selectedModel and permissionMode are NOT forwarded to the
+        // backend in this path — the runtime core maps runConfig.custom to
+        // forwardedProps.runConfig, but the adapter reads forwardedProps.terragon.
+        // This is tracked in docs/plans/2026-04-30-runtime-owns-writes-adr.md.
+        if (useRuntimeSubmit && threadRuntime != null) {
+          const content = dbPartsToAssistantUiContent(userMessage.parts);
+          if (content.length > 0) {
+            threadRuntime.append({
+              role: "user",
+              content,
+              runConfig: {
+                custom: {
+                  terragon: {
+                    selectedModel: userMessage.model,
+                    permissionMode: userMessage.permissionMode,
+                  },
+                },
+              },
+            });
+          }
+        } else {
+          await handleSubmit({
+            userMessage,
+            selectedModels,
+            repoFullName: repoFullName ?? "",
+            branchName: branchName ?? "",
+            saveAsDraft,
+            scheduleAt,
+          });
+        }
+
         if (clearContentOnSubmit) {
           clearContent();
         }
@@ -714,6 +793,8 @@ export function usePromptBox({
       getOnSubmitError,
       clearContent,
       isMultiAgentMode,
+      useRuntimeSubmit,
+      threadRuntime,
     ],
   );
 

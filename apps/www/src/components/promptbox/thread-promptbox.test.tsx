@@ -105,6 +105,14 @@ vi.mock("./simple-promptbox", () => ({
   },
 }));
 
+vi.mock("@assistant-ui/react", () => ({
+  useThreadRuntime: () => null,
+}));
+
+vi.mock("@/hooks/use-feature-flag", () => ({
+  useFeatureFlag: () => false,
+}));
+
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
@@ -155,6 +163,122 @@ function Harness({ onSubmit }: { onSubmit: HandleSubmit }): null {
     />
   );
 }
+
+// ---------------------------------------------------------------------------
+// Queue integration: ThreadPromptBox + useComposerQueue
+// ---------------------------------------------------------------------------
+
+type QueueHarness = {
+  onSubmit: HandleSubmit;
+  status: "working" | "complete";
+  queuedMessages: DBUserMessage[];
+  onUpdateQueuedMessage: (messages: DBUserMessage[]) => void;
+};
+
+function QueueHarnessComponent({
+  onSubmit,
+  status,
+  queuedMessages,
+  onUpdateQueuedMessage,
+}: QueueHarness): null {
+  return (
+    <ThreadPromptBox
+      threadId="thread-1"
+      threadChatId="chat-1"
+      sandboxId="sandbox-1"
+      status={status}
+      repoFullName="terragon/oss"
+      branchName="main"
+      prStatus={null}
+      prChecksStatus={null}
+      githubPRNumber={null}
+      agent="claudeCode"
+      agentVersion={1}
+      lastUsedModel={selectedModel}
+      permissionMode="allowAll"
+      onPermissionModeChange={() => {}}
+      handleStop={async () => {}}
+      handleSubmit={onSubmit}
+      queuedMessages={queuedMessages}
+      handleQueueMessage={onSubmit}
+      onUpdateQueuedMessage={onUpdateQueuedMessage}
+    />
+  );
+}
+
+describe("ThreadPromptBox queue integration via useComposerQueue", () => {
+  it("submits directly when status is complete (not working)", async () => {
+    const submitted: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submitted.push(userMessage);
+    };
+    const queueChanges: DBUserMessage[][] = [];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(QueueHarnessComponent, {
+          onSubmit: handleSubmit,
+          status: "complete",
+          queuedMessages: [],
+          onUpdateQueuedMessage: (msgs) => queueChanges.push(msgs),
+        }),
+      );
+    });
+
+    await act(async () => {
+      mocks.latestPromptBox?.submitForm({
+        saveAsDraft: false,
+        scheduleAt: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(submitted).toHaveLength(1);
+    // Queue should stay empty since not working
+    expect(queueChanges).toHaveLength(0);
+  });
+
+  it("queues message when status is working", async () => {
+    const submitted: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submitted.push(userMessage);
+    };
+    const queueChanges: DBUserMessage[][] = [];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(QueueHarnessComponent, {
+          onSubmit: handleSubmit,
+          status: "working",
+          queuedMessages: [],
+          onUpdateQueuedMessage: (msgs) => queueChanges.push(msgs),
+        }),
+      );
+    });
+
+    await act(async () => {
+      mocks.latestPromptBox?.submitForm({
+        saveAsDraft: false,
+        scheduleAt: null,
+      });
+      await Promise.resolve();
+    });
+
+    // While working, the message is queued — NOT forwarded to handleSubmit
+    expect(submitted).toHaveLength(0);
+    // onUpdateQueuedMessage should have been called with the new queue
+    expect(queueChanges).toHaveLength(1);
+    expect(queueChanges[0]).toHaveLength(1);
+  });
+});
 
 describe("ThreadPromptBox permission mode ownership", () => {
   it("dispatches user mode changes through ThreadViewModel and submits with the VM-updated mode", async () => {

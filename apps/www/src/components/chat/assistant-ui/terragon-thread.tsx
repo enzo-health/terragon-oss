@@ -181,8 +181,18 @@ export function TerragonThread({
       onCancel,
       resumeOnLoad: runtimeLoadConfig.resumeOnLoad,
       historyLoadKey: runtimeLoadConfig.historyLoadKey,
+      threadId: contentProps.thread.id,
+      threadChatId: contentProps.threadChatId,
     }),
-    [agent, loadAgUiHistoryMessages, showThinking, onCancel, runtimeLoadConfig],
+    [
+      agent,
+      loadAgUiHistoryMessages,
+      showThinking,
+      onCancel,
+      runtimeLoadConfig,
+      contentProps.thread.id,
+      contentProps.threadChatId,
+    ],
   );
 
   const runtime = useTerragonRuntime(runtimeConfig);

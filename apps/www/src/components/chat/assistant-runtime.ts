@@ -39,6 +39,8 @@ export function useTerragonRuntime({
   showThinking = true,
   resumeOnLoad = true,
   historyLoadKey,
+  threadId,
+  threadChatId,
 }: {
   agent: HttpAgent;
   historyMessages?: readonly AgUiMessage[];
@@ -53,6 +55,9 @@ export function useTerragonRuntime({
   showThinking?: boolean;
   resumeOnLoad?: boolean;
   historyLoadKey?: string;
+  /** Thread IDs forwarded to useTerragonAgUiRuntime for the cancel POST. */
+  threadId?: string;
+  threadChatId?: string;
 }): AssistantRuntime {
   const history = useMemo(
     () =>
@@ -105,8 +110,19 @@ export function useTerragonRuntime({
         history,
       },
       historyLoadKey,
+      ...(threadId ? { threadId } : {}),
+      ...(threadChatId ? { threadChatId } : {}),
     }),
-    [agent, history, historyLoadKey, onCancel, onError, showThinking],
+    [
+      agent,
+      history,
+      historyLoadKey,
+      onCancel,
+      onError,
+      showThinking,
+      threadId,
+      threadChatId,
+    ],
   );
 
   return useTerragonAgUiRuntime(runtimeOptions);

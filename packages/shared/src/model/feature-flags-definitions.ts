@@ -129,6 +129,12 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
+  composerRuntimeSubmit: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Routes prompt-box submission through useThreadRuntime().append() instead of the followUp() server action directly. Part of Wave 3 composer adoption (ADR: runtime-owns-writes). Default off until the runtime path is validated end-to-end.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;
