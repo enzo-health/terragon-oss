@@ -16,6 +16,10 @@ export const AIModelSchema = z.enum([
   "amp",
 
   // codex
+  "gpt-5.5-low",
+  "gpt-5.5",
+  "gpt-5.5-high",
+  "gpt-5.5-xhigh",
   "gpt-5.4-low",
   "gpt-5.4",
   "gpt-5.4-high",
@@ -75,6 +79,7 @@ export const AIModelSchema = z.enum([
 // Augment AIModelSchema with simpler names for external usage
 export const AIModelExternalSchema = z.enum([
   ...AIModelSchema.options,
+  "gpt-5.5-medium",
   "gpt-5.4-medium",
   "gpt-5.4-mini-medium",
   "gpt-5.4-nano-medium",

@@ -661,6 +661,14 @@ type ResolvedCodexModel = {
 
 function resolveCodexModel(model: string): ResolvedCodexModel {
   switch (model) {
+    case "gpt-5.5-low":
+      return { modelName: "gpt-5.5", reasoningEffort: "low" };
+    case "gpt-5.5":
+      return { modelName: "gpt-5.5", reasoningEffort: "medium" };
+    case "gpt-5.5-high":
+      return { modelName: "gpt-5.5", reasoningEffort: "high" };
+    case "gpt-5.5-xhigh":
+      return { modelName: "gpt-5.5", reasoningEffort: "xhigh" };
     case "gpt-5.4-low":
       return { modelName: "gpt-5.4", reasoningEffort: "low" };
     case "gpt-5.4":

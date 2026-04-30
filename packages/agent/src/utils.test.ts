@@ -38,6 +38,10 @@ describe("model-to-agent", () => {
         ["sonnet[1m]", "claudeCode"],
         ["gemini-2.5-pro", "gemini"],
         ["amp", "amp"],
+        ["gpt-5.5-low", "codex"],
+        ["gpt-5.5", "codex"],
+        ["gpt-5.5-high", "codex"],
+        ["gpt-5.5-xhigh", "codex"],
         ["gpt-5.4-low", "codex"],
         ["gpt-5.4", "codex"],
         ["gpt-5.4-high", "codex"],
@@ -109,6 +113,7 @@ describe("model-to-agent", () => {
         selectedModels: [],
         options,
       });
+      expect(result.models).toContain("gpt-5.5");
       expect(result.models).toContain("gpt-5.4");
       expect(result.models).toContain("gpt-5.4-mini");
       expect(result.models).not.toContain("gpt-5.3-codex-medium");
@@ -193,7 +198,7 @@ describe("model-to-agent", () => {
       expect(normalizedModelForDaemon("sonnet[1m]")).toBe(
         "claude-sonnet-4-6[1m]",
       );
-      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-6[1m]");
+      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-7[1m]");
     });
   });
 });
