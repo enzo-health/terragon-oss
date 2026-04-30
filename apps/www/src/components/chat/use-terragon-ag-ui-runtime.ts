@@ -43,6 +43,13 @@ export type UseTerragonAgUiRuntimeOptions = {
   onError?: (e: Error) => void;
   onCancel?: () => void;
   historyLoadKey?: string;
+  /**
+   * Thread IDs required to POST to the cancel endpoint on the server.
+   * When provided, onCancel will also POST to /api/ag-ui/[threadId]/cancel
+   * so the daemon process is stopped server-side (not just the SSE stream).
+   */
+  threadId?: string;
+  threadChatId?: string;
   adapters?: {
     attachments?: RuntimeAdapters["attachments"];
     speech?: StoreAdapters["speech"];
@@ -69,6 +76,11 @@ export function useTerragonAgUiRuntime(
   const [_version, setVersion] = useState(0);
   const notifyUpdate = useCallback(() => setVersion((v) => v + 1), []);
   const coreRef = useRef<TerragonAgUiThreadRuntimeCore | null>(null);
+  // Refs for cancel endpoint IDs — always current regardless of memo staleness.
+  const threadIdRef = useRef<string | undefined>(options.threadId);
+  const threadChatIdRef = useRef<string | undefined>(options.threadChatId);
+  threadIdRef.current = options.threadId;
+  threadChatIdRef.current = options.threadChatId;
   const runtimeAdapters = useRuntimeAdapters();
 
   const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
@@ -196,6 +208,24 @@ export function useTerragonAgUiRuntime(
         core.reload(parentId, config),
       onCancel: async () => {
         await core.cancel();
+        // POST to the cancel endpoint so the daemon process is stopped
+        // server-side. This is additive — core.cancel() already aborts the
+        // SSE stream client-side. The server-side stop is the authoritative
+        // signal that halts the delivery loop.
+        const threadId = threadIdRef.current;
+        const threadChatId = threadChatIdRef.current;
+        if (threadId && threadChatId) {
+          await fetch(
+            `/api/ag-ui/${encodeURIComponent(threadId)}/cancel?threadChatId=${encodeURIComponent(threadChatId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            },
+          ).catch((err: unknown) => {
+            console.error("[useTerragonAgUiRuntime] cancel POST failed", err);
+          });
+        }
         await toolInvocationsRef.current.abort();
       },
       onAddToolResult: (options) => core.addToolResult(options),

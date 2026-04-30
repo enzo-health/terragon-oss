@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { SetSelectedModel } from "@/hooks/use-selected-model";
+import { ComposerPrimitive, useThreadRuntime } from "@assistant-ui/react";
 
 // Tiptap imports
 import { EditorContent, Editor } from "@tiptap/react";
@@ -124,102 +125,120 @@ export function SimplePromptBox({
     [editor],
   );
 
+  // ComposerPrimitive.Root requires an AssistantRuntimeProvider ancestor.
+  // Thread page wraps in one; dashboard / generic composers don't. Detect
+  // the runtime presence and render the assistant-ui form when it's there,
+  // a plain <form> otherwise.
+  const isInRuntime = useThreadRuntime({ optional: true }) != null;
+
+  const handleFormSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      submitForm({ saveAsDraft: false, scheduleAt: null });
+    },
+    [submitForm],
+  );
+
+  const FormElement = isInRuntime ? ComposerPrimitive.Root : "form";
+
   return (
-    <DragDropWrapper
-      onFilesDropped={handleFilesAttached}
-      className={cn(
-        // Prompt box is the dashboard's primary affordance — it must
-        // read as an input. Solid hairline border (no opacity), warm-lift
-        // shadow at rest for elevation off the canvas, focus brings the
-        // coral ring at higher specificity. Dropped border-border/60 +
-        // shadow-xs combo which was visually invisible on cream-on-cream.
-        "relative flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-hairline bg-card p-2 shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
-        isSubmitting && [
-          "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
-          "animate-pulse-subtle",
-        ],
-        borderClassName,
-      )}
-    >
-      {isSubmitting && (
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[calc(var(--radius)+0.2rem)]">
-          <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
-        </div>
-      )}
-      <ScrollArea
-        className="max-h-[min(60dvh,28rem)] overflow-auto"
-        onClick={() => {
-          // Focus editor when clicking in the scroll area
-          if (editor && !editor.isFocused) {
-            editor.commands.focus("end");
-          }
-        }}
+    <FormElement onSubmit={handleFormSubmit}>
+      <DragDropWrapper
+        onFilesDropped={handleFilesAttached}
+        className={cn(
+          // Compact composer chrome. Outer has no padding so the editor
+          // and toolbar pin directly to the border; each inner region
+          // owns its own padding. Coral ring lights up on focus.
+          "relative flex flex-col rounded-2xl border border-hairline bg-card shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
+          isSubmitting && [
+            "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
+            "animate-pulse-subtle",
+          ],
+          borderClassName,
+        )}
       >
-        <EditorContent
-          editor={editor}
-          aria-label="Describe a task for the AI"
-          className={cn("min-h-[44px] px-3 pb-1.5 pt-2.5 md:px-4", className)}
+        {isSubmitting && (
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-2xl">
+            <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
+          </div>
+        )}
+        <ScrollArea
+          className="max-h-[min(40dvh,18rem)] overflow-auto"
+          onClick={() => {
+            if (editor && !editor.isFocused) {
+              editor.commands.focus("end");
+            }
+          }}
+        >
+          <EditorContent
+            editor={editor}
+            aria-label="Describe a task for the AI"
+            className={cn("min-h-10 px-2 py-1.5", className)}
+          />
+        </ScrollArea>
+        <AttachedFiles
+          attachedFiles={attachedFiles}
+          onRemoveFile={removeFile}
         />
-      </ScrollArea>
-      <AttachedFiles attachedFiles={attachedFiles} onRemoveFile={removeFile} />
-      <div className="flex flex-row items-center gap-3 border-t border-hairline-soft px-2 pb-1 pt-2">
-        <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
-          {!hideModelSelector && (
-            <ModelSelector
-              className="flex-initial"
-              selectedModel={selectedModel}
-              selectedModels={selectedModels}
-              setSelectedModel={setSelectedModel}
-              forcedAgent={forcedAgent}
-              forcedAgentVersion={forcedAgentVersion}
-              isMultiAgentMode={isMultiAgentMode}
-              setIsMultiAgentMode={setIsMultiAgentMode}
-              supportsMultiAgentPromptSubmission={
-                supportsMultiAgentPromptSubmission
-              }
-            />
-          )}
-          {!hideModeSelector &&
-            showPlanModeSelector &&
-            onPermissionModeChange && (
-              <ModeSelector
-                mode={permissionMode ?? "allowAll"}
-                onChange={onPermissionModeChange}
+        <div className="mx-2 mb-1 flex flex-row items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
+            {!hideModelSelector && (
+              <ModelSelector
+                className="flex-initial"
+                selectedModel={selectedModel}
+                selectedModels={selectedModels}
+                setSelectedModel={setSelectedModel}
+                forcedAgent={forcedAgent}
+                forcedAgentVersion={forcedAgentVersion}
+                isMultiAgentMode={isMultiAgentMode}
+                setIsMultiAgentMode={setIsMultiAgentMode}
+                supportsMultiAgentPromptSubmission={
+                  supportsMultiAgentPromptSubmission
+                }
               />
             )}
-        </div>
-        <div className="flex flex-shrink-0 flex-row items-center gap-1.5">
-          {!hideAddContextButton && (
-            <AddContextButton
-              editor={editor}
-              typeahead={typeahead ?? undefined}
-              selectedModel={selectedModel}
-              onAttachImages={
-                !showImageUploads ? undefined : handleFilesAttached
-              }
+            {!hideModeSelector &&
+              showPlanModeSelector &&
+              onPermissionModeChange && (
+                <ModeSelector
+                  mode={permissionMode ?? "allowAll"}
+                  onChange={onPermissionModeChange}
+                />
+              )}
+          </div>
+          <div className="flex flex-shrink-0 flex-row items-center gap-1.5">
+            {!hideAddContextButton && (
+              <AddContextButton
+                editor={editor}
+                typeahead={typeahead ?? undefined}
+                selectedModel={selectedModel}
+                onAttachImages={
+                  !showImageUploads ? undefined : handleFilesAttached
+                }
+              />
+            )}
+            {!hideFileAttachmentButton && showImageUploads && (
+              <FileAttachmentButton
+                className="flex-initial hidden xs:flex"
+                onFileAttachment={(file) => handleFilesAttached([file])}
+              />
+            )}
+            <SubmitComboButton
+              onTranscript={handleSpeechTranscript}
+              isSubmitting={isSubmitting}
+              submitForm={submitForm}
+              handleStop={handleStop}
+              disabled={isSubmitDisabled}
+              hideSubmitButton={hideSubmitButton}
+              showStopButton={showStopButton}
+              onRecordingChange={onRecordingChange}
+              supportSaveAsDraft={!!supportSaveAsDraft}
+              supportSchedule={!!supportSchedule}
+              hideVoiceInput={hideVoiceInput}
             />
-          )}
-          {!hideFileAttachmentButton && showImageUploads && (
-            <FileAttachmentButton
-              className="flex-initial hidden xs:flex"
-              onFileAttachment={(file) => handleFilesAttached([file])}
-            />
-          )}
-          <SubmitComboButton
-            onTranscript={handleSpeechTranscript}
-            isSubmitting={isSubmitting}
-            submitForm={submitForm}
-            handleStop={handleStop}
-            disabled={isSubmitDisabled}
-            hideSubmitButton={hideSubmitButton}
-            showStopButton={showStopButton}
-            onRecordingChange={onRecordingChange}
-            supportSaveAsDraft={!!supportSaveAsDraft}
-            supportSchedule={!!supportSchedule}
-            hideVoiceInput={hideVoiceInput}
-          />
+          </div>
         </div>
-      </div>
-    </DragDropWrapper>
+      </DragDropWrapper>
+    </FormElement>
   );
 }

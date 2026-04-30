@@ -76,6 +76,14 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
 }));
 
+const adapterMock = vi.hoisted(() => ({
+  runFollowUpFromAgUiInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+}));
+
+vi.mock("@/server-lib/run-from-ag-ui", () => ({
+  runFollowUpFromAgUiInput: adapterMock.runFollowUpFromAgUiInput,
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -187,6 +195,29 @@ function makeRequest(url: string): NextRequest {
   return new NextRequest(url);
 }
 
+function makePostRequest(url: string, body?: unknown): NextRequest {
+  return new NextRequest(url, {
+    method: "POST",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+  });
+}
+
+function makePostRequestWithHeaders(
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+): NextRequest {
+  return new NextRequest(url, {
+    method: "POST",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: {
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...headers,
+    },
+  });
+}
+
 function makeRequestWithHeaders(
   url: string,
   headers: Record<string, string>,
@@ -295,6 +326,10 @@ describe("ag-ui SSE route", () => {
     vi.clearAllMocks();
     redisMocks.xread.mockReset();
     redisMocks.xrevrange.mockReset();
+    // Default adapter result: success with a runId
+    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+      runId: "run-new",
+    });
     vi.mocked(getSessionOrNull).mockResolvedValue({
       session: {
         id: "session-1",
@@ -2903,5 +2938,137 @@ describe("ag-ui SSE route", () => {
 
     await response.body!.cancel();
     for (const d of deferred) d.resolve(null);
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST handler — adapter integration
+  // ---------------------------------------------------------------------------
+
+  it("POST with valid AG-UI body triggers adapter and opens SSE stream", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-client",
+      messages: [
+        {
+          id: "msg-user",
+          role: "user",
+          content: "hello from client",
+        },
+      ],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    // Adapter was called with the right args
+    expect(adapterMock.runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      userId: "user-1",
+      body: expect.objectContaining({ messages: validBody.messages }),
+      isReplayMode: false,
+    });
+
+    // Falls through to SSE stream
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST without body still opens SSE stream (back-compat)", async () => {
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        // no body
+      ),
+      makeContext("thread-1"),
+    );
+
+    // Adapter NOT called when body is absent
+    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+
+    // SSE stream still opens
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with X-Terragon-Test-Replay header skips adapter and opens SSE stream", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-replay",
+      messages: [{ id: "msg-1", role: "user", content: "replay" }],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequestWithHeaders(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+        { "X-Terragon-Test-Replay": "1" },
+      ),
+      makeContext("thread-1"),
+    );
+
+    // Adapter NOT called in replay mode
+    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+
+    // SSE stream opens
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with adapter returning lock-held returns 409", async () => {
+    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+      error: { kind: "lock-held" },
+    });
+
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-locked",
+      messages: [{ id: "msg-1", role: "user", content: "concurrent" }],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it("POST with adapter returning unauthorized returns 403", async () => {
+    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+      error: { kind: "unauthorized" },
+    });
+
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-forbidden",
+      messages: [{ id: "msg-1", role: "user", content: "forbidden" }],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(403);
   });
 });

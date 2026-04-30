@@ -3,6 +3,7 @@ import {
   EventType,
   type Message,
   type MessagesSnapshotEvent,
+  RunAgentInputSchema,
 } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DBMessage } from "@terragon/shared";
@@ -27,6 +28,7 @@ import {
   getDurableAgUiHistoryItemsFromEvents,
 } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
+import { runFollowUpFromAgUiInput } from "@/server-lib/run-from-ag-ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1760,12 +1762,91 @@ export async function GET(
   });
 }
 
-// AG-UI's HttpAgent POSTs RunAgentInput to the run URL. We route through
-// the same SSE handler because:
-//   1. All cursor state lives in query params (threadChatId, runId),
-//      which are on the URL for both methods.
-//   2. Backend run state is authoritative; client-provided run input is
-//      discarded here. Runs are initiated via server actions (followUp,
-//      retry, etc.), not by the client's runAgent POST. The POST body
-//      is the ceremony that opens the SSE stream.
-export const POST = GET;
+// POST: client-initiated runs.
+// HttpAgent POSTs RunAgentInput; we extract the new user message + metadata,
+// call followUp() via runFollowUpFromAgUiInput, then fall through to the SSE
+// stream machinery shared with GET. The advisory lock in the adapter holds
+// the dedup invariant (see ADR docs/plans/2026-04-30-runtime-owns-writes-adr.md).
+//
+// Replay mode (header X-Terragon-Test-Replay): adapter skips, request streams
+// as today. Preserves integration-harness fixture validity.
+export async function POST(
+  request: NextRequest,
+  ctx: { params: Promise<{ threadId: string }> },
+): Promise<Response> {
+  // 1. Resolve threadId from params
+  const { threadId } = await ctx.params;
+
+  // 2. Authenticate — same path as GET
+  const session = await getSessionOrNull();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const userId = session.user.id;
+
+  // 3. Resolve threadChatId from URL query param
+  const threadChatId = request.nextUrl.searchParams.get("threadChatId");
+  if (!threadChatId) {
+    return NextResponse.json(
+      { error: "Missing threadChatId" },
+      { status: 400 },
+    );
+  }
+
+  // 4. Detect replay mode via header X-Terragon-Test-Replay (any truthy value)
+  const isReplayMode = !!request.headers.get("X-Terragon-Test-Replay");
+
+  // 5. Parse the request body as RunAgentInput (skip in replay mode)
+  if (!isReplayMode) {
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      // Body parse failure — no body or non-JSON; fall through to SSE stream
+      rawBody = null;
+    }
+
+    const parsed =
+      rawBody != null
+        ? RunAgentInputSchema.safeParse(rawBody)
+        : { success: false as const };
+
+    // 6. If body parsed successfully, call the adapter
+    if (parsed.success) {
+      const result = await runFollowUpFromAgUiInput({
+        threadId,
+        threadChatId,
+        userId,
+        body: parsed.data,
+        isReplayMode: false,
+      });
+
+      if ("error" in result) {
+        const { error } = result;
+        if (error.kind === "unauthorized") {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        if (error.kind === "thread-not-found") {
+          return NextResponse.json(
+            { error: "Thread not found" },
+            { status: 404 },
+          );
+        }
+        if (error.kind === "lock-held") {
+          return NextResponse.json(
+            { error: "Run already in progress" },
+            { status: 409 },
+          );
+        }
+        if (error.kind === "invalid-input") {
+          return NextResponse.json({ error: error.reason }, { status: 400 });
+        }
+      }
+      // { runId } or { skipped } — fall through to SSE stream
+    }
+    // Body absent or parse failed — fall through to SSE stream (back-compat)
+  }
+
+  // 7. Fall through: open the SSE stream via the existing GET handler
+  return GET(request, ctx);
+}

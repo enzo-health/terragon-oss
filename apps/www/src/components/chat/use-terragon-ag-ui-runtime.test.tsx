@@ -1,5 +1,9 @@
+/* @vitest-environment jsdom */
+
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpAgent } from "@ag-ui/client";
 import type { ExternalStoreAdapter, ThreadMessage } from "@assistant-ui/react";
@@ -110,5 +114,102 @@ describe("useTerragonAgUiRuntime", () => {
     expect(mocks.state.toolInvocations.resume).toHaveBeenCalledWith("tool-1", {
       approved: true,
     });
+  });
+});
+
+describe("useTerragonAgUiRuntime cancel endpoint", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchSpy);
+    mocks.state.capturedStore = undefined;
+    mocks.useExternalStoreRuntime.mockClear();
+    mocks.state.toolInvocations.abort.mockClear();
+  });
+
+  it("POSTs to the cancel endpoint when threadId and threadChatId are provided", async () => {
+    const agent = {
+      threadId: "thread-1",
+      messages: [],
+      runAgent: vi.fn(),
+    } as unknown as HttpAgent;
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    function CancelHarness(): React.JSX.Element {
+      useTerragonAgUiRuntime({
+        agent,
+        threadId: "thread-abc",
+        threadChatId: "chat-xyz",
+      });
+      return createElement("div");
+    }
+
+    await act(async () => {
+      root.render(createElement(CancelHarness));
+    });
+
+    const store = mocks.state
+      .capturedStore as ExternalStoreAdapter<ThreadMessage>;
+    if (!store.onCancel) {
+      throw new Error("expected onCancel");
+    }
+
+    await act(async () => {
+      await store.onCancel?.();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/ag-ui/thread-abc/cancel?threadChatId=chat-xyz");
+    expect(init.method).toBe("POST");
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it("does NOT POST to the cancel endpoint when threadId/threadChatId are absent", async () => {
+    const agent = {
+      threadId: "thread-1",
+      messages: [],
+      runAgent: vi.fn(),
+    } as unknown as HttpAgent;
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    function NoCancelHarness(): React.JSX.Element {
+      useTerragonAgUiRuntime({ agent });
+      return createElement("div");
+    }
+
+    await act(async () => {
+      root.render(createElement(NoCancelHarness));
+    });
+
+    const store = mocks.state
+      .capturedStore as ExternalStoreAdapter<ThreadMessage>;
+    if (!store.onCancel) {
+      throw new Error("expected onCancel");
+    }
+
+    await act(async () => {
+      await store.onCancel?.();
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
   });
 });
