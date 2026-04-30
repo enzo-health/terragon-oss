@@ -16,6 +16,8 @@ export type UsageSkuPricing = {
 };
 
 export const OPENAI_RESPONSES_GPT_5_SKU: UsageSku = "openai_responses_gpt_5";
+export const OPENAI_RESPONSES_GPT_5_5_SKU: UsageSku =
+  "openai_responses_gpt_5_5";
 export const OPENAI_RESPONSES_GPT_5_4_SKU: UsageSku =
   "openai_responses_gpt_5_4";
 export const OPENAI_RESPONSES_GPT_5_4_MINI_SKU: UsageSku =
@@ -52,6 +54,13 @@ export const USAGE_SKU_PRICING: Record<UsageSku, UsageSkuPricing> = {
     cachedInputRatePerToken: 0.125 / 1_000_000,
     cacheCreationRatePerToken: 0,
     outputRatePerToken: 10 / 1_000_000,
+  },
+  [OPENAI_RESPONSES_GPT_5_5_SKU]: {
+    currency: "usd",
+    inputRatePerToken: 5 / 1_000_000,
+    cachedInputRatePerToken: 0.5 / 1_000_000,
+    cacheCreationRatePerToken: 0,
+    outputRatePerToken: 30 / 1_000_000,
   },
   [OPENAI_RESPONSES_GPT_5_4_SKU]: {
     currency: "usd",
@@ -239,6 +248,9 @@ export function calculateUsageCostUsd({
 }
 
 export function getOpenAIResponsesSkuForModel(model?: string | null): UsageSku {
+  if (model?.includes("gpt-5.5")) {
+    return OPENAI_RESPONSES_GPT_5_5_SKU;
+  }
   if (model?.includes("gpt-5.4-mini")) {
     return OPENAI_RESPONSES_GPT_5_4_MINI_SKU;
   }

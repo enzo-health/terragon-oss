@@ -43,6 +43,10 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     case "amp": {
       return "amp";
     }
+    case "gpt-5.5-low":
+    case "gpt-5.5":
+    case "gpt-5.5-high":
+    case "gpt-5.5-xhigh":
     case "gpt-5.4-low":
     case "gpt-5.4":
     case "gpt-5.4-high":
@@ -137,7 +141,27 @@ export function agentToModels(
       return ["amp"];
     }
     case "codex": {
-      if (options.agentVersion === "latest" || options.agentVersion >= 5) {
+      if (options.agentVersion === "latest" || options.agentVersion >= 6) {
+        return [
+          "gpt-5.5-low",
+          "gpt-5.5",
+          "gpt-5.5-high",
+          "gpt-5.5-xhigh",
+          "gpt-5.4-low",
+          "gpt-5.4",
+          "gpt-5.4-high",
+          "gpt-5.4-xhigh",
+          "gpt-5.4-mini-low",
+          "gpt-5.4-mini",
+          "gpt-5.4-mini-high",
+          "gpt-5.4-mini-xhigh",
+          "gpt-5.4-nano-low",
+          "gpt-5.4-nano",
+          "gpt-5.4-nano-high",
+          "gpt-5.4-nano-xhigh",
+        ];
+      }
+      if (options.agentVersion >= 5) {
         return [
           "gpt-5.4-low",
           "gpt-5.4",
@@ -239,7 +263,10 @@ export function getDefaultModelForAgent({
     case "claudeCode":
       return "sonnet";
     case "codex":
-      if (agentVersion === "latest" || agentVersion >= 5) {
+      if (agentVersion === "latest" || agentVersion >= 6) {
+        return "gpt-5.5";
+      }
+      if (agentVersion >= 5) {
         return "gpt-5.4";
       }
       if (agentVersion >= 4) {
@@ -386,15 +413,15 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
   switch (model) {
     case "opus":
       return {
-        fullName: "Opus 4.6",
+        fullName: "Opus 4.7",
         mainName: "Opus",
-        subName: "4.6",
+        subName: "4.7",
       };
     case "opus[1m]":
       return {
-        fullName: "Opus 4.6 (1M Context)",
+        fullName: "Opus 4.7 (1M Context)",
         mainName: "Opus",
-        subName: "4.6 (1M)",
+        subName: "4.7 (1M)",
       };
     case "sonnet":
       return {
@@ -437,6 +464,30 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
         fullName: "GPT-5 Medium",
         mainName: "GPT-5",
         subName: "Medium",
+      };
+    case "gpt-5.5":
+      return {
+        fullName: "GPT-5.5",
+        mainName: "GPT-5.5",
+        subName: null,
+      };
+    case "gpt-5.5-low":
+      return {
+        fullName: "GPT-5.5 Low",
+        mainName: "GPT-5.5",
+        subName: "Low",
+      };
+    case "gpt-5.5-high":
+      return {
+        fullName: "GPT-5.5 High",
+        mainName: "GPT-5.5",
+        subName: "High",
+      };
+    case "gpt-5.5-xhigh":
+      return {
+        fullName: "GPT-5.5 X-High",
+        mainName: "GPT-5.5",
+        subName: "X-High",
       };
     case "gpt-5.4":
       return {
@@ -938,6 +989,10 @@ export function isModelEnabledByDefault({
     case "gpt-5.4-nano-low":
     case "gpt-5.4-nano-high":
     case "gpt-5.4-nano-xhigh":
+    case "gpt-5.5":
+    case "gpt-5.5-low":
+    case "gpt-5.5-high":
+    case "gpt-5.5-xhigh":
       return true;
     case "opencode/kimi-k2.5":
     case "opencode/glm-5.1":
@@ -976,8 +1031,10 @@ export function getModelInfo(model: AIModel): string {
       return "Recommended for large codebases";
     case "opus[1m]":
       return "Deep reasoning with a 1M context window";
-    case "gpt-5.4":
+    case "gpt-5.5":
       return "Best for complex coding and agentic work";
+    case "gpt-5.4":
+      return "Frontier coding model with computer-use";
     case "gpt-5.4-mini":
       return "Fast, lower-cost coding model";
     case "gpt-5.4-nano":
@@ -1007,6 +1064,8 @@ export function parseModelOrNull({
     return modelAsExternal;
   }
   switch (modelAsExternal) {
+    case "gpt-5.5-medium":
+      return "gpt-5.5";
     case "gpt-5.4-medium":
       return "gpt-5.4";
     case "gpt-5.4-mini-medium":
@@ -1071,7 +1130,7 @@ export function normalizedModelForDaemon(model: AIModel): string {
     return model.replace("opencode-ant/", "terry-ant/");
   }
   if (model === "opus[1m]") {
-    return "claude-opus-4-6[1m]";
+    return "claude-opus-4-7[1m]";
   }
   if (model === "sonnet[1m]") {
     return "claude-sonnet-4-6[1m]";
@@ -1102,6 +1161,10 @@ export function modelRequiresChatGptOAuth(model: AIModel | null): boolean {
     case "gpt-5.3-codex-spark-low":
     case "gpt-5.3-codex-spark-medium":
     case "gpt-5.3-codex-spark-high":
+    case "gpt-5.5":
+    case "gpt-5.5-low":
+    case "gpt-5.5-high":
+    case "gpt-5.5-xhigh":
       return true;
     default:
       return false;
