@@ -180,7 +180,7 @@ export function SimplePromptBox({
           attachedFiles={attachedFiles}
           onRemoveFile={removeFile}
         />
-        <div className="mx-2 mb-2 flex flex-row items-center gap-2">
+        <div className="mx-2 mb-1 flex flex-row items-center gap-2">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
             {!hideModelSelector && (
               <ModelSelector
