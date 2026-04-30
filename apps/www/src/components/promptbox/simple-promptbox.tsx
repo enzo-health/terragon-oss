@@ -173,7 +173,7 @@ export function SimplePromptBox({
           <EditorContent
             editor={editor}
             aria-label="Describe a task for the AI"
-            className={cn("min-h-14 px-4 pt-3 pb-2", className)}
+            className={cn("min-h-12 px-3 py-2", className)}
           />
         </ScrollArea>
         <AttachedFiles
