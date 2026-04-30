@@ -2,7 +2,14 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { UserAtomsHydratorServer } from "@/components/system/user-atoms-server";
-import { Geist, Geist_Mono, Cormorant_Garamond } from "next/font/google";
+import {
+  Geist,
+  Geist_Mono,
+  Cormorant_Garamond,
+  Outfit,
+  Merriweather,
+  JetBrains_Mono,
+} from "next/font/google";
 import { ServerProviders } from "@/components/system/server-providers";
 import { KonamiVideo } from "@/components/konami-video";
 
@@ -62,6 +69,32 @@ const cormorant = Cormorant_Garamond({
   preload: false,
 });
 
+// Shadcn-trial font stack. Outfit replaces Geist as the primary sans;
+// Merriweather is the new serif (display); JetBrains Mono is the new
+// code font. Geist/Cormorant remain loaded as fallbacks so any utility
+// still referencing them keeps working during the trial.
+const outfit = Outfit({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-outfit",
+  preload: true,
+});
+
+const merriweather = Merriweather({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  display: "swap",
+  variable: "--font-merriweather",
+  preload: false,
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+  preload: false,
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -77,20 +110,20 @@ export default function RootLayout({
         )}
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
-        {/* Brand canvas — #faf9f5 cream in light, #181715 navy in dark */}
+        {/* Shadcn trial palette — pure white in light, near-black plum in dark */}
         <meta
           name="theme-color"
-          content="#faf9f5"
+          content="#ffffff"
           media="(prefers-color-scheme: light)"
         />
         <meta
           name="theme-color"
-          content="#181715"
+          content="#1a1519"
           media="(prefers-color-scheme: dark)"
         />
       </head>
       <body
-        className={`${geist.variable} ${geistMono.variable} ${cormorant.variable} font-sans antialiased`}
+        className={`${geist.variable} ${geistMono.variable} ${cormorant.variable} ${outfit.variable} ${merriweather.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
         <ServerProviders>
           <UserAtomsHydratorServer>

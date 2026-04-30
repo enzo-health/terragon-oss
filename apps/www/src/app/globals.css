@@ -4,139 +4,127 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* === The 11-token system ===
-     One math rule for neutrals: oklch(L 0.010 80) — vary L only.
-     Hue 80 sits in the warm yellow-beige band (Anthropic editorial
-     territory). Chroma 0.010 is the goldilocks — visible on careful
-     inspection (brand cohesion) but reads neutral in normal use.
-     Lightness ladder is non-linear: tight gaps at the light end where
-     human eyes need 5–7% to perceive a step, wider gaps in the middle
-     where contrast does its real work. Reference: Bjango, Stripe,
-     Refactoring UI. */
-  --canvas: oklch(0.97 0.01 80); /* page floor */
-  --raised: oklch(
-    0.94 0.01 80
-  ); /* cards, prompt box, user bubbles — lifted from 0.92 for gentler card-on-canvas */
-  --hairline-strong: oklch(
-    0.885 0.01 80
-  ); /* NEW — dedicated border stop. Sits between raised and sunken so borders hold definition no matter which surface they sit on. */
-  --sunken: oklch(
-    0.905 0.01 80
-  ); /* hover surfaces, muted regions — lifted from 0.86. The old 11-point drop from canvas read as "press" not "hover". */
-  --neutral: oklch(
-    0.78 0.01 80
-  ); /* disabled fills, dividers — lifted from 0.70 (was hideously heavy on a cream canvas) */
-  --mid: oklch(0.5 0.01 80); /* secondary text */
-  --strong: oklch(
-    0.15 0.006 80
-  ); /* body text — matches Tailwind Stone-950, ~17:1 contrast on canvas */
-  --base: oklch(0.18 0.005 80); /* code/terminal surface, brand floor */
+  /* ===========================================================
+     Trial: shadcn "orange-on-white" registry theme.
+     The new palette is set as the canonical values; the existing
+     11-token bridge (--canvas, --raised, --coral, --strong, ...)
+     is rewired to point at it so utilities like bg-coral and
+     bg-canvas keep working without a codemod.
+     =========================================================== */
 
-  /* Brand accent + active variant. Coral-active is the WCAG-AA-passing
-     darker variant for foreground use on cream-tinted surfaces. */
-  --coral: oklch(0.62 0.115 39);
-  --coral-active: oklch(0.51 0.1 40);
-
-  /* Semantics — all anchored at L=0.62 except error which lifts to 0.55
-     for hue separation from coral primary (hue 39). Hues chosen to be
-     editorial-warm rather than SaaS-default: warning is terracotta
-     (not amber), success is sage (not emerald), error is clay-red
-     (hue 22, distinct from coral). */
-  --warning: oklch(0.62 0.095 54);
-  --success: oklch(
-    0.58 0.075 150
-  ); /* sage — slightly darker for semantic weight, between Tailwind Green-600 and Catppuccin Latte */
-  --error: oklch(0.55 0.16 22);
-  --info: oklch(
-    0.58 0.1 230
-  ); /* steel blue — moderate chroma so it doesn't feel cold against the warm-cream system. Used for delegation/info chips, neutral status indicators. */
-
-  /* === Legacy aliases ===
-     411 uses of --muted-foreground, 131 of --muted, 106 of --foreground,
-     etc. depend on these names. We keep the names but point them at the
-     11 canonical tokens. Phase 2 (later) renames the consumers; phase 1
-     (this commit) is value-only. */
-  --background: var(--canvas);
-  --foreground: var(--strong);
-  --card: var(--raised);
-  --card-foreground: var(--strong);
-  --popover: var(--raised);
-  --popover-foreground: var(--strong);
-  --primary: var(--coral);
+  /* Shadcn registry tokens (verbatim) */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2101 0.0318 264.6645);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2101 0.0318 264.6645);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2101 0.0318 264.6645);
+  --primary: oklch(0.6716 0.1368 48.513);
   --primary-foreground: oklch(1 0 0);
-  --secondary: var(--sunken);
-  --secondary-foreground: var(--strong);
-  --muted: var(--sunken);
-  --muted-foreground: var(--mid);
-  --accent: var(--sunken);
-  --accent-foreground: var(--strong);
-  --destructive: var(--error);
-  --destructive-foreground: oklch(1 0 0);
-  --border: var(--hairline-strong);
-  --input: var(--hairline-strong);
-  --ring: var(--coral);
-  --chart-1: var(--coral);
-  --chart-2: var(--success);
-  --chart-3: var(--sunken);
-  --chart-4: var(--warning);
-  --chart-5: var(--coral-active);
-  --sidebar: var(--canvas);
-  --sidebar-foreground: var(--strong);
-  --sidebar-primary: var(--coral-active);
+  --secondary: oklch(0.536 0.0398 196.028);
+  --secondary-foreground: oklch(1 0 0);
+  --muted: oklch(0.967 0.0029 264.5419);
+  --muted-foreground: oklch(0.551 0.0234 264.3637);
+  --accent: oklch(0.9491 0 0);
+  --accent-foreground: oklch(0.2101 0.0318 264.6645);
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(0.9851 0 0);
+  --border: oklch(0.9276 0.0058 264.5313);
+  --input: oklch(0.9276 0.0058 264.5313);
+  --ring: oklch(0.6716 0.1368 48.513);
+  --chart-1: oklch(0.594 0.0443 196.0233);
+  --chart-2: oklch(0.7214 0.1337 49.9802);
+  --chart-3: oklch(0.8721 0.0864 68.5474);
+  --chart-4: oklch(0.6268 0 0);
+  --chart-5: oklch(0.683 0 0);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.2101 0.0318 264.6645);
+  --sidebar-primary: oklch(0.6716 0.1368 48.513);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: var(--sunken);
-  --sidebar-accent-foreground: var(--strong);
-  --sidebar-border: var(--hairline-strong);
-  --sidebar-ring: var(--coral);
-  --app-background: var(--canvas);
+  /* Active nav item highlight — must be visible against the sidebar.
+     Now that sidebar matches background (white), accent flips to the
+     muted gray that the previous sidebar surface used. */
+  --sidebar-accent: oklch(0.967 0.0029 264.5419);
+  --sidebar-accent-foreground: oklch(0.2101 0.0318 264.6645);
+  --sidebar-border: oklch(0.9276 0.0058 264.5313);
+  --sidebar-ring: oklch(0.6716 0.1368 48.513);
+  --app-background: var(--background);
 
-  /* Anchored brand surfaces — code, terminal, dark product chrome.
-     These don't theme-flip (the dark surface IS the brand value
-     #181715 regardless of mode). Kept as separate tokens because
-     they're a distinct concept from the cream ladder. */
+  /* === Canonical 11-token bridge ===
+     Existing utilities (bg-canvas, text-strong, bg-coral, ...) are
+     mapped onto the new palette. Naming is preserved during this
+     trial; "coral" reads as orange now, "warm-stone" as cool gray. */
+  --canvas: var(--background);
+  --raised: var(--card);
+  --hairline-strong: var(--border);
+  --sunken: var(--muted);
+  --neutral: oklch(0.78 0.005 264); /* between border and mid */
+  --mid: var(--muted-foreground);
+  --strong: var(--foreground);
+  --base: oklch(0.1797 0.0043 308.1928); /* code/terminal floor */
+  --coral: var(--primary);
+  --coral-active: oklch(0.55 0.13 48.5); /* darker primary for AA contrast */
+
+  /* Semantics — not in the shadcn export, kept from the prior system
+     so warning/success/info chips still render with correct hue. */
+  --warning: oklch(0.62 0.095 54);
+  --success: oklch(0.58 0.075 150);
+  --error: var(--destructive);
+  --info: oklch(0.58 0.1 230);
+
+  /* Brand-anchored dark surfaces — code/terminal stay dark in light mode */
   --surface-dark: var(--base);
-  --surface-dark-soft: oklch(0.2 0.005 80);
-  --surface-dark-elevated: oklch(0.24 0.005 80);
-  --on-dark: var(--canvas);
+  --surface-dark-soft: oklch(0.2 0.005 308);
+  --surface-dark-elevated: oklch(0.24 0.005 308);
+  --on-dark: oklch(0.97 0 0);
   --on-dark-soft: oklch(0.66 0.01 80);
 
-  /* Existing compatibility tokens — warm-stone is used in 4 places
-     (user bubble fallback, avatar fallback). Mixed from --raised so it
-     tracks any future shift in the ladder rather than drifting. */
   --warm-stone: color-mix(in oklch, var(--raised) 70%, transparent);
   --warm-gray: var(--mid);
 
-  /* next/font/google injects --font-geist, --font-geist-mono
-     onto <body> via the `geist.variable` class chain in layout.tsx. Do NOT
-     redefine them here — the browser would otherwise fall back to literal
-     "Geist" (which isn't installed) and then to system defaults like Roboto. */
+  /* Fonts — new theme stack with Geist as final fallback so first
+     paint isn't system-Roboto while the new fonts stream in. The
+     --font-outfit / --font-merriweather / --font-jetbrains-mono CSS
+     variables are produced by next/font/google in layout.tsx. */
   --font-sans:
-    var(--font-geist, ui-sans-serif), "Inter", ui-sans-serif, system-ui,
-    sans-serif;
+    var(--font-outfit, "Outfit"), var(--font-geist, ui-sans-serif), "Inter",
+    system-ui, sans-serif;
+  --font-serif: var(--font-merriweather, "Merriweather"), ui-serif, serif;
   --font-mono:
-    var(--font-geist-mono, ui-monospace), "JetBrains Mono", SFMono-Regular,
-    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  /* Display — Cormorant serif is OPT-IN for explicit brand moments only
-     (dashboard greeting, login hero, wordmark). Default headings render
-     in Geist; the serif is a deliberate editorial accent reserved for
-     places that earn the voice. Apply via the `font-display` utility,
-     not by relying on h1-h6 defaults. */
+    var(--font-jetbrains-mono, "JetBrains Mono"),
+    var(--font-geist-mono, ui-monospace), SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
   --font-display:
-    var(--font-cormorant, "Cormorant Garamond"), "Tiempos Headline",
-    "EB Garamond", Garamond, "Times New Roman", serif;
+    var(--font-merriweather, "Merriweather"), "Tiempos Headline", "EB Garamond",
+    Garamond, "Times New Roman", serif;
 
   --radius: 0.75rem;
-
-  --tracking-normal: 0em;
+  --tracking-normal: 0rem;
   --spacing: 0.25rem;
 
+  /* Shadow scale — new theme's parameters preserved */
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 4px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.05;
+  --shadow-color: #000000;
+  --shadow-2xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
+  --shadow-xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
+  --shadow-sm:
+    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+  --shadow-base:
+    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+  --shadow-md:
+    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 2px 4px -1px hsl(0 0% 0% / 0.05);
+  --shadow-lg:
+    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 4px 6px -1px hsl(0 0% 0% / 0.05);
+  --shadow-xl:
+    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 8px 10px -1px hsl(0 0% 0% / 0.05);
+  --shadow-2xl: 0px 1px 4px 0px hsl(0 0% 0% / 0.13);
+
+  /* Compound shadows referenced directly by some components */
   --shadow-inset-edge: rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
-  /* Shadow scale — softened pass. The previous values had alphas in the
-     0.075–0.25 range which read as heavy on a warm cream surface. Cream
-     amplifies dark drop-shadows compared to neutral gray, so the same
-     alpha that looks subtle on a Stripe-style gray system reads as bold
-     here. Pulled all alphas down by ~30–40% and reduced blur radii to
-     match. The hierarchy (xs < sm < md < lg < xl < 2xl) is preserved. */
   --shadow-outline-ring: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px;
   --shadow-card:
     rgba(0, 0, 0, 0.025) 0px 1px 2px, rgba(0, 0, 0, 0.03) 0px 2px 6px,
@@ -145,24 +133,7 @@
     rgba(78, 50, 23, 0.03) 0px 4px 12px,
     rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
 
-  --shadow-2xs: 0 1px 2px 0px hsl(0 0% 0% / 0.03);
-  --shadow-xs: 0 1px 2px 0px hsl(0 0% 0% / 0.04);
-  --shadow-sm:
-    0 1px 2px 0px hsl(0 0% 0% / 0.06), 0 1px 1px -1px hsl(0 0% 0% / 0.06);
-  --shadow-base:
-    0 1px 3px 0px hsl(0 0% 0% / 0.06), 0 1px 2px -1px hsl(0 0% 0% / 0.06);
-  --shadow-md:
-    0 2px 4px 0px hsl(0 0% 0% / 0.06), 0 1px 2px -1px hsl(0 0% 0% / 0.05);
-  --shadow-lg:
-    0 4px 8px -1px hsl(0 0% 0% / 0.07), 0 2px 4px -2px hsl(0 0% 0% / 0.05);
-  --shadow-xl:
-    0 8px 14px -2px hsl(0 0% 0% / 0.08), 0 4px 6px -3px hsl(0 0% 0% / 0.05);
-  --shadow-2xl: 0 12px 24px -4px hsl(0 0% 0% / 0.12);
-
-  /* Diff colors (git diff view) — these stay as Tailwind palette values
-     because diff convention universally expects green-add / red-remove,
-     and the brand semantic --success (sage) / --error (clay) would feel
-     wrong here. Diff is a domain that legitimately wants pure red/green. */
+  /* Diff colors — domain convention (red/green) regardless of theme */
   --diff-added-bg: color-mix(
     in srgb,
     var(--color-emerald-500) 10%,
@@ -199,78 +170,68 @@
 }
 
 .dark {
-  /* Dark ladder: same hue/chroma rule (oklch L 0.010 80), but inverted
-     L values so the perceptual relationships hold across modes. The
-     "base" anchor stays at 0.18 (Anthropic brand floor #181715) instead
-     of pure inversion (0.03) — the brand wants warm-dark, not absolute. */
-  --canvas: oklch(0.13 0.01 80);
-  --raised: oklch(
-    0.175 0.01 80
-  ); /* slight pull-down from 0.18 so it separates from --base (the brand-anchored 0.18 code surface) */
-  --hairline-strong: oklch(
-    0.265 0.01 80
-  ); /* NEW — dedicated border stop, sits above sunken so borders read against any surface */
-  --sunken: oklch(
-    0.225 0.01 80
-  ); /* hover/muted surface — was 0.24, lowered slightly so hairline-strong has room above */
-  --neutral: oklch(
-    0.38 0.01 80
-  ); /* disabled fills, dividers — lifted from 0.35 to match light-mode shift */
-  --mid: oklch(0.65 0.01 80);
-  --strong: oklch(0.92 0.01 80);
-  --base: oklch(0.18 0.005 80);
+  /* Shadcn registry tokens (verbatim, dark) */
+  --background: oklch(0.1797 0.0043 308.1928);
+  --foreground: oklch(0.8109 0 0);
+  --card: oklch(0.1822 0 0);
+  --card-foreground: oklch(0.8109 0 0);
+  --popover: oklch(0.1797 0.0043 308.1928);
+  --popover-foreground: oklch(0.8109 0 0);
+  --primary: oklch(0.7214 0.1337 49.9802);
+  --primary-foreground: oklch(0.1797 0.0043 308.1928);
+  --secondary: oklch(0.594 0.0443 196.0233);
+  --secondary-foreground: oklch(0.1797 0.0043 308.1928);
+  --muted: oklch(0.252 0 0);
+  --muted-foreground: oklch(0.6268 0 0);
+  --accent: oklch(0.3211 0 0);
+  --accent-foreground: oklch(0.8109 0 0);
+  --destructive: oklch(0.594 0.0443 196.0233);
+  --destructive-foreground: oklch(0.1797 0.0043 308.1928);
+  --border: oklch(0.252 0 0);
+  --input: oklch(0.252 0 0);
+  --ring: oklch(0.7214 0.1337 49.9802);
+  --chart-1: oklch(0.594 0.0443 196.0233);
+  --chart-2: oklch(0.7214 0.1337 49.9802);
+  --chart-3: oklch(0.8721 0.0864 68.5474);
+  --chart-4: oklch(0.6268 0 0);
+  --chart-5: oklch(0.683 0 0);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.8109 0 0);
+  --sidebar-primary: oklch(0.7214 0.1337 49.9802);
+  --sidebar-primary-foreground: oklch(0.1797 0.0043 308.1928);
+  /* Accent stays distinct from the unified sidebar/background so the
+     active nav item still reads as highlighted. */
+  --sidebar-accent: oklch(0.3211 0 0);
+  --sidebar-accent-foreground: oklch(0.8109 0 0);
+  --sidebar-border: oklch(0.252 0 0);
+  --sidebar-ring: oklch(0.7214 0.1337 49.9802);
+  --app-background: var(--background);
 
-  /* Coral brightens slightly to maintain WCAG contrast on dark cream */
-  --coral: oklch(0.69 0.13 39);
-  --coral-active: oklch(0.55 0.11 40);
+  /* Canonical 11-token bridge (dark) */
+  --canvas: var(--background);
+  --raised: var(--card);
+  --hairline-strong: var(--border);
+  --sunken: var(--muted);
+  --neutral: var(--accent);
+  --mid: var(--muted-foreground);
+  --strong: var(--foreground);
+  --base: oklch(0.1797 0.0043 308.1928);
+  --coral: var(--primary);
+  --coral-active: oklch(0.6 0.12 49.9);
 
-  /* Semantics lift slightly on dark — same hue/chroma, +3 L */
+  /* Semantics — kept from prior system. The shadcn export uses teal
+     for --destructive in dark, which would make destructive buttons
+     read as a calm teal instead of danger; --error stays red here. */
   --warning: oklch(0.65 0.1 54);
   --success: oklch(0.68 0.08 150);
   --error: oklch(0.62 0.17 22);
-  --info: oklch(0.68 0.11 230); /* steel blue, lifted for dark mode contrast */
+  --info: oklch(0.68 0.11 230);
 
-  /* Legacy aliases — same map as light, point to the inverted ladder */
-  --background: var(--canvas);
-  --foreground: var(--strong);
-  --card: var(--raised);
-  --card-foreground: var(--strong);
-  --popover: var(--raised);
-  --popover-foreground: var(--strong);
-  --primary: var(--coral);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: var(--sunken);
-  --secondary-foreground: var(--strong);
-  --muted: var(--sunken);
-  --muted-foreground: var(--mid);
-  --accent: var(--sunken);
-  --accent-foreground: var(--strong);
-  --destructive: var(--error);
-  --destructive-foreground: oklch(1 0 0);
-  --border: var(--hairline-strong);
-  --input: var(--hairline-strong);
-  --ring: var(--coral);
-  --chart-1: var(--coral);
-  --chart-2: var(--success);
-  --chart-3: var(--sunken);
-  --chart-4: var(--warning);
-  --chart-5: var(--coral-active);
-  --sidebar: var(--canvas);
-  --sidebar-foreground: var(--strong);
-  --sidebar-primary: var(--coral);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: var(--sunken);
-  --sidebar-accent-foreground: var(--strong);
-  --sidebar-border: var(--hairline-strong);
-  --sidebar-ring: var(--coral);
-  --app-background: var(--canvas);
-
-  /* Brand-anchored dark surfaces stay constant — code/terminal are
-     navy regardless of theme. */
+  /* Brand-anchored dark surfaces */
   --surface-dark: var(--base);
-  --surface-dark-soft: oklch(0.2 0.005 80);
-  --surface-dark-elevated: oklch(0.24 0.005 80);
-  --on-dark: oklch(0.97 0.01 80);
+  --surface-dark-soft: oklch(0.2 0.005 308);
+  --surface-dark-elevated: oklch(0.24 0.005 308);
+  --on-dark: oklch(0.97 0 0);
   --on-dark-soft: oklch(0.66 0.01 80);
 
   --invert: #ffffff;
@@ -319,6 +280,7 @@
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
   --font-display: var(--font-display);
 
   --tracking-normal: var(--tracking-normal);
