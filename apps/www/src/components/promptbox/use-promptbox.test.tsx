@@ -25,7 +25,6 @@ const mocks = vi.hoisted(() => ({
   dispatch: vi.fn(),
   appendFn: vi.fn(),
   useThreadRuntimeReturn: null as { append: ReturnType<typeof vi.fn> } | null,
-  featureFlagValue: false,
 }));
 
 vi.mock("@/hooks/useTouchDevice", () => ({
@@ -44,10 +43,6 @@ vi.mock("@/hooks/use-selected-model", () => ({
 
 vi.mock("@assistant-ui/react", () => ({
   useThreadRuntime: () => mocks.useThreadRuntimeReturn,
-}));
-
-vi.mock("@/hooks/use-feature-flag", () => ({
-  useFeatureFlag: (_name: string) => mocks.featureFlagValue,
 }));
 
 vi.mock("@tiptap/react", async (importOriginal) => {
@@ -130,9 +125,8 @@ function Harness({
   return null;
 }
 
-describe("usePromptBox composerRuntimeSubmit feature flag", () => {
-  it("calls handleSubmit (not runtime.append) when flag is off", async () => {
-    mocks.featureFlagValue = false;
+describe("usePromptBox runtime routing", () => {
+  it("calls runtime.append when a thread runtime is in context", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
 
@@ -146,7 +140,7 @@ describe("usePromptBox composerRuntimeSubmit feature flag", () => {
     const root = createRoot(container);
 
     let capturedController: PromptBoxController | null = null;
-    function FlagOffHarness(): null {
+    function RuntimePresentHarness(): null {
       const promptBox = usePromptBox({
         threadId: "thread-1",
         placeholderText: "Message",
@@ -172,65 +166,7 @@ describe("usePromptBox composerRuntimeSubmit feature flag", () => {
     }
 
     await act(async () => {
-      root.render(createElement(FlagOffHarness));
-    });
-    await act(async () => {
-      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
-      await Promise.resolve();
-    });
-
-    expect(submittedMessages).toHaveLength(1);
-    expect(mocks.appendFn).not.toHaveBeenCalled();
-
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-    mocks.featureFlagValue = false;
-  });
-
-  it("calls runtime.append (not handleSubmit) when flag is on and runtime is available", async () => {
-    mocks.featureFlagValue = true;
-    mocks.appendFn.mockReset();
-    mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
-
-    const submittedMessages: DBUserMessage[] = [];
-    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
-      submittedMessages.push(userMessage);
-    };
-
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    let capturedController: PromptBoxController | null = null;
-    function FlagOnHarness(): null {
-      const promptBox = usePromptBox({
-        threadId: "thread-1",
-        placeholderText: "Message",
-        repoFullName: "terragon/oss",
-        branchName: "main",
-        forcedAgent: "claudeCode",
-        forcedAgentVersion: 1,
-        initialSelectedModel: selectedModel,
-        handleStop: async () => {},
-        handleSubmit,
-        typeahead,
-        clearContentOnSubmit: false,
-        clearContentBeforeSubmit: false,
-        initialPermissionMode: "allowAll",
-        supportsMultiAgentPromptSubmission: false,
-        disableLocalStorage: true,
-      });
-      capturedController = {
-        submitForm: promptBox.submitForm,
-        setPermissionMode: promptBox.setPermissionMode,
-      };
-      return null;
-    }
-
-    await act(async () => {
-      root.render(createElement(FlagOnHarness));
+      root.render(createElement(RuntimePresentHarness));
     });
     await act(async () => {
       capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
@@ -252,12 +188,10 @@ describe("usePromptBox composerRuntimeSubmit feature flag", () => {
       root.unmount();
     });
     container.remove();
-    mocks.featureFlagValue = false;
     mocks.useThreadRuntimeReturn = null;
   });
 
-  it("falls back to handleSubmit when flag is on but runtime is null", async () => {
-    mocks.featureFlagValue = true;
+  it("falls back to handleSubmit when no runtime is in context (dashboard / generic composer)", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = null;
 
@@ -311,7 +245,6 @@ describe("usePromptBox composerRuntimeSubmit feature flag", () => {
       root.unmount();
     });
     container.remove();
-    mocks.featureFlagValue = false;
     mocks.useThreadRuntimeReturn = null;
   });
 });

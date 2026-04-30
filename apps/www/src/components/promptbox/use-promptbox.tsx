@@ -15,7 +15,6 @@ import { Attachment } from "@/lib/attachment-types";
 import StarterKit from "@tiptap/starter-kit";
 import { useThreadRuntime } from "@assistant-ui/react";
 import type { ThreadUserMessagePart } from "@assistant-ui/react";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import {
   FolderAwareMention,
   folderAwareMentionPluginKey,
@@ -147,9 +146,11 @@ export function usePromptBox({
   supportsMultiAgentPromptSubmission,
 }: UsePromptBoxProps) {
   const isTouchDevice = useTouchDevice();
-  const useRuntimeSubmit = useFeatureFlag("composerRuntimeSubmit");
   // useThreadRuntime() is null when the hook is rendered outside an
-  // AssistantRuntimeProvider (e.g., on the dashboard). We guard all usages.
+  // AssistantRuntimeProvider (e.g., dashboard composer, generic composer).
+  // When non-null we route submission through it; when null we fall back
+  // to props.handleSubmit. The runtime path goes through the AG-UI POST
+  // adapter -> followUp() server action (see runtime-owns-writes ADR).
   const threadRuntime = useThreadRuntime({ optional: true });
   const { storedContent, attachedFiles, setStoredContent, setAttachedFiles } =
     useContentAndAttachedFiles({
@@ -731,16 +732,14 @@ export function usePromptBox({
           attachedFiles,
         });
 
-        // Wave 3 runtime path: route through useThreadRuntime().append() so
-        // the AG-UI HttpAgent drives the POST to the backend adapter.
-        // Falls back to props.handleSubmit when the flag is off (default) or
-        // when no runtime is in context (dashboard, non-thread views).
-        //
-        // Deviation: selectedModel and permissionMode are NOT forwarded to the
-        // backend in this path — the runtime core maps runConfig.custom to
-        // forwardedProps.runConfig, but the adapter reads forwardedProps.terragon.
-        // This is tracked in docs/plans/2026-04-30-runtime-owns-writes-adr.md.
-        if (useRuntimeSubmit && threadRuntime != null) {
+        // Thread composer (existing thread): runtime appends → AG-UI POST →
+        // run-from-ag-ui adapter → followUp() server action.
+        // Dashboard/generic composer (no runtime in context): falls through
+        // to props.handleSubmit, which calls createThread or whatever task-
+        // creation mutation the caller wires in. Thread creation and
+        // appending to an existing thread are different operations — they
+        // intentionally take different paths.
+        if (threadRuntime != null) {
           const content = dbPartsToAssistantUiContent(userMessage.parts);
           if (content.length > 0) {
             threadRuntime.append({
@@ -793,7 +792,6 @@ export function usePromptBox({
       getOnSubmitError,
       clearContent,
       isMultiAgentMode,
-      useRuntimeSubmit,
       threadRuntime,
     ],
   );
