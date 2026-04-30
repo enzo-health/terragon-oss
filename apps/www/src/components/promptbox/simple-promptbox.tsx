@@ -146,12 +146,10 @@ export function SimplePromptBox({
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
-          // Prompt box is the dashboard's primary affordance — it must
-          // read as an input. Solid hairline border (no opacity), warm-lift
-          // shadow at rest for elevation off the canvas, focus brings the
-          // coral ring at higher specificity. Dropped border-border/60 +
-          // shadow-xs combo which was visually invisible on cream-on-cream.
-          "relative flex flex-col gap-2 rounded-[calc(var(--radius)+0.2rem)] border border-hairline bg-card p-2 shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
+          // Compact composer chrome. Outer has no padding so the editor
+          // and toolbar pin directly to the border; each inner region
+          // owns its own padding. Coral ring lights up on focus.
+          "relative flex flex-col rounded-2xl border border-hairline bg-card shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
           isSubmitting && [
             "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
             "animate-pulse-subtle",
@@ -160,14 +158,13 @@ export function SimplePromptBox({
         )}
       >
         {isSubmitting && (
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[calc(var(--radius)+0.2rem)]">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-2xl">
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
         <ScrollArea
-          className="max-h-[min(60dvh,28rem)] overflow-auto"
+          className="max-h-[min(40dvh,18rem)] overflow-auto"
           onClick={() => {
-            // Focus editor when clicking in the scroll area
             if (editor && !editor.isFocused) {
               editor.commands.focus("end");
             }
@@ -176,14 +173,14 @@ export function SimplePromptBox({
           <EditorContent
             editor={editor}
             aria-label="Describe a task for the AI"
-            className={cn("min-h-[44px] px-3 pb-1.5 pt-2.5 md:px-4", className)}
+            className={cn("min-h-14 px-4 pt-3 pb-2", className)}
           />
         </ScrollArea>
         <AttachedFiles
           attachedFiles={attachedFiles}
           onRemoveFile={removeFile}
         />
-        <div className="flex flex-row items-center gap-3 border-t border-hairline-soft px-2 pb-1 pt-2">
+        <div className="mx-2 mb-2 flex flex-row items-center gap-2">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
             {!hideModelSelector && (
               <ModelSelector
