@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { SetSelectedModel } from "@/hooks/use-selected-model";
-import { ComposerPrimitive } from "@assistant-ui/react";
+import { ComposerPrimitive, useThreadRuntime } from "@assistant-ui/react";
 
 // Tiptap imports
 import { EditorContent, Editor } from "@tiptap/react";
@@ -125,10 +125,12 @@ export function SimplePromptBox({
     [editor],
   );
 
-  // handleFormSubmit is called by ComposerPrimitive.Root when the form is
-  // submitted (e.g., via ComposerPrimitive.Send). It delegates to the existing
-  // submitForm prop so behaviour is unchanged regardless of how submission
-  // is triggered (button click, Enter key, or ComposerPrimitive.Root form submit).
+  // ComposerPrimitive.Root requires an AssistantRuntimeProvider ancestor.
+  // Thread page wraps in one; dashboard / generic composers don't. Detect
+  // the runtime presence and render the assistant-ui form when it's there,
+  // a plain <form> otherwise.
+  const isInRuntime = useThreadRuntime({ optional: true }) != null;
+
   const handleFormSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
@@ -137,8 +139,10 @@ export function SimplePromptBox({
     [submitForm],
   );
 
+  const FormElement = isInRuntime ? ComposerPrimitive.Root : "form";
+
   return (
-    <ComposerPrimitive.Root onSubmit={handleFormSubmit}>
+    <FormElement onSubmit={handleFormSubmit}>
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
@@ -238,6 +242,6 @@ export function SimplePromptBox({
           </div>
         </div>
       </DragDropWrapper>
-    </ComposerPrimitive.Root>
+    </FormElement>
   );
 }
