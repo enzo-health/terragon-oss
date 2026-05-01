@@ -51,7 +51,7 @@ const columns: ColumnDef<GitHubPR>[] = [
     cell: ({ row }) => (
       <Link
         href={`/internal/admin/github/pr/${row.original.repoFullName}/${row.original.number}`}
-        className="font-mono underline"
+        className="font-mono tabular-nums underline"
       >
         {row.getValue("number")}
       </Link>
@@ -269,18 +269,20 @@ export function AdminGithubAppTester() {
       </form>
 
       {error && (
-        <div className="mt-6 p-4 bg-destructive/10 border border-destructive rounded-lg">
-          <h2 className="text-lg font-semibold text-destructive mb-2">Error</h2>
-          <p className="text-sm text-destructive/90 whitespace-pre-wrap font-mono">
+        <div className="mt-6 p-4 bg-[var(--error)]/10 border border-[var(--error)]/40 rounded-2xl">
+          <h2 className="text-lg font-semibold text-[var(--error)] mb-2">
+            Error
+          </h2>
+          <p className="text-sm text-[var(--error)]/90 whitespace-pre-wrap font-mono">
             {error}
           </p>
         </div>
       )}
 
       {output && (
-        <div className="mt-6 p-4 bg-muted rounded-lg">
+        <div className="mt-6 p-4 bg-[var(--card-cream,var(--card))] rounded-2xl border border-[var(--hairline,var(--border))]">
           <h2 className="text-lg font-semibold mb-2">Comment Posted</h2>
-          <pre className="text-sm whitespace-pre-wrap font-mono bg-background p-4 rounded border">
+          <pre className="text-sm whitespace-pre-wrap font-mono bg-[var(--code-floor,var(--muted))] text-[var(--on-dark,var(--foreground))] p-4 rounded-xl border border-[var(--hairline,var(--border))]">
             {output}
           </pre>
         </div>

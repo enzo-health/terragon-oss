@@ -22,7 +22,7 @@ const RecommendedAutomationItem = memo(function RecommendedAutomationItem({
       onClick={() => {
         onSelect(automation);
       }}
-      className="block rounded-md transition-colors py-2 hover:bg-muted/50 w-full cursor-pointer"
+      className="block rounded-xl transition-colors py-2 px-3 hover:bg-sunken w-full cursor-pointer"
       aria-label={`Create ${automation.label} automation`}
       type="button"
     >
@@ -34,7 +34,7 @@ const RecommendedAutomationItem = memo(function RecommendedAutomationItem({
           >
             {automation.icon}
           </div>
-          <p className="text-sm truncate font-medium text-muted-foreground/50">
+          <p className="text-sm truncate font-medium text-foreground">
             {automation.label}
           </p>
         </div>

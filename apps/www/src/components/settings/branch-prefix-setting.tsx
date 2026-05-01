@@ -38,12 +38,12 @@ export function BranchPrefixSetting({
         <Input
           value={prefix}
           onChange={(e) => setPrefix(e.target.value)}
-          className="h-8 w-32"
+          className="w-40"
           placeholder="e.g. terragon/"
         />
         {isDirty && (
           <Button size="sm" onClick={handleSave} disabled={isSaving}>
-            Save
+            {isSaving ? "Saving..." : "Save"}
           </Button>
         )}
       </div>

@@ -523,7 +523,7 @@ export function AutomationEditorDialogContent({
                       hideSubmitButton={true}
                       clearContentOnSubmit={false}
                       borderClassName={cn({
-                        "border-destructive": form.formState.errors.action,
+                        "border-error": form.formState.errors.action,
                       })}
                       onUpdate={async ({ userMessage }) => {
                         form.setValue("action.config.message", userMessage);
@@ -574,8 +574,13 @@ export function AutomationEditorDialogContent({
               )}
             />
           </div>
-          <DialogFooter className="px-4 pt-4 border-t border-border">
-            <Button type="submit">{ctaLabel}</Button>
+          <DialogFooter className="px-4 pt-4 border-t border-hairline-strong">
+            <Button
+              type="submit"
+              className="rounded-full active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-coral/50"
+            >
+              {ctaLabel}
+            </Button>
           </DialogFooter>
         </form>
       </Form>

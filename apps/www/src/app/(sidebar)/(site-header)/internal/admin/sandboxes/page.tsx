@@ -33,11 +33,13 @@ export default async function AdminSandboxesPage() {
   if (typeof count !== "number") {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">Active Sandboxes</h1>
+        <h1 className="text-xl font-semibold tracking-tight">
+          Active Sandboxes
+        </h1>
         <Card>
           <CardContent className="py-8">
-            <p className="text-center text-red-600">
-              Failed to fetch sandbox data. Please check your E2B API key
+            <p className="text-center text-sm text-error">
+              Failed to fetch sandbox data. Check your E2B API key
               configuration.
             </p>
           </CardContent>

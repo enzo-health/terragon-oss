@@ -66,13 +66,13 @@ function LinearWorkspacePanel({
 
   if (!installation) {
     return (
-      <div className="flex flex-col gap-2 rounded-lg border p-4">
+      <div className="flex flex-col gap-3 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
         <div className="flex items-center gap-2">
           <SquareKanban className="h-5 w-5" />
           <span className="font-semibold">Workspace Agent</span>
           <ConnectionStatusPill connected={false} />
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-mid">
           Install the Linear Agent in your workspace to allow Terragon to
           respond to mentions and create tasks automatically.
         </p>
@@ -96,7 +96,7 @@ function LinearWorkspacePanel({
 
   return (
     <>
-      <div className="flex flex-col gap-3 rounded-lg border p-4">
+      <div className="flex flex-col gap-3 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
         <div className="flex items-start justify-between">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
@@ -106,16 +106,16 @@ function LinearWorkspacePanel({
               </span>
               <ConnectionStatusPill connected={isActive} />
               {!isActive && (
-                <span className="text-xs text-destructive font-medium">
-                  Reinstall required
+                <span className="rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
+                  Reauth needed
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-mid">
               Organization ID: {installation.organizationId}
             </p>
             {installation.createdAt && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-mid">
                 Installed:{" "}
                 {new Date(installation.createdAt).toLocaleDateString()}
               </p>
@@ -125,7 +125,7 @@ function LinearWorkspacePanel({
 
         {!isActive && (
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-mid">
               The agent token has expired or been revoked. Reinstall to restore
               functionality.
             </p>
@@ -142,7 +142,7 @@ function LinearWorkspacePanel({
           </div>
         )}
 
-        <div className="border-t pt-3">
+        <div className="border-t border-hairline-strong pt-3">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -151,7 +151,7 @@ function LinearWorkspacePanel({
                   disabled={uninstallMutation.isPending}
                   size="sm"
                   variant="link"
-                  className="text-muted-foreground font-normal underline px-0 opacity-50 hover:opacity-100"
+                  className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
                 >
                   Uninstall workspace
                 </Button>
@@ -205,7 +205,7 @@ function LinearAccountItem({
   });
 
   return (
-    <div className="space-y-4 rounded-lg border p-4">
+    <div className="space-y-4 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-2 flex-1">
           <div className="flex items-center gap-2">
@@ -213,12 +213,10 @@ function LinearAccountItem({
             <span className="font-semibold">{account.linearUserName}</span>
             <ConnectionStatusPill connected={true} />
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-mid">
             Organization ID: {account.organizationId}
           </p>
-          <p className="text-xs text-muted-foreground">
-            {account.linearUserEmail}
-          </p>
+          <p className="text-xs text-mid">{account.linearUserEmail}</p>
         </div>
       </div>
 
@@ -244,7 +242,7 @@ function LinearAccountItem({
         <div className="space-y-1">
           <Label className="text-sm">Default Model</Label>
           <ModelSelector
-            className="border-solid p-2 text-foreground bg-transparent dark:!bg-muted"
+            className="border-solid p-2 text-foreground bg-raised"
             forcedAgent={null}
             forcedAgentVersion={null}
             isMultiAgentMode={false}
@@ -277,7 +275,7 @@ function LinearAccountItem({
                 disabled={disconnectMutation.isPending}
                 size="sm"
                 variant="link"
-                className="text-muted-foreground font-normal underline px-0 opacity-50 hover:opacity-100"
+                className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
               >
                 {disconnectMutation.isPending
                   ? "Disconnecting..."
@@ -329,7 +327,7 @@ function LinearConnectButton() {
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
+    <div className="flex flex-col gap-3 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
       <p className="text-sm">
         Link your Linear account to identify you when the agent receives
         mentions in your workspace. You will be redirected to Linear to
@@ -368,18 +366,14 @@ export function LinearAccountSettings({
       {/* Per-user account links */}
       {accounts.length > 0 ? (
         <div className="flex flex-col gap-2">
-          <p className="text-sm font-medium text-muted-foreground">
-            Your account link
-          </p>
+          <p className="text-sm font-medium text-mid">Your account link</p>
           {accounts.map((account) => (
             <LinearAccountItem key={account.id} account={account} />
           ))}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="text-sm font-medium text-muted-foreground">
-            Your account link
-          </p>
+          <p className="text-sm font-medium text-mid">Your account link</p>
           <LinearConnectButton />
         </div>
       )}

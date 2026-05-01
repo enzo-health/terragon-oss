@@ -28,7 +28,7 @@ export function AdminAutomationDetail({
   const actionConfig = automation.action.config as any;
 
   return (
-    <div className="flex flex-col justify-start h-full w-full">
+    <div className="flex h-full w-full flex-col justify-start">
       <div className="flex flex-col gap-2">
         <SingleEntityTable
           entity={automation}
@@ -57,10 +57,10 @@ export function AdminAutomationDetail({
           ]}
           getLabel={(key) => {
             const labelMap: Record<string, string> = {
-              repoFullName: "repository",
-              branchName: "branch",
-              triggerConfig: "Trigger Configuration",
-              action: "Action Configuration",
+              repoFullName: "Repository",
+              branchName: "Branch",
+              triggerConfig: "Trigger configuration",
+              action: "Action configuration",
             };
             return labelMap[key] ?? key;
           }}
@@ -85,7 +85,7 @@ export function AdminAutomationDetail({
               }
               return (
                 <div className="space-y-1">
-                  <span className="font-mono text-sm">
+                  <span className="font-mono text-sm tabular-nums">
                     {triggerConfig.cron}
                   </span>
                   <p className="text-sm text-muted-foreground">

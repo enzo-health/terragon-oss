@@ -96,10 +96,15 @@ export function UserRoleSelector({ user }: { user: User }) {
                 setPendingRole(null);
               }}
               disabled={isUpdating}
+              className="rounded-full"
             >
               Cancel
             </Button>
-            <Button onClick={handleConfirm} disabled={isUpdating}>
+            <Button
+              onClick={handleConfirm}
+              disabled={isUpdating}
+              className="rounded-full"
+            >
               {isUpdating ? "Updating..." : "Confirm"}
             </Button>
           </DialogFooter>

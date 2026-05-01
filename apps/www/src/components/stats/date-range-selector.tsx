@@ -2,6 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 
+const RANGES = [
+  { days: 7, label: "Last 7 days" },
+  { days: 30, label: "Last 30 days" },
+] as const;
+
 export function DateRangeSelector({
   numDays,
   onNumDaysChange,
@@ -9,29 +14,26 @@ export function DateRangeSelector({
   numDays: number;
   onNumDaysChange: (numDays: number) => void;
 }) {
-  const isSevenDays = numDays === 7;
-  const isThirtyDays = numDays === 30;
-
   return (
-    <div className="flex gap-2">
-      <Button
-        variant={isSevenDays ? "default" : "outline"}
-        size="sm"
-        onClick={() => {
-          onNumDaysChange(7);
-        }}
-      >
-        Last 7 days
-      </Button>
-      <Button
-        variant={isThirtyDays ? "default" : "outline"}
-        size="sm"
-        onClick={() => {
-          onNumDaysChange(30);
-        }}
-      >
-        Last 30 days
-      </Button>
+    <div role="radiogroup" aria-label="Date range" className="flex gap-2">
+      {RANGES.map(({ days, label }) => {
+        const isActive = numDays === days;
+        return (
+          <Button
+            key={days}
+            role="radio"
+            aria-checked={isActive}
+            variant={isActive ? "default" : "outline"}
+            size="sm"
+            className="tabular-nums"
+            onClick={() => {
+              onNumDaysChange(days);
+            }}
+          >
+            {label}
+          </Button>
+        );
+      })}
     </div>
   );
 }

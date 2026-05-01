@@ -50,7 +50,7 @@ const topUsersColumns: ColumnDef<TopCreditsUser>[] = [
     accessorKey: "totalCents",
     header: "Total Spend",
     cell: ({ row }) => (
-      <div className="text-sm font-medium">
+      <div className="text-sm font-medium tabular-nums">
         {formatUsdFromCents(row.original.totalCents)}
       </div>
     ),
@@ -80,20 +80,33 @@ const topUsersColumns: ColumnDef<TopCreditsUser>[] = [
     header: "Most Recent Thread",
     cell: ({ row }) => {
       const date = row.getValue("mostRecentThreadDate") as Date | null;
-      return date ? format(date, "MMM d, yyyy h:mm a zzz") : "No threads";
+      return (
+        <div className="tabular-nums">
+          {date ? format(date, "MMM d, yyyy h:mm a zzz") : "No threads"}
+        </div>
+      );
     },
   },
   {
     accessorKey: "numThreads",
     header: "Total Threads (All Time)",
+    cell: ({ row }) => (
+      <div className="tabular-nums">{row.original.numThreads}</div>
+    ),
   },
   {
     accessorKey: "threadsCreatedPastDay",
     header: "Total Threads (Last Day)",
+    cell: ({ row }) => (
+      <div className="tabular-nums">{row.original.threadsCreatedPastDay}</div>
+    ),
   },
   {
     accessorKey: "threadsCreatedPastWeek",
     header: "Total Threads (Last Week)",
+    cell: ({ row }) => (
+      <div className="tabular-nums">{row.original.threadsCreatedPastWeek}</div>
+    ),
   },
 ];
 

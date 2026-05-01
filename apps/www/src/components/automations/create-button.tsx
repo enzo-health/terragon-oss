@@ -40,8 +40,12 @@ export function CreateAutomationButton({
 
   return (
     <>
-      <Button size="sm" className="h-7" onClick={handleClick}>
-        Create Automation
+      <Button
+        size="sm"
+        className="h-7 rounded-full active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-coral/50"
+        onClick={handleClick}
+      >
+        Create automation
       </Button>
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <AutomationEditorDialogContent

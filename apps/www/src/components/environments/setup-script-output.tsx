@@ -51,13 +51,13 @@ export function SetupScriptOutput({
     return null;
   }
   return (
-    <div className="relative border rounded-md bg-black/95 font-mono text-sm overflow-auto max-h-[500px]">
+    <div className="relative rounded-xl bg-surface-dark font-mono text-[13px] leading-[1.5] overflow-auto max-h-[500px] tabular-nums">
       {outputs.length > 0 && (
         <Button
           onClick={handleCopy}
           variant="ghost"
           size="sm"
-          className="sticky top-2 right-2 z-10 h-7 px-2 bg-surface-dark/50 hover:bg-surface-dark/70 text-on-dark-soft hover:text-on-dark float-right mr-2 mt-2"
+          className="sticky top-2 right-2 z-10 h-7 px-2 bg-surface-dark-elevated/60 hover:bg-surface-dark-elevated text-on-dark-soft hover:text-on-dark float-right mr-2 mt-2"
           title="Copy output"
         >
           {copied ? (
@@ -90,7 +90,7 @@ export function SetupScriptOutput({
         ))}
         {isRunning && (
           <div className="text-on-dark-soft">
-            <span className="text-muted-foreground">Running...</span>
+            <span>Running…</span>
           </div>
         )}
 

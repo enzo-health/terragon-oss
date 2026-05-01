@@ -122,7 +122,7 @@ export function GitHubSettings() {
           >
             <div className="space-y-1">
               <ModelSelector
-                className="border-solid p-2 text-foreground !bg-muted"
+                className="border-solid p-2 text-foreground bg-raised"
                 forcedAgent={null}
                 forcedAgentVersion={null}
                 isMultiAgentMode={false}

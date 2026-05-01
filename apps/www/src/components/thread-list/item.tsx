@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { prefetchThreadIntoCollections } from "@/collections/prefetch";
 
 /**
- * Inline name editor — only mounted when the user clicks "Rename".
+ * Inline name editor: only mounted when the user clicks "Rename".
  * This keeps useUpdateThreadNameMutation out of the default render path,
  * avoiding a TanStack Query mutation observer per list item.
  */
@@ -87,7 +87,7 @@ const InlineNameEditor = memo(function InlineNameEditor({
 });
 
 /**
- * Lazy menu trigger — renders just the icon button initially.
+ * Lazy menu trigger: renders just the icon button initially.
  * The full ThreadMenuDropdown (with its 4 mutation hooks) only mounts
  * on pointer interaction, saving ~400 mutation observers for a 100-item list.
  */
@@ -152,10 +152,6 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
   );
 });
 
-/**
- * Animated loading indicator for optimistic threads
- * Designed with Linear/Vercel-inspired minimalism
- */
 const CreatingIndicator = memo(function CreatingIndicator() {
   return (
     <span className="inline-flex items-center gap-1.5 text-primary/60">
@@ -340,7 +336,7 @@ export const ThreadListItem = memo(function ThreadListItem({
               )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground/80 min-w-0 font-sans tracking-normal">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80 min-w-0">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}

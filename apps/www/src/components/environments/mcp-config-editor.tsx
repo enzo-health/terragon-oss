@@ -101,15 +101,15 @@ export function McpConfigEditor({
         <Textarea
           value={configText}
           onChange={handleTextChange}
-          placeholder={`Enter your MCP JSON config here...`}
+          placeholder={`Enter your MCP JSON config here…`}
           className={cn(
-            "font-mono text-xs min-h-[200px]",
-            error && "border-destructive",
+            "font-mono text-[13px] leading-[1.5] tabular-nums min-h-[220px] rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50",
+            error && "ring-2 ring-error/40 focus-visible:ring-error/60",
           )}
           disabled={disabled}
         />
         {error && (
-          <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-destructive">
+          <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-error">
             <AlertCircle className="h-3 w-3" />
             <span>{error}</span>
           </div>

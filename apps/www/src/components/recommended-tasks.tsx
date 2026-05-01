@@ -24,10 +24,6 @@ const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
   onTaskSelect: (prompt: string) => void;
 }) {
   return (
-    // Resting affordance: leading sparkle (low-key at rest, coral on
-    // hover), label, trailing arrow that slides in. Two coral signals
-    // on hover — leading + trailing — make the actionability
-    // unmistakable at a glance, even before the cursor moves.
     <button
       onClick={() => onTaskSelect(task.prompt)}
       className="group flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left transition-[background-color,color] duration-150 hover:bg-surface-cream-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]"
@@ -54,9 +50,6 @@ export function RecommendedTasks({
   const tasks = tasksForModel(selectedModel);
 
   return (
-    // Hairline dividers between rows give the list a rhythm without
-    // boxing it into a card. divide-y is more honest than gap-* here:
-    // these are rows in a table, not isolated cards.
     <ul className="flex w-full flex-col divide-y divide-hairline-soft">
       {tasks.map((task) => (
         <li key={task.id}>

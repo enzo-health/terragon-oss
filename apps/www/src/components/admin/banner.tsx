@@ -78,19 +78,19 @@ export function BannerAdmin() {
   }
 
   return (
-    <div className="container mx-auto py-8 max-w-2xl">
+    <div className="container mx-auto max-w-2xl py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Banner Management</CardTitle>
+          <CardTitle>Banner</CardTitle>
           <CardDescription>
-            Configure the top banner that appears across the application
+            Configure the top banner that appears across the application.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="enabled">Enable Banner</Label>
-              <div className="flex items-center space-x-2">
+              <Label htmlFor="enabled">Visibility</Label>
+              <div className="flex items-center gap-2">
                 <Switch
                   id="enabled"
                   checked={formData.enabled}
@@ -98,17 +98,20 @@ export function BannerAdmin() {
                     setFormData({ ...formData, enabled: checked })
                   }
                 />
-                <Label htmlFor="enabled" className="font-normal">
+                <Label
+                  htmlFor="enabled"
+                  className="text-sm font-normal text-muted-foreground"
+                >
                   {formData.enabled ? "Banner is visible" : "Banner is hidden"}
                 </Label>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="message">Banner Message</Label>
+              <Label htmlFor="message">Message</Label>
               <Textarea
                 id="message"
-                placeholder="Enter the banner message..."
+                placeholder="Enter the banner message"
                 value={formData.message}
                 onChange={(e) =>
                   setFormData({ ...formData, message: e.target.value })
@@ -119,7 +122,7 @@ export function BannerAdmin() {
             </div>
 
             <div className="space-y-2">
-              <Label>Banner Variant</Label>
+              <Label>Variant</Label>
               <RadioGroup
                 value={formData.variant}
                 onValueChange={(value) =>
@@ -129,22 +132,22 @@ export function BannerAdmin() {
                   })
                 }
               >
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center gap-2">
                   <RadioGroupItem value="default" id="default" />
                   <Label htmlFor="default" className="font-normal">
-                    Default (Neutral information)
+                    Default (neutral information)
                   </Label>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center gap-2">
                   <RadioGroupItem value="warning" id="warning" />
                   <Label htmlFor="warning" className="font-normal">
-                    Warning (Important updates or potential issues)
+                    Warning (important updates or potential issues)
                   </Label>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center gap-2">
                   <RadioGroupItem value="error" id="error" />
                   <Label htmlFor="error" className="font-normal">
-                    Error (Critical alerts or outages)
+                    Error (critical alerts or outages)
                   </Label>
                 </div>
               </RadioGroup>
@@ -154,12 +157,12 @@ export function BannerAdmin() {
               <div className="space-y-2">
                 <Label>Preview</Label>
                 <div
-                  className={`rounded px-4 py-2 text-center text-sm font-medium ${
+                  className={`rounded-full px-4 py-2 text-center text-sm font-medium ${
                     formData.variant === "default"
-                      ? "bg-muted text-muted-foreground border border-border"
+                      ? "bg-info/10 text-info"
                       : formData.variant === "warning"
-                        ? "bg-warning/10 text-warning border border-warning/30"
-                        : "bg-error/10 text-error border border-error/30"
+                        ? "bg-warning/10 text-warning"
+                        : "bg-error/10 text-error"
                   }`}
                 >
                   {formData.message}
@@ -175,7 +178,7 @@ export function BannerAdmin() {
                 {updateMutation.isPending && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 )}
-                Save Configuration
+                Save configuration
               </Button>
               {bannerConfig && (
                 <Button
@@ -189,7 +192,7 @@ export function BannerAdmin() {
                   {deleteMutation.isPending && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}
-                  Delete Configuration
+                  Delete configuration
                 </Button>
               )}
             </div>

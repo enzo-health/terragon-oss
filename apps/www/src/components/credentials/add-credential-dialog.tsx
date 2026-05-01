@@ -398,12 +398,11 @@ export function AddClaudeCredentialDialog({
                   <p className="text-sm text-muted-foreground">
                     Authorize Claude in the new window, then paste code below:
                   </p>
-                  <input
+                  <Input
                     type="text"
                     placeholder="Paste authentication code"
                     value={authCode}
                     onChange={(e) => setAuthCode(e.target.value.trim())}
-                    className="w-full px-3 py-2 border rounded-md text-sm"
                   />
                 </>
               )}

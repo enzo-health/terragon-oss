@@ -85,9 +85,8 @@ export function CreateEnvironmentButton() {
           setSelectedRepo(null);
           setSearchQuery("");
         }}
-        variant="outline"
+        variant="default"
         size="sm"
-        className="h-7"
       >
         <Plus className="h-4 w-4 mr-1" />
         Create Environment
@@ -105,20 +104,18 @@ export function CreateEnvironmentButton() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Search Input */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-mid pointer-events-none" />
               <Input
                 type="text"
-                placeholder="Search repositories..."
+                placeholder="Search repositories…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
               />
             </div>
 
-            {/* Repository List */}
-            <div className="border rounded-lg overflow-hidden flex flex-col">
+            <div className="rounded-xl border border-hairline overflow-hidden flex flex-col">
               <div
                 className="overflow-y-auto"
                 style={{
@@ -129,26 +126,28 @@ export function CreateEnvironmentButton() {
                 {isLoadingRepos || isLoadingEnvironments ? (
                   <div className="min-h-[56px] flex items-center justify-center p-4">
                     <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">
-                        Loading repositories...
+                      <Loader2 className="h-6 w-6 animate-spin text-mid" />
+                      <span className="text-sm text-mid">
+                        Loading repositories…
                       </span>
                     </div>
                   </div>
                 ) : filteredRepos.length === 0 ? (
                   <div className="min-h-[56px] flex items-center justify-center p-4">
-                    <div className="text-center text-sm text-muted-foreground">
+                    <div className="text-center text-sm text-mid">
                       {searchQuery
-                        ? "No repositories found matching your search."
+                        ? "No repositories match that search."
                         : "No repositories found."}
                     </div>
                   </div>
                 ) : (
-                  <div className="divide-y">
+                  <div className="divide-y divide-hairline">
                     {filteredRepos.map((repo) => {
                       const hasEnvironment = environmentsByRepo.has(
                         repo.full_name,
                       );
+                      const isSelected =
+                        selectedRepo === repo.full_name && !hasEnvironment;
                       return (
                         <button
                           key={repo.full_name}
@@ -160,23 +159,23 @@ export function CreateEnvironmentButton() {
                           disabled={hasEnvironment}
                           className={cn(
                             "w-full px-4 py-3 text-left transition-colors flex items-center gap-3",
-                            hasEnvironment ? "opacity-50" : "hover:bg-accent",
-                            selectedRepo === repo.full_name &&
-                              !hasEnvironment &&
-                              "bg-accent",
+                            hasEnvironment
+                              ? "opacity-50 cursor-not-allowed"
+                              : "hover:bg-sunken",
+                            isSelected && "bg-sunken",
                           )}
                         >
-                          <Github className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <Github className="h-4 w-4 text-mid shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="font-medium text-sm">
+                            <div className="font-mono text-sm text-strong truncate">
                               {repo.full_name}
                             </div>
                           </div>
                           {hasEnvironment ? (
-                            <Check className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-xs text-mid">Configured</span>
                           ) : (
-                            selectedRepo === repo.full_name && (
-                              <Check className="h-3 w-3 text-primary" />
+                            isSelected && (
+                              <Check className="h-4 w-4 text-coral" />
                             )
                           )}
                         </button>
@@ -187,15 +186,14 @@ export function CreateEnvironmentButton() {
               </div>
             </div>
 
-            {/* Repository Access Link */}
-            <div className="text-sm text-muted-foreground py-3">
+            <div className="text-sm text-mid pt-1">
               Don't see one of your repositories?{" "}
               <button
                 type="button"
                 onClick={() => {
                   window.open(getGHAppInstallUrl(), "_blank");
                 }}
-                className="text-muted-foreground hover:text-foreground underline transition-colors inline-flex items-center gap-1"
+                className="text-strong underline underline-offset-2 hover:no-underline transition-colors inline-flex items-center gap-1"
               >
                 Manage repository access
                 <ExternalLink className="h-3 w-3" />
@@ -215,7 +213,7 @@ export function CreateEnvironmentButton() {
                 disabled={!selectedRepo || createEnvironmentMutation.isPending}
               >
                 {createEnvironmentMutation.isPending
-                  ? "Creating..."
+                  ? "Creating…"
                   : "Create Environment"}
               </Button>
             </div>

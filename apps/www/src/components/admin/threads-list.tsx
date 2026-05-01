@@ -78,7 +78,11 @@ const columns: ColumnDef<ThreadWithUser>[] = [
   {
     accessorKey: "thread.githubRepoFullName",
     header: "Repository",
-    cell: ({ row }) => row.original.thread.githubRepoFullName,
+    cell: ({ row }) => (
+      <span className="font-mono text-xs">
+        {row.original.thread.githubRepoFullName}
+      </span>
+    ),
   },
   {
     accessorKey: "thread.agent",
@@ -96,9 +100,11 @@ const columns: ColumnDef<ThreadWithUser>[] = [
   {
     accessorKey: "thread.createdAt",
     header: "Created At",
-    cell: ({ row }) => {
-      return format(row.original.thread.createdAt, "MMM d, yyyy h:mm a zzz");
-    },
+    cell: ({ row }) => (
+      <span className="tabular-nums text-xs">
+        {format(row.original.thread.createdAt, "MMM d, yyyy h:mm a zzz")}
+      </span>
+    ),
   },
   {
     id: "prStatus",
@@ -144,7 +150,7 @@ function AdminThreadsListFilter({ where }: { where: ThreadsListFilter }) {
   }
   return (
     <div className="flex flex-col text-sm gap-1">
-      <span className="font-bold">Showing threads where:</span>
+      <span className="font-semibold">Showing threads where:</span>
       <div className="flex flex-col">
         {keys.map((key) => (
           <span key={key}>
@@ -201,8 +207,9 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
   return (
     <div className="flex flex-col text-sm gap-2">
       <div className="flex flex-col gap-1">
-        <span className="font-bold">
-          Total threads (Past week): {counts.total}
+        <span className="font-semibold">
+          Total threads (Past week):{" "}
+          <span className="tabular-nums">{counts.total}</span>
         </span>
         <div className="rounded-md border w-fit">
           <Table className="w-fit">
@@ -223,7 +230,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedStatusKeys.map((key) => (
-                  <TableCell className="!w-[50px]" key={key}>
+                  <TableCell className="!w-[50px] tabular-nums" key={key}>
                     {counts.byStatus[key]}
                   </TableCell>
                 ))}
@@ -233,7 +240,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
         </div>
       </div>
       <div className="flex flex-col gap-1">
-        <span className="font-bold">By agent (Past week):</span>
+        <span className="font-semibold">By agent (Past week):</span>
         <div className="rounded-md border w-fit">
           <Table className="w-fit">
             <TableHeader>
@@ -253,7 +260,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedAgentKeys.map((key) => (
-                  <TableCell className="!w-[50px]" key={key}>
+                  <TableCell className="!w-[50px] tabular-nums" key={key}>
                     {counts.byAgent[key]}
                   </TableCell>
                 ))}
@@ -265,7 +272,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
       <div className="flex flex-col gap-1">
         <Link
           href="/internal/admin/thread?error=true"
-          className="font-bold underline"
+          className="font-semibold underline"
         >
           Threads with errors (Past week):
         </Link>
@@ -284,7 +291,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
               <TableBody>
                 <TableRow>
                   {sortedErrorMessageKeys.map((key) => (
-                    <TableCell className="!w-[50px]" key={key}>
+                    <TableCell className="!w-[50px] tabular-nums" key={key}>
                       {counts.byErrorMessage[key]}
                     </TableCell>
                   ))}
@@ -297,7 +304,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
         )}
       </div>
       <div className="flex flex-col gap-1">
-        <span className="font-bold">By source (Past week):</span>
+        <span className="font-semibold">By source (Past week):</span>
         <div className="rounded-md border w-fit">
           <Table className="w-fit">
             <TableHeader>
@@ -317,7 +324,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedSourceKeys.map((key) => (
-                  <TableCell className="!w-[50px]" key={key}>
+                  <TableCell className="!w-[50px] tabular-nums" key={key}>
                     {counts.bySource[key]}
                   </TableCell>
                 ))}

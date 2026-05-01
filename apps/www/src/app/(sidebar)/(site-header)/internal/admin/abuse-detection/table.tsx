@@ -14,7 +14,7 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     cell: ({ row }) => (
       <Link
         href={`/internal/admin/user/${row.original.id}`}
-        className="underline hover:text-foreground"
+        className="text-sm text-foreground transition-colors hover:text-coral-active"
       >
         {row.original.name}
       </Link>
@@ -24,7 +24,9 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     accessorKey: "sharedRepoCount",
     header: "Shared Repos",
     cell: ({ row }) => (
-      <div className="text-sm font-medium">{row.original.sharedRepoCount}</div>
+      <div className="text-sm font-medium tabular-nums">
+        {row.original.sharedRepoCount}
+      </div>
     ),
   },
   {
@@ -33,14 +35,14 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     cell: ({ row }) => {
       const sortedRepos = [...row.original.sharedRepos].sort();
       return (
-        <div className="flex flex-col gap-1 text-xs">
+        <div className="flex flex-col gap-1 font-mono text-xs">
           {sortedRepos.map((repo) => (
             <a
               key={repo}
               href={`https://github.com/${repo}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-muted-foreground hover:underline"
+              className="text-muted-foreground transition-colors hover:text-coral-active"
             >
               {repo}
             </a>
@@ -57,13 +59,15 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
   {
     accessorKey: "numThreads",
     header: "Total Threads",
-    cell: ({ row }) => <div className="text-sm">{row.original.numThreads}</div>,
+    cell: ({ row }) => (
+      <div className="text-sm tabular-nums">{row.original.numThreads}</div>
+    ),
   },
   {
     accessorKey: "totalCreditsCents",
     header: "Total Credits Used",
     cell: ({ row }) => (
-      <div className="text-sm">
+      <div className="text-sm tabular-nums">
         {formatUsdFromCents(row.original.totalCreditsCents)}
       </div>
     ),
@@ -72,7 +76,9 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     accessorKey: "threadsCreatedPastWeek",
     header: "Threads (7d)",
     cell: ({ row }) => (
-      <div className="text-sm">{row.original.threadsCreatedPastWeek}</div>
+      <div className="text-sm tabular-nums">
+        {row.original.threadsCreatedPastWeek}
+      </div>
     ),
   },
   {
@@ -80,14 +86,20 @@ const columns: ColumnDef<UserWithSharedRepos>[] = [
     header: "Most Recent Thread",
     cell: ({ row }) => {
       const date = row.original.mostRecentThreadDate;
-      return date ? format(date, "PPP p") : "-";
+      return (
+        <div className="text-sm tabular-nums text-muted-foreground">
+          {date ? format(date, "PPP p") : "-"}
+        </div>
+      );
     },
   },
   {
     accessorKey: "email",
     header: "Email",
     cell: ({ row }) => (
-      <div className="text-sm text-muted-foreground">{row.original.email}</div>
+      <div className="font-mono text-xs text-muted-foreground">
+        {row.original.email}
+      </div>
     ),
   },
 ];

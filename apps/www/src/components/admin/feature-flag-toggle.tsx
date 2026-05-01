@@ -56,17 +56,17 @@ export function UserFeatureFlagToggle({
   };
 
   return (
-    <div className="flex items-center gap-2 font-mono">
+    <div className="flex items-center gap-2 font-mono tabular-nums">
       <Select
         value={value?.toString() ?? "null"}
         onValueChange={handleValueChange}
       >
-        <SelectTrigger className="w-[100px]">
+        <SelectTrigger className="w-[110px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="true">True</SelectItem>
-          <SelectItem value="false">False</SelectItem>
+          <SelectItem value="true">true</SelectItem>
+          <SelectItem value="false">false</SelectItem>
           <SelectItem value="null">null</SelectItem>
         </SelectContent>
       </Select>
@@ -124,23 +124,28 @@ export function GlobalFeatureFlagToggle({
   const getConfirmationMessage = () => {
     if (pendingValue === null) return "";
 
-    const newValue = pendingValue === "true" ? "true" : pendingValue === "false" ? "false" : "null";
+    const newValue =
+      pendingValue === "true"
+        ? "true"
+        : pendingValue === "false"
+          ? "false"
+          : "null";
     return `Are you sure you want to change the global override for "${flagName}" to ${newValue}? This will affect all users who don't have a specific override.`;
   };
 
   return (
     <>
-      <div className="flex items-center gap-2 font-mono">
+      <div className="flex items-center gap-2 font-mono tabular-nums">
         <Select
           value={value?.toString() ?? "null"}
           onValueChange={handleValueChange}
         >
-          <SelectTrigger className="w-[100px] !border-destructive !ring-destructive">
+          <SelectTrigger className="w-[110px] !border-warning/60 !ring-warning/30">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="true">True</SelectItem>
-            <SelectItem value="false">False</SelectItem>
+            <SelectItem value="true">true</SelectItem>
+            <SelectItem value="false">false</SelectItem>
             <SelectItem value="null">null</SelectItem>
           </SelectContent>
         </Select>
@@ -150,7 +155,7 @@ export function GlobalFeatureFlagToggle({
         open={confirmDialogOpen}
         onOpenChange={setConfirmDialogOpen}
         onConfirm={handleConfirm}
-        title="Confirm Global Feature Flag Change"
+        title="Confirm global feature flag change"
         description={getConfirmationMessage()}
         confirmText="Confirm"
         cancelText="Cancel"

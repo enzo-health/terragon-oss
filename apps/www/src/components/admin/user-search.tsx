@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
+import { Search } from "lucide-react";
 import {
   Command,
   CommandDialog,
@@ -67,13 +68,20 @@ export function UserSearch({
 
   return (
     <>
-      <Input
-        placeholder={placeholder}
-        readOnly
-        onFocus={() => {
-          setOpen(true);
-        }}
-      />
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-mid-text"
+          aria-hidden
+        />
+        <Input
+          placeholder={placeholder}
+          readOnly
+          onFocus={() => {
+            setOpen(true);
+          }}
+          className="pl-11"
+        />
+      </div>
       <CommandDialog open={open} onOpenChange={setOpen}>
         <Command shouldFilter={false}>
           <CommandInput

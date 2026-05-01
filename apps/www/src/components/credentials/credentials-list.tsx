@@ -180,7 +180,7 @@ export function CredentialsList() {
   }
   if (allCredentials.length === 0) {
     return (
-      <div className="p-6 text-center border-dashed rounded-md">
+      <div className="p-6 text-center border border-dashed border-border rounded-md">
         <p className="text-sm text-muted-foreground">
           No credentials added yet.
         </p>

@@ -21,14 +21,14 @@ interface UsageChartProps {
 const threadsChartConfig = {
   threads: {
     label: "Threads",
-    color: "var(--chart-3)", // purple-500
+    color: "var(--coral)",
   },
 } satisfies ChartConfig;
 
 const prsChartConfig = {
   prs: {
     label: "PRs",
-    color: "var(--chart-4)", // orange-500
+    color: "var(--info)",
   },
 } satisfies ChartConfig;
 
@@ -36,8 +36,8 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
   const timeZone = useAtomValue(timeZoneAtom);
   if (dailyStats.length === 0) {
     return (
-      <div className="text-center py-12 text-muted-foreground">
-        No data available for visualization.
+      <div className="py-12 text-center text-sm text-muted-foreground">
+        No activity in this range yet.
       </div>
     );
   }
@@ -57,21 +57,24 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
   });
 
   return (
-    <div className="grid gap-8 grid-cols-1 lg:grid-cols-2">
-      {/* Threads Created Chart */}
-      <div className="space-y-6">
-        <div className="flex flex-col gap-1">
-          <h4 className="text-sm font-medium">Tasks Created</h4>
-          <p className="text-sm text-muted-foreground min-h-[2.5rem]">
-            Number of tasks created per day.
+    <div className="grid gap-x-10 gap-y-8 grid-cols-1 lg:grid-cols-2">
+      <section className="space-y-5">
+        <header className="flex flex-col gap-0.5">
+          <h4 className="text-sm font-medium text-foreground">Tasks created</h4>
+          <p className="text-xs text-muted-foreground">
+            Per day, in your timezone.
           </p>
-        </div>
+        </header>
         <ChartContainer
           config={threadsChartConfig}
-          className="h-[200px] w-full"
+          className="h-[200px] w-full [&_.recharts-cartesian-axis-tick_text]:tabular-nums [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground"
         >
           <BarChart data={chartData}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <CartesianGrid
+              vertical={false}
+              strokeDasharray="3 3"
+              stroke="var(--hairline-strong)"
+            />
             <XAxis
               dataKey="date"
               tickLine={false}
@@ -95,19 +98,25 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
             <Bar dataKey="threads" fill="var(--color-threads)" radius={4} />
           </BarChart>
         </ChartContainer>
-      </div>
+      </section>
 
-      {/* PRs Merged Chart */}
-      <div className="space-y-6">
-        <div className="flex flex-col gap-1">
-          <h4 className="text-sm font-medium">PRs Merged</h4>
-          <p className="text-sm text-muted-foreground min-h-[2.5rem]">
-            Number of pull requests merged per day.
+      <section className="space-y-5">
+        <header className="flex flex-col gap-0.5">
+          <h4 className="text-sm font-medium text-foreground">PRs merged</h4>
+          <p className="text-xs text-muted-foreground">
+            Per day, in your timezone.
           </p>
-        </div>
-        <ChartContainer config={prsChartConfig} className="h-[200px] w-full">
+        </header>
+        <ChartContainer
+          config={prsChartConfig}
+          className="h-[200px] w-full [&_.recharts-cartesian-axis-tick_text]:tabular-nums [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground"
+        >
           <BarChart data={chartData}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <CartesianGrid
+              vertical={false}
+              strokeDasharray="3 3"
+              stroke="var(--hairline-strong)"
+            />
             <XAxis
               dataKey="date"
               tickLine={false}
@@ -131,7 +140,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
             <Bar dataKey="prs" fill="var(--color-prs)" radius={4} />
           </BarChart>
         </ChartContainer>
-      </div>
+      </section>
     </div>
   );
 }

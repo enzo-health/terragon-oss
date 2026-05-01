@@ -43,12 +43,13 @@ export function MagicLinkAuth() {
   if (sent) {
     return (
       <div className="w-full text-center">
-        <div className="rounded-full bg-primary/10 p-3 w-fit mx-auto mb-4">
-          <Mail className="size-6 text-primary" />
+        <div className="rounded-full bg-coral/10 p-3 w-fit mx-auto mb-4">
+          <Mail className="size-6 text-coral" />
         </div>
         <h3 className="text-lg font-semibold mb-2">Check your email</h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          We sent a magic link to <strong>{email}</strong>
+        <p className="text-sm text-mid mb-4">
+          We sent a magic link to{" "}
+          <strong className="text-strong">{email}</strong>
         </p>
         <Button
           variant="outline"

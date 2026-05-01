@@ -182,7 +182,7 @@ export function AdminThreadContent({
         <AdminThreadIdInput />
 
         {threadIdOrNull && !threadOrNull && (
-          <p className="font-bold text-destructive">Thread not found</p>
+          <p className="font-semibold text-error">Thread not found</p>
         )}
         {threadOrNull && (
           <Tabs
@@ -198,9 +198,7 @@ export function AdminThreadContent({
             <TabsContent value="details" className="mt-4">
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col gap-2">
-                  <h2 className="text-md font-semibold underline">
-                    Thread Details
-                  </h2>
+                  <h2 className="text-base font-semibold">Thread Details</h2>
                   <SingleEntityTable
                     entity={threadOrNull}
                     rowKeys={[...threadKeys, "childThreads"]}
@@ -229,7 +227,7 @@ export function AdminThreadContent({
                         return (
                           <div className="flex items-center gap-2">
                             <Link
-                              className="underline"
+                              className="underline font-mono text-xs"
                               href={`/internal/admin/sandbox/${threadOrNull.sandboxProvider}/${threadOrNull.codesandboxId}`}
                             >
                               {threadOrNull.codesandboxId}
@@ -266,9 +264,11 @@ export function AdminThreadContent({
                       if (key === "githubRepoFullName") {
                         return (
                           <div className="flex items-center gap-2">
-                            {threadOrNull.githubRepoFullName}
+                            <span className="font-mono text-xs">
+                              {threadOrNull.githubRepoFullName}
+                            </span>
                             <Link
-                              className="underline"
+                              className="underline text-xs text-mid-text"
                               href={`/internal/admin/environment?id=${threadOrNull.id}`}
                             >
                               (Environment)
@@ -311,7 +311,9 @@ export function AdminThreadContent({
                                 key={chat.id}
                                 className="flex items-center gap-2"
                               >
-                                {chat.sessionId}
+                                <span className="font-mono text-xs">
+                                  {chat.sessionId}
+                                </span>
                                 {chat.agent === "claudeCode" &&
                                   chat.sessionId && (
                                     <DownloadJSONLButton
@@ -347,13 +349,13 @@ export function AdminThreadContent({
                                 className="flex items-center gap-2"
                               >
                                 <Link
-                                  className="underline text-sm"
+                                  className="underline font-mono text-xs"
                                   href={`/internal/admin/thread/${child.id}`}
                                 >
                                   {child.id}
                                 </Link>
                                 {child.parentToolId && (
-                                  <span className="text-xs text-muted-foreground">
+                                  <span className="text-xs text-muted-foreground font-mono">
                                     (tool: {child.parentToolId})
                                   </span>
                                 )}
@@ -373,7 +375,7 @@ export function AdminThreadContent({
             <TabsContent value="messages" className="mt-4">
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-md font-semibold">Messages</h2>
+                  <h2 className="text-base font-semibold">Messages</h2>
                 </div>
                 <p className="text-muted-foreground">No messages available</p>
               </div>

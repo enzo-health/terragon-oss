@@ -32,7 +32,7 @@ export function AdminGithubPRContent({
     <div className="flex flex-col justify-start h-full w-full">
       <div className="space-y-6">
         {!prOrNull && (
-          <p className="font-bold text-destructive">GitHub PR not found</p>
+          <p className="font-bold text-[var(--error)]">GitHub PR not found</p>
         )}
         {prOrNull && (
           <div className="flex flex-col gap-2">
@@ -96,7 +96,9 @@ export function AdminGithubPRContent({
                   if (key === "number") {
                     return prOrNull.status ? (
                       <div className="flex items-center gap-2">
-                        <span className="font-mono">#{prOrNull.number}</span>
+                        <span className="font-mono tabular-nums">
+                          #{prOrNull.number}
+                        </span>
                         <PRStatusPill
                           repoFullName={prOrNull.repoFullName}
                           prNumber={prOrNull.number}

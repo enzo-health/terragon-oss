@@ -97,7 +97,7 @@ export function BanUserAction({ user }: BanUserActionProps) {
         <div className="text-sm text-muted-foreground">
           Banned: {user.banReason || "No reason provided"}
           {user.banExpires && (
-            <div className="text-xs">
+            <div className="text-xs tabular-nums">
               Expires: {new Date(user.banExpires).toLocaleString()}
             </div>
           )}
@@ -106,7 +106,7 @@ export function BanUserAction({ user }: BanUserActionProps) {
           variant="outline"
           onClick={handleUnban}
           disabled={isLoading}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 rounded-full"
         >
           <Unlock className="h-4 w-4" />
           {isLoading ? "Unbanning..." : "Unban User"}
@@ -118,7 +118,10 @@ export function BanUserAction({ user }: BanUserActionProps) {
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        <Button variant="destructive" className="flex items-center gap-2">
+        <Button
+          variant="destructive"
+          className="flex items-center gap-2 rounded-full"
+        >
           <Ban className="h-4 w-4" />
           Ban User
         </Button>
@@ -178,6 +181,7 @@ export function BanUserAction({ user }: BanUserActionProps) {
             variant="outline"
             onClick={() => setIsOpen(false)}
             disabled={isLoading}
+            className="rounded-full"
           >
             Cancel
           </Button>
@@ -185,6 +189,7 @@ export function BanUserAction({ user }: BanUserActionProps) {
             variant="destructive"
             onClick={handleBan}
             disabled={isLoading}
+            className="rounded-full"
           >
             {isLoading ? "Banning..." : "Ban User"}
           </Button>

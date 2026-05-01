@@ -6,13 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   topUpUserCredits,
   forceCreditAutoReload,
 } from "@/server-actions/admin/user";
@@ -87,14 +80,16 @@ export function CreditTesterContent() {
   return (
     <div className="space-y-4 max-w-2xl">
       <div>
-        <h1 className="text-2xl font-semibold">Credit Balance Tester</h1>
+        <h1 className="text-xl font-semibold tracking-tight">
+          Credit Balance Tester
+        </h1>
         <p className="text-muted-foreground text-sm">
           Admin tool to view and manipulate your own credit balances using
-          admin_adjustment grants
+          admin_adjustment grants.
         </p>
       </div>
 
-      <div className="space-y-1 rounded-lg border p-4">
+      <div className="space-y-2 rounded-[1.25rem] border border-hairline p-6 bg-card">
         {!balance ? (
           <div className="flex items-center justify-center py-4">
             <Loader2 className="h-6 w-6 animate-spin" />
@@ -105,20 +100,20 @@ export function CreditTesterContent() {
               <span className="text-sm text-muted-foreground">
                 Total Credits
               </span>
-              <span className="font-medium">
+              <span className="font-mono tabular-nums">
                 {formatCents(balance.totalCreditsCents)}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Total Usage</span>
-              <span className="font-medium">
+              <span className="font-mono tabular-nums">
                 {formatCents(balance.totalUsageCents)}
               </span>
             </div>
-            <div className="flex items-center justify-between border-t pt-3">
+            <div className="flex items-center justify-between border-t border-hairline pt-3">
               <span className="font-medium">Balance</span>
               <span
-                className={`text-lg font-semibold ${
+                className={`text-lg font-semibold font-mono tabular-nums ${
                   balance.balanceCents < 0 ? "text-error" : "text-success"
                 }`}
               >
@@ -129,94 +124,91 @@ export function CreditTesterContent() {
         )}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Adjust Credits</CardTitle>
-          <CardDescription>
+      <section className="space-y-4 border-t border-hairline pt-6">
+        <div>
+          <h2 className="text-base font-semibold">Adjust Credits</h2>
+          <p className="text-sm text-muted-foreground">
             Add or remove credits using admin_adjustment grant type (use
-            negative values to deduct)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1">
-            <Label htmlFor="amount">Amount (cents)</Label>
-            <Input
-              id="amount"
-              type="number"
-              placeholder="1000 = $10.00"
-              value={amountCents}
-              onChange={(e) => setAmountCents(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Enter a positive number to add credits, negative to deduct
-            </p>
-          </div>
+            negative values to deduct).
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="amount">Amount (cents)</Label>
+          <Input
+            id="amount"
+            type="number"
+            placeholder="1000 = $10.00"
+            value={amountCents}
+            onChange={(e) => setAmountCents(e.target.value)}
+            className="font-mono tabular-nums"
+          />
+          <p className="text-xs text-muted-foreground">
+            Enter a positive number to add credits, negative to deduct.
+          </p>
+        </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="description">Description (optional)</Label>
-            <Textarea
-              id="description"
-              placeholder="Reason for adjustment..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-            />
-          </div>
+        <div className="space-y-1">
+          <Label htmlFor="description">Description (optional)</Label>
+          <Textarea
+            id="description"
+            placeholder="Reason for adjustment..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+          />
+        </div>
 
-          <Button
-            onClick={handleAdjustCredits}
-            disabled={loading || !amountCents}
-            className="w-full"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              "Adjust Credits"
-            )}
-          </Button>
-        </CardContent>
-      </Card>
+        <Button
+          onClick={handleAdjustCredits}
+          disabled={loading || !amountCents}
+          className="w-full rounded-full"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            "Adjust Credits"
+          )}
+        </Button>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Force Credit Auto Reload</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button
-            onClick={handleTriggerAutoReload}
-            disabled={autoReloadLoading}
-            className="w-full"
-            variant="outline"
-          >
-            {autoReloadLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Triggering...
-              </>
-            ) : (
-              "Trigger Auto Reload"
-            )}
-          </Button>
-        </CardContent>
-      </Card>
+      <section className="space-y-3 border-t border-hairline pt-6">
+        <h2 className="text-base font-semibold">Force Credit Auto Reload</h2>
+        <Button
+          onClick={handleTriggerAutoReload}
+          disabled={autoReloadLoading}
+          className="w-full rounded-full"
+          variant="outline"
+        >
+          {autoReloadLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Triggering...
+            </>
+          ) : (
+            "Trigger Auto Reload"
+          )}
+        </Button>
+      </section>
 
       {error && (
-        <Card className="border-error/30 bg-error/5">
-          <CardContent className="pt-6">
-            <p className="text-sm text-error">{error}</p>
-          </CardContent>
-        </Card>
+        <p
+          role="alert"
+          className="text-sm text-error rounded-xl border border-error/30 bg-error/5 px-4 py-3"
+        >
+          {error}
+        </p>
       )}
 
       {success && (
-        <Card className="border-success/30 bg-success/5">
-          <CardContent className="pt-6">
-            <p className="text-sm text-success">{success}</p>
-          </CardContent>
-        </Card>
+        <p
+          role="status"
+          className="text-sm text-success rounded-xl border border-success/30 bg-success/5 px-4 py-3"
+        >
+          {success}
+        </p>
       )}
     </div>
   );

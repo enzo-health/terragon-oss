@@ -21,7 +21,13 @@ export function CodeClickToCopy({
     }, 2000);
   };
   return (
-    <code className={cn("font-mono font-bold", className)} onClick={handleCopy}>
+    <code
+      className={cn(
+        "bg-raised text-strong inline-flex cursor-pointer items-center rounded-md border border-border px-1.5 py-0.5 font-mono text-[0.8125em] tabular-nums shadow-inset-edge transition-colors hover:bg-sunken",
+        className,
+      )}
+      onClick={handleCopy}
+    >
       {text}
     </code>
   );

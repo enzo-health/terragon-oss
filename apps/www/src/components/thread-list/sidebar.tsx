@@ -23,9 +23,6 @@ export function ThreadListSidebar() {
     setThreadListCollapsed,
   } = useCollapsibleThreadList();
   const pathname = usePathname();
-  // The "+ New Task" link nav-routes to /dashboard. When the user IS on
-  // /dashboard, the link is dead chrome competing with the main canvas's
-  // primary affordance. Hide it on dashboard so the canvas owns "create".
   const isOnDashboard = pathname === "/dashboard";
 
   const [viewFilter, setViewFilter] = useState<"active" | "archived">("active");
@@ -50,8 +47,6 @@ export function ThreadListSidebar() {
           className={cn("px-3 py-2.5 flex items-center gap-2", headerClassName)}
         >
           {isOnDashboard ? (
-            // On dashboard the canvas owns "create"; this row becomes
-            // a panel title instead of a duplicate CTA.
             <span className="flex-1 flex items-center gap-2 px-3 text-caption font-medium text-foreground">
               Your tasks
             </span>
@@ -93,7 +88,6 @@ export function ThreadListSidebar() {
         </div>
       </div>
 
-      {/* Resize handle — 2px visual, wider hit target via padding */}
       <div
         className={cn(
           "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-accent transition-colors z-30",

@@ -26,7 +26,7 @@ export function AdminSlackInstallations({
         return (
           <div>
             <div className="font-medium">{installation.teamName}</div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground font-mono">
               {installation.teamId}
             </div>
           </div>
@@ -40,9 +40,15 @@ export function AdminSlackInstallations({
       cell: ({ row }) => {
         const isActive = row.getValue<boolean>("isActive");
         return (
-          <Badge variant={isActive ? "default" : "secondary"}>
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              isActive
+                ? "bg-[var(--success)]/10 text-[var(--success)]"
+                : "bg-[var(--mid-text,var(--muted-foreground))]/10 text-[var(--mid-text,var(--muted-foreground))]"
+            }`}
+          >
             {isActive ? "Active" : "Inactive"}
-          </Badge>
+          </span>
         );
       },
       size: 100,
@@ -75,7 +81,7 @@ export function AdminSlackInstallations({
       accessorKey: "botUserId",
       header: "Bot User ID",
       cell: ({ row }) => (
-        <code className="text-xs bg-muted px-2 py-1 rounded">
+        <code className="text-xs bg-[var(--code-floor,var(--muted))] text-[var(--on-dark,var(--foreground))] px-2 py-1 rounded-md font-mono">
           {row.getValue("botUserId")}
         </code>
       ),
@@ -94,7 +100,7 @@ export function AdminSlackInstallations({
               </Badge>
             ))}
             {scopes.length > 3 && (
-              <Badge variant="outline" className="text-xs">
+              <Badge variant="outline" className="text-xs tabular-nums">
                 +{scopes.length - 3} more
               </Badge>
             )}

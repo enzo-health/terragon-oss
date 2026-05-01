@@ -86,20 +86,20 @@ const adminCategories: AdminCategory[] = [
 
 export function AdminMain() {
   return (
-    <div className="flex flex-col justify-start h-full w-full">
-      <div className="flex flex-col gap-4 w-full">
+    <div className="flex h-full w-full flex-col justify-start">
+      <div className="flex w-full flex-col gap-6">
         {adminCategories.map((category) => (
-          <div key={category.name} className="flex flex-col gap-1">
-            <h2 className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
-              <category.icon className="h-4 w-4" />
+          <div key={category.name} className="flex flex-col gap-2">
+            <h2 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              <category.icon className="h-3.5 w-3.5" />
               <span>{category.name}</span>
             </h2>
-            <div className="flex flex-col gap-2 pl-6">
+            <div className="flex flex-col pl-6">
               {category.sections.map((section) => (
                 <Link
                   key={section.href}
                   href={section.href}
-                  className="underline"
+                  className="rounded-md px-2 py-1 text-sm text-foreground transition-colors hover:bg-sunken hover:text-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/50"
                 >
                   {section.title}
                 </Link>

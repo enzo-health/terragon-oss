@@ -97,11 +97,11 @@ export function AutomationItem({
           }
         }}
         className={cn(
-          "group flex flex-col border rounded-lg transition-colors py-2",
+          "group flex flex-col rounded-2xl bg-card transition-colors py-3 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)] hover:bg-sunken",
           verbose && "!cursor-default",
         )}
       >
-        <div className="grid grid-cols-[auto_1fr] px-2.5 items-center justify-between gap-x-2">
+        <div className="grid grid-cols-[auto_1fr] px-4 items-center justify-between gap-x-3">
           <div className="contents">
             {getIconForTriggerType(automation.triggerType)}
             <div className="flex items-center justify-between gap-2 min-w-0">
@@ -259,15 +259,22 @@ function AutomationItemContents({
   });
 
   return (
-    <div className="flex flex-col gap-1 text-xs text-muted-foreground pr-2 min-w-0">
+    <div className="flex flex-col gap-1.5 text-xs text-muted-foreground pr-2 min-w-0">
       <div className="flex items-center gap-0.5 truncate min-w-0">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "mr-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full",
+            automation.enabled ? "bg-success" : "bg-neutral",
+          )}
+        />
         <span className="flex-shrink-0">
           {automation.enabled ? "Enabled" : "Disabled"}
         </span>
         {automation.lastRunAt && (
           <>
             <span className="mx-1 flex-shrink-0">·</span>
-            <span className="truncate">
+            <span className="truncate tabular-nums">
               Last run {formatRelativeTime(new Date(automation.lastRunAt))}
             </span>
           </>
@@ -299,7 +306,7 @@ function AutomationItemContents({
           ) : null}
           <AutomationNextRunLabel automation={automation} />
           {isRepoBranchRelevant(automation.triggerType) && (
-            <div className="mt-2">
+            <div className="mt-2 font-mono text-[11px]">
               <span title={automation.repoFullName}>
                 {automation.repoFullName}
               </span>
@@ -308,8 +315,8 @@ function AutomationItemContents({
             </div>
           )}
           {promptText.length > 0 && (
-            <div className="rounded-md bg-muted/50 p-2.5">
-              <pre className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">
+            <div className="mt-2 rounded-xl bg-canvas px-3 py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.05)]">
+              <pre className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap font-sans">
                 {promptText}
               </pre>
             </div>
@@ -336,9 +343,7 @@ function AutomationErrorLabel({
       return (
         <>
           {prefix}
-          <span className="truncate text-destructive">
-            Invalid configuration
-          </span>
+          <span className="truncate text-error">Invalid configuration</span>
         </>
       );
     }
@@ -352,7 +357,7 @@ function AutomationErrorLabel({
       return (
         <>
           {prefix}
-          <span className="truncate text-destructive">Invalid schedule</span>
+          <span className="truncate text-error">Invalid schedule</span>
         </>
       );
     }
@@ -376,7 +381,7 @@ function AutomationNextRunLabel({
   return (
     <>
       {prefix}
-      <span className="truncate">
+      <span className="truncate tabular-nums">
         Next run:{" "}
         {automation.nextRunAt.toLocaleString(undefined, {
           dateStyle: "short",
@@ -462,7 +467,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs"
+            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
             onClick={() => {
               setPrPopoverOpen(true);
             }}
@@ -520,7 +525,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs"
+            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
             onClick={() => {
               setIssuePopoverOpen(true);
             }}

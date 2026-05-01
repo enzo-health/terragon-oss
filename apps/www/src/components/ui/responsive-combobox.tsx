@@ -115,9 +115,9 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
       className={cn(
         "w-fit min-w-0 max-w-[350px] !px-2 justify-between font-normal",
         variant === "ghost" &&
-          "text-muted-foreground/70 hover:text-foreground hover:bg-transparent hover:text-foreground",
-        variant === "outline" && "hover:bg-accent hover:text-accent-foreground",
-        "group disabled:bg-background disabled:opacity-50",
+          "text-mid hover:text-strong hover:bg-transparent",
+        variant === "outline" && "hover:bg-sunken/60 hover:text-strong",
+        "group disabled:bg-canvas disabled:opacity-50",
         className,
       )}
       disabled={disabled}
@@ -277,7 +277,7 @@ function ComboboxContent<T extends ComboboxItem>({
         </CommandGroup>
       </CommandList>
       {actionItems.length > 0 && (
-        <div className="border-t">
+        <div className="border-t border-hairline">
           <CommandGroup>
             {actionItems.map((actionItem) => (
               <CommandItem

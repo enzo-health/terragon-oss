@@ -38,7 +38,7 @@ export function EntityIdInput({
           setValue(e.currentTarget.value);
         }}
       />
-      <Button variant="outline" onClick={handleSubmit}>
+      <Button variant="outline" onClick={handleSubmit} className="rounded-full">
         Submit
       </Button>
     </div>

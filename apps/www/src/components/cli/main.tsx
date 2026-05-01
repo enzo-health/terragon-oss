@@ -58,9 +58,9 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-screen items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <div className="mx-auto relative mb-4 flex w-fit items-center justify-center rounded-full bg-primary/10 p-4">
-              <Terminal className="size-8 text-primary" />
-              <div className="absolute flex items-center justify-center -bottom-2 -right-2 p-1.5 bg-background rounded-full">
+            <div className="mx-auto relative mb-4 flex w-fit items-center justify-center rounded-full bg-coral/10 p-4">
+              <Terminal className="size-8 text-coral" />
+              <div className="absolute flex items-center justify-center -bottom-2 -right-2 p-1.5 bg-canvas rounded-full">
                 <Wordmark showText={false} />
               </div>
             </div>
@@ -89,11 +89,9 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-screen items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin" />
-            <p className="text-center text-lg">
-              Please wait while we authorize the CLI client
-            </p>
-            <p className="mt-2 text-center text-sm text-muted-foreground">
+            <Loader2 className="mb-4 h-8 w-8 animate-spin text-mid" />
+            <p className="text-center text-lg">Authorizing the CLI client</p>
+            <p className="mt-2 text-center text-sm text-mid">
               Connecting to CLI...
             </p>
           </CardContent>
@@ -107,9 +105,9 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-screen items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <div className="mb-4 text-success">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
               <svg
-                className="h-12 w-12"
+                className="h-6 w-6"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -123,9 +121,9 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
               </svg>
             </div>
             <p className="text-center text-lg font-semibold">
-              Successfully authenticated!
+              Successfully authenticated
             </p>
-            <p className="mt-2 text-center text-sm text-muted-foreground">
+            <p className="mt-2 text-center text-sm text-mid">
               You can close this window.
             </p>
           </CardContent>
@@ -140,20 +138,22 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle>
-            Copy the API key below and paste it into your CLI:
+            Copy the API key below and paste it into your CLI
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <div className="rounded-md bg-muted p-4 text-center truncate cursor-pointer">
+            <div className="rounded-xl bg-sunken p-4 text-center truncate cursor-pointer">
               <CodeClickToCopy
                 text={apiKey}
                 className="break-all text-sm truncate"
               />
             </div>
           </div>
-          <div className="text-sm text-muted-foreground">
-            <p className="mb-1 font-semibold">To complete authentication:</p>
+          <div className="text-sm text-mid">
+            <p className="mb-1 font-semibold text-strong">
+              To complete authentication
+            </p>
             <ol className="list-inside list-decimal space-y-1">
               <li>Click the API key above to copy it</li>
               <li>Return to your terminal</li>

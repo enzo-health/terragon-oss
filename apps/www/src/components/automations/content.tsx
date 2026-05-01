@@ -52,7 +52,7 @@ export function AutomationContent({ automationId }: { automationId: string }) {
   }
   return (
     <>
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-6">
         <AutomationItem
           automation={automation}
           onEdit={() => setIsEditDialogOpen(true)}
