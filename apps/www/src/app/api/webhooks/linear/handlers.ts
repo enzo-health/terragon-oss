@@ -90,6 +90,11 @@ interface AppUserNotificationPayload {
   };
 }
 
+// Window in which a `prompted` event arriving on a brand-new thread is
+// treated as the redundant pair of its `created` event rather than a real
+// follow-up. See handleAgentSessionPrompted for the full guard.
+const FRESH_THREAD_DEDUP_WINDOW_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -715,10 +720,9 @@ async function handleAgentSessionPrompted(
 
   // Linear pairs every `created` event with a redundant `prompted` event
   // carrying the same content in a different format. Skip the prompted side
-  // when the thread is fresh (≤30s) and still on its first user message with
-  // no agent output. A real fast follow-up needs the agent to have produced
-  // something to respond to, so the message-count + agent-activity guards
-  // carry the dedupe correctness; the time bound is just defense in depth.
+  // when the thread is fresh and still on its first user message with no
+  // agent output. The message-count + agent-activity guards carry dedup
+  // correctness; the time bound is defense in depth.
   const createdAt =
     thread.createdAt instanceof Date
       ? thread.createdAt
@@ -734,7 +738,11 @@ async function handleAgentSessionPrompted(
     (msg) => msg.type === "user",
   ).length;
   const hasAgentActivity = transcript.some((msg) => msg.type !== "user");
-  if (ageMs < 30_000 && userMessageCount <= 1 && !hasAgentActivity) {
+  if (
+    ageMs < FRESH_THREAD_DEDUP_WINDOW_MS &&
+    userMessageCount <= 1 &&
+    !hasAgentActivity
+  ) {
     console.log(
       "[linear webhook] Prompted event paired with create, skipping duplicate",
       {
