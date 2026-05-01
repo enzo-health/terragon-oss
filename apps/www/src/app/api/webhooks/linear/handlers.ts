@@ -1,4 +1,8 @@
-import { LinearClient, type RepositorySuggestionsPayload } from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
+import {
+  LinearClient,
+  AgentActivitySignal,
+  type RepositorySuggestionsPayload,
+} from "@linear/sdk"; // Used in inline factory for issueRepositorySuggestions
 import { env } from "@terragon/env/apps-www";
 import { publicAppUrl } from "@terragon/env/next-public";
 import type { LinearMentionSourceMetadataInsert } from "@terragon/shared/db/types";
@@ -29,6 +33,7 @@ import {
 } from "@/server-lib/linear-agent-activity";
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
+import { stopThread } from "@/server-lib/stop-thread";
 
 // ---------------------------------------------------------------------------
 // Webhook payload types (mirrors @linear/sdk AgentSessionEventWebhookPayload)
@@ -67,6 +72,7 @@ interface AgentSessionPromptedPayload {
       body?: string;
     };
     signal?: string | null;
+    signalMetadata?: Record<string, unknown> | null;
   } | null;
 }
 
@@ -82,12 +88,30 @@ type AgentSessionEventPayload =
 
 interface AppUserNotificationPayload {
   type: "AppUserNotification";
+  action?: string;
+  createdAt?: string;
   organizationId: string;
   notification?: {
     type?: string;
     user?: { id?: string };
-    issue?: { id?: string };
+    issue?: { id?: string; identifier?: string; team?: { id?: string } };
   };
+}
+
+interface PermissionChangePayload {
+  type: "PermissionChange";
+  action: "teamAccessChanged";
+  createdAt: string;
+  organizationId: string;
+  canAccessAllPublicTeams: boolean;
+  addedTeamIds: string[];
+  removedTeamIds: string[];
+}
+
+interface OAuthAppRevokedPayload {
+  type: "OAuthApp";
+  action: "revoked";
+  organizationId: string;
 }
 
 // Window in which a `prompted` event arriving on a brand-new thread is
@@ -195,6 +219,111 @@ async function emitErrorActivityBestEffort({
       }
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Issue lifecycle helpers (best practices from Linear Agent Interaction docs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Transition the issue to the first "started" workflow state when the agent
+ * begins work. Per Linear best practices: "If your agent is delegated to work
+ * on an issue that is not in a started/completed/canceled status type, move
+ * the issue to the first status in started."
+ *
+ * Best-effort — errors are logged but never block thread creation.
+ */
+async function transitionIssueToStarted({
+  accessToken,
+  issueId,
+  createClient = (t: string) => new LinearClient({ accessToken: t }),
+}: {
+  accessToken: string;
+  issueId: string;
+  createClient?: LinearClientFactory;
+}): Promise<void> {
+  try {
+    const client = createClient(accessToken);
+    const issue = await client.issue(issueId);
+    if (!issue) return;
+
+    const team = await issue.team;
+    if (!team) return;
+
+    const states = await team.states({
+      filter: { type: { eq: "started" } },
+    });
+    const startedStates = states.nodes;
+    if (startedStates.length === 0) return;
+
+    // Pick the one with lowest position (first "started" column)
+    const firstStarted = startedStates.reduce((a, b) =>
+      (b.position ?? Infinity) < (a.position ?? Infinity) ? b : a,
+    );
+
+    // Only transition if the current state is not already started/completed/canceled
+    const currentState = await issue.state;
+    if (!currentState) return;
+    const currentType = currentState.type as string;
+    if (
+      currentType === "started" ||
+      currentType === "completed" ||
+      currentType === "canceled"
+    ) {
+      return;
+    }
+
+    await client.updateIssue(issueId, { stateId: firstStarted.id });
+    console.log("[linear webhook] Transitioned issue to started state", {
+      issueId,
+      stateName: firstStarted.name,
+    });
+  } catch (error) {
+    console.warn("[linear webhook] Failed to transition issue to started", {
+      issueId,
+      error,
+    });
+  }
+}
+
+/**
+ * Set the agent as the delegate on the issue. Per Linear best practices:
+ * "If your agent is working on implementation and no Issue.delegate is currently
+ * set, it should set itself as the delegate."
+ *
+ * Best-effort — errors are logged but never block thread creation.
+ */
+async function setAgentAsDelegate({
+  accessToken,
+  issueId,
+  createClient = (t: string) => new LinearClient({ accessToken: t }),
+}: {
+  accessToken: string;
+  issueId: string;
+  createClient?: LinearClientFactory;
+}): Promise<void> {
+  try {
+    const client = createClient(accessToken);
+    const issue = await client.issue(issueId);
+    if (!issue) return;
+
+    // Only set delegate if none is currently assigned
+    const currentDelegate = await issue.delegate;
+    if (currentDelegate) return;
+
+    // The app user ID is available via the viewer query
+    const viewer = await client.viewer;
+    await client.updateIssue(issueId, { delegateId: viewer.id });
+    console.log("[linear webhook] Set agent as delegate on issue", {
+      issueId,
+      delegateId: viewer.id,
+    });
+  } catch (error) {
+    console.warn("[linear webhook] Failed to set agent as delegate", {
+      issueId,
+      error,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +469,7 @@ async function handleAgentSessionCreated(
         type: "thought",
         body: "Starting work on this issue...",
       },
+      ephemeral: true,
       createClient: opts?.createClient,
     }).then(() => {
       if (!done) {
@@ -519,8 +649,11 @@ async function createThreadRecord({
     }
   }
 
-  // issueRepositorySuggestions — pick highest confidence
+  // issueRepositorySuggestions — pick highest confidence, or emit select signal
+  // when multiple candidates exist but no clear winner
   let githubRepoFullName: string | null = null;
+  let shouldEmitSelectSignal = false;
+  let selectOptions: Array<{ label: string; value: string }> = [];
   if (candidateRepoNames.size > 0) {
     try {
       const candidateRepositories = [...candidateRepoNames].map(
@@ -544,7 +677,20 @@ async function createThreadRecord({
         const best = suggestions.reduce((a, b) =>
           b.confidence > a.confidence ? b : a,
         );
-        githubRepoFullName = best.repositoryFullName;
+        // If top suggestion has high confidence, use it directly
+        if (best.confidence >= 0.7) {
+          githubRepoFullName = best.repositoryFullName;
+        } else if (suggestions.length > 1 && !defaultRepo) {
+          // No default repo and low confidence — ask user via select signal
+          shouldEmitSelectSignal = true;
+          selectOptions = suggestions.map((s) => ({
+            label: s.repositoryFullName,
+            value: s.repositoryFullName,
+          }));
+        } else {
+          // Low confidence but have a default — use default as fallback
+          githubRepoFullName = best.repositoryFullName;
+        }
       }
     } catch (err) {
       console.warn(
@@ -563,9 +709,45 @@ async function createThreadRecord({
   }
 
   if (!githubRepoFullName) {
-    console.error("[linear webhook] No GitHub repo for user, skipping", {
-      userId,
+    if (shouldEmitSelectSignal && selectOptions.length > 0) {
+      // Multiple repos with low confidence — ask user to pick
+      await emitAgentActivity({
+        agentSessionId,
+        accessToken,
+        content: {
+          type: "elicitation",
+          body: "Which repository should I work on for this issue?",
+        },
+        signal: AgentActivitySignal.Select,
+        signalMetadata: { options: selectOptions },
+        createClient: opts?.createClient,
+      });
+      console.log("[linear webhook] Emitted select signal for repo choice", {
+        agentSessionId,
+        optionCount: selectOptions.length,
+      });
+      // Do NOT mark the delivery as completed — the session is awaiting input,
+      // and when the user responds via a prompted event, the handler will need
+      // to create a thread. Leaving deliveryId un-completed allows Linear retries
+      // if the session times out without a response.
+      return;
+    }
+    // No repos at all and no default — emit elicitation asking user to configure
+    await emitAgentActivity({
+      agentSessionId,
+      accessToken,
+      content: {
+        type: "elicitation",
+        body: "I couldn't determine which repository to work on. Please configure a default repository in your Terragon Linear settings and try again.",
+      },
+      createClient: opts?.createClient,
     });
+    console.error(
+      "[linear webhook] No GitHub repo for user, emitted elicitation",
+      {
+        userId,
+      },
+    );
     return;
   }
 
@@ -635,6 +817,22 @@ async function createThreadRecord({
     createClient: opts?.createClient,
   });
 
+  // Best-effort: transition issue to "started" status and set agent as delegate.
+  // These follow Linear's Agent Interaction best practices. Errors are logged
+  // but never block the already-successful thread creation path.
+  await Promise.all([
+    transitionIssueToStarted({
+      accessToken,
+      issueId,
+      createClient: opts?.createClient,
+    }),
+    setAgentAsDelegate({
+      accessToken,
+      issueId,
+      createClient: opts?.createClient,
+    }),
+  ]);
+
   // Mark delivery as completed — retries will now skip via completedAt IS NOT NULL.
   if (deliveryId) {
     await completeLinearWebhookDelivery({
@@ -651,6 +849,54 @@ async function handleAgentSessionPrompted(
 ): Promise<void> {
   const { organizationId } = payload;
   const agentSessionId = payload.agentSession.id;
+
+  // Handle the stop signal — user clicked "Stop" in Linear
+  if (payload.agentActivity?.signal === AgentActivitySignal.Stop) {
+    // Look up thread by agentSessionId
+    const thread = await getThreadByLinearAgentSessionId({
+      db,
+      agentSessionId,
+      organizationId,
+    });
+    if (thread) {
+      console.log("[linear webhook] Stop signal received, stopping thread", {
+        agentSessionId,
+        threadId: thread.id,
+      });
+
+      // Fetch full thread to resolve the active threadChat
+      const threadFull = await getThread({
+        db,
+        threadId: thread.id,
+        userId: thread.userId,
+      });
+      if (threadFull) {
+        try {
+          const primaryChat = getPrimaryThreadChat(threadFull);
+          await stopThread({
+            userId: thread.userId,
+            threadId: thread.id,
+            threadChatId: primaryChat.id,
+          });
+        } catch (err) {
+          console.error(
+            "[linear webhook] Failed to stop thread for stop signal",
+            {
+              agentSessionId,
+              threadId: thread.id,
+              err,
+            },
+          );
+        }
+      }
+    } else {
+      console.warn(
+        "[linear webhook] Stop signal: no thread found for agentSessionId",
+        { agentSessionId },
+      );
+    }
+    return;
+  }
 
   // Look up thread by agentSessionId
   const thread = await getThreadByLinearAgentSessionId({
@@ -781,7 +1027,7 @@ async function handleAgentSessionPrompted(
 
 /**
  * Handle AppUserNotification webhooks.
- * These are logged only — no thread creation (they lack agentSessionId).
+ * Processes notification types that are relevant to the agent lifecycle.
  */
 export async function handleAppUserNotification(
   payload: AppUserNotificationPayload,
@@ -789,11 +1035,97 @@ export async function handleAppUserNotification(
   const { organizationId } = payload;
   const notificationType = payload.notification?.type ?? "unknown";
   const linearUserId = payload.notification?.user?.id;
+  const issueId = payload.notification?.issue?.id;
 
   console.log("[linear] AppUserNotification", {
     organizationId,
     notificationType,
     userId: linearUserId,
+    issueId,
   });
-  // Log only — do NOT create threads (AppUserNotification lacks agentSessionId)
+
+  // Key notification types the agent should react to:
+  // - issueUnassignedFromYou: agent was removed as delegate — log for visibility
+  // - issueStatusChanged: issue status changed — may indicate user resolved externally
+  // - issueEmojiReaction: user reacted to agent comment — could track satisfaction
+
+  switch (notificationType) {
+    case "issueUnassignedFromYou":
+      console.log(
+        "[linear] Agent was unassigned from issue — user may have resolved externally",
+        { organizationId, issueId },
+      );
+      break;
+    case "issueStatusChanged":
+      console.log("[linear] Issue status changed externally", {
+        organizationId,
+        issueId,
+      });
+      break;
+    default:
+      // Other notification types are logged above — no action needed
+      break;
+  }
+}
+
+/**
+ * Handle PermissionChange webhooks.
+ * Tracks team access changes for the agent workspace installation.
+ */
+export async function handlePermissionChange(
+  payload: PermissionChangePayload,
+): Promise<void> {
+  const { organizationId, addedTeamIds, removedTeamIds } = payload;
+
+  console.log("[linear] PermissionChange", {
+    organizationId,
+    addedTeamIds,
+    removedTeamIds,
+    canAccessAllPublicTeams: payload.canAccessAllPublicTeams,
+  });
+
+  if (removedTeamIds.length > 0) {
+    // Log warning — active threads in removed teams may be affected
+    console.warn(
+      "[linear] Agent lost access to teams — active threads may be impacted",
+      { organizationId, removedTeamIds },
+    );
+  }
+}
+
+/**
+ * Handle OAuthApp revoked webhook.
+ * Deactivates the linearInstallation for the organization.
+ * Uses CAS guard to avoid clobbering a concurrent reinstall.
+ */
+export async function handleOAuthAppRevoked(
+  payload: OAuthAppRevokedPayload,
+): Promise<void> {
+  const { organizationId } = payload;
+
+  console.log("[linear webhook] OAuthApp revoked — deactivating installation", {
+    organizationId,
+  });
+
+  try {
+    const { deactivateLinearInstallation, getLinearInstallationForOrg } =
+      await import("@terragon/shared/model/linear");
+    const installation = await getLinearInstallationForOrg({
+      db,
+      organizationId,
+    });
+    if (!installation) {
+      return;
+    }
+    await deactivateLinearInstallation({
+      db,
+      organizationId,
+      ifAccessTokenEncrypted: installation.accessTokenEncrypted,
+    });
+  } catch (error) {
+    console.error(
+      "[linear webhook] Failed to deactivate installation on OAuthApp revoked",
+      { organizationId, error },
+    );
+  }
 }

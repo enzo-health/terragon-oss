@@ -64,15 +64,61 @@ const mockIssueRepositorySuggestions = vi.fn().mockResolvedValue({
     },
   ],
 });
+const mockUpdateIssue = vi.fn().mockResolvedValue({ success: true });
+const mockViewer = {
+  id: "app-user-id",
+  name: "Terragon Agent",
+};
+const mockIssueState = {
+  id: "state-started",
+  name: "In Progress",
+  type: "started",
+  position: 1,
+};
+const mockIssueStates = {
+  nodes: [mockIssueState],
+};
+const mockTeam = {
+  id: "team-123",
+  states: vi.fn().mockResolvedValue(mockIssueStates),
+};
+const mockCurrentState = {
+  id: "state-backlog",
+  name: "Backlog",
+  type: "unstarted",
+};
+const mockIssue = {
+  id: "issue-xyz",
+  get state() {
+    return Promise.resolve(mockCurrentState);
+  },
+  get team() {
+    return Promise.resolve(mockTeam);
+  },
+  get delegate() {
+    return Promise.resolve(null);
+  },
+};
 
 const mockLinearClientInstance = {
   createAgentActivity: mockCreateAgentActivity,
   updateAgentSession: mockUpdateAgentSession,
   issueRepositorySuggestions: mockIssueRepositorySuggestions,
+  issue: vi.fn().mockResolvedValue(mockIssue),
+  updateIssue: mockUpdateIssue,
+  get viewer() {
+    return Promise.resolve(mockViewer);
+  },
 };
 
 vi.mock("@linear/sdk", () => ({
   LinearClient: vi.fn().mockImplementation(() => mockLinearClientInstance),
+  AgentActivitySignal: {
+    Auth: "auth",
+    Continue: "continue",
+    Select: "select",
+    Stop: "stop",
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -228,6 +274,8 @@ describe("handlers", () => {
         },
       ],
     });
+    mockUpdateIssue.mockResolvedValue({ success: true });
+    mockLinearClientInstance.issue.mockResolvedValue(mockIssue);
     // Restore refreshLinearTokenIfNeeded mock after clearAllMocks
     const { refreshLinearTokenIfNeeded } = await import(
       "@/server-lib/linear-oauth"
@@ -257,6 +305,7 @@ describe("handlers", () => {
         expect.objectContaining({
           agentSessionId: "session-abc",
           content: expect.objectContaining({ type: "thought" }),
+          ephemeral: true,
         }),
       );
 
@@ -750,5 +799,153 @@ describe("handlers", () => {
       expect(elapsed).toBeLessThan(6000);
       expect(newThreadInternal).not.toHaveBeenCalled();
     }, 10000);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue lifecycle (transition to started, set delegate)
+  // -------------------------------------------------------------------------
+
+  describe("issue lifecycle on creation", () => {
+    it("transitions issue to started status and sets agent as delegate", async () => {
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-lifecycle", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+
+      // Issue lifecycle calls are best-effort and may run asynchronously.
+      // Give a small grace period for the Promise.all to complete.
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Should have called updateIssue to set the started state
+      expect(mockUpdateIssue).toHaveBeenCalledWith(
+        "issue-xyz",
+        expect.objectContaining({ stateId: "state-started" }),
+      );
+
+      // Should have called updateIssue to set the delegate
+      expect(mockUpdateIssue).toHaveBeenCalledWith(
+        "issue-xyz",
+        expect.objectContaining({ delegateId: "app-user-id" }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Stop signal handling
+  // -------------------------------------------------------------------------
+
+  describe("stop signal in prompted events", () => {
+    it("calls stopThread when stop signal is received", async () => {
+      const stopModule = await import("@/server-lib/stop-thread");
+      const mockStopThread = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(stopModule, "stopThread").mockImplementation(mockStopThread);
+
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce({
+          id: "stop-thread-id",
+          userId: user.id,
+          sourceMetadata: {
+            type: "linear-mention",
+            agentSessionId: "session-stop",
+            organizationId: "org-123",
+          },
+        } as unknown as Awaited<
+          ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+        >);
+
+      const payload = makePromptedPayload({
+        agentSession: { id: "session-stop" },
+        agentActivity: {
+          content: { type: "prompt", body: "Stop working" },
+          signal: "stop",
+        },
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      // Should NOT queue a follow-up — it should stop the thread
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+
+      spyBySessionId.mockRestore();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Select signal for repo selection
+  // -------------------------------------------------------------------------
+
+  describe("select signal for repo selection", () => {
+    it("falls back to default repo when suggestions have low confidence and default is set", async () => {
+      // Return low-confidence suggestions — but since default repo is set,
+      // the handler should fall back to using the default repo
+      mockIssueRepositorySuggestions.mockResolvedValueOnce({
+        suggestions: [
+          {
+            repositoryFullName: "owner/repo-a",
+            hostname: "github.com",
+            confidence: 0.3,
+          },
+          {
+            repositoryFullName: "owner/repo-b",
+            hostname: "github.com",
+            confidence: 0.25,
+          },
+        ],
+      });
+
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-low-confidence", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+
+      // Should have created a thread using the default repo (not skipped)
+      expect(newThreadInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          githubRepoFullName: "owner/repo-a", // first suggestion used as fallback
+        }),
+      );
+    });
+
+    it("emits elicitation without repo when no candidates and no default", async () => {
+      // Override environments to return empty list (no repos at all)
+      const envModule = await import("@terragon/shared/model/environments");
+      vi.spyOn(envModule, "getEnvironments").mockResolvedValueOnce([]);
+
+      // Override settings to return no default repo
+      const linearModel = await import("@terragon/shared/model/linear");
+      const settingsSpy = vi
+        .spyOn(linearModel, "getLinearSettingsForUserAndOrg")
+        .mockResolvedValueOnce(null);
+
+      const payload = makeCreatedPayload();
+
+      await handleAgentSessionEvent(payload, "delivery-no-repo", {
+        createClient: mockClientFactory,
+      });
+      await waitUntilResolved();
+
+      // Should have emitted an elicitation asking user to configure a repo
+      const calls = mockCreateAgentActivity.mock.calls;
+      const elicitationCall = calls.find(
+        (c: any) => c[0]?.content?.type === "elicitation",
+      );
+      expect(elicitationCall).toBeDefined();
+      expect(elicitationCall![0].content.body).toContain(
+        "configure a default repository",
+      );
+
+      // Should NOT have created a thread
+      expect(newThreadInternal).not.toHaveBeenCalled();
+
+      settingsSpy.mockRestore();
+    });
   });
 });

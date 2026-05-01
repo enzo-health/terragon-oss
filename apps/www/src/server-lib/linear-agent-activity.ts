@@ -3,13 +3,20 @@
  *
  * Uses `LinearClient.createAgentActivity()` from @linear/sdk (typed SDK — no raw GraphQL).
  * Activity content shapes per Linear Agent Interaction docs:
- *   - thought: { type: "thought", body: string }
- *   - action:  { type: "action", action: string, parameter: string, result?: string }
- *   - response: { type: "response", body: string }
- *   - error:   { type: "error", body: string }
+ *   - thought:    { type: "thought", body: string }
+ *   - elicitation: { type: "elicitation", body: string }
+ *   - action:     { type: "action", action: string, parameter: string, result?: string }
+ *   - response:   { type: "response", body: string }
+ *   - error:      { type: "error", body: string }
+ *
+ * Signals (optional metadata on activities):
+ *   - auth:   agent needs user to complete account linking
+ *   - select: agent presents options for user to choose from
+ *
+ * Ephemeral activities: thought/action types can be marked ephemeral (temporary, replaced by next activity).
  */
 
-import { LinearClient } from "@linear/sdk";
+import { LinearClient, AgentActivitySignal } from "@linear/sdk";
 import type { ClaudeMessage } from "@terragon/daemon/shared";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import { db } from "@/lib/db";
@@ -35,9 +42,29 @@ const defaultClientFactory: LinearClientFactory = (accessToken: string) =>
 
 export type AgentActivityContent =
   | { type: "thought"; body: string }
+  | { type: "elicitation"; body: string }
   | { type: "action"; action: string; parameter: string; result?: string }
   | { type: "response"; body: string }
   | { type: "error"; body: string };
+
+/** Signal types that modify how an agent activity should be interpreted. */
+export type AgentActivitySignalType = `${AgentActivitySignal}`;
+
+/** Metadata for the `auth` signal — provides account linking URL. */
+export type AuthSignalMetadata = {
+  url: string;
+  providerName?: string;
+  userId?: string;
+};
+
+/** Metadata for the `select` signal — provides options for user to choose. */
+export type SelectSignalMetadata = {
+  options: Array<{ label: string; value: string }>;
+};
+
+export type AgentActivitySignalMetadata =
+  | AuthSignalMetadata
+  | SelectSignalMetadata;
 
 /**
  * Emit a Linear agent activity for a session.
@@ -47,17 +74,26 @@ export type AgentActivityContent =
  * @param opts.agentSessionId - Linear agent session ID
  * @param opts.accessToken - OAuth access token for the workspace installation
  * @param opts.content - Activity content (typed per Linear API shapes)
+ * @param opts.ephemeral - If true, activity is temporary and replaced by the next one (thought/action only)
+ * @param opts.signal - Optional signal type (auth, select) to modify how the activity is interpreted
+ * @param opts.signalMetadata - Optional metadata for the signal (e.g. URL for auth, options for select)
  * @param opts.createClient - Injectable factory for testability (defaults to real LinearClient)
  */
 export async function emitAgentActivity({
   agentSessionId,
   accessToken,
   content,
+  ephemeral,
+  signal,
+  signalMetadata,
   createClient = defaultClientFactory,
 }: {
   agentSessionId: string;
   accessToken: string;
   content: AgentActivityContent;
+  ephemeral?: boolean;
+  signal?: AgentActivitySignal;
+  signalMetadata?: AgentActivitySignalMetadata;
   createClient?: LinearClientFactory;
 }): Promise<void> {
   try {
@@ -65,15 +101,40 @@ export async function emitAgentActivity({
     await client.createAgentActivity({
       agentSessionId,
       content,
+      ...(ephemeral ? { ephemeral } : {}),
+      ...(signal ? { signal } : {}),
+      ...(signalMetadata ? { signalMetadata } : {}),
     });
   } catch (error) {
     console.error("[linear-agent-activity] Failed to emit activity", {
       agentSessionId,
       contentType: content.type,
+      ephemeral,
+      signal,
       error,
     });
   }
 }
+
+/** Plan step status values per Linear Agent Plans API. */
+export type AgentPlanStepStatus =
+  | "pending"
+  | "inProgress"
+  | "completed"
+  | "canceled";
+
+/** A single step in an agent plan. */
+export type AgentPlanStep = {
+  content: string;
+  status: AgentPlanStepStatus;
+};
+
+/** Narrow local shape for the Agent Session update fields we currently use. */
+type LinearAgentSessionUpdateInput = {
+  externalUrls?: AgentSessionExternalUrlInput[];
+  addedExternalUrls?: AgentSessionExternalUrlInput[];
+  plan?: AgentPlanStep[];
+};
 
 /**
  * Update the Linear agent session with external URLs (e.g. Terragon task URL).
@@ -83,26 +144,44 @@ export async function emitAgentActivity({
  * @param opts.sessionId - Linear agent session ID
  * @param opts.accessToken - OAuth access token for the workspace installation
  * @param opts.externalUrls - Array of { label, url } objects to set on the session
+ * @param opts.addedExternalUrls - Array of { label, url } objects to add (without replacing existing)
+ * @param opts.plan - Full array of plan steps (replaces entire plan)
  * @param opts.createClient - Injectable factory for testability
  */
 export async function updateAgentSession({
   sessionId,
   accessToken,
   externalUrls,
+  addedExternalUrls,
+  plan,
   createClient = defaultClientFactory,
 }: {
   sessionId: string;
   accessToken: string;
-  externalUrls: AgentSessionExternalUrlInput[];
+  externalUrls?: AgentSessionExternalUrlInput[];
+  addedExternalUrls?: AgentSessionExternalUrlInput[];
+  plan?: AgentPlanStep[];
   createClient?: LinearClientFactory;
 }): Promise<void> {
   try {
     const client = createClient(accessToken);
-    await client.updateAgentSession(sessionId, { externalUrls });
+    const updateInput: LinearAgentSessionUpdateInput = {};
+    if (externalUrls) {
+      updateInput.externalUrls = externalUrls;
+    }
+    if (addedExternalUrls) {
+      updateInput.addedExternalUrls = addedExternalUrls;
+    }
+    if (plan) {
+      updateInput.plan = plan;
+    }
+    await client.updateAgentSession(sessionId, updateInput);
   } catch (error) {
     console.error("[linear-agent-activity] Failed to update agent session", {
       sessionId,
       externalUrls,
+      addedExternalUrls,
+      plan,
       error,
     });
   }
@@ -252,6 +331,7 @@ export async function emitLinearActivitiesForDaemonEvent(
       agentSessionId,
       accessToken,
       content: { type: "action", action: "Working", parameter: summary },
+      ephemeral: true,
       createClient,
     });
     return;

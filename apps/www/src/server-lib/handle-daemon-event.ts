@@ -1,5 +1,4 @@
 import { ClaudeMessage } from "@terragon/daemon/shared";
-import { publicAppUrl } from "@terragon/env/next-public";
 import { extendSandboxLife } from "@terragon/sandbox";
 import {
   DBMessage,
@@ -65,6 +64,7 @@ import {
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { compactThreadChat } from "./compact";
 import {
+  type AgentSessionExternalUrlInput,
   emitLinearActivitiesForDaemonEvent,
   updateAgentSession,
 } from "./linear-agent-activity";
@@ -1092,7 +1092,9 @@ async function handleThreadFinish({
     runId,
   });
 
-  // Update Linear agent session externalUrls on completion (fallback if webhook handler missed it).
+  // Update Linear agent session externalUrls on completion.
+  // The Terragon Task URL is already set during thread creation in the webhook handler.
+  // Here we only append the PR URL if one was created during the session.
   if (sourceType === "linear-mention" && sourceMetadata != null) {
     const linearMeta = sourceMetadata as Extract<
       ThreadSourceMetadata,
@@ -1107,12 +1109,24 @@ async function handleThreadFinish({
               db,
             );
             if (tokenResult.status === "ok") {
-              const taskUrl = `${publicAppUrl()}/task/${threadId}`;
-              await updateAgentSession({
-                sessionId: linearMeta.agentSessionId!,
-                accessToken: tokenResult.accessToken,
-                externalUrls: [{ label: "Terragon Task", url: taskUrl }],
+              // Append PR URL if one was created — preserves any existing URLs
+              // already set on the session (task URL, user-added links, etc).
+              const threadData = await getThreadMinimal({
+                db,
+                threadId,
+                userId,
               });
+              if (threadData?.githubPRNumber && threadData.githubRepoFullName) {
+                const prUrl = `https://github.com/${threadData.githubRepoFullName}/pull/${threadData.githubPRNumber}`;
+                const addedExternalUrls: AgentSessionExternalUrlInput[] = [
+                  { label: "Pull Request", url: prUrl },
+                ];
+                await updateAgentSession({
+                  sessionId: linearMeta.agentSessionId!,
+                  accessToken: tokenResult.accessToken,
+                  addedExternalUrls,
+                });
+              }
             }
           } catch (error) {
             console.error(

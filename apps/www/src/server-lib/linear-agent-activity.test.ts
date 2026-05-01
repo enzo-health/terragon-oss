@@ -106,6 +106,7 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
         action: "Working",
         parameter: "Running tests on auth module",
       },
+      ephemeral: true,
     });
   });
 
@@ -156,6 +157,7 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
     expect(mockCreateAgentActivity).toHaveBeenCalledWith({
       agentSessionId: "session-throttle-3",
       content: { type: "action", action: "Working", parameter: "Step 2 done" },
+      ephemeral: true,
     });
   });
 

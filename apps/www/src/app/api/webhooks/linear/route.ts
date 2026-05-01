@@ -2,7 +2,12 @@ import crypto from "crypto";
 import { env } from "@terragon/env/apps-www";
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
-import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
+import {
+  handleAgentSessionEvent,
+  handleAppUserNotification,
+  handleOAuthAppRevoked,
+  handlePermissionChange,
+} from "./handlers";
 import {
   LinearWebhookClient,
   LINEAR_WEBHOOK_SIGNATURE_HEADER,
@@ -171,7 +176,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (payload.type === "AppUserNotification") {
-    // Log only — do NOT create threads (no agentSessionId available)
+    // Inbox notifications — agent was mentioned, unassigned, reacted to, etc.
     waitUntil(
       handleAppUserNotification(
         payload as unknown as Parameters<typeof handleAppUserNotification>[0],
@@ -180,6 +185,30 @@ export async function POST(req: NextRequest) {
           "[linear webhook] Error handling AppUserNotification",
           err,
         );
+      }),
+    );
+    return new Response("ok", { status: 200 });
+  }
+
+  if (payload.type === "PermissionChange") {
+    // Team access gained/lost for the agent
+    waitUntil(
+      handlePermissionChange(
+        payload as unknown as Parameters<typeof handlePermissionChange>[0],
+      ).catch((err) => {
+        console.error("[linear webhook] Error handling PermissionChange", err);
+      }),
+    );
+    return new Response("ok", { status: 200 });
+  }
+
+  if (payload.type === "OAuthApp" && payload.action === "revoked") {
+    // OAuth app was revoked — deactivate the installation
+    waitUntil(
+      handleOAuthAppRevoked(
+        payload as unknown as Parameters<typeof handleOAuthAppRevoked>[0],
+      ).catch((err) => {
+        console.error("[linear webhook] Error handling OAuthApp revoked", err);
       }),
     );
     return new Response("ok", { status: 200 });
