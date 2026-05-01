@@ -1428,8 +1428,7 @@ export async function handleStatusEvent(
     );
 
     const state = event.state?.toLowerCase();
-    const isFailure =
-      state === "failure" || state === "error" || state === "pending";
+    const isFailure = state === "failure" || state === "error";
     if (!isFailure) {
       return;
     }
