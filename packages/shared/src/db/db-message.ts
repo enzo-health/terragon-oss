@@ -50,7 +50,9 @@ export type DBSystemMessage = {
     | "clear-context"
     | "compact-result"
     | "agent-error-retry"
-    | "follow-up-retry-failed";
+    | "follow-up-retry-failed"
+    | "auto-fix-ci-failure"
+    | "auto-respond-changes-requested";
   parts: DBTextPart[];
   timestamp?: string;
   model?: AIModel | null;
