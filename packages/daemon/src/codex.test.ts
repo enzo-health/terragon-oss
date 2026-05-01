@@ -980,6 +980,30 @@ describe("parseCodexLine", () => {
     expect(started).toHaveLength(0);
   });
 
+  test("should suppress collab send_input items with empty prompt", () => {
+    const state = createCodexParserState();
+    const realStart = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_collab_real","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"You are the planner-agent","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const internalStart = parseCodexLine({
+      line: '{"type":"item.started","item":{"id":"item_collab_internal","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"","agents_states":{},"status":"in_progress"}}',
+      runtime: mockRuntime,
+      state,
+    });
+    const internalEnd = parseCodexLine({
+      line: '{"type":"item.completed","item":{"id":"item_collab_internal","type":"collab_tool_call","tool":"send_input","sender_thread_id":"thread_parent","receiver_thread_ids":["thread_child"],"prompt":"","agents_states":{"thread_child":{"status":"completed"}},"status":"completed"}}',
+      runtime: mockRuntime,
+      state,
+    });
+
+    expect(realStart).toHaveLength(1);
+    expect(internalStart).toHaveLength(0);
+    expect(internalEnd).toHaveLength(0);
+    expect(state.suppressedCollabToolCallIds.size).toBe(0);
+  });
+
   test("should nest child tool events under active collab Task", () => {
     const state = createCodexParserState();
     parseCodexLine({

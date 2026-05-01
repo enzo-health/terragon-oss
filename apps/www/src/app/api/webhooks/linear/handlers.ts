@@ -90,6 +90,11 @@ interface AppUserNotificationPayload {
   };
 }
 
+// Window in which a `prompted` event arriving on a brand-new thread is
+// treated as the redundant pair of its `created` event rather than a real
+// follow-up. See handleAgentSessionPrompted for the full guard.
+const FRESH_THREAD_DEDUP_WINDOW_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -701,14 +706,52 @@ async function handleAgentSessionPrompted(
     return;
   }
 
-  let threadChatId: string;
+  let primaryChat: ReturnType<typeof getPrimaryThreadChat>;
   try {
-    threadChatId = getPrimaryThreadChat(threadFull).id;
+    primaryChat = getPrimaryThreadChat(threadFull);
   } catch (err) {
     console.warn("[linear webhook] No thread chat found for thread", {
       threadId: thread.id,
       err,
     });
+    return;
+  }
+  const threadChatId = primaryChat.id;
+
+  // Linear pairs every `created` event with a redundant `prompted` event
+  // carrying the same content in a different format. Skip the prompted side
+  // when the thread is fresh and still on its first user message with no
+  // agent output. The message-count + agent-activity guards carry dedup
+  // correctness; the time bound is defense in depth.
+  const createdAt =
+    thread.createdAt instanceof Date
+      ? thread.createdAt
+      : thread.createdAt
+        ? new Date(thread.createdAt)
+        : null;
+  const ageMs =
+    createdAt !== null
+      ? Date.now() - createdAt.getTime()
+      : Number.POSITIVE_INFINITY;
+  const transcript = primaryChat.messages ?? [];
+  const userMessageCount = transcript.filter(
+    (msg) => msg.type === "user",
+  ).length;
+  const hasAgentActivity = transcript.some((msg) => msg.type !== "user");
+  if (
+    ageMs < FRESH_THREAD_DEDUP_WINDOW_MS &&
+    userMessageCount <= 1 &&
+    !hasAgentActivity
+  ) {
+    console.log(
+      "[linear webhook] Prompted event paired with create, skipping duplicate",
+      {
+        agentSessionId,
+        threadId: thread.id,
+        ageMs,
+        userMessageCount,
+      },
+    );
     return;
   }
 

@@ -188,6 +188,10 @@ vi.mock("@/collections/thread-chat-collection", () => ({
   applyChatPatchToCollection: vi.fn(),
 }));
 
+vi.mock("@/components/chat/use-thread-page-realtime-sync", () => ({
+  useThreadPageRealtimeSync: vi.fn(),
+}));
+
 // Feature flag hook — default off for unknown flags, keep contextUsageChip off.
 vi.mock("@/hooks/use-feature-flag", () => ({
   useFeatureFlag: () => false,

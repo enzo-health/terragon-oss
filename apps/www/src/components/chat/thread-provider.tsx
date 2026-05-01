@@ -25,6 +25,7 @@ import {
 } from "@/queries/thread-queries";
 import { ChatError } from "./chat-error";
 import { LeafLoading } from "./leaf-loading";
+import { useThreadPageRealtimeSync } from "./use-thread-page-realtime-sync";
 
 /**
  * Resolved thread bootstrap data exposed to children of {@link ThreadProvider}.
@@ -119,6 +120,8 @@ export function ThreadProvider({
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
   const threadChat = chatFromCollection ?? chatFromQuery ?? null;
   const isThreadChatLoading = !threadChat && isChatFetching;
+
+  useThreadPageRealtimeSync({ threadId });
 
   // Retry both queries when the user clicks the retry button. We swallow the
   // refetch error because <ChatError/> already surfaces it via `errorInfo`.

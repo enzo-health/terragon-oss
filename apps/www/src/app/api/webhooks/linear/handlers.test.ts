@@ -509,6 +509,81 @@ describe("handlers", () => {
       spyGetPrimary.mockRestore();
     });
 
+    it("skips follow-up when prompted event arrives paired with create (fresh thread, no agent activity)", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const threadUtilsModule = await import(
+        "@terragon/shared/utils/thread-utils"
+      );
+
+      const fakeThread = {
+        id: "fresh-thread-id",
+        userId: user.id,
+        createdAt: new Date(),
+        sourceMetadata: {
+          type: "linear-mention",
+          agentSessionId: "session-fresh",
+          organizationId: "org-123",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const fakeThreadFull = {
+        id: "fresh-thread-id",
+        userId: user.id,
+        threadChats: [
+          {
+            id: "fresh-chat-id",
+            messages: [
+              {
+                type: "user",
+                model: "sonnet",
+                parts: [{ type: "text", text: "initial" }],
+              },
+            ],
+          },
+        ],
+      } as unknown as Awaited<ReturnType<typeof threadsModule.getThread>>;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce(fakeThread);
+      const spyGetThread = vi
+        .spyOn(threadsModule, "getThread")
+        .mockResolvedValueOnce(fakeThreadFull);
+      const spyGetPrimary = vi
+        .spyOn(threadUtilsModule, "getPrimaryThreadChat")
+        .mockReturnValueOnce({
+          id: "fresh-chat-id",
+          messages: [
+            {
+              type: "user",
+              model: "sonnet",
+              parts: [{ type: "text", text: "initial" }],
+            },
+          ],
+        } as unknown as ReturnType<
+          typeof threadUtilsModule.getPrimaryThreadChat
+        >);
+
+      const payload = makePromptedPayload({
+        agentSession: { id: "session-fresh" },
+        agentActivity: {
+          content: { type: "response", body: '<issue identifier="ENG-42"/>' },
+        },
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+
+      spyBySessionId.mockRestore();
+      spyGetThread.mockRestore();
+      spyGetPrimary.mockRestore();
+    });
+
     it("skips follow-up when prompted body is empty or whitespace", async () => {
       const threadsModule = await import("@terragon/shared/model/threads");
 
