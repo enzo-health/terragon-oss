@@ -7,7 +7,7 @@ import {
 import type {
   AgUiHistoryItem,
   AgUiHistoryMessagesResult,
-} from "@/components/chat/ag-ui-history-types";
+} from "@/lib/ag-ui-history-types";
 
 export type ThreadTranscriptEntry = {
   /** Composite key: `${threadId}:${threadChatId}` */
@@ -119,7 +119,8 @@ export function seedTranscript({
 
 /**
  * Synchronous read for use in render-once callbacks (e.g., loadHistoryMessages).
- * Returns undefined if the collection is not ready or has no entry.
+ * Returns undefined if the collection is not ready, has no entry, or the
+ * stored entry is malformed (defensive guard against storage corruption).
  */
 export function getCachedTranscript(
   threadId: string,
@@ -127,10 +128,18 @@ export function getCachedTranscript(
 ): AgUiHistoryMessagesResult | undefined {
   const collection = getThreadTranscriptCollection();
   if (collection.status !== "ready") return undefined;
-  const entry = collection.state.get(transcriptKey(threadId, threadChatId)) as
-    | ThreadTranscriptEntry
-    | undefined;
-  if (!entry) return undefined;
+  const raw = collection.state.get(transcriptKey(threadId, threadChatId));
+  if (!raw) return undefined;
+  // Defensive shape check — collection.state values should always be
+  // ThreadTranscriptEntry but guard against storage-level corruption.
+  const asRecord = raw as unknown as Record<string, unknown>;
+  if (
+    !Array.isArray(asRecord.messages) ||
+    typeof asRecord.lastSeq !== "number"
+  ) {
+    return undefined;
+  }
+  const entry = raw as unknown as ThreadTranscriptEntry;
   return { messages: entry.messages, lastSeq: entry.lastSeq };
 }
 

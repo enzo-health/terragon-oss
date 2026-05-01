@@ -8,7 +8,8 @@ import { getThreadPageChatAction } from "@/server-actions/get-thread-page-chat";
 import { unwrapResult } from "@/lib/server-actions";
 import { getOrCreateQueryClient } from "@/lib/query-client";
 import { threadQueryKeys } from "@/queries/thread-queries";
-import { fetchAgUiHistoryMessages } from "@/components/chat/ag-ui-history-fetch";
+import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
+import type { ThreadPageShell } from "@terragon/shared/db/types";
 
 const inflight = new Set<string>();
 const transcriptInflight = new Set<string>();
@@ -85,11 +86,12 @@ export function prefetchThreadIntoCollections(threadId: string): void {
     // visited this thread before the transcript collection existed, or the
     // prior cache entry was evicted). Kick off transcript prefetch so the
     // next click skips the loading placeholder.
-    const primaryThreadChatId = (
-      existingShell as { primaryThreadChatId?: string }
-    ).primaryThreadChatId;
-    if (primaryThreadChatId) {
-      prefetchThreadTranscript({ threadId, threadChatId: primaryThreadChatId });
+    const shell = existingShell as ThreadPageShell;
+    if (shell.primaryThreadChatId) {
+      prefetchThreadTranscript({
+        threadId,
+        threadChatId: shell.primaryThreadChatId,
+      });
     }
     return;
   }

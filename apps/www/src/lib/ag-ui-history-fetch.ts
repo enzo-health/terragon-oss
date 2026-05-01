@@ -1,8 +1,8 @@
 import { EventType, type Message as AgUiMessage } from "@ag-ui/core";
-import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
 import type {
   AgUiHistoryItem,
   AgUiHistoryMessagesResult,
+  TerragonCustomPartEvent,
 } from "./ag-ui-history-types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -3,7 +3,7 @@
 import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useCallback, useMemo, useState } from "react";
-import type { AgUiHistoryMessagesResult } from "../ag-ui-history-types";
+import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { useTerragonRuntime } from "../assistant-runtime";
 import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {

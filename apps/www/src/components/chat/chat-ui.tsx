@@ -22,7 +22,7 @@ import {
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
-import { fetchAgUiHistoryMessages } from "./ag-ui-history-fetch";
+import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import {
   getCachedTranscript,
   invalidateCachedTranscript,
@@ -280,7 +280,12 @@ function ChatUIContent() {
     //    `fromSeq=cachedLastSeq` and the SSE replay fills in any gap.
     const cached = getCachedTranscript(threadId, threadChatId);
     if (cached) {
-      void fetchAgUiHistoryMessages({ threadId, threadChatId })
+      const controller = new AbortController();
+      void fetchAgUiHistoryMessages({
+        threadId,
+        threadChatId,
+        signal: controller.signal,
+      })
         .then((fresh) =>
           seedTranscript({ threadId, threadChatId, result: fresh }),
         )
@@ -288,8 +293,10 @@ function ChatUIContent() {
           // Background revalidation failure is non-fatal — the runtime is
           // already hydrated. Drop the cached entry so the next visit refetches
           // (avoids serving an entry that may be permanently broken).
-          console.warn("[transcript-cache] revalidation failed", err);
-          invalidateCachedTranscript(threadId, threadChatId);
+          if (!controller.signal.aborted) {
+            console.warn("[transcript-cache] revalidation failed", err);
+            invalidateCachedTranscript(threadId, threadChatId);
+          }
         });
       return cached;
     }
