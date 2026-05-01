@@ -31,9 +31,12 @@ export default async function AdminEnvironmentListPage({
   }
   return (
     <div className="space-y-6">
-      <p className="text-muted-foreground">
-        Enter an environment ID or thread ID to view its details
-      </p>
+      <div className="space-y-2">
+        <h1 className="text-xl font-semibold tracking-tight">Environments</h1>
+        <p className="text-sm text-muted-foreground">
+          Enter an environment ID or thread ID to view its details.
+        </p>
+      </div>
       <AdminEnvironmentIdOrThreadIdInput />
     </div>
   );

@@ -54,10 +54,10 @@ export function KonamiVideo({ startSeconds = 155 }: KonamiVideoProps) {
   const src = `https://www.youtube.com/embed/7ghSziUQnhs?start=${startSeconds}`;
 
   return (
-    <div className="hidden lg:block fixed bottom-4 right-4 z-20 w-[360px] rounded-lg overflow-hidden border border-border bg-background shadow-xl">
+    <div className="hidden lg:block fixed bottom-4 right-4 z-20 w-[360px] rounded-xl overflow-hidden border border-hairline bg-raised shadow-xl">
       <button
         aria-label="Close video"
-        className="absolute right-2 top-2 z-10 h-6 w-6 rounded-full bg-background/80 border border-border hover:bg-background/90 text-foreground/80"
+        className="absolute right-2 top-2 z-10 h-6 w-6 rounded-full bg-raised/80 border border-hairline hover:bg-raised text-strong/80"
         onClick={() => setShow(false)}
       >
         ×

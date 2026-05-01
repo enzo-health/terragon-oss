@@ -125,9 +125,11 @@ export default async function AdminCreditsUsagePage() {
     }),
   );
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Internal Credits Usage</h1>
+        <h1 className="text-xl font-semibold tracking-tight">
+          Internal Credits Usage
+        </h1>
         <p className="text-muted-foreground text-sm">
           Aggregate cost of billable usage covered by Terragon&apos;s internal
           credits across all accounts.
@@ -138,11 +140,11 @@ export default async function AdminCreditsUsagePage() {
       <div>
         <h2 className="text-base font-medium mb-2">All-Time Usage</h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          <div className="border rounded-lg p-3 md:col-span-2 lg:col-span-1">
+          <div className="border border-hairline rounded-xl p-4 md:col-span-2 lg:col-span-1">
             <div className="text-xs text-muted-foreground mb-1">
               Total Credits Spent
             </div>
-            <div className="text-2xl font-semibold">
+            <div className="text-2xl font-semibold tabular-nums">
               {formatUsdFromCents(totalSpentCents)}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -150,7 +152,7 @@ export default async function AdminCreditsUsagePage() {
             </div>
           </div>
 
-          <div className="border rounded-lg p-3 md:col-span-2 lg:col-span-2">
+          <div className="border border-hairline rounded-xl p-4 md:col-span-2 lg:col-span-2">
             <div className="text-xs text-muted-foreground mb-2">
               Provider Breakdown
             </div>
@@ -176,11 +178,11 @@ export default async function AdminCreditsUsagePage() {
                         <div className="text-sm font-medium">
                           {provider.label}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-muted-foreground tabular-nums">
                           {percentage}% of total spend
                         </div>
                       </div>
-                      <div className="text-sm font-medium">
+                      <div className="text-sm font-medium tabular-nums">
                         {formatUsdFromCents(provider.cents)}
                       </div>
                     </div>
@@ -196,11 +198,11 @@ export default async function AdminCreditsUsagePage() {
       <div>
         <h2 className="text-base font-medium mb-2">Past 7 Days Usage</h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          <div className="border rounded-lg p-3 md:col-span-2 lg:col-span-1">
+          <div className="border border-hairline rounded-xl p-4 md:col-span-2 lg:col-span-1">
             <div className="text-xs text-muted-foreground mb-1">
               Total Credits Spent
             </div>
-            <div className="text-2xl font-semibold">
+            <div className="text-2xl font-semibold tabular-nums">
               {formatUsdFromCents(last7DaysSpentCents)}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -208,7 +210,7 @@ export default async function AdminCreditsUsagePage() {
             </div>
           </div>
 
-          <div className="border rounded-lg p-3 md:col-span-2 lg:col-span-2">
+          <div className="border border-hairline rounded-xl p-4 md:col-span-2 lg:col-span-2">
             <div className="text-xs text-muted-foreground mb-2">
               Provider Breakdown
             </div>
@@ -235,11 +237,11 @@ export default async function AdminCreditsUsagePage() {
                         <div className="text-sm font-medium">
                           {provider.label}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-muted-foreground tabular-nums">
                           {percentage}% of 7-day spend
                         </div>
                       </div>
-                      <div className="text-sm font-medium">
+                      <div className="text-sm font-medium tabular-nums">
                         {formatUsdFromCents(provider.cents)}
                       </div>
                     </div>

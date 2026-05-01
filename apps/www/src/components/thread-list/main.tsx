@@ -189,7 +189,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
   return (
     <h3
       className={cn(
-        "group py-1.5 text-[11px] uppercase tracking-[0.6px] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
+        "group py-1.5 text-[11px] uppercase tracking-[0.06em] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
         "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
@@ -304,8 +304,6 @@ function EmptyThreadList({
     );
   }
   return (
-    // Empty state: icon + label + one-line of guidance. The previous
-    // "No tasks" terse pair didn't tell first-timers what happens next.
     <div className="rounded-lg p-8 flex flex-col items-center justify-center gap-3 text-center">
       {queryFilters.archived ? (
         <ArchiveX className="size-5 text-muted-foreground/60" />
@@ -535,8 +533,8 @@ export const ThreadListContents = memo(function ThreadListContents({
           <EmptyThreadList queryFilters={queryFilters} />
         )}
         {viewFilter === "active" && showSuggestedTasks && (
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-muted-foreground/70 sticky top-9 bg-background z-10 py-1">
+          <div className="space-y-3">
+            <h3 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground sticky top-9 bg-background z-10 py-1">
               Suggested tasks
             </h3>
             <RecommendedTasks

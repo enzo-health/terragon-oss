@@ -73,7 +73,10 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="destructive" className="flex items-center gap-2">
+        <Button
+          variant="destructive"
+          className="flex items-center gap-2 rounded-full"
+        >
           <Trash2 className="h-4 w-4" />
           Delete User
         </Button>
@@ -105,6 +108,7 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
               placeholder="Enter user's email to confirm"
               value={confirmEmail}
               onChange={(e) => setConfirmEmail(e.target.value)}
+              className="font-mono text-sm"
             />
           </div>
         </div>
@@ -113,6 +117,7 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
             variant="outline"
             onClick={() => setIsOpen(false)}
             disabled={isLoading}
+            className="rounded-full"
           >
             Cancel
           </Button>
@@ -120,6 +125,7 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
             variant="destructive"
             onClick={handleDelete}
             disabled={isLoading || confirmEmail !== user.email}
+            className="rounded-full"
           >
             {isLoading ? "Deleting..." : "Delete User"}
           </Button>

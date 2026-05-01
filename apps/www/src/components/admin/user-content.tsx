@@ -410,21 +410,34 @@ export function AdminUserContent({
                   <TableCell className="whitespace-pre-wrap space-y-1">
                     <div>Add platform credits to this user's balance.</div>
                     <div className="text-sm text-muted-foreground">
-                      Current balance: {balanceLabel}. Credits issued:{" "}
-                      {totalCreditsLabel}. Usage billed: {totalUsageLabel}.
+                      Current balance:{" "}
+                      <span className="font-mono tabular-nums">
+                        {balanceLabel}
+                      </span>
+                      . Credits issued:{" "}
+                      <span className="font-mono tabular-nums">
+                        {totalCreditsLabel}
+                      </span>
+                      . Usage billed:{" "}
+                      <span className="font-mono tabular-nums">
+                        {totalUsageLabel}
+                      </span>
+                      .
                     </div>
                   </TableCell>
                   <TableCell className="flex flex-col items-start gap-2">
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center">
-                        <span className="text-sm mr-1">$</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm text-mid-text font-mono">
+                          $
+                        </span>
                         <Input
                           type="number"
                           step="0.01"
                           min="0"
                           value={topUpAmount}
                           onChange={(e) => setTopUpAmount(e.target.value)}
-                          className="w-24"
+                          className="w-24 font-mono tabular-nums"
                           disabled={isTopUpPending}
                         />
                       </div>
@@ -456,6 +469,7 @@ export function AdminUserContent({
                   <TableCell>
                     <Button
                       variant="destructive"
+                      className="rounded-full"
                       onClick={async () => {
                         const result = await resetUserOnboarding(user.id);
                         if (result.success) {

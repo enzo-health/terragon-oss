@@ -110,18 +110,21 @@ export default async function AbuseDetectionPage() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold">Abuse Detection</h1>
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-xl font-semibold tracking-tight">
+          Abuse Detection
+        </h1>
         <p className="text-sm text-muted-foreground">
           Users working on repositories with multiple users in the last 30 days
-          (potential shared-repository abuse)
+          (potential shared-repository abuse).
         </p>
       </div>
 
-      <div className="flex flex-col gap-4">
-        <div className="text-sm text-muted-foreground">
-          Found {finalData.length} users working on shared repositories
+      <div className="flex flex-col gap-3">
+        <div className="text-[0.6875rem] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+          <span className="tabular-nums">{finalData.length}</span>{" "}
+          {finalData.length === 1 ? "user" : "users"} on shared repositories
         </div>
         <AbuseDetectionTable data={finalData} />
       </div>

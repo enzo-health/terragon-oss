@@ -82,18 +82,23 @@ export function SingleEntityTable<T extends Record<string, any>>({
                 displayValue = (
                   <Link
                     href={customRender.href}
-                    className={customRender.className ?? "underline"}
+                    className={
+                      customRender.className ??
+                      "text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
+                    }
                   >
                     {customRender.label}
                   </Link>
                 );
               } else if (isDateResult(customRender)) {
-                displayValue = customRender.value.toLocaleString();
+                displayValue = (
+                  <span className="tabular-nums">
+                    {customRender.value.toLocaleString()}
+                  </span>
+                );
               } else if (isJsonResult(customRender)) {
                 displayValue = (
-                  <pre
-                    className={`bg-muted p-2 rounded-lg overflow-x-auto text-xs`}
-                  >
+                  <pre className="overflow-x-auto rounded-xl border border-border bg-canvas p-3 font-mono text-xs leading-relaxed">
                     {JSON.stringify(customRender.value, null, 2)}
                   </pre>
                 );
@@ -106,23 +111,31 @@ export function SingleEntityTable<T extends Record<string, any>>({
               const value = entity[key as keyof T];
               if (value === null) {
                 displayValue = (
-                  <span className="text-muted-foreground">null</span>
+                  <span className="font-mono text-muted-foreground">null</span>
                 );
               } else if (value === undefined) {
                 displayValue = (
-                  <span className="text-muted-foreground">undefined</span>
+                  <span className="font-mono text-muted-foreground">
+                    undefined
+                  </span>
                 );
               } else if (
                 Object.prototype.toString.call(value) === "[object Date]"
               ) {
-                displayValue = format(value as Date, "PPP p");
+                displayValue = (
+                  <span className="tabular-nums">
+                    {format(value as Date, "PPP p")}
+                  </span>
+                );
               } else if (typeof value === "boolean") {
                 displayValue = (
-                  <span className="font-mono">{JSON.stringify(value)}</span>
+                  <span className="font-mono tabular-nums">
+                    {JSON.stringify(value)}
+                  </span>
                 );
               } else if (typeof value === "object") {
                 displayValue = (
-                  <pre className="bg-muted p-2 rounded text-xs max-w-xl overflow-auto">
+                  <pre className="max-w-xl overflow-auto rounded-xl border border-border bg-canvas p-3 font-mono text-xs leading-relaxed">
                     {JSON.stringify(value, null, 2)}
                   </pre>
                 );
@@ -133,8 +146,12 @@ export function SingleEntityTable<T extends Record<string, any>>({
 
             return (
               <TableRow key={keyString}>
-                <TableCell className="font-medium">{label}</TableCell>
-                <TableCell>{displayValue}</TableCell>
+                <TableCell className="w-48 align-top text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                  {label}
+                </TableCell>
+                <TableCell className="align-top text-foreground">
+                  {displayValue}
+                </TableCell>
               </TableRow>
             );
           })}

@@ -34,14 +34,12 @@ export function AdminEnvironmentContent({
         />
 
         {environmentIdOrNull && !environmentOrNull && (
-          <p className="font-bold text-destructive">Environment not found</p>
+          <p className="font-semibold text-error">Environment not found</p>
         )}
         {environmentOrNull && (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <h2 className="text-md font-semibold underline">
-                Environment Details
-              </h2>
+              <h2 className="text-base font-semibold">Environment Details</h2>
               <SingleEntityTable
                 entity={environmentOrNull}
                 rowKeys={[
@@ -85,11 +83,13 @@ export function AdminEnvironmentContent({
                         {environmentOrNull.environmentVariables.map(
                           (envVar, idx) => (
                             <div key={idx} className="flex items-center gap-2">
-                              <span className="font-mono text-sm">
+                              <span className="font-mono text-xs">
                                 {envVar.key}
                               </span>
-                              <span className="font-mono text-sm"> = </span>
-                              <span className="text-muted-foreground">
+                              <span className="font-mono text-xs text-mid-text">
+                                =
+                              </span>
+                              <span className="font-mono text-xs text-mid-text">
                                 [ENCRYPTED]
                               </span>
                             </div>
@@ -140,18 +140,19 @@ function AdminEnvironmentDangerZone({
   const [isDeleting, setIsDeleting] = useState(false);
 
   return (
-    <div className="mt-4 border border-destructive/30 rounded-md p-4 bg-destructive/5">
-      <h3 className="text-sm font-semibold text-destructive">Danger Zone</h3>
+    <div className="mt-4 rounded-[1.25rem] p-6 bg-error/5 border border-error/30">
+      <h3 className="text-sm font-semibold text-error">Danger Zone</h3>
       <p className="text-sm text-muted-foreground mt-1">
         This will permanently delete this environment and all associated threads
         for user {environment.user.name} in repo{" "}
-        <span className="font-mono">{environment.repoFullName}</span>. This
-        action cannot be undone.
+        <span className="font-mono text-xs">{environment.repoFullName}</span>.
+        This action cannot be undone.
       </p>
       <div className="mt-3">
         <Button
           variant="destructive"
           disabled={isDeleting}
+          className="rounded-full"
           onClick={async () => {
             const ok = window.confirm(
               `Are you sure you want to DELETE environment ${environment.id} (repo ${environment.repoFullName}) and ALL its threads? This cannot be undone.`,
@@ -174,7 +175,7 @@ function AdminEnvironmentDangerZone({
             }
           }}
         >
-          {isDeleting ? "Deleting…" : "Delete environment and threads"}
+          {isDeleting ? "Deleting..." : "Delete environment and threads"}
         </Button>
       </div>
     </div>

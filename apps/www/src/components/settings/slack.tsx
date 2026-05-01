@@ -56,7 +56,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   const isConnected = !!account.installation;
 
   return (
-    <div className="space-y-4 rounded-lg border p-4">
+    <div className="space-y-4 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-2 flex-1">
           <div className="flex items-center gap-2">
@@ -64,15 +64,13 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
             <span className="font-semibold">{account.slackTeamName}</span>
             <ConnectionStatusPill connected={isConnected} />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Workspace ID: {account.teamId}
-          </p>
+          <p className="text-xs text-mid">Workspace ID: {account.teamId}</p>
         </div>
       </div>
 
       {!isConnected ? (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-mid">
             The Slack app needs to be installed in your workspace to complete
             the setup.
           </p>
@@ -105,7 +103,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
             <div className="space-y-1">
               <Label className="text-sm">Default Model</Label>
               <ModelSelector
-                className="border-solid p-2 text-foreground bg-transparent dark:!bg-muted"
+                className="border-solid p-2 text-foreground bg-raised"
                 forcedAgent={null}
                 forcedAgentVersion={null}
                 isMultiAgentMode={false}
@@ -131,7 +129,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               disabled={isDisconnecting}
               size="sm"
               variant="link"
-              className="text-muted-foreground font-normal underline px-0 opacity-50 hover:opacity-100"
+              className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
             >
               {isDisconnecting ? "Disconnecting..." : "Disconnect"}
             </Button>

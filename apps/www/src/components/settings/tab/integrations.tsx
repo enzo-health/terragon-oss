@@ -44,7 +44,7 @@ export function IntegrationsSettings({
               href="https://docs.terragonlabs.com/docs/integrations/slack-integration"
               target="_blank"
               rel="noopener noreferrer"
-              className="underline hover:no-underline"
+              className="underline underline-offset-2 hover:text-coral hover:no-underline transition-colors"
             >
               Learn more about the Slack integration.
             </Link>
@@ -67,7 +67,7 @@ export function IntegrationsSettings({
                 href="https://docs.terragonlabs.com/docs/integrations/linear-integration"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline hover:no-underline"
+                className="underline underline-offset-2 hover:text-coral hover:no-underline transition-colors"
               >
                 Learn more about the Linear integration.
               </Link>

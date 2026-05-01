@@ -13,12 +13,12 @@ const INTERNAL_TENANT_NOTICE =
 
 export function ShutdownControls() {
   return (
-    <div className="container mx-auto py-8 max-w-2xl">
+    <div className="container mx-auto max-w-2xl py-8">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
-            Shutdown Controls
+            <AlertTriangle className="h-5 w-5 text-error" />
+            Shutdown controls
           </CardTitle>
           <CardDescription>
             Manage the Terragon shutdown workflow in single-tenant deployments.
@@ -31,22 +31,24 @@ export function ShutdownControls() {
             <AlertDescription>{INTERNAL_TENANT_NOTICE}</AlertDescription>
           </Alert>
 
-          <div className="space-y-4">
-            <h3 className="font-medium">Shutdown actions</h3>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p>
-                <span className="font-medium">
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Shutdown actions
+            </h3>
+            <dl className="divide-y divide-border rounded-xl border border-border">
+              <div className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm">
+                <dt className="text-foreground">
                   Automatic account deprovisioning
-                </span>
-                —No longer available.
-              </p>
-              <p>
-                <span className="font-medium">
+                </dt>
+                <dd className="text-muted-foreground">No longer available</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm">
+                <dt className="text-foreground">
                   Timed shutdown orchestration
-                </span>
-                —Disabled.
-              </p>
-            </div>
+                </dt>
+                <dd className="text-muted-foreground">Disabled</dd>
+              </div>
+            </dl>
           </div>
         </CardContent>
       </Card>

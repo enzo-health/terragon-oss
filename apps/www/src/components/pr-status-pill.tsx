@@ -38,31 +38,23 @@ export const PRStatusPill = memo(function PRStatusPill({
       case "open":
         return (
           <GitPullRequestArrow
-            className={cn(
-              iconClassName,
-              "shrink-0 text-[var(--diff-added-fg)]/70",
-            )}
+            className={cn(iconClassName, "shrink-0 text-info")}
           />
         );
       case "closed":
         return (
           <GitPullRequestClosed
-            className={cn(
-              iconClassName,
-              "shrink-0 text-[var(--diff-removed-fg)]/70",
-            )}
+            className={cn(iconClassName, "shrink-0 text-mid")}
           />
         );
       case "merged":
         return (
-          <GitMerge
-            className={cn(iconClassName, "shrink-0 text-purple-600/70")}
-          />
+          <GitMerge className={cn(iconClassName, "shrink-0 text-success")} />
         );
       case "draft":
         return (
           <GitPullRequestDraft
-            className={cn(iconClassName, "shrink-0 text-muted-foreground/70")}
+            className={cn(iconClassName, "shrink-0 text-mid")}
           />
         );
     }
@@ -138,7 +130,7 @@ export const PRStatusPill = memo(function PRStatusPill({
   return (
     <div
       title={getTitle()}
-      className="flex items-center gap-1.5 cursor-pointer bg-card border border-border/40 shadow-inset-edge px-2 py-0.5 rounded-full transition-[box-shadow,transform,border-color] duration-200 hover:shadow-card hover:scale-[1.02] active:scale-[0.98]"
+      className="flex items-center gap-1.5 cursor-pointer bg-raised border border-hairline shadow-inset-edge px-2 py-0.5 rounded-full transition-[box-shadow,border-color,transform] duration-150 ease-[cubic-bezier(0.2,0,0,1)] hover:shadow-card active:scale-[0.98]"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -152,7 +144,7 @@ export const PRStatusPill = memo(function PRStatusPill({
         {getIcon()}
         {checkStatusIcon}
       </div>
-      <span className="text-[10px] font-sans font-bold text-muted-foreground/70 tracking-tight">
+      <span className="text-[11px] font-sans font-medium text-mid tracking-tight tabular-nums">
         #{prNumber}
       </span>
     </div>

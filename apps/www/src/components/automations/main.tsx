@@ -141,38 +141,34 @@ function AutomationsList({
   return (
     <>
       {hasReachedLimit && (
-        <Alert className="mb-4 bg-muted border-none">
+        <Alert className="mb-4 bg-warning/10 text-warning border-none rounded-2xl">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
+          <AlertDescription className="text-warning">
             You have reached the active automation limit. To create another,
             disable or delete an existing active automation.
           </AlertDescription>
         </Alert>
       )}
       {automations?.length === 0 && (
-        <div className="flex flex-col gap-4">
-          <div className="p-4 bg-muted/50 rounded-lg border">
-            <h3 className="text-sm font-medium text-muted-foreground mb-2">
-              About Automations
-            </h3>
-            <p className="text-sm text-muted-foreground">
+        <div className="flex flex-col gap-6">
+          <div className="rounded-[1.25rem] bg-card p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <h3 className="text-sm font-semibold mb-2">About automations</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed">
               Automations are saved prompts that run automatically in response
-              to a trigger. You can create automations that run on a schedule or
-              in response to events like GitHub pull requests.
-              <br />
-              <br />
-              <Link
-                href={`${publicDocsUrl()}/docs/automations`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:no-underline"
-              >
-                Learn more about automations
-              </Link>
+              to a trigger. Schedules, GitHub pull requests, issues, and
+              mentions are supported.
             </p>
+            <Link
+              href={`${publicDocsUrl()}/docs/automations`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-block text-sm text-coral hover:underline"
+            >
+              Learn more
+            </Link>
           </div>
           <div className="space-y-2">
-            <h3 className="text-sm font-medium text-muted-foreground/70 sticky top-[36px] bg-background z-9 py-1">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-[36px] bg-canvas z-9 py-1">
               Suggested automations
             </h3>
             <RecommendedAutomations

@@ -162,7 +162,7 @@ export function AdminUsersList({
               {u.name}
             </Link>
             {u.id === user?.id && (
-              <span className="p-0.5 text-xs bg-primary text-primary-foreground rounded-md">
+              <span className="px-2 py-0.5 text-[11px] bg-coral/10 text-coral rounded-full">
                 You
               </span>
             )}
@@ -173,13 +173,18 @@ export function AdminUsersList({
     {
       accessorKey: "email",
       header: "Email",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{row.getValue("email")}</span>
+      ),
     },
     {
       accessorKey: "createdAt",
       header: "Created At",
-      cell: ({ row }) => {
-        return format(row.getValue("createdAt"), "MMM d, yyyy h:mm a zzz");
-      },
+      cell: ({ row }) => (
+        <span className="tabular-nums text-xs">
+          {format(row.getValue("createdAt"), "MMM d, yyyy h:mm a zzz")}
+        </span>
+      ),
     },
     {
       accessorKey: "onboardingCompleted",
@@ -193,20 +198,37 @@ export function AdminUsersList({
       header: "Most Recent Thread",
       cell: ({ row }) => {
         const date = row.getValue("mostRecentThreadDate") as Date | null;
-        return date ? format(date, "MMM d, yyyy h:mm a zzz") : "No threads";
+        return (
+          <span className="tabular-nums text-xs">
+            {date ? format(date, "MMM d, yyyy h:mm a zzz") : "No threads"}
+          </span>
+        );
       },
     },
     {
       accessorKey: "numThreads",
       header: "Total Threads (All Time)",
+      cell: ({ row }) => (
+        <span className="tabular-nums">{row.getValue("numThreads")}</span>
+      ),
     },
     {
       accessorKey: "threadsCreatedPastDay",
       header: "Total Threads (Last Day)",
+      cell: ({ row }) => (
+        <span className="tabular-nums">
+          {row.getValue("threadsCreatedPastDay")}
+        </span>
+      ),
     },
     {
       accessorKey: "threadsCreatedPastWeek",
       header: "Total Threads (Last Week)",
+      cell: ({ row }) => (
+        <span className="tabular-nums">
+          {row.getValue("threadsCreatedPastWeek")}
+        </span>
+      ),
     },
     {
       accessorKey: "role",
@@ -216,17 +238,17 @@ export function AdminUsersList({
         return (
           <div className="flex gap-2">
             {u.role && (
-              <span className="text-xs bg-info/10 text-info px-2 py-1 rounded">
+              <span className="text-[11px] bg-info/10 text-info px-2.5 py-0.5 rounded-full">
                 {u.role}
               </span>
             )}
             {u.banned && (
-              <span className="text-xs bg-error/10 text-error px-2 py-1 rounded">
+              <span className="text-[11px] bg-error/10 text-error px-2.5 py-0.5 rounded-full">
                 Banned
               </span>
             )}
             {u.shadowBanned && (
-              <span className="text-xs bg-warning/10 text-warning px-2 py-1 rounded">
+              <span className="text-[11px] bg-warning/10 text-warning px-2.5 py-0.5 rounded-full">
                 Shadow Ban
               </span>
             )}
@@ -251,11 +273,11 @@ export function AdminUsersList({
   const retentionChartConfig = {
     activeUsers: {
       label: "Active Users",
-      color: "hsl(142.1 76.2% 36.3%)", // green-600
+      color: "var(--success)",
     },
     inactiveUsers: {
       label: "Inactive Users",
-      color: "hsl(0 0% 63.9%)", // gray-400
+      color: "var(--divider)",
     },
   } satisfies ChartConfig;
 
@@ -270,7 +292,7 @@ export function AdminUsersList({
   const activeUsersChartConfig = {
     count: {
       label: "Active Users",
-      color: "hsl(221.2 83.2% 53.3%)", // blue-600
+      color: "var(--info)",
     },
   } satisfies ChartConfig;
 
@@ -283,11 +305,11 @@ export function AdminUsersList({
   const monthlyRetentionChartConfig = {
     activeUsers: {
       label: "Active Users",
-      color: "hsl(142.1 76.2% 36.3%)", // green-600
+      color: "var(--success)",
     },
     inactiveUsers: {
       label: "Inactive Users",
-      color: "hsl(0 0% 63.9%)", // gray-400
+      color: "var(--divider)",
     },
   } satisfies ChartConfig;
 
@@ -302,7 +324,7 @@ export function AdminUsersList({
   const monthlyActiveUsersChartConfig = {
     count: {
       label: "Active Users",
-      color: "hsl(262.1 83.3% 57.8%)", // purple-600
+      color: "var(--coral)",
     },
   } satisfies ChartConfig;
 
@@ -313,14 +335,13 @@ export function AdminUsersList({
     })) || [];
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4"></div>
-      <div className="grid sm:grid-cols-3 grid-cols-1 gap-2">
+    <div className="space-y-6">
+      <dl className="grid sm:grid-cols-3 grid-cols-1 gap-x-8 gap-y-4 border-y border-hairline py-4">
         <AdminUserBigNumber
           label="Weekly Active Users"
           value={weeklyActiveUsers}
           description="Users who created at least 1 thread in the last 7 days"
-          className="!bg-primary !text-primary-foreground"
+          accent
         />
         <AdminUserBigNumber
           label="Monthly Active Users"
@@ -334,12 +355,12 @@ export function AdminUsersList({
         <AdminUserBigNumber
           label="New signups active / total (24h)"
           value={`${activeSignupsLast24Hours} / ${signupsLast24Hours}`}
-          description="Active accounts / total accounts created in the last 24 hours"
+          description="Active / total accounts created in the last 24 hours"
         />
         <AdminUserBigNumber
           label="New signups active / total (7 days)"
           value={`${activeSignupsLast7Days} / ${signupsLast7Days}`}
-          description="Active accounts / total accounts created in the last 7 days"
+          description="Active / total accounts created in the last 7 days"
         />
         <AdminUserBigNumber
           label="Users with threads"
@@ -354,14 +375,14 @@ export function AdminUsersList({
           label="Preview features opt-in"
           value={totalPreviewOptIn}
         />
-      </div>
+      </dl>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {userRetentionByAge && userRetentionByAge.length > 0 && (
           <div>
             <div className="text-sm font-semibold mb-3">
               Weekly active users by cohort age:
             </div>
-            <div className="bg-muted rounded-lg p-4">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
               <ChartContainer
                 config={activeUsersChartConfig}
                 className="h-64 w-full"
@@ -369,7 +390,7 @@ export function AdminUsersList({
                 <BarChart data={activeUsersChartData}>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    className="stroke-gray-300 dark:stroke-gray-600"
+                    className="stroke-hairline"
                   />
                   <XAxis
                     dataKey="week"
@@ -382,7 +403,7 @@ export function AdminUsersList({
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar
                     dataKey="count"
-                    fill="hsl(142.1 76.2% 36.3%)"
+                    fill="var(--success)"
                     radius={[4, 4, 0, 0]}
                   />
                 </BarChart>
@@ -395,7 +416,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               User retention by cohort age:
             </div>
-            <div className="bg-muted rounded-lg p-4">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
               <ChartContainer
                 config={retentionChartConfig}
                 className="h-64 w-full"
@@ -403,7 +424,7 @@ export function AdminUsersList({
                 <BarChart data={retentionChartData}>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    className="stroke-gray-300 dark:stroke-gray-600"
+                    className="stroke-hairline"
                   />
                   <XAxis
                     dataKey="week"
@@ -417,12 +438,12 @@ export function AdminUsersList({
                   <Bar
                     dataKey="activeUsers"
                     stackId="a"
-                    fill="hsl(142.1 76.2% 36.3%)"
+                    fill="var(--success)"
                   />
                   <Bar
                     dataKey="inactiveUsers"
                     stackId="a"
-                    fill="hsl(0 0% 63.9%)"
+                    fill="var(--divider)"
                     radius={[4, 4, 0, 0]}
                   >
                     <LabelList
@@ -456,14 +477,14 @@ export function AdminUsersList({
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded"
-                    style={{ backgroundColor: "hsl(142.1 76.2% 36.3%)" }}
+                    style={{ backgroundColor: "var(--success)" }}
                   />
                   <span>Active in last 7 days</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded"
-                    style={{ backgroundColor: "hsl(0 0% 63.9%)" }}
+                    style={{ backgroundColor: "var(--divider)" }}
                   />
                   <span>Not active in last 7 days</span>
                 </div>
@@ -478,7 +499,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly active users by cohort age:
             </div>
-            <div className="bg-muted rounded-lg p-4">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
               <ChartContainer
                 config={monthlyActiveUsersChartConfig}
                 className="h-64 w-full"
@@ -486,7 +507,7 @@ export function AdminUsersList({
                 <BarChart data={monthlyActiveUsersChartData}>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    className="stroke-gray-300 dark:stroke-gray-600"
+                    className="stroke-hairline"
                   />
                   <XAxis
                     dataKey="month"
@@ -499,7 +520,7 @@ export function AdminUsersList({
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar
                     dataKey="count"
-                    fill="hsl(262.1 83.3% 57.8%)"
+                    fill="var(--coral)"
                     radius={[4, 4, 0, 0]}
                   />
                 </BarChart>
@@ -512,7 +533,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly user retention by cohort age:
             </div>
-            <div className="bg-muted rounded-lg p-4">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
               <ChartContainer
                 config={monthlyRetentionChartConfig}
                 className="h-64 w-full"
@@ -520,7 +541,7 @@ export function AdminUsersList({
                 <BarChart data={monthlyRetentionChartData}>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    className="stroke-gray-300 dark:stroke-gray-600"
+                    className="stroke-hairline"
                   />
                   <XAxis
                     dataKey="month"
@@ -534,12 +555,12 @@ export function AdminUsersList({
                   <Bar
                     dataKey="activeUsers"
                     stackId="a"
-                    fill="hsl(142.1 76.2% 36.3%)"
+                    fill="var(--success)"
                   />
                   <Bar
                     dataKey="inactiveUsers"
                     stackId="a"
-                    fill="hsl(0 0% 63.9%)"
+                    fill="var(--divider)"
                     radius={[4, 4, 0, 0]}
                   >
                     <LabelList
@@ -573,14 +594,14 @@ export function AdminUsersList({
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded"
-                    style={{ backgroundColor: "hsl(142.1 76.2% 36.3%)" }}
+                    style={{ backgroundColor: "var(--success)" }}
                   />
                   <span>Active in last 30 days</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded"
-                    style={{ backgroundColor: "hsl(0 0% 63.9%)" }}
+                    style={{ backgroundColor: "var(--divider)" }}
                   />
                   <span>Not active in last 30 days</span>
                 </div>
@@ -613,25 +634,29 @@ function AdminUserBigNumber({
   label,
   value,
   description,
-  className,
+  accent,
 }: {
   label: string;
   value: number | string;
   description?: string;
-  className?: string;
+  accent?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex flex-col items-center gap-2 bg-muted p-4 rounded-lg",
-        className,
+    <div className="flex flex-col gap-1">
+      <dt className="text-[11px] uppercase tracking-[0.06em] text-mid-text">
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "text-2xl font-semibold tabular-nums",
+          accent ? "text-coral" : "text-strong-text",
+        )}
+      >
+        {value}
+      </dd>
+      {description && (
+        <p className="text-xs text-mid-text leading-snug">{description}</p>
       )}
-    >
-      <div className="text-center my-auto">
-        <h2 className="text-3xl font-bold">{value}</h2>
-        <h2 className="text-md opacity-90">{label}</h2>
-        <p className="text-xs opacity-75">{description}</p>
-      </div>
     </div>
   );
 }

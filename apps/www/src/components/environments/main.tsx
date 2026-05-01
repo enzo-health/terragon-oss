@@ -56,64 +56,70 @@ export function Environments({
       <Portal container={headerActionContainer}>
         <CreateEnvironmentButton />
       </Portal>
-      <div className="flex flex-col justify-start h-full w-full max-w-4xl">
-        <div className="mb-6 p-4 bg-muted/50 rounded-lg border">
-          <h3 className="text-sm font-medium text-muted-foreground mb-2">
-            About Sandbox Environments
+      <div className="flex flex-col justify-start h-full w-full max-w-4xl gap-8">
+        <div className="rounded-xl border border-hairline bg-canvas p-5">
+          <h3 className="text-sm font-medium text-strong mb-1">
+            About sandbox environments
           </h3>
-          <p className="text-sm text-muted-foreground">
-            Terragon runs in an isolated Linux environment with full development
-            capabilities. Each sandbox includes Node.js, Python, Git, and common
-            development tools.
-            <br />
-            <br />
+          <p className="text-sm text-mid">
+            Terragon runs in an isolated Linux sandbox with Node.js, Python,
+            Git, and the usual development tooling.{" "}
             <Link
               href={`${publicDocsUrl()}/docs/configuration/environment-setup/sandbox`}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline hover:no-underline"
+              className="text-strong underline underline-offset-2 hover:no-underline"
             >
-              Learn more about the sandbox environment
+              Learn more
             </Link>
+            .
           </p>
         </div>
-        <div className="space-y-2 pb-6 mb-4">
-          <div className="border-b pb-2">
-            <h2 className="text-lg font-semibold">Global</h2>
-            <p className="text-sm text-muted-foreground">
-              Manage environment variables that apply to all your repositories.
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-baseline justify-between border-b border-hairline pb-2">
+            <h2 className="text-lg font-semibold text-strong">Global</h2>
+            <Link
+              className="text-sm text-strong underline underline-offset-2 hover:no-underline"
+              href="/environments/global"
+            >
+              Manage
+            </Link>
+          </div>
+          <p className="text-sm text-mid">
+            Environment variables that apply to every repository.
+          </p>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="border-b border-hairline pb-2">
+            <h2 className="text-lg font-semibold text-strong">
+              Repository-specific
+            </h2>
+            <p className="text-sm text-mid">
+              {environments?.length === 0
+                ? 'Click "Create Environment" to add one.'
+                : "Per-repository variables, MCP servers, and setup scripts."}
             </p>
           </div>
-          <Link className="underline" href="/environments/global">
-            Manage
-          </Link>
-        </div>
-        <div className="space-y-2 pb-6">
-          <div className="border-b pb-2">
-            <h2 className="text-lg font-semibold">Repository Specific</h2>
-            {environments?.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Click "Create Environment" to get started
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Manage environment variables and MCP servers for specific
-                repositories.
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col gap-4 w-full">
-            {environments?.map((environment) => (
-              <Link
-                className="underline"
-                href={`/environments/${environment.id}`}
-                key={environment.id}
-              >
-                {environment.repoFullName}
-              </Link>
-            ))}
-          </div>
-        </div>
+          {environments && environments.length > 0 && (
+            <ul className="flex flex-col rounded-xl border border-hairline overflow-hidden divide-y divide-hairline">
+              {environments.map((environment) => (
+                <li key={environment.id}>
+                  <Link
+                    href={`/environments/${environment.id}`}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-sunken transition-colors"
+                  >
+                    <span className="font-mono text-sm text-strong truncate">
+                      {environment.repoFullName}
+                    </span>
+                    <span className="text-xs text-mid">Configure</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
     </>
   );
@@ -143,21 +149,19 @@ function EnvironmentVariablesSection({
   });
   return (
     <div className="flex flex-col gap-2 mt-6">
-      <h2 className="text-base font-medium text-muted-foreground">
+      <h2 className="text-base font-semibold text-strong">
         Environment Variables
       </h2>
       <div className="flex flex-col gap-2">
-        <span className="text-xs text-muted-foreground">
-          Configure environment variables that will be available in your sandbox
-          environments. All environment variables are encrypted at rest and in
-          transit for optimal security.{" "}
+        <span className="text-xs text-mid">
+          Variables exposed in your sandbox. Encrypted at rest and in transit.{" "}
           <Link
             href={`${publicDocsUrl()}/docs/configuration/environment-setup/environment-variables`}
             target="_blank"
             rel="noopener noreferrer"
-            className="underline hover:no-underline"
+            className="text-strong underline underline-offset-2 hover:no-underline"
           >
-            Learn more about environment variables
+            Learn more
           </Link>
           .
         </span>
@@ -318,39 +322,38 @@ function SnapshotSection({
   return (
     <div className="flex flex-col gap-2 mt-10">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-medium text-muted-foreground">
+        <h2 className="text-base font-semibold text-strong">
           Sandbox Snapshots
         </h2>
         <div className="flex items-center gap-2">
           <select
             value={selectedSize}
             onChange={(e) => setSelectedSize(e.target.value as SandboxSize)}
-            className="text-xs border rounded px-2 py-1 bg-background"
+            className="text-xs rounded-full border border-hairline px-3 py-1 bg-canvas text-strong tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/50"
           >
-            <option value="small">Small (2 vCPU, 4GB)</option>
-            <option value="large">Large (4 vCPU, 8GB)</option>
+            <option value="small">Small (2 vCPU, 4 GB)</option>
+            <option value="large">Large (4 vCPU, 8 GB)</option>
           </select>
         </div>
       </div>
-      <span className="text-xs text-muted-foreground">
-        Build a pre-configured snapshot that includes your repo, dependencies,
-        and setup script. New tasks will start from this snapshot, skipping
-        clone and setup entirely.
+      <span className="text-xs text-mid">
+        A pre-built snapshot of your repo, dependencies, and setup script. New
+        tasks start from the snapshot instead of cloning and setting up.
       </span>
 
       {!currentSnapshot && (
-        <div className="border rounded-lg p-4 bg-muted/30">
+        <div className="rounded-xl border border-hairline bg-canvas p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Package className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                No snapshot built for {selectedSize} size
+              <Package className="h-4 w-4 text-mid" />
+              <span className="text-sm text-mid">
+                No snapshot built for{" "}
+                <span className="tabular-nums">{selectedSize}</span> size.
               </span>
             </div>
             <Button
               variant="outline"
               size="sm"
-              className="text-xs"
               onClick={() =>
                 buildMutation.mutate({
                   environmentId,
@@ -371,13 +374,13 @@ function SnapshotSection({
       )}
 
       {currentSnapshot && (
-        <div className="border rounded-lg p-4">
+        <div className="rounded-xl border border-hairline bg-canvas p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <SnapshotStatusBadge status={currentSnapshot.status} />
               {currentSnapshot.builtAt &&
                 currentSnapshot.status !== "building" && (
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs text-mid tabular-nums">
                     Built{" "}
                     {new Date(currentSnapshot.builtAt).toLocaleDateString()}
                   </span>
@@ -390,7 +393,6 @@ function SnapshotSection({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs"
                   onClick={() =>
                     buildMutation.mutate({
                       environmentId,
@@ -407,7 +409,7 @@ function SnapshotSection({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-xs text-destructive hover:text-destructive"
+                  className="text-error hover:text-error"
                   onClick={() =>
                     deleteMutation.mutate({
                       environmentId,
@@ -423,9 +425,7 @@ function SnapshotSection({
             </div>
           </div>
           {currentSnapshot.status === "failed" && currentSnapshot.error && (
-            <p className="text-xs text-destructive mt-2">
-              {currentSnapshot.error}
-            </p>
+            <p className="text-xs text-error mt-2">{currentSnapshot.error}</p>
           )}
           {currentSnapshot.status === "stale" && (
             <p className="text-xs text-warning mt-2">
@@ -511,21 +511,20 @@ export function EnvironmentUI({
           onDirtyChange={setEnvVarsDirty}
         />
         <div className="flex flex-col gap-2 mt-10">
-          <h2 className="text-base font-medium text-muted-foreground">
+          <h2 className="text-base font-semibold text-strong">
             MCP Server Configuration
           </h2>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">
-              Configure custom Model Context Protocol ("MCP") servers that will
-              be available to Terragon. Learn more about which formats are
-              supported with each agent{" "}
+            <span className="text-xs text-mid">
+              Custom Model Context Protocol (MCP) servers exposed to Terragon.
+              Per-agent format support is documented{" "}
               <Link
                 href={`${publicDocsUrl()}/docs/configuration/mcp-setup`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline hover:no-underline"
+                className="text-strong underline underline-offset-2 hover:no-underline"
               >
-                in our documentation
+                in our docs
               </Link>
               .
             </span>
@@ -545,48 +544,45 @@ export function EnvironmentUI({
 
         <div className="flex flex-col gap-2 mt-10 mb-8">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-medium text-muted-foreground">
+            <h2 className="text-base font-semibold text-strong">
               Environment Setup
             </h2>
             <Link href={`/environments/${environmentId}/setup`}>
-              <Button variant="outline" size="sm" className="text-xs">
+              <Button variant="outline" size="sm">
                 <FileCog className="h-4 w-4 mr-1" />
                 Edit Setup Script
               </Button>
             </Link>
           </div>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">
-              Configure custom setup commands that run when your environment
-              starts. You can either configure an environment-specific script in
-              the settings or add a{" "}
-              <code className="bg-muted px-1 py-0.5 rounded text-xs">
+            <span className="text-xs text-mid">
+              Commands that run when your environment starts. Either configure
+              an environment-specific script in settings, or add a{" "}
+              <code className="font-mono px-1.5 py-0.5 rounded bg-surface-dark text-on-dark text-[11px]">
                 terragon-setup.sh
               </code>{" "}
-              file to your repository. Environment scripts take precedence over
-              repository scripts.{" "}
+              file at the repo root. Environment scripts take precedence.{" "}
               <Link
                 href={`${publicDocsUrl()}/docs/configuration/environment-setup/setup-scripts`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline hover:no-underline"
+                className="text-strong underline underline-offset-2 hover:no-underline"
               >
-                Learn more about setup scripts
+                Learn more
               </Link>
               .
             </span>
           </div>
-          <div className="bg-muted/50 p-3 rounded-md">
-            <p className="text-xs text-muted-foreground mb-2">Example:</p>
-            <code className="text-xs text-foreground block">
-              #!/bin/bash
-              <br />
-              npm install
-              <br />
-              pip install -r requirements.txt
-              <br />
-              ./my-custom-setup.sh
-            </code>
+          <div className="rounded-xl bg-surface-dark p-4">
+            <p className="text-[11px] uppercase tracking-[0.06em] text-on-dark-soft mb-2">
+              Example
+            </p>
+            <pre className="font-mono text-[13px] leading-[1.5] text-on-dark whitespace-pre">
+              {`#!/bin/bash
+npm install
+pip install -r requirements.txt
+./my-custom-setup.sh`}
+            </pre>
           </div>
         </div>
 
@@ -613,7 +609,9 @@ export function GlobalEnvironmentUI({
   return (
     <div className="flex flex-col justify-start h-full w-full max-w-4xl">
       <EnvironmentBreadcrumb label="Global" />
-      <p>The global environment applies to all your repositories.</p>
+      <p className="text-sm text-mid">
+        The global environment applies to all your repositories.
+      </p>
       <EnvironmentVariablesSection
         environmentId={environmentId}
         environmentVariables={environmentVariables}

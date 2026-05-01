@@ -25,7 +25,7 @@ export const RECOMMENDED_AUTOMATIONS: RecommendedAutomation[] = [
     prompt:
       "Give me an overview of all of the commits made yesterday to the repo, organized by the user who made the commit. On Mondays, provide an overview of all the commits made between Friday - Sunday.\n\nUse this format:\n\n[User]:\n- [Summary of commit] [PR #:] [detailed description of changes]",
     triggerType: "schedule",
-    icon: <Calendar className="size-3 text-muted-foreground/50" />,
+    icon: <Calendar className="size-3 text-muted-foreground" />,
     triggerConfig: {
       cron: "0 8 * * 1-5", // 8 AM on weekdays (Monday-Friday)
       timezone: "America/Los_Angeles",
@@ -52,7 +52,7 @@ Keep your review concise but thorough. Focus on:
 
 When you're done with your review, create a single comment directly on the PR that summarizes the review and for any recommended changes leave in-line review with the relevant parts of the code highlighted. Format your comments with clear sections and bullet points.`,
     triggerType: "pull_request",
-    icon: <GitPullRequest className="size-3 text-muted-foreground/50" />,
+    icon: <GitPullRequest className="size-3 text-muted-foreground" />,
     triggerConfig: {
       filter: {
         includeDraftPRs: true,
@@ -108,7 +108,7 @@ IMPORTANT GUIDELINES:
 - Your ONLY action should be to apply labels using \`gh issue edit --add-label\`
 - It's okay to not add any labels if none are clearly applicable`,
     triggerType: "issue",
-    icon: <CircleDot className="size-3 text-muted-foreground/50" />,
+    icon: <CircleDot className="size-3 text-muted-foreground" />,
     triggerConfig: {
       filter: {
         includeOtherAuthors: false,

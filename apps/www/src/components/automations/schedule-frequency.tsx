@@ -89,7 +89,7 @@ export function ScheduleTriggerForm({
     accessTier: tier,
   });
   return (
-    <div className="space-y-4 border rounded-lg p-4">
+    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
       <div className="space-y-2">
         <FormLabel>Schedule Frequency</FormLabel>
         <div className="flex flex-col sm:flex-row gap-2">
@@ -332,12 +332,10 @@ export function ScheduleTriggerForm({
                   );
                 }}
                 placeholder="e.g. 9, 12, 15, 18"
-                className="font-mono"
+                className="font-mono tabular-nums"
               />
               {hoursInputError ? (
-                <div className="text-xs text-destructive">
-                  {hoursInputError}
-                </div>
+                <div className="text-xs text-error">{hoursInputError}</div>
               ) : (
                 <div className="text-xs text-muted-foreground">
                   Enter up to {MAX_HOURS_SCHEDULE_AUTOMATIONS} hours (0-23)
@@ -369,9 +367,9 @@ export function ScheduleTriggerForm({
                   );
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-all active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   dayOfWeek === day.value
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",
@@ -405,7 +403,7 @@ export function ScheduleTriggerForm({
               );
             }}
             placeholder="Enter day (1-31)"
-            className="w-[100px]"
+            className="w-[100px] tabular-nums"
           />
         </div>
       )}
@@ -446,9 +444,9 @@ export function ScheduleTriggerForm({
                   }
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-all active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   selectedDays.includes(day.value)
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",
@@ -461,9 +459,9 @@ export function ScheduleTriggerForm({
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="space-y-1.5 rounded-xl bg-card px-3 py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.05)]">
         <div className="text-sm text-muted-foreground">
-          <span className="font-medium">Schedule: </span>
+          <span className="font-medium text-foreground">Schedule: </span>
           {getCronDescription(value.cron)}
         </div>
         {isValid ? (
@@ -474,8 +472,8 @@ export function ScheduleTriggerForm({
               options: { accessTier: tier },
             });
             return nextRun ? (
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium">Next run: </span>
+              <div className="text-sm text-muted-foreground tabular-nums">
+                <span className="font-medium text-foreground">Next run: </span>
                 {nextRun.toLocaleString(undefined, {
                   timeZone: value.timezone,
                   dateStyle: "medium",
@@ -485,15 +483,15 @@ export function ScheduleTriggerForm({
             ) : null;
           })()
         ) : error === "unsupported-pattern" ? (
-          <div className="text-sm text-destructive">
+          <div className="text-sm text-error">
             This schedule is not supported.
           </div>
         ) : error === "invalid-syntax" ? (
-          <div className="text-sm text-destructive">
+          <div className="text-sm text-error">
             Invalid schedule. Please check your schedule configuration.
           </div>
         ) : error === "pro-only" ? (
-          <div className="text-sm text-destructive">
+          <div className="text-sm text-error">
             This schedule requires a higher automation access level.
           </div>
         ) : null}

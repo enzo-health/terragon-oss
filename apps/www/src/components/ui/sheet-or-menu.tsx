@@ -243,7 +243,7 @@ function MenuContents({
               return (
                 <DropdownMenuLabel
                   key={itemKey}
-                  className="text-xs text-muted-foreground/50 uppercase py-0.5"
+                  className="text-xs text-mid uppercase py-0.5"
                 >
                   {item.label}
                 </DropdownMenuLabel>
@@ -303,7 +303,7 @@ function MenuContents({
                 className={cn(
                   "w-full text-left flex items-center justify-start py-4 px-4",
                   {
-                    "!text-destructive": item.destructive,
+                    "!text-error": item.destructive,
                   },
                   item.className,
                 )}
@@ -351,13 +351,13 @@ function MenuContents({
             );
           case "separator":
             return (
-              <DropdownMenuSeparator key={itemKey} className="bg-border/50" />
+              <DropdownMenuSeparator key={itemKey} className="bg-hairline" />
             );
           case "label":
             return (
               <DropdownMenuLabel
                 key={itemKey}
-                className="text-xs text-muted-foreground/50 uppercase py-0.5"
+                className="text-xs text-mid uppercase py-0.5"
               >
                 {item.label}
               </DropdownMenuLabel>

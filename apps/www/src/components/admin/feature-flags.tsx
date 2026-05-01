@@ -193,11 +193,11 @@ export function AdminFeatureFlags({
             {!flag.inCodebase && (
               <>
                 <Button
-                  title="Delete flag (Not used in codebase)"
+                  title="Delete flag (not used in codebase)"
                   variant="ghost"
                   size="sm"
                   onClick={() => handleDelete(flag)}
-                  className="text-destructive hover:text-destructive"
+                  className="text-error hover:bg-error/10 hover:text-error"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -210,18 +210,33 @@ export function AdminFeatureFlags({
   ];
 
   return (
-    <div className="flex flex-col justify-start h-full w-full mx-auto space-y-8">
+    <div className="mx-auto flex h-full w-full flex-col justify-start space-y-8">
       <div>
-        <h2 className="text-lg font-semibold mb-4">Active Feature Flags</h2>
+        <div className="mb-3 flex items-baseline gap-2">
+          <h2 className="text-base font-semibold tracking-tight">
+            Active feature flags
+          </h2>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {activeFlags.length}
+          </span>
+        </div>
         <DataTable columns={columns} data={activeFlags} />
       </div>
 
       {inactiveFlags.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">
-              Inactive Feature Flags (Not in Codebase)
-            </h2>
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-base font-semibold tracking-tight">
+                Inactive feature flags
+              </h2>
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {inactiveFlags.length}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                (not in codebase)
+              </span>
+            </div>
             <Button
               variant="destructive"
               size="sm"
@@ -229,7 +244,7 @@ export function AdminFeatureFlags({
               className="flex items-center gap-2"
             >
               <Trash2 className="h-4 w-4" />
-              Delete All Unused ({inactiveFlags.length})
+              Delete all unused ({inactiveFlags.length})
             </Button>
           </div>
           <DataTable columns={columns} data={inactiveFlags} />
@@ -346,70 +361,80 @@ export function AdminFeatureFlagContent({
   ];
 
   return (
-    <div className="flex flex-col gap-6 justify-start h-full w-full mx-auto">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-lg font-bold font-mono">{featureFlag.name}</h1>
-        <div className="space-y-2 text-sm">
+    <div className="mx-auto flex h-full w-full flex-col justify-start gap-6">
+      <div className="flex flex-col gap-3">
+        <h1 className="font-mono text-base font-medium tabular-nums tracking-tight text-foreground">
+          {featureFlag.name}
+        </h1>
+        <dl className="divide-y divide-border rounded-xl border border-border bg-card">
           {featureFlag.description && (
-            <div className="flex items-start gap-2">
-              <span className="font-medium text-muted-foreground">
-                Description:
-              </span>
-              <span className="text-sm">{featureFlag.description}</span>
+            <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-baseline sm:gap-6">
+              <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                Description
+              </dt>
+              <dd className="text-sm text-foreground">
+                {featureFlag.description}
+              </dd>
             </div>
           )}
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-muted-foreground">Default:</span>
-            <span className="font-mono text-sm">
+          <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-baseline sm:gap-6">
+            <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Default
+            </dt>
+            <dd className="font-mono text-sm tabular-nums text-foreground">
               {JSON.stringify(featureFlag.defaultValue)}
-            </span>
+            </dd>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-muted-foreground">
-              Enabled for Preview:
-            </span>
-            <span className="font-mono text-sm">
+          <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-baseline sm:gap-6">
+            <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Enabled for preview
+            </dt>
+            <dd className="font-mono text-sm tabular-nums text-foreground">
               {JSON.stringify(featureFlag.enabledForPreview)}
-            </span>
+            </dd>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-muted-foreground">
-              Global Override:
-            </span>
-            <span className="font-mono text-sm">
+          <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:gap-6">
+            <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Global override
+            </dt>
+            <dd>
               <GlobalFeatureFlagToggle
                 flagName={featureFlag.name}
                 value={featureFlag.globalOverride}
               />
-            </span>
+            </dd>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-muted-foreground">
-              In Codebase:
-            </span>
-            <span className="font-mono text-sm">
+          <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-baseline sm:gap-6">
+            <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              In codebase
+            </dt>
+            <dd className="font-mono text-sm tabular-nums text-foreground">
               {featureFlag.inCodebase ? "Yes" : "No"}
-            </span>
+            </dd>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-muted-foreground">
-              In Early Access:
-            </span>
-            <span className="font-mono text-sm">
+          <div className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-baseline sm:gap-6">
+            <dt className="w-40 shrink-0 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              In early access
+            </dt>
+            <dd className="font-mono text-sm tabular-nums text-foreground">
               {featureFlag.enabledForPreview ? "Yes" : "No"}
-            </span>
+            </dd>
           </div>
-        </div>
+        </dl>
       </div>
       <div className="space-y-6">
         <div>
-          <h2 className="text-sm font-medium mb-3">Users with overrides</h2>
+          <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+            Users with overrides
+          </h2>
           <DataTable columns={overridesColumns} data={userOverrides} />
         </div>
 
         {additionalUsers.length > 0 && (
           <div>
-            <h2 className="text-sm font-medium mb-3">Other users</h2>
+            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+              Other users
+            </h2>
             <DataTable
               columns={additionalUsersColumns}
               data={additionalUsers}

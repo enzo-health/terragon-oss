@@ -65,11 +65,11 @@ export function SettingsLayout({ children }: { children: React.ReactNode }) {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-2 px-3 h-8 text-sm rounded-md transition-colors",
-                    "hover:bg-muted/50",
+                    "flex items-center gap-2 px-3 h-8 text-sm rounded-full transition-colors",
+                    "hover:bg-sunken",
                     isActive
-                      ? "bg-muted text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "bg-sunken text-strong font-medium"
+                      : "text-mid hover:text-strong",
                   )}
                 >
                   {item.icon && <span className="flex">{item.icon}</span>}

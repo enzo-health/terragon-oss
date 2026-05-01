@@ -226,7 +226,7 @@ function CustomSystemPromptSetting() {
           size="sm"
           className="self-start"
         >
-          Save Changes
+          {isSaving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
     </SettingsWithCTA>
@@ -331,10 +331,8 @@ function AgentModelItem({
         <AgentIcon agent={agent} sessionId={null} />
       </div>
       <div>
-        <p className="text-sm font-medium">{agentLabel}</p>
-        {agentInfo && (
-          <p className="text-xs text-muted-foreground mt-0.5">{agentInfo}</p>
-        )}
+        <p className="text-sm font-medium text-strong">{agentLabel}</p>
+        {agentInfo && <p className="text-xs text-mid mt-0.5">{agentInfo}</p>}
         {models.length > 1 && (
           <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
             {models.map((model) => (
@@ -387,9 +385,7 @@ function ModelItem({
         )}
       >
         <span className="font-medium">{displayName.fullName}</span>
-        {modelInfo && (
-          <p className="text-xs text-muted-foreground mt-0.5">{modelInfo}</p>
-        )}
+        {modelInfo && <p className="text-xs text-mid mt-0.5">{modelInfo}</p>}
       </label>
     </>
   );

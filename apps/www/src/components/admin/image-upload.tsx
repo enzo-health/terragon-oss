@@ -15,6 +15,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
+import { cn } from "@/lib/utils";
 
 interface UploadedImage {
   fileName: string;
@@ -149,7 +150,7 @@ export function AdminImageUpload() {
       <div className="flex flex-col gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Image/Video Upload</CardTitle>
+            <CardTitle>Image and video upload</CardTitle>
             <CardDescription>
               Upload images or videos (MP4, WebM, MOV) to the CDN bucket
               (cdn-terragon) at cdn.terragonlabs.com
@@ -158,25 +159,27 @@ export function AdminImageUpload() {
           <CardContent>
             <div
               {...getRootProps()}
-              className={`
-              border-2 border-dashed rounded-lg p-8 text-center cursor-pointer
-              transition-colors duration-200
-              ${isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25"}
-              ${uploading ? "pointer-events-none opacity-50" : "hover:border-primary hover:bg-primary/5"}
-            `}
+              className={cn(
+                "cursor-pointer rounded-xl border border-dashed border-border p-8 text-center transition-colors duration-150",
+                isDragActive && "border-coral bg-coral/5",
+                uploading
+                  ? "pointer-events-none opacity-50"
+                  : "hover:border-coral/60 hover:bg-sunken",
+              )}
             >
               <input {...getInputProps()} />
-              <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+              <Upload className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
               {isDragActive ? (
-                <p className="text-lg font-medium">Drop files here...</p>
+                <p className="text-sm font-medium text-foreground">
+                  Drop files to upload
+                </p>
               ) : (
                 <>
-                  <p className="text-lg font-medium mb-1">
-                    Drag & drop images or videos here, or click to select
+                  <p className="mb-1 text-sm font-medium text-foreground">
+                    Drop images or videos here, or click to select
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    Supports PNG, JPG, GIF, WebP, SVG, MP4, WebM, MOV (max 10MB
-                    per file)
+                  <p className="text-xs text-muted-foreground">
+                    PNG, JPG, GIF, WebP, SVG, MP4, WebM, MOV. Max 10MB per file.
                   </p>
                 </>
               )}
@@ -184,9 +187,9 @@ export function AdminImageUpload() {
 
             {uploading && (
               <div className="mt-4">
-                <Progress value={uploadProgress} className="h-2" />
-                <p className="text-sm text-muted-foreground mt-2">
-                  Uploading... {Math.round(uploadProgress)}%
+                <Progress value={uploadProgress} className="h-1.5" />
+                <p className="mt-2 text-xs tabular-nums text-muted-foreground">
+                  Uploading {Math.round(uploadProgress)}%
                 </p>
               </div>
             )}
@@ -196,22 +199,22 @@ export function AdminImageUpload() {
         {uploadedImages.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Uploaded Files</CardTitle>
+              <CardTitle>Uploaded files</CardTitle>
               <CardDescription>
-                Click the copy button to copy the CDN URL
+                Copy the CDN URL or remove the entry from this session.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="divide-y divide-border rounded-xl border border-border">
                 {uploadedImages.map((image, index) => (
                   <div
                     key={`${image.publicUrl}-${index}`}
-                    className="flex items-center gap-3 p-3 border rounded-lg"
+                    className="flex items-center gap-3 p-3"
                   >
                     {image.contentType.startsWith("video/") ? (
                       <video
                         src={image.publicUrl}
-                        className="w-16 h-16 object-cover rounded"
+                        className="h-14 w-14 rounded-md object-cover"
                         controls
                         muted
                         playsInline
@@ -220,34 +223,36 @@ export function AdminImageUpload() {
                       <img
                         src={image.publicUrl}
                         alt={image.fileName}
-                        className="w-16 h-16 object-cover rounded"
+                        className="h-14 w-14 rounded-md object-cover"
                       />
                     )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">
                         {image.fileName}
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">
+                      <p className="truncate font-mono text-xs tabular-nums text-muted-foreground">
                         {image.publicUrl}
                       </p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs tabular-nums text-muted-foreground">
                         {image.uploadedAt.toLocaleString()}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => copyToClipboard(image.publicUrl)}
+                        aria-label="Copy URL"
                       >
-                        <Copy className="w-4 h-4" />
+                        <Copy className="h-4 w-4" />
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => removeImage(index)}
+                        aria-label="Remove from list"
                       >
-                        <X className="w-4 h-4" />
+                        <X className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>

@@ -173,7 +173,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="bg-sidebar text-sidebar-foreground w-(--sidebar-width) border-r border-sidebar-border/70 p-0 shadow-card [&>button]:hidden"
+          className="bg-sidebar text-sidebar-foreground w-(--sidebar-width) border-r border-sidebar-border p-0 shadow-card [&>button]:hidden"
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -230,7 +230,7 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          className="bg-sidebar flex h-full w-full flex-col group-data-[variant=sidebar]:border-r group-data-[variant=sidebar]:border-sidebar-border/70 group-data-[variant=sidebar]:shadow-[var(--shadow-card)] group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:rounded-[calc(var(--radius)+0.1rem)] group-data-[variant=floating]:border group-data-[variant=floating]:shadow-[var(--shadow-card)]"
+          className="bg-sidebar flex h-full w-full flex-col group-data-[variant=sidebar]:border-r group-data-[variant=sidebar]:border-sidebar-border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:rounded-[calc(var(--radius)+0.1rem)] group-data-[variant=floating]:border group-data-[variant=floating]:shadow-[var(--shadow-card)]"
         >
           {children}
         </div>

@@ -68,30 +68,49 @@ const columns: ColumnDef<AutomationWithUser>[] = [
     cell: ({ row }) => {
       const enabled = row.getValue<boolean>("enabled");
       return (
-        <Pill
-          label={enabled ? "Enabled" : "Disabled"}
-          className={enabled ? "" : "opacity-60"}
-        />
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+            enabled
+              ? "bg-success/10 text-success"
+              : "bg-muted text-muted-foreground",
+          )}
+        >
+          {enabled ? "Enabled" : "Disabled"}
+        </span>
       );
     },
   },
   {
     accessorKey: "runCount",
     header: "Run Count",
+    cell: ({ row }) => (
+      <span className="font-mono tabular-nums">
+        {row.getValue<number>("runCount")}
+      </span>
+    ),
   },
   {
     accessorKey: "lastRunAt",
     header: "Last Run",
     cell: ({ row }) => {
       const lastRunAt = row.getValue<Date | null>("lastRunAt");
-      return lastRunAt ? format(lastRunAt, "MMM d, yyyy h:mm a") : "Never";
+      return (
+        <span className="tabular-nums">
+          {lastRunAt ? format(lastRunAt, "MMM d, yyyy h:mm a") : "Never"}
+        </span>
+      );
     },
   },
   {
     accessorKey: "createdAt",
     header: "Created At",
     cell: ({ row }) => {
-      return format(row.getValue<Date>("createdAt"), "MMM d, yyyy h:mm a");
+      return (
+        <span className="tabular-nums">
+          {format(row.getValue<Date>("createdAt"), "MMM d, yyyy h:mm a")}
+        </span>
+      );
     },
   },
 ];
@@ -109,14 +128,16 @@ export function AdminAutomationsList({
   ]);
   return (
     <div className="space-y-6">
-      <div className="flex gap-2 items-center text-sm">
-        <p className="text-muted-foreground">Filter by type:</p>
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+          Filter
+        </span>
+        <div className="flex flex-wrap gap-1.5">
           <AdminAutomationsListFilterButton
             triggerType={undefined}
             currentTriggerType={triggerType}
           />
-          {Object.entries(triggerTypeLabels).map(([type, label]) => (
+          {Object.entries(triggerTypeLabels).map(([type]) => (
             <AdminAutomationsListFilterButton
               key={type}
               triggerType={type as AutomationTriggerType}
@@ -149,7 +170,8 @@ function AdminAutomationsListFilterButton({
   const isActive = triggerType === currentTriggerType;
   const label = triggerType ? triggerTypeLabels[triggerType] : "All";
   return (
-    <a
+    <button
+      type="button"
       onClick={() => {
         if (triggerType) {
           router.push(`/internal/admin/automations?triggerType=${triggerType}`);
@@ -158,11 +180,13 @@ function AdminAutomationsListFilterButton({
         }
       }}
       className={cn(
-        "border px-2 py-1 rounded-md opacity-50 cursor-pointer",
-        isActive && "font-medium opacity-100",
+        "rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
+        isActive
+          ? "border-foreground/20 bg-foreground/5 font-medium text-foreground"
+          : "border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground",
       )}
     >
       {label}
-    </a>
+    </button>
   );
 }

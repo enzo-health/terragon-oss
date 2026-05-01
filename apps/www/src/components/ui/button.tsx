@@ -5,29 +5,26 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,opacity,box-shadow,transform] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:bg-disabled disabled:text-muted-foreground disabled:active:scale-100 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-[color,background-color,border-color,opacity,box-shadow,transform] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:bg-disabled disabled:text-mid disabled:active:scale-100 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-coral/50 focus-visible:ring-2 focus-visible:outline-none aria-invalid:ring-error/20 dark:aria-invalid:ring-error/40 aria-invalid:border-error",
   {
     variants: {
       variant: {
-        default:
-          "bg-primary text-primary-foreground rounded-full hover:bg-primary/90",
+        default: "bg-coral text-primary-foreground hover:bg-coral-active",
         destructive:
-          "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+          "bg-error text-on-dark hover:bg-error/90 focus-visible:ring-error/50",
         outline:
-          "border bg-background rounded-full hover:bg-muted/50 hover:text-muted-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
-        secondary:
-          "bg-card text-card-foreground rounded-full shadow-card hover:bg-muted",
-        ghost:
-          "hover:bg-muted/50 rounded-full hover:text-muted-foreground dark:hover:bg-muted/50",
-        link: "text-foreground-primary underline-offset-4 hover:underline",
-        warm: "bg-[var(--warm-stone)] text-foreground rounded-[30px] shadow-warm-lift px-5 py-3 pr-6",
+          "border border-hairline bg-canvas text-strong hover:bg-sunken/60",
+        secondary: "bg-raised text-strong shadow-card hover:bg-sunken",
+        ghost: "text-strong hover:bg-sunken/60",
+        link: "text-strong underline-offset-4 hover:underline",
+        warm: "bg-[var(--warm-stone)] text-strong rounded-[30px] shadow-warm-lift px-5 py-3 pr-6",
         uppercase: "uppercase tracking-[0.7px] text-sm font-bold",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
         xs: "h-7 px-2.5 py-1.5 has-[>svg]:px-2",
-        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
-        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
+        sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
+        lg: "h-10 px-6 has-[>svg]:px-4",
         icon: "size-10",
       },
     },

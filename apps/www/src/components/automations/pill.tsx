@@ -23,7 +23,7 @@ export function AutomationPill({
         }
       }}
       className={cn(
-        "cursor-pointer",
+        "cursor-pointer bg-info/10 text-info",
         isReadOnly && "cursor-default",
         className,
       )}

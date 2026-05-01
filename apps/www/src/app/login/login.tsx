@@ -19,33 +19,33 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
   };
 
   return (
-    <div className="min-h-[100dvh] w-full bg-background flex items-center justify-center">
+    <div className="min-h-[100dvh] w-full bg-canvas flex items-center justify-center">
       <div className="flex flex-col p-8 items-center justify-center w-full max-w-md">
-        <div className="w-full space-y-12 bg-card p-12 rounded-3xl shadow-card border border-border/40">
-          <div className="flex flex-col items-center text-center space-y-4">
+        <div className="w-full space-y-10 bg-raised p-12 rounded-[1.25rem] shadow-card">
+          <div className="flex flex-col items-center text-center space-y-5">
             <Wordmark showLogo showText size="lg" />
-            <div className="space-y-2 pt-4">
-              <h1 className="text-display font-display font-[300] tracking-tight leading-tight text-foreground">
+            <div className="space-y-2 pt-3">
+              <h1 className="text-display font-display font-[300] tracking-tight leading-tight text-strong">
                 Sign in
               </h1>
-              <p className="text-lead font-sans text-muted-foreground/70 tracking-[0.15px]">
-                Welcome back. Sign in to continue to Terragon.
+              <p className="text-lead font-sans text-mid">
+                Welcome back. Continue to Terragon.
               </p>
             </div>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-5">
             <Button
               variant="default"
               size="lg"
-              className="w-full h-12 rounded-full relative font-sans font-medium tracking-[0.15px]"
+              className="w-full h-12 rounded-full relative font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
               onClick={handleGithubSignIn}
               disabled={isLoading}
             >
               {isLoading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Signing in...
+                  Signing in
                 </>
               ) : (
                 <>
@@ -67,7 +67,7 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
                 </>
               )}
             </Button>
-            <p className="text-micro text-center text-muted-foreground/50 font-sans tracking-[0.02em] uppercase">
+            <p className="text-micro text-center text-mid font-sans tracking-[0.06em] uppercase">
               Secure authentication via GitHub
             </p>
           </div>

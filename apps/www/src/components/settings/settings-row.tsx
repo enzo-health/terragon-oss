@@ -26,10 +26,8 @@ export function SettingsCheckbox({
         className="mt-0.5"
       />
       <div className="flex flex-col gap-1 flex-1">
-        <span className="text-sm font-medium">{label}</span>
-        {description && (
-          <span className="text-xs text-muted-foreground">{description}</span>
-        )}
+        <span className="text-sm font-medium text-strong">{label}</span>
+        {description && <span className="text-xs text-mid">{description}</span>}
       </div>
     </Label>
   );
@@ -57,10 +55,8 @@ export function SettingsWithCTA({
       )}
     >
       <div className="flex flex-col gap-1 flex-1">
-        <Label className="text-sm font-medium">{label}</Label>
-        {description && (
-          <span className="text-xs text-muted-foreground">{description}</span>
-        )}
+        <Label className="text-sm font-medium text-strong">{label}</Label>
+        {description && <span className="text-xs text-mid">{description}</span>}
       </div>
       {children}
     </div>
@@ -79,14 +75,14 @@ export function SettingsSection({
   cta?: React.ReactNode;
 }) {
   return (
-    <div className="bg-card rounded-lg border p-6 space-y-6">
+    <div className="bg-card rounded-[1.25rem] p-6 space-y-6 shadow-inset-edge">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <h3 className="text-base font-semibold tracking-[-0.01em]">
+          <h3 className="text-base font-semibold tracking-[-0.01em] text-strong">
             {label}
           </h3>
           {description && (
-            <p className="text-sm text-muted-foreground mt-1">{description}</p>
+            <p className="text-sm text-mid mt-1">{description}</p>
           )}
         </div>
         {cta && <div className="flex-shrink-0">{cta}</div>}

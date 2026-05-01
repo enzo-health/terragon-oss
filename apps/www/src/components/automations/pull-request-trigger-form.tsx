@@ -23,7 +23,7 @@ export function PullRequestTriggerForm({
   errorMessage?: string;
 }) {
   return (
-    <div className="space-y-4 border rounded-lg p-4">
+    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
       <div className="space-y-2">
         <FormLabel>Repository</FormLabel>
         <RepoSelector
@@ -145,9 +145,7 @@ export function PullRequestTriggerForm({
           </div>
         </div>
       </div>
-      {errorMessage && (
-        <p className="text-sm text-destructive">{errorMessage}</p>
-      )}
+      {errorMessage && <p className="text-sm text-error">{errorMessage}</p>}
     </div>
   );
 }

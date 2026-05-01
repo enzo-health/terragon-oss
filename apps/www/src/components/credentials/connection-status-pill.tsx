@@ -1,25 +1,17 @@
 import { cn } from "@/lib/utils";
 
+// Canonical status pill: bg-{semantic}/10 text-{semantic}, rounded-full.
+// Connected reads as success; not-connected falls back to a quiet mid-text
+// label without a chip fill (the absence of state is itself the signal).
 export function ConnectionStatusPill({ connected }: { connected: boolean }) {
   return (
-    <div className="flex items-center gap-2 border border-border rounded-full px-2 py-1">
-      <span className="text-xs font-mono">
-        {connected ? "Connected" : "Not Connected"}
-      </span>
-      <div className="size-2 relative flex items-center justify-center">
-        <div
-          className={cn(
-            "size-1 rounded-full",
-            connected ? "bg-success" : "bg-destructive",
-          )}
-        />
-        <div
-          className={cn(
-            "absolute inset-0 rounded-full size-2",
-            connected ? "bg-success/20" : "bg-destructive/20",
-          )}
-        />
-      </div>
-    </div>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full font-mono text-xs px-2.5 py-0.5",
+        connected ? "bg-success/10 text-success" : "text-mid",
+      )}
+    >
+      {connected ? "Connected" : "Not Connected"}
+    </span>
   );
 }

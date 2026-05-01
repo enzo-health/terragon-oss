@@ -76,19 +76,12 @@ export function Dashboard({
   const [promptText, setPromptText] = useState<string | null>(null);
   const selectedModel = useAtomValue(selectedModelAtom);
 
-  // Show recommended tasks when user has few active threads
   const { data: threadPages } = useInfiniteThreadList({ archived: false });
   const showRecommendedTasks = (threadPages?.pages[0]?.length ?? 0) < 3;
 
   return (
-    // Center the hero vertically when there's not much content below it.
-    // justify-center on tall viewports settles the headline + prompt
-    // around the optical middle instead of clinging to the top edge.
     <div
       className={cn(
-        // Symmetric vertical padding (py-16 = 64px) so the hero feels
-        // balanced rather than clinging to the top with 80px unused below.
-        // Outer gap-8 gives clear separation between conceptual blocks.
         "flex flex-col h-full max-w-chat w-full mx-auto gap-8 justify-center py-16 px-6",
         "animate-in fade-in duration-300",
       )}
@@ -97,9 +90,6 @@ export function Dashboard({
         <h1 className="font-display text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground">
           What would you like to build?
         </h1>
-        {/* Subtitle: shorter is better here. The previous 2-line copy
-            described what happens behind the scenes; the user already
-            knows that. One line reads as a confident product statement. */}
         <p className="text-[15px] leading-relaxed text-muted-foreground">
           Describe a task and I&apos;ll get to work.
         </p>
@@ -117,8 +107,6 @@ export function Dashboard({
         />
       </div>
       {showRecommendedTasks && (
-        // Brand caption-uppercase: 12px / 500 / 1.5px tracking. Reduced
-        // section gap since the rows below now have their own padding.
         <div className="space-y-3 hidden md:block">
           <h2 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground">
             Suggested tasks

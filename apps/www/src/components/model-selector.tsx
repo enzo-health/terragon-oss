@@ -193,7 +193,7 @@ function ModelSelectorInner({
 
   const triggerClassName = cn(
     "w-fit max-w-full min-w-0 px-1",
-    "border-none shadow-none hover:bg-transparent text-muted-foreground hover:text-foreground gap-0.5 dark:bg-transparent dark:hover:bg-transparent",
+    "border-none shadow-none hover:bg-transparent text-mid hover:text-strong gap-0.5 dark:bg-transparent dark:hover:bg-transparent",
     className,
   );
 
@@ -230,7 +230,7 @@ function ModelSelectorInner({
             {agentGroups.map((group) => {
               return (
                 <div key={group.agent} className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  <p className="text-[11px] font-medium text-mid uppercase tracking-[0.06em]">
                     {group.label}
                   </p>
                   <div className="space-y-1">
@@ -347,7 +347,7 @@ function AgentConfigButton({ forcedAgent }: { forcedAgent: AIAgent | null }) {
   return (
     <Link
       href="/settings/agent#available-agents-and-models"
-      className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      className="flex items-center gap-2 text-xs text-mid hover:text-strong transition-colors"
     >
       <SettingsIcon className="size-4" />
       {forcedAgent ? "Configure Models" : "Configure Agents & Models"}
@@ -413,10 +413,8 @@ function ModelDisplay({ model }: { model: AIModel }) {
   const { mainName, subName } = getModelDisplayName(model);
   return (
     <span className="flex items-baseline gap-1">
-      <span className="text-xs text-foreground/90">{mainName}</span>
-      {subName && (
-        <span className="text-xs text-muted-foreground/70">{subName}</span>
-      )}
+      <span className="text-xs text-strong">{mainName}</span>
+      {subName && <span className="text-xs text-mid">{subName}</span>}
     </span>
   );
 }

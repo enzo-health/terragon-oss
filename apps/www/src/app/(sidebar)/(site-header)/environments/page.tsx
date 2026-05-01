@@ -9,15 +9,24 @@ export const metadata: Metadata = {
   title: "Environments | Terragon",
 };
 
-// Dynamically import the heavy environments component for code splitting
+// Dynamically import the heavy environments component for code splitting.
+// The skeleton previews the eventual layout (header row + repo list rows) so
+// the swap to real content doesn't reflow.
 const Environments = dynamic(
   () => import("@/components/environments/main").then((m) => m.Environments),
   {
     loading: () => (
-      <div className="flex flex-col gap-4 p-4">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-64 w-full" />
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
+        <div className="flex items-center justify-between gap-4">
+          <Skeleton className="h-7 w-40" />
+          <Skeleton className="h-9 w-32 rounded-full" />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+        </div>
       </div>
     ),
   },

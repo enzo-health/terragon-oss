@@ -83,8 +83,8 @@ export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
     return (
       <div className="flex-shrink-0" title="Creating">
         <span className="relative flex h-2.5 w-2.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/30 opacity-60" />
-          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary/50" />
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral/30 opacity-60" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-coral/50" />
         </span>
       </div>
     );
@@ -130,45 +130,26 @@ function MinimalStatusIndicator({
   const strokeWidth = 2.5;
   const size = "size-3.5";
   const icons = {
-    draft: (
-      <File strokeWidth={2} className={cn("text-muted-foreground", size)} />
-    ),
+    draft: <File strokeWidth={2} className={cn("text-mid", size)} />,
     scheduled: (
-      <Calendar
-        strokeWidth={strokeWidth}
-        className={cn("text-muted-foreground", size)}
-      />
+      <Calendar strokeWidth={strokeWidth} className={cn("text-mid", size)} />
     ),
     pending: (
-      <Clock strokeWidth={strokeWidth} className={cn("text-amber-600", size)} />
+      <Clock strokeWidth={strokeWidth} className={cn("text-warning", size)} />
     ),
     active: (
       <CircleDashed
         strokeWidth={2}
-        className={cn(
-          "text-foreground/60 animate-[spin_2s_linear_infinite]",
-          size,
-        )}
+        className={cn("text-strong/60 animate-[spin_2s_linear_infinite]", size)}
       />
     ),
     finishing: (
-      <Check
-        strokeWidth={strokeWidth}
-        className={cn("text-emerald-600", size)}
-      />
+      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
     ),
     complete: (
-      <Check
-        strokeWidth={strokeWidth}
-        className={cn("text-emerald-600", size)}
-      />
+      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
     ),
-    error: (
-      <X
-        strokeWidth={strokeWidth}
-        className={cn("text-destructive/75", size)}
-      />
-    ),
+    error: <X strokeWidth={strokeWidth} className={cn("text-error", size)} />,
     unread: <div className="w-2 h-2 rounded-full bg-info" />,
   };
   return (

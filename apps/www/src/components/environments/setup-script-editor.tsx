@@ -180,15 +180,15 @@ export function SetupScriptEditor({
       <div className="flex flex-col gap-4 w-full pb-4">
         <div className="flex items-start justify-between">
           <div className="flex flex-col gap-1">
-            <h2 className="text-base font-semibold text-foreground">
+            <h2 className="text-base font-semibold text-strong">
               Setup Script Editor
             </h2>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-mid">
               {scriptSource === "environment"
-                ? "Using environment-specific setup script (overrides repository script)"
+                ? "Environment-specific script (overrides the repository script)."
                 : scriptSource === "repo"
-                  ? "Using setup script from repository (terragon-setup.sh)"
-                  : "Create a custom setup script for this environment"}
+                  ? "Using terragon-setup.sh from the repository."
+                  : "Create a custom setup script for this environment."}
             </p>
           </div>
 
@@ -255,32 +255,30 @@ export function SetupScriptEditor({
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center h-64 border rounded-md bg-muted/50">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center h-64 rounded-xl bg-surface-dark">
+            <Loader2 className="h-6 w-6 animate-spin text-on-dark-soft" />
           </div>
         ) : (
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <code className="text-xs text-muted-foreground">
+              <code className="font-mono text-[13px] text-mid">
                 terragon-setup.sh
               </code>
               <div className="flex items-center gap-2">
                 {scriptSource === "environment" && (
-                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2.5 py-0.5 rounded-full">
                     <FileCode2 className="h-3 w-3" />
                     Environment
                   </span>
                 )}
                 {scriptSource === "repo" && (
-                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-1 text-xs bg-info/10 text-info px-2.5 py-0.5 rounded-full">
                     <FileCode2 className="h-3 w-3" />
                     Repository
                   </span>
                 )}
                 {hasChanges && (
-                  <span className="text-xs text-muted-foreground">
-                    Modified
-                  </span>
+                  <span className="text-xs text-mid">Modified</span>
                 )}
               </div>
             </div>
@@ -288,8 +286,8 @@ export function SetupScriptEditor({
               ref={textAreaRef}
               value={scriptValue}
               onChange={(e) => setScriptValue(e.target.value)}
-              placeholder="Enter your setup script here..."
-              className="font-mono text-sm min-h-[400px] resize-y"
+              placeholder="Enter your setup script here…"
+              className="font-mono text-[13px] leading-[1.5] tabular-nums min-h-[400px] resize-y rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
               disabled={isRunning}
             />
           </div>
@@ -298,7 +296,7 @@ export function SetupScriptEditor({
         {(status !== "idle" || outputs.length > 0) && (
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Output</h3>
+              <h3 className="text-sm font-medium text-strong">Output</h3>
               {isRunning && (
                 <Button onClick={stop} variant="outline" size="sm">
                   <Square className="h-4 w-4 mr-1" />
@@ -310,41 +308,42 @@ export function SetupScriptEditor({
           </div>
         )}
 
-        <div className="bg-muted/50 p-3 rounded-md">
-          <div>
-            <p className="text-sm text-muted-foreground mb-1">
-              <strong>Tip:</strong> To test what the agent will see in their
-              environment, use{" "}
-              <code className="px-1 py-0.5 bg-muted rounded text-[11px]">
-                bash -lc 'command'
-              </code>{" "}
-              in your script. This runs commands with a login shell, loading the
-              same environment variables and configurations that the agent uses.
-              eg. `bash -lc 'go version'`
-            </p>
-          </div>
-          <hr className="my-4" />
-          <p className="text-sm text-muted-foreground mb-2">
-            Setup Script Priority:
+        <div className="rounded-xl border border-hairline bg-canvas p-4">
+          <p className="text-sm text-mid">
+            <strong className="text-strong font-medium">Tip:</strong> To test
+            what the agent will see in their environment, use{" "}
+            <code className="font-mono px-1.5 py-0.5 rounded bg-surface-dark text-on-dark text-[11px]">
+              bash -lc 'command'
+            </code>{" "}
+            in your script. This runs commands with a login shell, loading the
+            same environment variables and configurations that the agent uses
+            (e.g.{" "}
+            <code className="font-mono px-1.5 py-0.5 rounded bg-surface-dark text-on-dark text-[11px]">
+              bash -lc 'go version'
+            </code>
+            ).
           </p>
-          <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+          <div className="my-4 h-px bg-hairline" />
+          <p className="text-sm text-mid mb-2">Setup script priority:</p>
+          <ul className="text-sm text-mid space-y-1 list-disc list-inside">
             <li>
-              <strong>Environment Script:</strong> If you save a script to this
-              environment, it will override any repository script
+              <strong className="text-strong font-medium">
+                Environment script:
+              </strong>{" "}
+              if you save a script to this environment, it overrides any
+              repository script.
             </li>
             <li>
-              <strong>Repository Script:</strong> The terragon-setup.sh file in
-              your repository's main branch (used when no environment script
-              exists)
+              <strong className="text-strong font-medium">
+                Repository script:
+              </strong>{" "}
+              the terragon-setup.sh file on your repository's main branch (used
+              when no environment script exists).
             </li>
             <li>
-              You can test your script by clicking "Test" - this creates a new
-              sandbox and runs the script
+              Click "Test" to run the script in a fresh sandbox without saving.
             </li>
-            <li>
-              "Save to Environment" stores the script for this specific
-              environment only
-            </li>
+            <li>"Save" stores the script for this environment only.</li>
           </ul>
         </div>
       </div>

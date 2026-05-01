@@ -87,11 +87,11 @@ export function AdminSandboxContent(props: {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      <div className="flex flex-col flex-1 mt-4 min-h-0 pb-4">
-        <div className="flex gap-2 mb-6">
+      <div className="mt-4 flex min-h-0 flex-1 flex-col pb-4">
+        <div className="mb-6 flex gap-2">
           <Input
-            placeholder="Enter E2B Sandbox ID..."
-            className="font-mono text-sm"
+            placeholder="Enter E2B Sandbox ID"
+            className="font-mono text-sm tabular-nums"
             value={sandboxId}
             autoComplete="off"
             onKeyDown={(e) => {
@@ -114,9 +114,9 @@ export function AdminSandboxContent(props: {
           </Button>
         </div>
         {props.sandboxId && (
-          <div className="flex flex-col flex-1 min-h-0 border rounded-lg overflow-hidden">
-            <div className="flex w-full items-center justify-between px-4 py-2 border-b bg-muted/50">
-              <h3 className="text-sm font-semibold">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border">
+            <div className="flex w-full items-center justify-between gap-4 border-b border-border px-4 py-2.5">
+              <h3 className="font-mono text-[13px] tabular-nums text-foreground">
                 /tmp/terragon-daemon.log
               </h3>
               <div className="flex items-center gap-4">
@@ -126,10 +126,10 @@ export function AdminSandboxContent(props: {
                   onClick={handleDownloadLog}
                   disabled={!logLines || logLines.length === 0 || isLoadingLogs}
                 >
-                  <Download className="h-4 w-4 mr-2" />
+                  <Download className="mr-2 h-4 w-4" />
                   Download
                 </Button>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center gap-2">
                   <Checkbox
                     id="wrap-lines"
                     checked={wrapLines}
@@ -137,25 +137,32 @@ export function AdminSandboxContent(props: {
                       setWrapLines(checked === true)
                     }
                   />
-                  <label htmlFor="wrap-lines" className="text-sm font-medium">
+                  <label
+                    htmlFor="wrap-lines"
+                    className="text-xs font-medium text-muted-foreground"
+                  >
                     Wrap
                   </label>
                 </div>
               </div>
             </div>
             {isLoadingLogs && (
-              <div className="flex p-4 h-64 items-center justify-center text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Loading Logs...
+              <div className="flex h-64 items-center justify-center p-4 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading logs...
               </div>
             )}
             {logLines && (
-              <ScrollArea className="flex-1 overflow-auto [&>div]:w-fit">
-                <div className="flex flex-col gap-1 font-mono text-sm p-4 w-fit">
+              <ScrollArea className="flex-1 overflow-auto bg-surface-dark [&>div]:w-fit">
+                <div className="flex w-fit flex-col gap-0.5 p-4 font-mono text-xs text-on-dark">
                   {logLines.map((logLine, index) => (
-                    <div key={index} className="flex">
+                    <div key={index} className="flex gap-3">
+                      <span className="select-none tabular-nums text-on-dark-soft/60">
+                        {String(index + 1).padStart(4, " ")}
+                      </span>
                       <span
                         className={cn(
+                          "tabular-nums",
                           wrapLines
                             ? "whitespace-pre-wrap break-all"
                             : "whitespace-pre",

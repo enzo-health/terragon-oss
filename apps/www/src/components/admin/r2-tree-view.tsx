@@ -105,8 +105,8 @@ export function R2TreeView({ initialData = [] }: TreeViewProps) {
     return (
       <div key={node.path}>
         <div
-          className={`group flex items-center gap-2 px-2 py-1 hover:bg-muted rounded cursor-pointer ${
-            isSelected ? "bg-muted" : ""
+          className={`group flex items-center gap-2 px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-[var(--hover-cream,var(--muted))] ${
+            isSelected ? "bg-[var(--hover-cream,var(--muted))]" : ""
           }`}
           style={{ paddingLeft: `${level * 20 + 8}px` }}
           onClick={() => {
@@ -136,9 +136,13 @@ export function R2TreeView({ initialData = [] }: TreeViewProps) {
           ) : (
             <Folder className="h-4 w-4 text-muted-foreground" />
           )}
-          <span className="flex-1 text-sm">{node.name}</span>
+          <span
+            className={`flex-1 text-sm ${node.type === "file" ? "font-mono" : ""}`}
+          >
+            {node.name}
+          </span>
           {node.type === "file" && node.size !== undefined && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {formatBytes(node.size)}
             </span>
           )}
@@ -212,7 +216,7 @@ export function R2TreeView({ initialData = [] }: TreeViewProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between p-4 border-b">
+      <div className="flex items-center justify-between p-4 border-b border-[var(--hairline,var(--border))]">
         <h3 className="text-lg font-semibold">CDN Objects</h3>
         <Button onClick={handleRefresh} disabled={isLoading} size="sm">
           {isLoading ? "Loading..." : "Refresh"}
@@ -230,12 +234,12 @@ export function R2TreeView({ initialData = [] }: TreeViewProps) {
       </div>
 
       {selectedNode && selectedNode.type === "file" && (
-        <div className="border-t p-4 space-y-2">
+        <div className="border-t border-[var(--hairline,var(--border))] p-4 space-y-2">
           <h4 className="font-medium">File Details</h4>
           <div className="text-sm space-y-1">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Name:</span>
-              <span>{selectedNode.name}</span>
+              <span className="font-mono text-xs">{selectedNode.name}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Path:</span>
@@ -244,7 +248,9 @@ export function R2TreeView({ initialData = [] }: TreeViewProps) {
             {selectedNode.size !== undefined && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Size:</span>
-                <span>{formatBytes(selectedNode.size)}</span>
+                <span className="tabular-nums">
+                  {formatBytes(selectedNode.size)}
+                </span>
               </div>
             )}
             {selectedNode.lastModified && (

@@ -198,8 +198,8 @@ export function EnvironmentVariablesEditor({
 
       <div className="space-y-2">
         {!!globalEnvironmentVariableKeys.length && (
-          <div className="flex flex-col gap-2 items-start p-3 rounded-md border">
-            <p className="text-sm text-muted-foreground/75 font-medium">
+          <div className="flex flex-col gap-2 items-start p-4 rounded-xl border border-hairline bg-canvas">
+            <p className="text-sm text-mid font-medium">
               Defined in the{" "}
               <Link
                 href="/environments/global"
@@ -212,18 +212,12 @@ export function EnvironmentVariablesEditor({
             <div className="flex flex-col gap-1 w-full">
               {globalEnvironmentVariableKeys.map((key) => (
                 <div key={key} className="flex-1">
-                  <div className="flex-1 space-y-2">
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <Input
-                          placeholder="KEY"
-                          value={key}
-                          disabled={true}
-                          className="font-[var(--font-geist-mono)] text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <Input
+                    placeholder="KEY"
+                    value={key}
+                    disabled={true}
+                    className="font-mono text-sm tabular-nums"
+                  />
                 </div>
               ))}
             </div>
@@ -233,8 +227,8 @@ export function EnvironmentVariablesEditor({
           <div
             key={index}
             className={cn(
-              "flex gap-2 items-start p-3 rounded-md border",
-              errors[index] && "border-destructive",
+              "flex gap-2 items-start p-3 rounded-xl border border-hairline bg-canvas",
+              errors[index] && "border-error/60",
             )}
           >
             <div className="flex-1 space-y-2">
@@ -246,14 +240,13 @@ export function EnvironmentVariablesEditor({
                     onChange={(e) => handleKeyChange(index, e.target.value)}
                     disabled={disabled}
                     className={cn(
-                      "font-[var(--font-geist-mono)] text-sm",
-                      errors[index] && "border-destructive",
+                      "font-mono text-sm tabular-nums",
+                      errors[index] &&
+                        "border-error/60 focus-visible:ring-error/40",
                     )}
                   />
                   {errors[index] && (
-                    <p className="text-xs text-destructive mt-1">
-                      {errors[index]}
-                    </p>
+                    <p className="text-xs text-error mt-1">{errors[index]}</p>
                   )}
                 </div>
                 <div className="flex-1 relative">
@@ -263,13 +256,13 @@ export function EnvironmentVariablesEditor({
                     value={variable.value}
                     onChange={(e) => handleValueChange(index, e.target.value)}
                     disabled={disabled}
-                    className="font-[var(--font-geist-mono)] text-sm pr-10"
+                    className="font-mono text-sm tabular-nums pr-10"
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="absolute right-0 top-0 h-full px-2"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
                     onClick={() =>
                       setShowValues({
                         ...showValues,
@@ -277,11 +270,14 @@ export function EnvironmentVariablesEditor({
                       })
                     }
                     disabled={disabled}
+                    aria-label={
+                      showValues[index] ? "Hide value" : "Reveal value"
+                    }
                   >
                     {showValues[index] ? (
-                      <Eye className="h-4 w-4" />
-                    ) : (
                       <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
                     )}
                   </Button>
                 </div>
@@ -293,6 +289,7 @@ export function EnvironmentVariablesEditor({
               size="icon"
               onClick={() => setDeleteConfirmIndex(index)}
               disabled={disabled}
+              aria-label="Remove variable"
             >
               <X className="h-4 w-4" />
             </Button>
@@ -331,15 +328,15 @@ export function EnvironmentVariablesEditor({
                 setEnvContent(e.target.value);
                 setImportErrors([]);
               }}
-              placeholder={`# EXAMPLE .ENV CONTENT:
-DATABASE_URL=POSTGRESQL://USER:PASS@LOCALHOST/DB
-API_KEY=YOUR-API-KEY-HERE
-NODE_ENV=PRODUCTION`}
-              className="min-h-[300px] max-h-[400px] font-mono text-sm overflow-auto whitespace-pre resize-none"
+              placeholder={`# example .env content
+DATABASE_URL=postgresql://user:pass@localhost/db
+API_KEY=your-api-key-here
+NODE_ENV=production`}
+              className="min-h-[300px] max-h-[400px] font-mono text-[13px] leading-[1.5] tabular-nums overflow-auto whitespace-pre resize-none rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
             />
 
             {importErrors.length > 0 && (
-              <div className="space-y-1 text-destructive overflow-auto max-h-[100px]">
+              <div className="space-y-1 text-sm text-error overflow-auto max-h-[100px]">
                 {importErrors.map((error, index) => (
                   <div key={index}>{error}</div>
                 ))}

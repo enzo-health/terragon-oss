@@ -22,7 +22,7 @@ export function Stats() {
   } = useQuery(statsQueryOptions({ numDays, timezone: timeZone }));
   if (error) {
     return (
-      <div className="mx-auto p-8 w-full">
+      <div className="w-full p-8">
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
@@ -35,19 +35,21 @@ export function Stats() {
 
   if (isLoading || !statsData) {
     return (
-      <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="h-4 w-4 animate-spin" />
+      <div
+        role="status"
+        aria-label="Loading usage statistics"
+        className="flex h-full w-full items-center justify-center"
+      >
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto space-y-8 w-full">
-      <div className="space-y-6 w-full">
-        <DateRangeSelector numDays={numDays} onNumDaysChange={setNumDays} />
-        <Summary summary={statsData.summary} />
-        <UsageChart dailyStats={statsData.dailyStats} />
-      </div>
+    <div className="w-full space-y-7">
+      <DateRangeSelector numDays={numDays} onNumDaysChange={setNumDays} />
+      <Summary summary={statsData.summary} />
+      <UsageChart dailyStats={statsData.dailyStats} />
     </div>
   );
 }
