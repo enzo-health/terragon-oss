@@ -188,6 +188,13 @@ vi.mock("@/collections/thread-chat-collection", () => ({
   applyChatPatchToCollection: vi.fn(),
 }));
 
+vi.mock("@/collections/thread-transcript-collection", () => ({
+  seedTranscript: vi.fn(),
+  getCachedTranscript: vi.fn(() => undefined),
+  invalidateCachedTranscript: vi.fn(),
+  getThreadTranscriptCollection: vi.fn(),
+}));
+
 vi.mock("@/components/chat/use-thread-page-realtime-sync", () => ({
   useThreadPageRealtimeSync: vi.fn(),
 }));

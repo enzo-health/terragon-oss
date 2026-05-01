@@ -25,7 +25,7 @@ export default async function TaskListLayout({
   }
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-4 md:pr-4 md:pl-2">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-2 md:pr-2 md:pl-1">
         {/* Outer frame: canvas-toned (was bg-card, which made every inner
             child render on cream-strong and made surfaces inside —
             especially the prompt box, which also uses bg-card — invisible

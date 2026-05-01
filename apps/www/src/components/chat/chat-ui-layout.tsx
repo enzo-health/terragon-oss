@@ -16,7 +16,7 @@ import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
 import { stopThread } from "@/server-actions/stop-thread";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import type { AgUiHistoryMessagesResult } from "./ag-ui-history-types";
+import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import {
   TerragonThread,
   TerragonThreadErrorBoundary,

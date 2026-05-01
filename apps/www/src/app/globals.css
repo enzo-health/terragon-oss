@@ -726,7 +726,8 @@
   .reconciliation-flash,
   .animate-progress-indeterminate,
   .animate-blink,
-  .animate-pulse {
+  .animate-pulse,
+  .animate-ping {
     animation: none !important;
     transition: none !important;
   }

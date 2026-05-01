@@ -44,7 +44,10 @@ export function ThreadListSidebar() {
     >
       <div className="flex flex-col h-full w-full overflow-hidden">
         <div
-          className={cn("px-3 py-2.5 flex items-center gap-2", headerClassName)}
+          className={cn(
+            "px-2.5 py-1.5 flex items-center gap-2",
+            headerClassName,
+          )}
         >
           {isOnDashboard ? (
             <span className="flex-1 flex items-center gap-2 px-3 text-caption font-medium text-foreground">
@@ -55,7 +58,7 @@ export function ThreadListSidebar() {
               href="/dashboard"
               className="flex-1 flex items-center gap-2 rounded-md py-1.5 px-3 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
             >
-              <SquarePen className="h-3.5 w-3.5 opacity-60" />
+              <SquarePen className="h-3.5 w-3.5 text-muted-foreground" />
               <span>New Task</span>
             </Link>
           )}
@@ -67,7 +70,7 @@ export function ThreadListSidebar() {
               className="h-8 w-8 flex-shrink-0 rounded-lg hover:bg-accent"
               title="Collapse task list"
             >
-              <PanelLeftClose className="h-4 w-4 opacity-60" />
+              <PanelLeftClose className="h-4 w-4 text-muted-foreground" />
             </Button>
           )}
         </div>
@@ -76,7 +79,7 @@ export function ThreadListSidebar() {
           setViewFilter={setViewFilter}
           allowGroupBy={true}
         />
-        <div className="flex-1 overflow-y-auto px-1.5">
+        <div className="flex-1 overflow-y-auto px-1">
           <ThreadListContentsClient
             viewFilter={viewFilter}
             queryFilters={{ archived: viewFilter === "archived" }}
@@ -94,6 +97,15 @@ export function ThreadListSidebar() {
           isResizing && "bg-accent",
         )}
         onMouseDown={handleMouseDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize task list"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+          }
+        }}
       />
     </div>
   );

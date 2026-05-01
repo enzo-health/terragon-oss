@@ -69,6 +69,7 @@ const InlineNameEditor = memo(function InlineNameEditor({
       onChange={(e) => setEditedName(e.target.value)}
       onBlur={handleSave}
       onKeyDown={handleKeyDown}
+      aria-label="Task name"
       className="h-auto py-0 px-1 text-[15px] font-medium border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm flex-1 min-w-0"
       placeholder={getThreadTitle(thread)}
       onClick={(e) => {
@@ -134,6 +135,13 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
           setActivated(true);
           setPendingClick(true);
         }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setActivated(true);
+            setPendingClick(true);
+          }
+        }}
       >
         {menuTrigger}
       </div>
@@ -154,12 +162,12 @@ const LazyThreadListMenu = memo(function LazyThreadListMenu({
 
 const CreatingIndicator = memo(function CreatingIndicator() {
   return (
-    <span className="inline-flex items-center gap-1.5 text-primary/60">
+    <span className="inline-flex items-center gap-1.5 text-primary">
       <span className="relative flex h-2 w-2">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 opacity-75" />
         <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/60" />
       </span>
-      <span className="text-[11px] font-medium tracking-wide uppercase">
+      <span className="text-micro font-medium tracking-wide uppercase">
         Creating
       </span>
     </span>
@@ -230,19 +238,21 @@ function useReconciliationAnimation(
 export const ThreadListItem = memo(function ThreadListItem({
   thread,
   pathname,
-  relativeTimeTick: _relativeTimeTick,
   className,
   hideRepository,
   style,
 }: {
   pathname: string;
   thread: ThreadInfo;
-  relativeTimeTick: number;
   className?: string;
   hideRepository: boolean;
   style?: React.CSSProperties;
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
+  const relativeTime = useMemo(
+    () => formatRelativeTime(thread.updatedAt),
+    [thread.updatedAt],
+  );
   const isOptimisticThread = thread.id.startsWith("optimistic-");
   const isReconciling = useReconciliationAnimation(
     thread.id,
@@ -250,7 +260,6 @@ export const ThreadListItem = memo(function ThreadListItem({
     title,
   );
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const relativeTime = formatRelativeTime(thread.updatedAt);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
 
@@ -274,9 +283,9 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-lg transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2.5 py-[7px] relative pr-9 border",
+            "block rounded-lg transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1.5 md:py-1 relative pr-9 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             pathname === `/task/${thread.id}`
-              ? "bg-primary/[0.06] border-primary/20"
+              ? "bg-primary/[0.10] border-primary/25"
               : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
             isOptimisticThread && [
@@ -308,7 +317,7 @@ export const ThreadListItem = memo(function ThreadListItem({
               <div className="h-full bg-primary/50 animate-progress-indeterminate rounded-full" />
             </div>
           )}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
               <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
                 <ThreadStatusIndicator
@@ -324,9 +333,9 @@ export const ThreadListItem = memo(function ThreadListItem({
               ) : (
                 <p
                   className={cn(
-                    "text-[13px] flex-1 truncate font-medium tracking-[-0.01em] leading-snug",
+                    "text-sm flex-1 truncate font-medium tracking-[-0.01em] leading-snug",
                     isOptimisticThread
-                      ? "text-foreground/80"
+                      ? "text-muted-foreground"
                       : "text-foreground",
                   )}
                   title={title}
@@ -336,7 +345,7 @@ export const ThreadListItem = memo(function ThreadListItem({
               )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80 min-w-0">
+              <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
@@ -345,9 +354,9 @@ export const ThreadListItem = memo(function ThreadListItem({
                 </span>
                 {thread.githubRepoFullName && !hideRepository && (
                   <>
-                    <span className="flex-shrink-0 opacity-60">·</span>
+                    <span className="flex-shrink-0 opacity-50">·</span>
                     <span
-                      className="truncate opacity-80"
+                      className="truncate"
                       title={thread.githubRepoFullName}
                     >
                       {thread.githubRepoFullName}
@@ -369,7 +378,19 @@ export const ThreadListItem = memo(function ThreadListItem({
                     repoFullName={thread.githubRepoFullName}
                   />
                 )}
-                <div className="opacity-80 scale-90">
+                <div
+                  className="text-muted-foreground"
+                  title={
+                    thread.threadChats[0]?.agent
+                      ? `Agent: ${thread.threadChats[0].agent}`
+                      : undefined
+                  }
+                  aria-label={
+                    thread.threadChats[0]?.agent
+                      ? `Agent: ${thread.threadChats[0].agent}`
+                      : "Agent"
+                  }
+                >
                   <ThreadAgentIcon thread={thread} />
                 </div>
               </div>
@@ -378,8 +399,10 @@ export const ThreadListItem = memo(function ThreadListItem({
         </Link>
         <div
           className={cn(
-            "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100",
-            isMenuOpen ? "opacity-100" : "opacity-100 sm:opacity-0",
+            "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+            isMenuOpen
+              ? "opacity-100"
+              : "opacity-100 sm:opacity-0 focus-within:opacity-100",
             isOptimisticThread && "pointer-events-none opacity-0",
           )}
           onClick={(e) => {
