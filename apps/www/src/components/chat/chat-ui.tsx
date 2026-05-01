@@ -1,6 +1,5 @@
 "use client";
 
-import { EventType, type Message as AgUiMessage } from "@ag-ui/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureAgent } from "@terragon/agent/utils";
 import {
@@ -23,11 +22,12 @@ import {
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
-import type {
-  AgUiHistoryItem,
-  AgUiHistoryMessagesResult,
-} from "./ag-ui-history-types";
-import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
+import { fetchAgUiHistoryMessages } from "./ag-ui-history-fetch";
+import {
+  getCachedTranscript,
+  invalidateCachedTranscript,
+  seedTranscript,
+} from "@/collections/thread-transcript-collection";
 import {
   ChatUILayout,
   type ChatUICoreData,
@@ -61,10 +61,6 @@ import {
   useRetryThreadMutation,
 } from "./use-thread-mutations";
 import { useThreadViewModel } from "./use-ag-ui-messages";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function queuedUserMessageToOptimisticUiMessage({
   message,
@@ -158,66 +154,6 @@ function getOptimisticUserMessages({
     appendUniqueUiUserMessages(optimisticSubmittedMessages, submittedMessages),
     optimisticQueuedMessages,
   );
-}
-
-function isAgUiHistoryMessage(value: unknown): value is AgUiMessage {
-  if (!isRecord(value)) {
-    return false;
-  }
-  const id = value.id;
-  const role = value.role;
-  const content = value.content;
-  if (typeof id !== "string") {
-    return false;
-  }
-  if (role === "user") {
-    return typeof content === "string" || Array.isArray(content);
-  }
-  if (role === "system") {
-    return typeof content === "string";
-  }
-  if (role === "assistant") {
-    return content === undefined || typeof content === "string";
-  }
-  if (role === "tool") {
-    return typeof value.toolCallId === "string" && typeof content === "string";
-  }
-  return false;
-}
-
-function isTerragonCustomPartEvent(
-  value: unknown,
-): value is TerragonCustomPartEvent {
-  return (
-    isRecord(value) &&
-    value.type === EventType.CUSTOM &&
-    typeof value.name === "string" &&
-    value.name === "terragon.data-part"
-  );
-}
-
-function isAgUiHistoryItem(value: unknown): value is AgUiHistoryItem {
-  return isAgUiHistoryMessage(value) || isTerragonCustomPartEvent(value);
-}
-
-function parseAgUiHistoryMessagesResponse(
-  value: unknown,
-): AgUiHistoryMessagesResult {
-  if (!isRecord(value) || !Array.isArray(value.messages)) {
-    throw new Error("Invalid AG UI history response");
-  }
-  if (!value.messages.every(isAgUiHistoryItem)) {
-    throw new Error("Invalid AG UI history item");
-  }
-  const lastSeq = value.lastSeq;
-  if (
-    typeof lastSeq !== "number" ||
-    !Number.isSafeInteger(lastSeq) ||
-    lastSeq < -1
-  ) {
-    throw new Error("Invalid AG UI history cursor");
-  }
-  return { messages: value.messages, lastSeq };
 }
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
@@ -333,18 +269,34 @@ function ChatUIContent() {
   });
 
   const loadAgUiHistoryMessages = useCallback(async () => {
-    const query = new URLSearchParams({
-      threadChatId,
-      history: "messages",
-    });
-    const response = await fetch(
-      `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`,
-      { cache: "no-store" },
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to load AG UI history (${response.status})`);
+    // Stale-while-revalidate against the transcript collection.
+    //
+    // 1. If we have a cached snapshot (warmed by sidebar prefetch or a prior
+    //    visit), return it synchronously so the runtime hydrates instantly
+    //    with no "Loading task history..." placeholder.
+    //
+    // 2. Always kick off a background revalidation that updates the collection
+    //    so the next open is fresh. For active runs the runtime applies
+    //    `fromSeq=cachedLastSeq` and the SSE replay fills in any gap.
+    const cached = getCachedTranscript(threadId, threadChatId);
+    if (cached) {
+      void fetchAgUiHistoryMessages({ threadId, threadChatId })
+        .then((fresh) =>
+          seedTranscript({ threadId, threadChatId, result: fresh }),
+        )
+        .catch((err) => {
+          // Background revalidation failure is non-fatal — the runtime is
+          // already hydrated. Drop the cached entry so the next visit refetches
+          // (avoids serving an entry that may be permanently broken).
+          console.warn("[transcript-cache] revalidation failed", err);
+          invalidateCachedTranscript(threadId, threadChatId);
+        });
+      return cached;
     }
-    return parseAgUiHistoryMessagesResponse(await response.json());
+
+    const fresh = await fetchAgUiHistoryMessages({ threadId, threadChatId });
+    seedTranscript({ threadId, threadChatId, result: fresh });
+    return fresh;
   }, [threadChatId, threadId]);
   const agent = useAgUiTransport({
     threadId,

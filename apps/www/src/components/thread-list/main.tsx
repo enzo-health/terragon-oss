@@ -2,14 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { ThreadInfo } from "@terragon/shared";
-import {
-  useCallback,
-  useDeferredValue,
-  useMemo,
-  memo,
-  useEffect,
-  useState,
-} from "react";
+import { useCallback, useDeferredValue, useMemo, memo } from "react";
 import {
   LoaderCircle,
   ChevronDown,
@@ -20,6 +13,8 @@ import {
   Archive,
   SlidersHorizontal,
   List,
+  ChevronsDown,
+  ChevronsUp,
 } from "lucide-react";
 import { useRealtimeThreadMatch } from "@/hooks/useRealtime";
 import { BroadcastThreadPatch } from "@terragon/types/broadcast";
@@ -69,12 +64,12 @@ export const ThreadListHeader = memo(function ThreadListHeader({
   return (
     <div
       className={cn(
-        "px-4 flex items-center justify-between min-h-12 mb-1",
+        "px-3 flex items-center justify-between min-h-9",
         "animate-in fade-in duration-300",
         className,
       )}
     >
-      <h2 className="font-semibold text-[13px] uppercase tracking-[0.06em] text-muted-foreground">
+      <h2 className="font-semibold text-sm uppercase tracking-[0.06em] text-muted-foreground">
         Tasks
       </h2>
       <div className="flex items-center gap-1">
@@ -85,16 +80,17 @@ export const ThreadListHeader = memo(function ThreadListHeader({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-fit px-2 hover:bg-accent rounded-full group flex items-center gap-1.5 transition-colors duration-200"
+                title="Filter tasks"
               >
                 {viewFilter === "active" ? (
-                  <Inbox className="h-3.5 w-3.5 opacity-70" />
+                  <Inbox className="h-3.5 w-3.5 text-muted-foreground" />
                 ) : (
-                  <Archive className="h-3.5 w-3.5 opacity-70" />
+                  <Archive className="h-3.5 w-3.5 text-muted-foreground" />
                 )}
-                <span className="text-[13px] font-sans font-medium opacity-70">
+                <span className="text-sm font-sans font-medium text-muted-foreground">
                   {viewFilter === "active" ? "Inbox" : "Archived"}
                 </span>
-                <ChevronDown className="size-3 opacity-40 group-hover:opacity-100 transition-opacity" />
+                <ChevronDown className="size-3 text-muted-foreground group-hover:text-foreground transition-colors" />
               </Button>
             }
             title="Tasks Filter"
@@ -130,8 +126,9 @@ export const ThreadListHeader = memo(function ThreadListHeader({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8 hover:bg-accent rounded-full group flex items-center justify-center transition-colors duration-200"
+                title="Group tasks by"
               >
-                <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
+                <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
               </Button>
             }
             title="Group Tasks By"
@@ -189,20 +186,29 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
   return (
     <h3
       className={cn(
-        "group py-1.5 text-[11px] uppercase tracking-[0.06em] font-semibold text-muted-foreground/70 flex items-center gap-1.5 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-3",
+        "group py-2 md:py-1 text-micro uppercase tracking-[0.06em] font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-2.5 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
         "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
+      role="button"
+      tabIndex={0}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      title={title}
     >
       <ChevronRight
         className={cn(
-          "size-3 opacity-50 transition-transform duration-200 ease-[var(--ease-standard)]",
+          "size-3 flex-shrink-0 text-muted-foreground transition-transform duration-200 ease-[var(--ease-standard)]",
           !isCollapsed && "rotate-90",
         )}
       />
-      {title}
-      <span className="text-muted-foreground/70 font-sans text-[10px] font-medium">
+      <span className="truncate normal-case tracking-normal">{title}</span>
+      <span className="text-muted-foreground/70 font-sans text-[10px] font-medium tabular-nums flex-shrink-0">
         {numThreads}
       </span>
     </h3>
@@ -217,7 +223,6 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname,
   isSidebar,
   groupBy,
-  relativeTimeTick,
 }: {
   title: string;
   threads: ThreadInfo[];
@@ -226,7 +231,6 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   pathname: string;
   isSidebar: boolean;
   groupBy: ThreadListGroupBy;
-  relativeTimeTick: number;
 }) {
   const toggleCollapsedSection = useSetAtom(
     toggleThreadListCollapsedSectionAtom,
@@ -241,7 +245,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   }
   return (
     <div
-      className="mb-6"
+      className="mb-3"
       style={{ contentVisibility: "auto", containIntrinsicSize: "320px" }}
     >
       <ThreadListSectionHeader
@@ -253,7 +257,10 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
       />
       {!isCollapsed && (
         <div
-          className={cn("space-y-1.5", isSidebar ? "px-2" : undefined)}
+          className={cn(
+            "space-y-1 md:space-y-0.5",
+            isSidebar ? "px-1" : undefined,
+          )}
           style={{
             transitionBehavior: "allow-discrete",
           }}
@@ -263,7 +270,6 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
               key={thread.id}
               thread={thread}
               pathname={pathname}
-              relativeTimeTick={relativeTimeTick}
               className={cn(
                 !isSidebar ? "pl-1" : undefined,
                 thread.id.startsWith("optimistic-") &&
@@ -295,8 +301,8 @@ function EmptyThreadList({
     return (
       <div className="bg-muted/20 rounded-md p-8 flex flex-col items-center justify-center gap-2">
         <div className="flex items-center gap-2">
-          <WorkflowIcon className="size-4 text-muted-foreground/70" />
-          <span className="text-sm text-muted-foreground/70">
+          <WorkflowIcon className="size-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">
             No tasks for this automation
           </span>
         </div>
@@ -306,16 +312,16 @@ function EmptyThreadList({
   return (
     <div className="rounded-lg p-8 flex flex-col items-center justify-center gap-3 text-center">
       {queryFilters.archived ? (
-        <ArchiveX className="size-5 text-muted-foreground/60" />
+        <ArchiveX className="size-5 text-muted-foreground" />
       ) : (
-        <List className="size-5 text-muted-foreground/60" />
+        <List className="size-5 text-muted-foreground" />
       )}
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground/85">
+        <span className="text-sm font-medium text-foreground">
           {queryFilters.archived ? "No archived tasks" : "No tasks yet"}
         </span>
         {!queryFilters.archived && (
-          <span className="text-xs text-muted-foreground/85">
+          <span className="text-xs text-muted-foreground">
             Tasks you create will show up here.
           </span>
         )}
@@ -477,23 +483,32 @@ export const ThreadListContents = memo(function ThreadListContents({
   isSidebar: boolean;
 }) {
   const pathname = usePathname();
-  const collapsedSections = useAtomValue(threadListCollapsedSectionsAtom);
+  const [collapsedSections, setCollapsedSections] = useAtom(
+    threadListCollapsedSectionsAtom,
+  );
   const groupBy = useAtomValue(threadListGroupByAtom);
   const selectedModel = useAtomValue(selectedModelAtom);
-  const [relativeTimeTick, setRelativeTimeTick] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setRelativeTimeTick((tick) => tick + 1);
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, []);
 
   const { threadGroups, threads, isLoading, isError } = useThreadList({
     viewFilter,
     queryFilters,
     groupBy: allowGroupBy ? groupBy : "lastUpdated",
   });
+
+  const nonEmptyGroups = useMemo(
+    () => threadGroups.filter((g) => g.threads.length > 0),
+    [threadGroups],
+  );
+  const allCollapsed =
+    nonEmptyGroups.length > 1 &&
+    nonEmptyGroups.every((g) => !!collapsedSections[g.id]);
+  const toggleAllSections = useCallback(() => {
+    const newState: Record<string, boolean> = {};
+    for (const group of nonEmptyGroups) {
+      newState[group.id] = !allCollapsed;
+    }
+    setCollapsedSections((prev) => ({ ...prev, ...newState }));
+  }, [nonEmptyGroups, allCollapsed, setCollapsedSections]);
 
   if (isLoading) {
     return (
@@ -504,17 +519,39 @@ export const ThreadListContents = memo(function ThreadListContents({
   }
   if (isError) {
     return (
-      <div className="flex flex-col h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          Failed to load tasks. Please try again.
-        </p>
+      <div className="flex flex-col h-full items-center justify-center gap-2">
+        <p className="text-sm text-muted-foreground">Failed to load tasks.</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.reload()}
+          className="text-muted-foreground"
+        >
+          Retry
+        </Button>
       </div>
     );
   }
   return (
     <>
-      <div className="flex-1 pb-4 flex flex-col gap-4">
-        <div className="space-y-2">
+      <div className="flex-1 pb-2 flex flex-col gap-2">
+        {nonEmptyGroups.length > 1 && (
+          <button
+            onClick={toggleAllSections}
+            className="text-micro text-muted-foreground hover:text-foreground transition-colors text-left pl-2.5 py-0.5 flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none"
+            title={
+              allCollapsed ? "Expand all sections" : "Collapse all sections"
+            }
+          >
+            {allCollapsed ? (
+              <ChevronsDown className="size-3" />
+            ) : (
+              <ChevronsUp className="size-3" />
+            )}
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+        )}
+        <div className="space-y-1">
           {threadGroups.map((group) => (
             <CollapsableThreadSection
               key={group.id}
@@ -525,7 +562,6 @@ export const ThreadListContents = memo(function ThreadListContents({
               pathname={pathname}
               isSidebar={isSidebar}
               groupBy={groupBy}
-              relativeTimeTick={relativeTimeTick}
             />
           ))}
         </div>
@@ -534,7 +570,7 @@ export const ThreadListContents = memo(function ThreadListContents({
         )}
         {viewFilter === "active" && showSuggestedTasks && (
           <div className="space-y-3">
-            <h3 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground sticky top-9 bg-background z-10 py-1">
+            <h3 className="text-caption uppercase tracking-[0.13em] font-medium text-muted-foreground sticky top-9 bg-background z-10 py-1">
               Suggested tasks
             </h3>
             <RecommendedTasks
@@ -576,7 +612,7 @@ export const ThreadListMain = memo(function ThreadListMain({
     [searchParams, router, pathname],
   );
   return (
-    <div className="flex-1 pb-4 flex flex-col animate-in fade-in duration-500">
+    <div className="flex-1 pb-2 flex flex-col animate-in fade-in duration-500">
       <ThreadListHeader
         className="sticky top-0 bg-background z-20 px-0 "
         viewFilter={viewFilter}
