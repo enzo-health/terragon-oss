@@ -701,14 +701,49 @@ async function handleAgentSessionPrompted(
     return;
   }
 
-  let threadChatId: string;
+  let primaryChat: ReturnType<typeof getPrimaryThreadChat>;
   try {
-    threadChatId = getPrimaryThreadChat(threadFull).id;
+    primaryChat = getPrimaryThreadChat(threadFull);
   } catch (err) {
     console.warn("[linear webhook] No thread chat found for thread", {
       threadId: thread.id,
       err,
     });
+    return;
+  }
+  const threadChatId = primaryChat.id;
+
+  // Linear pairs every `created` event with a redundant `prompted` event
+  // carrying the same content in a different format. Skip the prompted side
+  // when the thread is fresh (≤30s) and still on its first user message with
+  // no agent output. A real fast follow-up needs the agent to have produced
+  // something to respond to, so the message-count + agent-activity guards
+  // carry the dedupe correctness; the time bound is just defense in depth.
+  const createdAt =
+    thread.createdAt instanceof Date
+      ? thread.createdAt
+      : thread.createdAt
+        ? new Date(thread.createdAt)
+        : null;
+  const ageMs =
+    createdAt !== null
+      ? Date.now() - createdAt.getTime()
+      : Number.POSITIVE_INFINITY;
+  const transcript = primaryChat.messages ?? [];
+  const userMessageCount = transcript.filter(
+    (msg) => msg.type === "user",
+  ).length;
+  const hasAgentActivity = transcript.some((msg) => msg.type !== "user");
+  if (ageMs < 30_000 && userMessageCount <= 1 && !hasAgentActivity) {
+    console.log(
+      "[linear webhook] Prompted event paired with create, skipping duplicate",
+      {
+        agentSessionId,
+        threadId: thread.id,
+        ageMs,
+        userMessageCount,
+      },
+    );
     return;
   }
 

@@ -35,6 +35,14 @@ export type CodexParserState = {
    * producing duplicate DB rows when the same list replays.
    */
   lastEmittedTodoHashByItemId: Map<string, string>;
+  /**
+   * collab_tool_call ids whose start was suppressed because they carried
+   * an empty prompt (the WS transport's internal "message" item that
+   * forwards the parent's payload to the spawned sub-agent). We track
+   * them so the matching terminal event is also suppressed and no orphan
+   * tool_result reaches the chat UI.
+   */
+  suppressedCollabToolCallIds: Set<string>;
   /** Thread id captured from `thread.started`. */
   threadId: string | null;
   /** Hash of the last emitted turn diff, to dedupe identical snapshots within a turn. */
@@ -57,6 +65,7 @@ export function createCodexParserState(
     taskParentToolUseIdById: new Map(),
     lastEmittedTextByItemId: new Map(),
     lastEmittedTodoHashByItemId: new Map(),
+    suppressedCollabToolCallIds: new Set(),
     threadId: null,
     lastEmittedTurnDiffHash: null,
     emitTurnDiffs: false,
@@ -267,15 +276,36 @@ function transformCollabToolCall({
   }
 
   const toolUseId = item.id;
-  const taskPrompt =
-    item.prompt?.trim() || "Complete the delegated sub-agent task.";
+  const trimmedPrompt = item.prompt?.trim() ?? "";
+  const taskPrompt = trimmedPrompt || "Complete the delegated sub-agent task.";
   const status = item.status;
   const activeParentToolUseId = getActiveTaskToolUseId(state);
 
+  // Codex's WS transport emits a second collab_tool_call per delegation with
+  // an empty prompt (the internal "message" item that forwards the parent's
+  // payload to the spawned sub-agent). The fallback prompt would otherwise
+  // render as a duplicate Task card. Suppress both ends by tracking the id.
+  const isStartEvent =
+    codexMsg.type === "item.started" ||
+    (codexMsg.type === "item.updated" && status === "in_progress");
+  if (
+    isStartEvent &&
+    trimmedPrompt.length === 0 &&
+    !state.activeTaskToolUseIds.includes(toolUseId)
+  ) {
+    state.suppressedCollabToolCallIds.add(toolUseId);
+  }
+  if (state.suppressedCollabToolCallIds.has(toolUseId)) {
+    // Clean up on any non-running status (completed/failed/errored AND
+    // cancelled/stopped/timeout/etc) so the set never leaks on dropped runs.
+    if (isTerminalCollabAgentStatus(item.status)) {
+      state.suppressedCollabToolCallIds.delete(toolUseId);
+    }
+    return [];
+  }
+
   const shouldEmitTaskStart =
-    !state.activeTaskToolUseIds.includes(toolUseId) &&
-    (codexMsg.type === "item.started" ||
-      (codexMsg.type === "item.updated" && status === "in_progress"));
+    !state.activeTaskToolUseIds.includes(toolUseId) && isStartEvent;
 
   if (shouldEmitTaskStart) {
     addActiveTaskToolUseId({
