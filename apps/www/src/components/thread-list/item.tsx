@@ -1,6 +1,13 @@
 import Link from "next/link";
 import { ThreadInfo } from "@terragon/shared";
-import React, { memo, useMemo, useState, useRef, useEffect } from "react";
+import React, {
+  memo,
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
 import { PRStatusPill } from "../pr-status-pill";
 import { cn } from "@/lib/utils";
@@ -8,6 +15,7 @@ import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ThreadStatusIndicator } from "../thread-status";
 import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { WorkflowIcon, EllipsisVerticalIcon } from "lucide-react";
 import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
@@ -15,6 +23,12 @@ import { DraftTaskDialog } from "../chat/draft-task-dialog";
 import { ThreadAgentIcon } from "../thread-agent-icon";
 import { toast } from "sonner";
 import { prefetchThreadIntoCollections } from "@/collections/prefetch";
+import { useAtomValue, useSetAtom } from "jotai";
+import {
+  threadSelectionAtom,
+  enterSelectionModeAtom,
+  toggleThreadSelectionAtom,
+} from "@/atoms/user-cookies";
 
 /**
  * Inline name editor: only mounted when the user clicks "Rename".
@@ -241,12 +255,14 @@ export const ThreadListItem = memo(function ThreadListItem({
   className,
   hideRepository,
   style,
+  allThreadIds,
 }: {
   pathname: string;
   thread: ThreadInfo;
   className?: string;
   hideRepository: boolean;
   style?: React.CSSProperties;
+  allThreadIds?: string[];
 }) {
   const title = useMemo(() => getThreadTitle(thread), [thread]);
   const relativeTime = useMemo(
@@ -263,6 +279,75 @@ export const ThreadListItem = memo(function ThreadListItem({
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
 
+  // Selection state
+  const selection = useAtomValue(threadSelectionAtom);
+  const enterSelectionMode = useSetAtom(enterSelectionModeAtom);
+  const toggleThreadSelection = useSetAtom(toggleThreadSelectionAtom);
+
+  const isSelected = selection.selectedIds.has(thread.id);
+  const isSelectionMode = selection.isSelectionMode;
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (isOptimisticThread) {
+        e.preventDefault();
+        return;
+      }
+
+      // Handle selection mode interactions
+      if (isSelectionMode) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const isRangeSelect = e.shiftKey && selection.lastSelectedId;
+        const threadIds = allThreadIds || [];
+        toggleThreadSelection({
+          threadId: thread.id,
+          range: isRangeSelect ? threadIds : undefined,
+        });
+        return;
+      }
+
+      // Enter selection mode on Ctrl/Cmd+click
+      if ((e.ctrlKey || e.metaKey) && !isOptimisticThread) {
+        e.preventDefault();
+        e.stopPropagation();
+        enterSelectionMode(thread.id);
+        return;
+      }
+
+      if (!e.defaultPrevented && thread.draftMessage) {
+        e.preventDefault();
+        setIsEditingDraft(true);
+      }
+    },
+    [
+      isOptimisticThread,
+      isSelectionMode,
+      selection.lastSelectedId,
+      thread.id,
+      thread.draftMessage,
+      allThreadIds,
+      toggleThreadSelection,
+      enterSelectionMode,
+    ],
+  );
+
+  const handleCheckboxChange = useCallback(
+    (checked: boolean) => {
+      const isRangeSelect =
+        (window as typeof window & { lastClickHadShift?: boolean })
+          .lastClickHadShift && selection.lastSelectedId;
+      const threadIds = allThreadIds || [];
+
+      toggleThreadSelection({
+        threadId: thread.id,
+        range: isRangeSelect ? threadIds : undefined,
+      });
+    },
+    [thread.id, allThreadIds, selection.lastSelectedId, toggleThreadSelection],
+  );
+
   return (
     <>
       <div
@@ -270,6 +355,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           "relative group",
           "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isReconciling && "reconciliation-flash",
+          isSelected && "ring-2 ring-primary/30 rounded-lg",
         )}
         style={{
           contentVisibility: "auto",
@@ -279,12 +365,12 @@ export const ThreadListItem = memo(function ThreadListItem({
       >
         <Link
           href={`/task/${thread.id}`}
-          prefetch={!isOptimisticThread}
+          prefetch={!isOptimisticThread && !isSelectionMode}
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
             "block rounded-lg transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1.5 md:py-1 relative pr-9 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-            pathname === `/task/${thread.id}`
+            pathname === `/task/${thread.id}` && !isSelectionMode
               ? "bg-primary/[0.10] border-primary/25"
               : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
@@ -293,21 +379,20 @@ export const ThreadListItem = memo(function ThreadListItem({
               "relative overflow-hidden",
               "cursor-default",
             ],
+            isSelectionMode && "cursor-pointer hover:bg-accent",
+            isSelected && "bg-primary/[0.05]",
             className,
           )}
           onMouseEnter={() => {
-            if (!isOptimisticThread) {
+            if (!isOptimisticThread && !isSelectionMode) {
               prefetchThreadIntoCollections(thread.id);
             }
           }}
-          onClick={(e) => {
-            if (isOptimisticThread) {
-              e.preventDefault();
-              return;
-            }
-            if (!e.defaultPrevented && thread.draftMessage) {
-              e.preventDefault();
-              setIsEditingDraft(true);
+          onClick={handleClick}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (!isOptimisticThread && !isSelectionMode) {
+              enterSelectionMode(thread.id);
             }
           }}
         >
@@ -319,12 +404,33 @@ export const ThreadListItem = memo(function ThreadListItem({
           )}
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
-              <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
-                <ThreadStatusIndicator
-                  thread={thread}
-                  isOptimistic={isOptimisticThread}
-                />
-              </div>
+              {/* Selection checkbox */}
+              {isSelectionMode && !isOptimisticThread && (
+                <div
+                  className="flex-shrink-0 w-4 h-4"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                >
+                  <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={handleCheckboxChange}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
+                  />
+                </div>
+              )}
+              {/* Status indicator (hidden in selection mode) */}
+              {(!isSelectionMode || isOptimisticThread) && (
+                <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
+                  <ThreadStatusIndicator
+                    thread={thread}
+                    isOptimistic={isOptimisticThread}
+                  />
+                </div>
+              )}
               {isEditingName ? (
                 <InlineNameEditor
                   thread={thread}
@@ -397,24 +503,27 @@ export const ThreadListItem = memo(function ThreadListItem({
             </div>
           </div>
         </Link>
-        <div
-          className={cn(
-            "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
-            isMenuOpen
-              ? "opacity-100"
-              : "opacity-100 sm:opacity-0 focus-within:opacity-100",
-            isOptimisticThread && "pointer-events-none opacity-0",
-          )}
-          onClick={(e) => {
-            e.preventDefault();
-          }}
-        >
-          <LazyThreadListMenu
-            thread={thread}
-            onRenameClick={() => setIsEditingName(true)}
-            onMenuOpenChange={setIsMenuOpen}
-          />
-        </div>
+        {/* Menu button - hidden in selection mode */}
+        {!isSelectionMode && (
+          <div
+            className={cn(
+              "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+              isMenuOpen
+                ? "opacity-100"
+                : "opacity-100 sm:opacity-0 focus-within:opacity-100",
+              isOptimisticThread && "pointer-events-none opacity-0",
+            )}
+            onClick={(e) => {
+              e.preventDefault();
+            }}
+          >
+            <LazyThreadListMenu
+              thread={thread}
+              onRenameClick={() => setIsEditingName(true)}
+              onMenuOpenChange={setIsMenuOpen}
+            />
+          </div>
+        )}
       </div>
       {thread.draftMessage && (
         <DraftTaskDialog

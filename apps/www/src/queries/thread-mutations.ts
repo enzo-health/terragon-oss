@@ -628,3 +628,137 @@ export function useCreateThreadMutation() {
     },
   });
 }
+
+// Bulk operations mutations
+import {
+  bulkArchiveThreads,
+  bulkUnarchiveThreads,
+  bulkDeleteThreads,
+} from "@/server-actions/bulk-thread-operations";
+
+export function useBulkArchiveMutation() {
+  const queryClient = useQueryClient();
+  return useServerActionMutation({
+    mutationFn: async ({
+      threadIds,
+      archive,
+    }: {
+      threadIds: string[];
+      archive: boolean;
+    }) => {
+      if (archive) {
+        return bulkArchiveThreads(threadIds);
+      } else {
+        return bulkUnarchiveThreads(threadIds);
+      }
+    },
+    onMutate: async ({ threadIds, archive }) => {
+      await queryClient.cancelQueries({ queryKey: ["threads"] });
+
+      // Update all thread list queries optimistically
+      const cache = queryClient.getQueryCache();
+      const queries = cache.findAll({ queryKey: threadQueryKeys.list(null) });
+
+      queries.forEach((query) => {
+        const queryKey = query.queryKey as any[];
+        const filters = queryKey[2];
+        queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
+          queryKey,
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              pages: old.pages.map((page) =>
+                page
+                  .map((thread) => {
+                    if (!threadIds.includes(thread.id)) return thread;
+                    return {
+                      ...thread,
+                      archived: archive,
+                      isUnread: archive ? false : thread.isUnread,
+                    };
+                  })
+                  .filter((thread) => {
+                    if (!isValidThreadListFilter(filters)) return true;
+                    return isMatchingThreadForFilter(thread, filters);
+                  }),
+              ),
+            };
+          },
+        );
+      });
+
+      // Update detail queries
+      threadIds.forEach((threadId) => {
+        queryClient.setQueryData<ThreadInfo>(
+          threadQueryKeys.detail(threadId),
+          (old) =>
+            old
+              ? {
+                  ...old,
+                  archived: archive,
+                  isUnread: archive ? false : old.isUnread,
+                }
+              : old,
+        );
+      });
+    },
+    onError: (_, { threadIds }) => {
+      threadIds.forEach((threadId) => {
+        queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.detail(threadId),
+        });
+      });
+      queryClient.invalidateQueries({ queryKey: threadQueryKeys.list(null) });
+    },
+  });
+}
+
+export function useBulkDeleteMutation() {
+  const queryClient = useQueryClient();
+  return useServerActionMutation({
+    mutationFn: bulkDeleteThreads,
+    onMutate: async (threadIds: string[]) => {
+      await queryClient.cancelQueries({ queryKey: ["threads"] });
+
+      // Remove threads from all queries
+      const cache = queryClient.getQueryCache();
+      const queries = cache.findAll({ queryKey: threadQueryKeys.list(null) });
+
+      queries.forEach((query) => {
+        queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
+          query.queryKey,
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              pages: old.pages.map((page) =>
+                page.filter((thread) => !threadIds.includes(thread.id)),
+              ),
+            };
+          },
+        );
+      });
+
+      // Remove thread detail queries
+      threadIds.forEach((threadId) => {
+        queryClient.removeQueries({
+          queryKey: threadQueryKeys.detail(threadId),
+        });
+        queryClient.removeQueries({
+          queryKey: threadQueryKeys.shell(threadId),
+        });
+        queryClient.removeQueries({ queryKey: ["threads", "chat", threadId] });
+        queryClient.removeQueries({ queryKey: threadQueryKeys.diff(threadId) });
+      });
+    },
+    onError: (_, threadIds) => {
+      threadIds.forEach((threadId) => {
+        queryClient.invalidateQueries({
+          queryKey: threadQueryKeys.detail(threadId),
+        });
+      });
+      queryClient.invalidateQueries({ queryKey: threadQueryKeys.list(null) });
+    },
+  });
+}
