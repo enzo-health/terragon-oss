@@ -86,11 +86,13 @@ type ShadowRefreshWebhookEvent =
       payload: IssueCommentWebhookPayload;
     }
   | {
-      name: "pull_request_review.submitted";
+      name: "pull_request_review.submitted" | "pull_request_review.dismissed";
       payload: PullRequestReviewWebhookPayload;
     }
   | {
-      name: "pull_request_review_comment.created";
+      name:
+        | "pull_request_review_comment.created"
+        | "pull_request_review_comment.edited";
       payload: PullRequestReviewWebhookPayload;
     }
   | {
@@ -176,22 +178,26 @@ export function getShadowRefreshWebhookEvent(
       };
     }
     case "pull_request_review": {
-      if (action !== "submitted") {
+      if (action !== "submitted" && action !== "dismissed") {
         return null;
       }
 
       return {
-        name: "pull_request_review.submitted",
+        name: `pull_request_review.${action}` as
+          | "pull_request_review.submitted"
+          | "pull_request_review.dismissed",
         payload: payload as PullRequestReviewWebhookPayload,
       };
     }
     case "pull_request_review_comment": {
-      if (action !== "created") {
+      if (action !== "created" && action !== "edited") {
         return null;
       }
 
       return {
-        name: "pull_request_review_comment.created",
+        name: `pull_request_review_comment.${action}` as
+          | "pull_request_review_comment.created"
+          | "pull_request_review_comment.edited",
         payload: payload as PullRequestReviewWebhookPayload,
       };
     }
@@ -234,6 +240,10 @@ export function getShadowRefreshWebhookEvent(
         name: "issues.opened",
         payload: payload as IssuesOpenedWebhookPayload,
       };
+    }
+    case "status":
+    case "deployment_status": {
+      return null;
     }
     default:
       return null;
@@ -347,7 +357,8 @@ async function getShadowRefreshTargets(
       }
       return [{ kind: "repo", repoFullName }];
     }
-    case "pull_request_review.submitted": {
+    case "pull_request_review.submitted":
+    case "pull_request_review.dismissed": {
       return [
         {
           kind: "pr",
@@ -356,7 +367,8 @@ async function getShadowRefreshTargets(
         },
       ];
     }
-    case "pull_request_review_comment.created": {
+    case "pull_request_review_comment.created":
+    case "pull_request_review_comment.edited": {
       return [
         {
           kind: "pr",

@@ -51,6 +51,7 @@ import {
   handlePullRequestReviewEvent,
   handlePullRequestStatusChange,
   handlePullRequestUpdated,
+  handleStatusEvent,
 } from "./handlers";
 import {
   getShadowRefreshWebhookEvent,
@@ -64,7 +65,9 @@ type SupportedGitHubWebhookName =
   | "pull_request_review_comment"
   | "check_run"
   | "check_suite"
-  | "issues";
+  | "issues"
+  | "status"
+  | "deployment_status";
 
 const supportedGitHubWebhookNames = new Set<string>([
   "pull_request",
@@ -74,6 +77,8 @@ const supportedGitHubWebhookNames = new Set<string>([
   "check_run",
   "check_suite",
   "issues",
+  "status",
+  "deployment_status",
 ]);
 
 type GitHubWebhookClaimOutcome =
@@ -292,8 +297,17 @@ export async function POST(request: NextRequest) {
   webhooks.on("pull_request_review.submitted", async ({ payload }) => {
     await handlePullRequestReviewEvent(payload, requestId);
   });
-  webhooks.on("pull_request_review_comment.created", async ({ payload }) => {
-    await handlePullRequestReviewCommentEvent(payload, requestId);
+  webhooks.on(
+    [
+      "pull_request_review_comment.created",
+      "pull_request_review_comment.edited",
+    ],
+    async ({ payload }) => {
+      await handlePullRequestReviewCommentEvent(payload, requestId);
+    },
+  );
+  webhooks.on("pull_request_review.dismissed", async ({ payload }) => {
+    await handlePullRequestReviewEvent(payload, requestId);
   });
   webhooks.on(
     ["check_run.completed", "check_run.created", "check_run.rerequested"],
@@ -309,6 +323,9 @@ export async function POST(request: NextRequest) {
   );
   webhooks.on(["issues.opened"], async ({ payload }) => {
     await handleIssueEvent(payload);
+  });
+  webhooks.on("status", async ({ payload }) => {
+    await handleStatusEvent(payload, requestId);
   });
   webhooks.onAny(({ name, payload }) => {
     const payloadInfo: string[] = [];

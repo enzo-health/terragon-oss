@@ -39,6 +39,7 @@ export type PullRequestReviewEvent =
   EmitterWebhookEvent<"pull_request_review">["payload"];
 export type CheckRunEvent = EmitterWebhookEvent<"check_run">["payload"];
 export type CheckSuiteEvent = EmitterWebhookEvent<"check_suite">["payload"];
+export type StatusEvent = EmitterWebhookEvent<"status">["payload"];
 
 const TERRAGON_RUNTIME_CHECK_RUN_NAME = "Terragon Runtime";
 const TERRAGON_RUNTIME_CHECK_RUN_EXTERNAL_ID_PREFIX =
@@ -685,7 +686,9 @@ export async function handlePullRequestReviewCommentEvent(
   deliveryId?: string,
 ): Promise<void> {
   try {
-    // Only process newly created comments
+    // Only process newly created comments. Edited review comments currently
+    // remain read-only because existing expectations and routing assume edits
+    // do not wake the agent yet.
     if (event.action !== "created") {
       console.log(
         `Ignoring pull_request_review_comment action: ${event.action}`,
@@ -713,7 +716,7 @@ export async function handlePullRequestReviewCommentEvent(
             userId: routeUserId ?? undefined,
             repoFullName,
             prNumber,
-            eventType: "pull_request_review_comment.created",
+            eventType: `pull_request_review_comment.${event.action}`,
             deliveryId,
             reviewBody: commentBody,
             commentId: event.comment.id,
@@ -781,14 +784,84 @@ export async function handlePullRequestReviewCommentEvent(
   }
 }
 
+type ReviewCommentForFeedback = {
+  path: string;
+  line: number | null;
+  body: string;
+  diffHunk?: string | null;
+};
+
+async function fetchReviewCommentsForReview({
+  repoFullName,
+  prNumber,
+  reviewId,
+}: {
+  repoFullName: string;
+  prNumber: number;
+  reviewId: number;
+}): Promise<ReviewCommentForFeedback[]> {
+  try {
+    const [owner, repo] = parseRepoFullName(repoFullName);
+    const octokit = await getOctokitForApp({ owner, repo });
+    if (!octokit) {
+      return [];
+    }
+    const { data } = await octokit.rest.pulls.listCommentsForReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      review_id: reviewId,
+    });
+    return data.map((comment) => ({
+      path: comment.path,
+      line: comment.line ?? comment.original_line ?? null,
+      body: comment.body ?? "",
+      diffHunk: comment.diff_hunk ?? null,
+    }));
+  } catch (error) {
+    console.warn(
+      "[github webhook] failed to fetch review comments for review",
+      {
+        repoFullName,
+        prNumber,
+        reviewId,
+        error,
+      },
+    );
+    return [];
+  }
+}
+
+function formatReviewCommentsForFeedback(
+  comments: ReviewCommentForFeedback[],
+): string | null {
+  if (comments.length === 0) {
+    return null;
+  }
+  return comments
+    .map((comment) => {
+      const parts: string[] = [];
+      parts.push(
+        `File: ${comment.path}${comment.line ? `:${comment.line}` : ""}`,
+      );
+      if (comment.diffHunk) {
+        parts.push("Diff context:");
+        parts.push(comment.diffHunk);
+      }
+      parts.push("Comment:");
+      parts.push(comment.body);
+      return parts.join("\n");
+    })
+    .join("\n\n---\n\n");
+}
+
 // Handle pull request review events
 export async function handlePullRequestReviewEvent(
   event: PullRequestReviewEvent,
   deliveryId?: string,
 ): Promise<void> {
   try {
-    // Only process newly submitted reviews
-    if (event.action !== "submitted") {
+    if (event.action !== "submitted" && event.action !== "dismissed") {
       console.log(`Ignoring pull_request_review action: ${event.action}`);
       return;
     }
@@ -819,11 +892,27 @@ export async function handlePullRequestReviewEvent(
           ? "review_state_heuristic"
           : undefined;
 
-    const normalizedReviewState = event.review.state.trim().toLowerCase();
+    const normalizedReviewState =
+      event.action === "dismissed"
+        ? "dismissed"
+        : event.review.state.trim().toLowerCase();
     const reviewIsActionable =
       normalizedReviewState === "changes_requested" ||
       (reviewBody != null && reviewBody.trim().length > 0);
     const routeUserIds: Array<string | null> = reviewIsActionable ? [null] : [];
+
+    // For changes_requested reviews, fetch the review's inline comments
+    // to provide actionable diff context to the agent.
+    let reviewCommentsText: string | undefined;
+    if (normalizedReviewState === "changes_requested") {
+      const reviewComments = await fetchReviewCommentsForReview({
+        repoFullName,
+        prNumber,
+        reviewId: event.review.id,
+      });
+      reviewCommentsText =
+        formatReviewCommentsForFeedback(reviewComments) ?? undefined;
+    }
 
     if (routeUserIds.length > 0) {
       await Promise.all(
@@ -838,11 +927,16 @@ export async function handlePullRequestReviewEvent(
             commentId: event.review.id,
             reviewId: event.review.id,
             reviewState: event.review.state,
-            failureDetails: `Review state: ${event.review.state}`,
+            failureDetails:
+              normalizedReviewState === "changes_requested"
+                ? `Review state: ${event.review.state}${unresolvedThreadCount != null ? `. Unresolved review threads: ${unresolvedThreadCount}` : ""}`
+                : `Review state: ${event.review.state}`,
+            reviewCommentsText,
             sourceType: isMention ? "github-mention" : "automation",
             authorGitHubAccountId: event.pull_request.user?.id,
             baseBranchName: event.pull_request.base?.ref,
             headBranchName: event.pull_request.head?.ref,
+            isChangesRequested: normalizedReviewState === "changes_requested",
           });
           console.log("GitHub feedback routed from review", {
             repoFullName,
@@ -919,6 +1013,24 @@ export async function resolvePrNumbersFromSha({
   }
 }
 
+function buildCiFailureFeedbackDetails(
+  failingCheckName: string,
+  individualFailureDetails: string,
+  ciSnapshot: CiSignalSnapshot | null,
+): string {
+  const sections: string[] = [];
+
+  // Individual check failure details
+  sections.push(individualFailureDetails);
+
+  // Aggregate view of all failing checks (when snapshot available)
+  if (ciSnapshot && ciSnapshot.failingChecks.length > 1) {
+    sections.push(`All failing checks: ${ciSnapshot.failingChecks.join(", ")}`);
+  }
+
+  return sections.join("\n\n");
+}
+
 // Handle check run events
 export async function handleCheckRunEvent(
   event: CheckRunEvent,
@@ -963,10 +1075,29 @@ export async function handleCheckRunEvent(
           repoFullName,
           headSha: checkRun.head_sha ?? null,
         });
-        const failureDetails =
-          signalOutcome === "fail"
-            ? getCheckRunFailureDetails(checkRun)
-            : undefined;
+
+        // Wait for ALL checks to complete before routing CI failure feedback.
+        // If checks are still running, the next check_run.completed webhook
+        // will re-evaluate. This prevents the agent from acting on partial CI
+        // state (e.g., only lint has failed while typecheck is still running).
+        if (ciSnapshot && !ciSnapshot.complete) {
+          console.log(
+            "CI snapshot incomplete — deferring auto-fix routing until all checks finish",
+            {
+              repoFullName,
+              checkRunId: checkRun.id,
+              failingChecksCount: ciSnapshot.failingChecks.length,
+              totalChecksCount: ciSnapshot.checkNames.length,
+            },
+          );
+          return;
+        }
+
+        const failureDetails = buildCiFailureFeedbackDetails(
+          checkRun.name,
+          getCheckRunFailureDetails(checkRun),
+          ciSnapshot,
+        );
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
@@ -985,10 +1116,13 @@ export async function handleCheckRunEvent(
                     prNumber,
                     eventType: "check_run.completed",
                     deliveryId,
-                    checkSummary: `${checkRun.name} (${checkRun.status}:${signalOutcome})`,
+                    checkSummary: ciSnapshot
+                      ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
+                      : `${checkRun.name} (${checkRun.status}:${signalOutcome})`,
                     failureDetails,
                     checkRunId: checkRun.id,
                     sourceType: "automation",
+                    isAutoFixEligible: true,
                   });
                 console.log("GitHub feedback routed from check run", {
                   repoFullName,
@@ -1065,10 +1199,26 @@ export async function handleCheckSuiteEvent(
           repoFullName,
           headSha: checkSuite.head_sha ?? null,
         });
-        const failureDetails =
-          signalOutcome === "fail"
-            ? getCheckSuiteFailureDetails(checkSuite)
-            : undefined;
+
+        // Wait for ALL checks to complete before routing CI failure feedback.
+        if (ciSnapshot && !ciSnapshot.complete) {
+          console.log(
+            "CI snapshot incomplete — deferring auto-fix routing until all checks finish",
+            {
+              repoFullName,
+              checkSuiteId: checkSuite.id,
+              failingChecksCount: ciSnapshot.failingChecks.length,
+              totalChecksCount: ciSnapshot.checkNames.length,
+            },
+          );
+          return;
+        }
+
+        const failureDetails = buildCiFailureFeedbackDetails(
+          `Check suite ${checkSuite.id}`,
+          getCheckSuiteFailureDetails(checkSuite),
+          ciSnapshot,
+        );
 
         await Promise.all(
           prNumbers.map(async (prNumber) => {
@@ -1087,10 +1237,13 @@ export async function handleCheckSuiteEvent(
                     prNumber,
                     eventType: "check_suite.completed",
                     deliveryId,
-                    checkSummary: `Check suite (${checkSuite.status}:${signalOutcome})`,
+                    checkSummary: ciSnapshot
+                      ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
+                      : `Check suite (${checkSuite.status}:${signalOutcome})`,
                     failureDetails,
                     checkSuiteId: checkSuite.id,
                     sourceType: "automation",
+                    isAutoFixEligible: true,
                   });
                 console.log("GitHub feedback routed from check suite", {
                   repoFullName,
@@ -1240,4 +1393,93 @@ async function handleIssueAutomation(
       error,
     );
   });
+}
+
+export async function handleStatusEvent(
+  event: StatusEvent,
+  deliveryId?: string,
+): Promise<void> {
+  try {
+    const repoFullName = event.repository.full_name;
+    const headSha = event.sha;
+    if (!headSha) {
+      return;
+    }
+
+    const prNumbers = await resolvePrNumbersFromSha({
+      repoFullName,
+      headSha,
+    });
+    if (prNumbers.length === 0) {
+      console.log(
+        `Status event for ${repoFullName}@${headSha} has no associated PRs, skipping`,
+      );
+      return;
+    }
+
+    await Promise.all(
+      prNumbers.map(async (prNumber) => {
+        await updateGitHubPR({
+          repoFullName,
+          prNumber,
+          createIfNotFound: false,
+        });
+      }),
+    );
+
+    const state = event.state?.toLowerCase();
+    const isFailure = state === "failure" || state === "error";
+    if (!isFailure) {
+      return;
+    }
+
+    const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
+      repoFullName,
+      headSha,
+    });
+    if (ciSnapshot && !ciSnapshot.complete) {
+      console.log(
+        "Legacy status event received while CI snapshot is incomplete, deferring routing",
+        {
+          repoFullName,
+          headSha,
+          state,
+          totalChecksCount: ciSnapshot.checkNames.length,
+        },
+      );
+      return;
+    }
+
+    const failureDetails = [
+      `Legacy commit status "${event.context ?? "status"}" reported state "${event.state}".`,
+      event.description?.trim()
+        ? `Description: ${event.description.trim()}`
+        : null,
+      event.target_url?.trim()
+        ? `Details URL: ${event.target_url.trim()}`
+        : null,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join("\n");
+
+    await Promise.all(
+      prNumbers.map(async (prNumber) => {
+        await routeGithubFeedbackOrSpawnThread({
+          repoFullName,
+          prNumber,
+          eventType: "status",
+          deliveryId,
+          checkSummary: ciSnapshot
+            ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
+            : `Legacy status failed: ${event.context ?? "status"}`,
+          failureDetails,
+          sourceType: "automation",
+          isAutoFixEligible: true,
+        });
+      }),
+    );
+  } catch (error) {
+    console.error("Error handling status event:", error);
+    throw error;
+  }
 }
