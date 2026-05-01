@@ -41,6 +41,7 @@ import { applyThreadPatchToCollection } from "@/collections/thread-info-collecti
 import { applyThreadPatchToListQueries } from "@/queries/thread-patch-cache";
 import { useQueryClient } from "@tanstack/react-query";
 import { ThreadListContentsClient } from "./thread-list-contents-client";
+import { BulkActionToolbar } from "./bulk-action-toolbar";
 
 const RecommendedTasks = dynamic(
   () => import("../recommended-tasks").then((mod) => mod.RecommendedTasks),
@@ -239,6 +240,8 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
     () => toggleCollapsedSection(groupId),
     [toggleCollapsedSection, groupId],
   );
+  // Extract thread IDs for range selection support
+  const threadIds = useMemo(() => threads.map((t) => t.id), [threads]);
   const numThreads = threads.length;
   if (numThreads === 0) {
     return null;
@@ -284,6 +287,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
                     }
                   : { transitionBehavior: "allow-discrete" }
               }
+              allThreadIds={threadIds}
             />
           ))}
         </div>
@@ -510,6 +514,9 @@ export const ThreadListContents = memo(function ThreadListContents({
     setCollapsedSections((prev) => ({ ...prev, ...newState }));
   }, [nonEmptyGroups, allCollapsed, setCollapsedSections]);
 
+  // Collect all visible thread IDs for bulk selection
+  const allThreadIds = useMemo(() => threads.map((t) => t.id), [threads]);
+
   if (isLoading) {
     return (
       <div className="flex flex-col h-full items-center justify-center">
@@ -535,6 +542,10 @@ export const ThreadListContents = memo(function ThreadListContents({
   return (
     <>
       <div className="flex-1 pb-2 flex flex-col gap-2">
+        <BulkActionToolbar
+          threadIds={allThreadIds}
+          viewFilter={viewFilter === "all" ? "active" : viewFilter}
+        />
         {nonEmptyGroups.length > 1 && (
           <button
             onClick={toggleAllSections}

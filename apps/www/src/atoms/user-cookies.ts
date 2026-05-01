@@ -226,3 +226,115 @@ export const secondaryPaneClosedAtom = atomWithStorage<boolean>(
   booleanCookieStorage,
   { getOnInit: true },
 );
+
+// Thread selection state for bulk operations (not persisted)
+export const threadSelectionAtom = atom<{
+  selectedIds: Set<string>;
+  isSelectionMode: boolean;
+  lastSelectedId: string | null;
+}>({
+  selectedIds: new Set<string>(),
+  isSelectionMode: false,
+  lastSelectedId: null,
+});
+
+// Helper atom to toggle selection mode
+export const toggleSelectionModeAtom = atom(null, (get, set) => {
+  const current = get(threadSelectionAtom);
+  set(threadSelectionAtom, {
+    ...current,
+    isSelectionMode: !current.isSelectionMode,
+    selectedIds: !current.isSelectionMode
+      ? current.selectedIds
+      : new Set<string>(),
+    lastSelectedId: !current.isSelectionMode ? current.lastSelectedId : null,
+  });
+});
+
+// Helper atom to enter selection mode with an initial selection
+export const enterSelectionModeAtom = atom(
+  null,
+  (get, set, threadId: string) => {
+    set(threadSelectionAtom, {
+      selectedIds: new Set<string>([threadId]),
+      isSelectionMode: true,
+      lastSelectedId: threadId,
+    });
+  },
+);
+
+// Helper atom to exit selection mode
+export const exitSelectionModeAtom = atom(null, (get, set) => {
+  set(threadSelectionAtom, {
+    selectedIds: new Set<string>(),
+    isSelectionMode: false,
+    lastSelectedId: null,
+  });
+});
+
+// Helper atom to toggle a thread's selection
+export const toggleThreadSelectionAtom = atom(
+  null,
+  (get, set, { threadId, range }: { threadId: string; range?: string[] }) => {
+    const current = get(threadSelectionAtom);
+    const newSelectedIds = new Set<string>(current.selectedIds);
+
+    if (range && range.length > 0 && current.lastSelectedId) {
+      // Range selection (Shift+click)
+      const lastIndex = range.indexOf(current.lastSelectedId);
+      const currentIndex = range.indexOf(threadId);
+
+      if (lastIndex !== -1 && currentIndex !== -1) {
+        const [start, end] =
+          lastIndex < currentIndex
+            ? [lastIndex, currentIndex]
+            : [currentIndex, lastIndex];
+
+        for (let i = start; i <= end; i++) {
+          const id = range[i];
+          if (id) {
+            newSelectedIds.add(id);
+          }
+        }
+      } else {
+        newSelectedIds.add(threadId);
+      }
+    } else {
+      // Toggle single selection
+      if (newSelectedIds.has(threadId)) {
+        newSelectedIds.delete(threadId);
+      } else {
+        newSelectedIds.add(threadId);
+      }
+    }
+
+    set(threadSelectionAtom, {
+      ...current,
+      selectedIds: newSelectedIds,
+      lastSelectedId: threadId,
+    });
+  },
+);
+
+// Helper atom to select all visible threads
+export const selectAllThreadsAtom = atom(
+  null,
+  (get, set, threadIds: string[]) => {
+    const current = get(threadSelectionAtom);
+    set(threadSelectionAtom, {
+      ...current,
+      selectedIds: new Set<string>(threadIds),
+      lastSelectedId: threadIds[threadIds.length - 1] || null,
+    });
+  },
+);
+
+// Helper atom to deselect all threads
+export const deselectAllThreadsAtom = atom(null, (get, set) => {
+  const current = get(threadSelectionAtom);
+  set(threadSelectionAtom, {
+    ...current,
+    selectedIds: new Set<string>(),
+    lastSelectedId: null,
+  });
+});

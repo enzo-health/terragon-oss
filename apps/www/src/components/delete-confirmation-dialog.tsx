@@ -72,19 +72,27 @@ export function TaskDeleteConfirmationModal({
   onOpenChange,
   onConfirm,
   isLoading = false,
+  itemCount = 1,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
   isLoading?: boolean;
+  itemCount?: number;
 }) {
+  const isBulk = itemCount > 1;
   return (
     <DeleteConfirmationDialog
       open={open}
       onOpenChange={onOpenChange}
       onConfirm={onConfirm}
-      title="Delete Task"
-      description="Are you sure you want to delete this task? This action cannot be undone."
+      title={isBulk ? `Delete ${itemCount} Tasks` : "Delete Task"}
+      description={
+        isBulk
+          ? `Are you sure you want to delete these ${itemCount} tasks? This action cannot be undone.`
+          : "Are you sure you want to delete this task? This action cannot be undone."
+      }
+      confirmText={isBulk ? `Delete ${itemCount}` : "Delete"}
       isLoading={isLoading}
     />
   );
