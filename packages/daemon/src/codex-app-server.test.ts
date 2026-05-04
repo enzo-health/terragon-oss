@@ -272,6 +272,56 @@ describe("extractThreadEvent", () => {
     });
   });
 
+  test("extracts app-server error notifications", () => {
+    const event = extractThreadEvent({
+      method: "error",
+      params: {
+        error: {
+          message: JSON.stringify({
+            type: "error",
+            status: 400,
+            error: {
+              type: "invalid_request_error",
+              message:
+                "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+            },
+          }),
+        },
+      },
+    });
+
+    expect(event).toEqual({
+      type: "error",
+      message:
+        "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+    });
+  });
+
+  test("maps failed turn/completed notifications to turn.failed", () => {
+    const event = extractThreadEvent({
+      method: "turn/completed",
+      params: {
+        turn: {
+          id: "turn-failed",
+          items: [],
+          status: "failed",
+          error: {
+            message:
+              "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+          },
+        },
+      },
+    });
+
+    expect(event).toEqual({
+      type: "turn.failed",
+      error: {
+        message:
+          "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+      },
+    });
+  });
+
   test("returns null for non-thread notifications", () => {
     const event = extractThreadEvent(
       parseJsonObject('{"method":"account/rateLimits/updated","params":{}}'),
