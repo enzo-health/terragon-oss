@@ -50,6 +50,10 @@ export type UseTerragonAgUiRuntimeOptions = {
    */
   threadId?: string;
   threadChatId?: string;
+  queue?: {
+    shouldQueue: (message: AppendMessage) => boolean;
+    enqueue: (message: AppendMessage) => Promise<void> | void;
+  };
   adapters?: {
     attachments?: RuntimeAdapters["attachments"];
     speech?: StoreAdapters["speech"];
@@ -79,8 +83,12 @@ export function useTerragonAgUiRuntime(
   // Refs for cancel endpoint IDs — always current regardless of memo staleness.
   const threadIdRef = useRef<string | undefined>(options.threadId);
   const threadChatIdRef = useRef<string | undefined>(options.threadChatId);
+  const queueRef = useRef<UseTerragonAgUiRuntimeOptions["queue"]>(
+    options.queue,
+  );
   threadIdRef.current = options.threadId;
   threadChatIdRef.current = options.threadChatId;
+  queueRef.current = options.queue;
   const runtimeAdapters = useRuntimeAdapters();
 
   const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
@@ -202,7 +210,14 @@ export function useTerragonAgUiRuntime(
       messages: core.getMessages(),
       state: core.getState(),
       isRunning: core.isRunning() || hasExecutingTools,
-      onNew: (message: AppendMessage) => core.append(message),
+      onNew: async (message: AppendMessage) => {
+        const queue = queueRef.current;
+        if (queue?.shouldQueue(message)) {
+          await queue.enqueue(message);
+          return;
+        }
+        await core.append(message);
+      },
       onEdit: (message: AppendMessage) => core.edit(message),
       onReload: (parentId: string | null, config: { runConfig?: RunConfig }) =>
         core.reload(parentId, config),
