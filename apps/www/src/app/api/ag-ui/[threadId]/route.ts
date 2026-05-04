@@ -1046,6 +1046,7 @@ export async function GET(
       const replayedEventDedupeKeys = new Set<string>();
       let lastDeliveredSeq = replayCursorSeq;
       let hasEmittedAgUiDataEvent = false;
+      let activeEmittedRunId: string | null = null;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
       enqueue(encodeSseComment(BASELINE_SNAPSHOT_COMMENT));
@@ -1131,6 +1132,7 @@ export async function GET(
         });
         rememberReplayedEventDedupeKeys(runStartedEvent);
         hasEmittedAgUiDataEvent = true;
+        activeEmittedRunId = resumeRunId;
         enqueue(encodeSseEvent(runStartedEvent));
         return true;
       };
@@ -1143,8 +1145,31 @@ export async function GET(
         if (!ensurePostResumeStartsWithRun(event, identity)) {
           return false;
         }
+        if (event.type === EventType.RUN_STARTED) {
+          const nextRunId = getStringEventField(event, "runId");
+          if (
+            activeEmittedRunId !== null &&
+            nextRunId !== null &&
+            activeEmittedRunId !== nextRunId
+          ) {
+            enqueue(
+              encodeSseEvent({
+                type: EventType.RUN_FINISHED,
+                threadId,
+                runId: activeEmittedRunId,
+              }),
+            );
+          }
+          activeEmittedRunId = nextRunId;
+        }
         hasEmittedAgUiDataEvent = true;
         enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
+        if (isTerminalRunEventType(event.type)) {
+          const terminalRunId = getStringEventField(event, "runId");
+          if (terminalRunId === null || terminalRunId === activeEmittedRunId) {
+            activeEmittedRunId = null;
+          }
+        }
         return true;
       };
 

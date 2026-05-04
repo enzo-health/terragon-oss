@@ -2703,6 +2703,67 @@ describe("ag-ui SSE route", () => {
     await response.body!.cancel();
   });
 
+  it("closes a stale replayed run before live-tailing a newer RUN_STARTED", async () => {
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue("run-stale");
+    const staleRunStarted = {
+      type: EventType.RUN_STARTED,
+      timestamp: 1,
+      threadId: "thread-1",
+      runId: "run-stale",
+    } as BaseEvent;
+    const newRunStarted = {
+      type: EventType.RUN_STARTED,
+      timestamp: 2,
+      threadId: "thread-1",
+      runId: "run-new",
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([staleRunStarted]);
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-stale", status: "processing" }),
+    );
+    redisMocks.xread.mockResolvedValueOnce([
+      [
+        "agui:thread:chat-1",
+        [
+          [
+            "1700000000000-0",
+            [
+              "envelope",
+              JSON.stringify({
+                eventId: "event-run-new-started",
+                seq: 1,
+                runId: "run-new",
+                threadId: "thread-1",
+                threadChatId: "chat-1",
+                timestamp: "2026-05-04T00:00:00.000Z",
+                idempotencyKey: "run-new:event-run-new-started",
+                payload: newRunStarted,
+              }),
+            ],
+          ],
+        ],
+      ],
+    ]);
+
+    const response = await GET(
+      makeRequest("http://localhost/api/ag-ui/thread-1?threadChatId=chat-1"),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 3);
+    expect(received).toEqual([
+      staleRunStarted,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-1",
+        runId: "run-stale",
+      },
+      newRunStarted,
+    ]);
+    await response.body!.cancel();
+  });
+
   it("keeps the stream open and live-tails when the thread chat has no runs yet", async () => {
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
 
