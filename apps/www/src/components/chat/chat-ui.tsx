@@ -62,24 +62,6 @@ import {
 } from "./use-thread-mutations";
 import { useThreadViewModel } from "./use-ag-ui-messages";
 
-function queuedUserMessageToOptimisticUiMessage({
-  message,
-  index,
-  threadChatId,
-}: {
-  message: DBUserMessage;
-  index: number;
-  threadChatId: string;
-}): UIUserMessage {
-  return {
-    id: `queued-optimistic-${threadChatId}-${index}-${message.timestamp ?? "pending"}`,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
-}
-
 function submittedUserMessageToOptimisticUiMessage({
   message,
   index,
@@ -129,30 +111,18 @@ function appendUniqueUiUserMessages(
 
 function getOptimisticUserMessages({
   messages,
-  queuedMessages,
   submittedMessages,
-  threadChatId,
 }: {
   messages: UIMessage[];
-  queuedMessages: DBUserMessage[] | null;
   submittedMessages: UIUserMessage[];
-  threadChatId: string;
 }): UIUserMessage[] {
   const optimisticSubmittedMessages = messages.filter(
     (message): message is UIUserMessage =>
       message.role === "user" && message.id.startsWith("user-optimistic-"),
   );
-  const optimisticQueuedMessages = (queuedMessages ?? []).map(
-    (message, index) =>
-      queuedUserMessageToOptimisticUiMessage({
-        message,
-        index,
-        threadChatId,
-      }),
-  );
   return appendUniqueUiUserMessages(
-    appendUniqueUiUserMessages(optimisticSubmittedMessages, submittedMessages),
-    optimisticQueuedMessages,
+    optimisticSubmittedMessages,
+    submittedMessages,
   );
 }
 
@@ -498,9 +468,7 @@ function ChatUIContent() {
       queuedMessages,
       optimisticUserMessages: getOptimisticUserMessages({
         messages: threadViewModel.messages,
-        queuedMessages,
         submittedMessages: submittedOptimisticUserMessages,
-        threadChatId: threadViewModel.threadChatId,
       }),
       artifactDescriptors,
       effectiveThreadStatus,
