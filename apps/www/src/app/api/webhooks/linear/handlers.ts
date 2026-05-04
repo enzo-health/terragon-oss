@@ -118,6 +118,37 @@ interface OAuthAppRevokedPayload {
 // treated as the redundant pair of its `created` event rather than a real
 // follow-up. See handleAgentSessionPrompted for the full guard.
 const FRESH_THREAD_DEDUP_WINDOW_MS = 30_000;
+const LINEAR_ASSIGNMENT_PROMPT_PREFIX = "You were assigned a Linear issue";
+const LINEAR_ASSIGNMENT_PROMPT_FOOTER =
+  "Please work on this task. Your work will be sent to the user once you're done.";
+
+function formatLinearAssignmentPromptHeading({
+  issueIdentifier,
+  issueTitle,
+}: {
+  issueIdentifier: string;
+  issueTitle: string;
+}): string {
+  return `${LINEAR_ASSIGNMENT_PROMPT_PREFIX} ${issueIdentifier}: ${issueTitle}`;
+}
+
+export function isLinearBootstrapPromptDuplicate({
+  promptBody,
+  issueIdentifier,
+}: {
+  promptBody: string;
+  issueIdentifier?: string | null;
+}): boolean {
+  if (!issueIdentifier?.trim()) {
+    return false;
+  }
+  const normalizedPromptBody = promptBody.trim().replace(/\s+/g, " ");
+  return (
+    normalizedPromptBody.startsWith(
+      `${LINEAR_ASSIGNMENT_PROMPT_PREFIX} ${issueIdentifier}:`,
+    ) && normalizedPromptBody.includes(LINEAR_ASSIGNMENT_PROMPT_FOOTER)
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -211,13 +242,25 @@ async function emitErrorActivityBestEffort({
       accessToken: fallbackToken,
       content: { type: "error", body },
       createClient,
-    }).then(() => {
-      if (!done) {
-        done = true;
-        clearTimeout(timer);
-        resolve();
-      }
-    });
+    })
+      .then(() => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      })
+      .catch((err) => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          console.error("[linear webhook] Error activity emission failed", {
+            agentSessionId,
+            err,
+          });
+          resolve();
+        }
+      });
   });
 }
 
@@ -471,13 +514,25 @@ async function handleAgentSessionCreated(
       },
       ephemeral: true,
       createClient: opts?.createClient,
-    }).then(() => {
-      if (!done) {
-        done = true;
-        clearTimeout(timer);
-        resolve();
-      }
-    });
+    })
+      .then(() => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      })
+      .catch((err) => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          console.error(
+            "[linear webhook] Thought emission failed (SLA guard), continuing",
+            { agentSessionId, err },
+          );
+          resolve();
+        }
+      });
   });
 
   // 5-7. Create thread in-band so failures surface to the webhook response path
@@ -760,14 +815,12 @@ async function createThreadRecord({
   // details, comments, and guidance) when available, falling back to basic info.
   const messageParts: string[] = [];
   messageParts.push(
-    `You were assigned a Linear issue ${issueIdentifier}: ${issueTitle}`,
+    formatLinearAssignmentPromptHeading({ issueIdentifier, issueTitle }),
   );
   if (payload.promptContext) {
     messageParts.push(`**Context from Linear:**\n${payload.promptContext}`);
   }
-  messageParts.push(
-    "Please work on this task. Your work will be sent to the user once you're done.",
-  );
+  messageParts.push(LINEAR_ASSIGNMENT_PROMPT_FOOTER);
   if (issueUrl) {
     messageParts.push(issueUrl);
   }
@@ -913,8 +966,8 @@ async function handleAgentSessionPrompted(
   }
 
   // Backward compat: skip legacy fn-1 threads that have no agentSessionId in metadata
-  const meta = thread.sourceMetadata as { agentSessionId?: string } | null;
-  if (!meta?.agentSessionId) {
+  const meta = thread.sourceMetadata;
+  if (meta?.type !== "linear-mention" || !meta.agentSessionId) {
     console.log(
       "[linear webhook] Legacy thread without agentSessionId, skipping prompted event",
       { threadId: thread.id },
@@ -924,17 +977,30 @@ async function handleAgentSessionPrompted(
 
   // Extract the user's follow-up message from the agent activity content,
   // falling back to the formatted promptContext string.
-  const promptedPayload = payload as AgentSessionPromptedPayload;
   const promptBody =
-    promptedPayload.agentActivity?.content?.body ??
-    promptedPayload.promptContext ??
-    "";
+    payload.agentActivity?.content?.body ?? payload.promptContext ?? "";
 
   // Skip empty prompts — no useful work to queue
   if (!promptBody.trim()) {
     console.log(
       "[linear webhook] Prompted event has empty body, skipping follow-up",
       { agentSessionId },
+    );
+    return;
+  }
+
+  if (
+    isLinearBootstrapPromptDuplicate({
+      promptBody,
+      issueIdentifier: meta.issueIdentifier,
+    })
+  ) {
+    console.log(
+      "[linear webhook] Prompted event contains initial Linear assignment, skipping duplicate",
+      {
+        agentSessionId,
+        threadId: thread.id,
+      },
     );
     return;
   }

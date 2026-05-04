@@ -24,7 +24,11 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import type { LinearClientFactory } from "@/server-lib/linear-agent-activity";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { mockWaitUntil, waitUntilResolved } from "@/test-helpers/mock-next";
-import { handleAgentSessionEvent, handleAppUserNotification } from "./handlers";
+import {
+  handleAgentSessionEvent,
+  handleAppUserNotification,
+  isLinearBootstrapPromptDuplicate,
+} from "./handlers";
 
 // Mock newThreadInternal
 vi.mock("@/server-lib/new-thread-internal", () => ({
@@ -474,6 +478,59 @@ describe("handlers", () => {
   // -------------------------------------------------------------------------
 
   describe("handleAgentSessionEvent (prompted)", () => {
+    describe("isLinearBootstrapPromptDuplicate", () => {
+      it("matches generated Linear assignment prompts across whitespace variations", () => {
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "ENG-42",
+            promptBody:
+              "You were assigned a Linear issue ENG-42: Fix the bug\n\nPlease work on this task. Your work will be sent to the user once you're done.",
+          }),
+        ).toBe(true);
+
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "ENG-42",
+            promptBody:
+              "  You were assigned a Linear issue ENG-42:   Fix the bug\t\nPlease work on this task.   Your work will be sent to the user once you're done.  ",
+          }),
+        ).toBe(true);
+      });
+
+      it("rejects malformed, partial, mismatched, and empty-identifier prompts", () => {
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "ENG-42",
+            promptBody:
+              "You were assigned a Linear issue ENG-99: Fix the bug\n\nPlease work on this task. Your work will be sent to the user once you're done.",
+          }),
+        ).toBe(false);
+
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "ENG-42",
+            promptBody: "You were assigned a Linear issue ENG-42: Fix the bug",
+          }),
+        ).toBe(false);
+
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "ENG-42",
+            promptBody:
+              "you were assigned a linear issue ENG-42: Fix the bug\n\nPlease work on this task. Your work will be sent to the user once you're done.",
+          }),
+        ).toBe(false);
+
+        expect(
+          isLinearBootstrapPromptDuplicate({
+            issueIdentifier: "",
+            promptBody:
+              "You were assigned a Linear issue : Fix the bug\n\nPlease work on this task. Your work will be sent to the user once you're done.",
+          }),
+        ).toBe(false);
+      });
+    });
+
     it("logs warning and skips if no thread found for agentSessionId", async () => {
       const payload = makePromptedPayload({
         agentSession: { id: "session-no-thread" },
@@ -486,6 +543,92 @@ describe("handlers", () => {
       });
 
       expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    });
+
+    it("skips prompted events for legacy Linear threads without session metadata", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+
+      const fakeThread = {
+        id: "legacy-thread-id",
+        userId: user.id,
+        sourceMetadata: {
+          organizationId: "org-123",
+          issueId: "issue-xyz",
+          issueIdentifier: "ENG-42",
+          issueUrl: "https://linear.app/team/issue/ENG-42",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce(fakeThread);
+
+      const payload = makePromptedPayload({
+        agentSession: { id: "session-legacy" },
+        agentActivity: {
+          content: { type: "response", body: "Please continue with the task." },
+        },
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+
+      spyBySessionId.mockRestore();
+    });
+
+    it("skips Linear assignment replays delivered through promptContext", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+
+      const fakeThread = {
+        id: "prompt-context-thread-id",
+        userId: user.id,
+        createdAt: new Date(Date.now() - 60_000),
+        sourceMetadata: {
+          type: "linear-mention",
+          agentSessionId: "session-prompt-context",
+          organizationId: "org-123",
+          issueId: "issue-xyz",
+          issueIdentifier: "ENG-42",
+          issueUrl: "https://linear.app/team/issue/ENG-42",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce(fakeThread);
+      const spyGetThread = vi.spyOn(threadsModule, "getThread");
+
+      const payload = makePromptedPayload({
+        agentSession: { id: "session-prompt-context" },
+        agentActivity: { content: { type: "response" } },
+        promptContext: [
+          "You were assigned a Linear issue ENG-42: Fix the bug",
+          "",
+          "**Context from Linear:**",
+          '<issue identifier="ENG-42">',
+          "<title>Fix the bug</title>",
+          "</issue>",
+          "",
+          "Please work on this task. Your work will be sent to the user once you're done.",
+        ].join("\n"),
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+      expect(spyGetThread).not.toHaveBeenCalled();
+
+      spyBySessionId.mockRestore();
+      spyGetThread.mockRestore();
     });
 
     it("queues follow-up when thread found for agentSessionId (happy path)", async () => {
@@ -619,6 +762,104 @@ describe("handlers", () => {
         agentSession: { id: "session-fresh" },
         agentActivity: {
           content: { type: "response", body: '<issue identifier="ENG-42"/>' },
+        },
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+
+      spyBySessionId.mockRestore();
+      spyGetThread.mockRestore();
+      spyGetPrimary.mockRestore();
+    });
+
+    it("skips follow-up when Linear replays the assignment prompt after agent activity starts", async () => {
+      const threadsModule = await import("@terragon/shared/model/threads");
+      const threadUtilsModule = await import(
+        "@terragon/shared/utils/thread-utils"
+      );
+
+      const fakeThread = {
+        id: "active-thread-id",
+        userId: user.id,
+        createdAt: new Date(Date.now() - 60_000),
+        sourceMetadata: {
+          type: "linear-mention",
+          agentSessionId: "session-active",
+          organizationId: "org-123",
+          issueId: "issue-xyz",
+          issueIdentifier: "ENG-42",
+          issueUrl: "https://linear.app/team/issue/ENG-42",
+        },
+      } as unknown as Awaited<
+        ReturnType<typeof threadsModule.getThreadByLinearAgentSessionId>
+      >;
+
+      const fakeThreadFull = {
+        id: "active-thread-id",
+        userId: user.id,
+        threadChats: [
+          {
+            id: "active-chat-id",
+            messages: [
+              {
+                type: "user",
+                model: "sonnet",
+                parts: [{ type: "text", text: "initial" }],
+              },
+              {
+                type: "agent",
+                parts: [{ type: "text", text: "Starting" }],
+              },
+            ],
+          },
+        ],
+      } as unknown as Awaited<ReturnType<typeof threadsModule.getThread>>;
+
+      const spyBySessionId = vi
+        .spyOn(threadsModule, "getThreadByLinearAgentSessionId")
+        .mockResolvedValueOnce(fakeThread);
+      const spyGetThread = vi
+        .spyOn(threadsModule, "getThread")
+        .mockResolvedValueOnce(fakeThreadFull);
+      const spyGetPrimary = vi
+        .spyOn(threadUtilsModule, "getPrimaryThreadChat")
+        .mockReturnValueOnce({
+          id: "active-chat-id",
+          messages: [
+            {
+              type: "user",
+              model: "sonnet",
+              parts: [{ type: "text", text: "initial" }],
+            },
+            {
+              type: "agent",
+              parts: [{ type: "text", text: "Starting" }],
+            },
+          ],
+        } as unknown as ReturnType<
+          typeof threadUtilsModule.getPrimaryThreadChat
+        >);
+
+      const payload = makePromptedPayload({
+        agentSession: { id: "session-active" },
+        agentActivity: {
+          content: {
+            type: "response",
+            body: [
+              "You were assigned a Linear issue ENG-42: Fix the bug",
+              "",
+              "**Context from Linear:**",
+              '<issue identifier="ENG-42">',
+              "<title>Fix the bug</title>",
+              "</issue>",
+              "",
+              "Please work on this task. Your work will be sent to the user once you're done.",
+            ].join("\n"),
+          },
         },
       });
 
