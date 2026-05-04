@@ -1651,6 +1651,67 @@ describe("ag-ui SSE route", () => {
     ]);
   });
 
+  it("continues live-tailing after a nonterminal fromSeq replay", async () => {
+    const staleRunStarted = {
+      type: EventType.RUN_STARTED,
+      timestamp: 1,
+      threadId: "thread-1",
+      runId: "run-stale",
+    } as BaseEvent;
+    const newRunStarted = {
+      type: EventType.RUN_STARTED,
+      timestamp: 2,
+      threadId: "thread-1",
+      runId: "run-new",
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([staleRunStarted], [11]);
+    redisMocks.xread.mockResolvedValueOnce([
+      [
+        "agui:thread:chat-1",
+        [
+          [
+            "1700000000000-0",
+            [
+              "envelope",
+              JSON.stringify({
+                eventId: "event-run-new-started",
+                seq: 12,
+                runId: "run-new",
+                threadId: "thread-1",
+                threadChatId: "chat-1",
+                timestamp: "2026-05-04T00:00:00.000Z",
+                idempotencyKey: "run-new:event-run-new-started",
+                payload: newRunStarted,
+              }),
+            ],
+          ],
+        ],
+      ],
+    ]);
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=10",
+        { method: "POST" },
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, 3);
+    expect(received).toEqual([
+      staleRunStarted,
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-1",
+        runId: "run-stale",
+      },
+      newRunStarted,
+    ]);
+    expect(redisMocks.xread).toHaveBeenCalled();
+    await response.body!.cancel();
+  });
+
   it("does not frame POST fromSeq resumes around leading history snapshots", async () => {
     const replayEvents: BaseEvent[] = [
       {

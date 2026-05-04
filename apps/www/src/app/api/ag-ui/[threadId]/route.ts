@@ -1161,6 +1161,7 @@ export async function GET(
             );
           }
           activeEmittedRunId = nextRunId;
+          resolvedRunId = nextRunId;
         }
         hasEmittedAgUiDataEvent = true;
         enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
@@ -1568,10 +1569,12 @@ export async function GET(
           replayCursorSeq !== null
             ? await replayDurableEventsAfterCursor()
             : false;
-        if (closed || replayed) {
+        if (closed) {
           return;
         }
-        enqueue(encodeSseComment("awaiting-first-run"));
+        if (!replayed) {
+          enqueue(encodeSseComment("awaiting-first-run"));
+        }
         await liveTail(
           resolvedRunId !== null
             ? { runId: resolvedRunId, userId: session.user.id }
