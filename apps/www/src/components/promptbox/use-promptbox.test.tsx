@@ -191,6 +191,70 @@ describe("usePromptBox runtime routing", () => {
     mocks.useThreadRuntimeReturn = null;
   });
 
+  it("ignores a second submit while the first submit is still in flight", async () => {
+    mocks.appendFn.mockReset();
+    mocks.useThreadRuntimeReturn = null;
+
+    let resolveSubmit: (() => void) | null = null;
+    const handleSubmit = vi.fn<HandleSubmit>(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function InFlightHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(InFlightHarness));
+    });
+    await act(async () => {
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      await Promise.resolve();
+    });
+
+    expect(handleSubmit).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveSubmit?.();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("falls back to handleSubmit when no runtime is in context (dashboard / generic composer)", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = null;

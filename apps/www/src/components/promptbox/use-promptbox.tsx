@@ -161,6 +161,7 @@ export function usePromptBox({
       disableLocalStorage,
     });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [permissionMode, setPermissionMode] = useState<"allowAll" | "plan">(
     initialPermissionMode,
   );
@@ -699,7 +700,7 @@ export function usePromptBox({
 
   const submitForm = useCallback<TSubmitForm>(
     async ({ saveAsDraft, scheduleAt }) => {
-      if (isSubmitDisabled) {
+      if (isSubmitDisabled || isSubmittingRef.current) {
         return;
       }
       if (!editor) {
@@ -721,6 +722,7 @@ export function usePromptBox({
       const html = editor.getHTML();
       const onSubmitError = getOnSubmitError({ json, html });
       try {
+        isSubmittingRef.current = true;
         setIsSubmitting(true);
         if (clearContentBeforeSubmit) {
           clearContent();
@@ -782,6 +784,7 @@ export function usePromptBox({
         onSubmitError();
         throw error;
       } finally {
+        isSubmittingRef.current = false;
         setIsSubmitting(false);
       }
     },
