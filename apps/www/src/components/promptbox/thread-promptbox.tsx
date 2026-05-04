@@ -25,7 +25,6 @@ import { QueuedMessages } from "./queued-messages";
 import { SimplePromptBox } from "./simple-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
 import { HandleStop, HandleSubmit, usePromptBox } from "./use-promptbox";
-import { useComposerQueue } from "./use-composer-queue";
 
 const GitHubQuickActions = dynamic(
   () =>
@@ -160,28 +159,6 @@ export const ThreadPromptBox = React.forwardRef<
     props.status,
   ]);
 
-  // useComposerQueue wraps the actual submit function to buffer messages when
-  // the agent is working. When isWorking flips false it auto-drains in order.
-  // This replaces the old shouldQueue ternary that chose between handleSubmit
-  // and handleQueueMessage at call time.
-  const { submitOrQueue } = useComposerQueue({
-    isWorking,
-    append: (userMessage) =>
-      props.handleSubmit({
-        userMessage,
-        selectedModels: {},
-        repoFullName: props.repoFullName,
-        branchName: props.branchName,
-        saveAsDraft: false,
-        scheduleAt: null,
-      }),
-    initialQueue: props.queuedMessages ?? [],
-    // onUpdateQueuedMessage expects a mutable array; spread to satisfy the
-    // mutable vs readonly mismatch without changing the prop contract.
-    onQueueChange: (queue: readonly DBUserMessage[]) =>
-      props.onUpdateQueuedMessage([...queue]),
-  });
-
   const {
     editor,
     attachedFiles,
@@ -208,9 +185,7 @@ export const ThreadPromptBox = React.forwardRef<
     isAgentWorking: isWorking,
     isSandboxProvisioned: props.sandboxId != null,
     isQueueingEnabled: true,
-    handleSubmit: async ({ userMessage }) => {
-      await submitOrQueue(userMessage);
-    },
+    handleSubmit: props.handleSubmit,
     isRecording,
     initialPermissionMode: props.permissionMode ?? "allowAll",
     supportsMultiAgentPromptSubmission: false,

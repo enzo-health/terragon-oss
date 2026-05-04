@@ -91,6 +91,7 @@ afterEach(() => {
   container?.remove();
   container = null;
   controller = null;
+  mocks.useThreadRuntimeReturn = null;
   vi.clearAllMocks();
 });
 
@@ -312,7 +313,7 @@ describe("usePromptBox runtime routing", () => {
     mocks.useThreadRuntimeReturn = null;
   });
 
-  it("uses handleSubmit instead of runtime.append when queueing is enabled and the agent is active", async () => {
+  it("uses runtime.append when queueing is enabled and the agent is active", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
 
@@ -361,8 +362,8 @@ describe("usePromptBox runtime routing", () => {
       await Promise.resolve();
     });
 
-    expect(submittedMessages).toHaveLength(1);
-    expect(mocks.appendFn).not.toHaveBeenCalled();
+    expect(submittedMessages).toHaveLength(0);
+    expect(mocks.appendFn).toHaveBeenCalledOnce();
 
     act(() => {
       root.unmount();

@@ -6,7 +6,11 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpAgent } from "@ag-ui/client";
-import type { ExternalStoreAdapter, ThreadMessage } from "@assistant-ui/react";
+import type {
+  AppendMessage,
+  ExternalStoreAdapter,
+  ThreadMessage,
+} from "@assistant-ui/react";
 import type { useToolInvocations } from "@assistant-ui/core/react";
 import { useTerragonAgUiRuntime } from "./use-terragon-ag-ui-runtime";
 
@@ -114,6 +118,57 @@ describe("useTerragonAgUiRuntime", () => {
     expect(mocks.state.toolInvocations.resume).toHaveBeenCalledWith("tool-1", {
       approved: true,
     });
+  });
+
+  it("queues active user appends before they reach the AG-UI core", async () => {
+    const agent = {
+      threadId: "thread-1",
+      messages: [],
+      runAgent: vi.fn(),
+    } as unknown as HttpAgent;
+    const enqueue = vi.fn(async () => undefined);
+    const shouldQueue = vi.fn(() => true);
+
+    function QueueHarness(): React.JSX.Element {
+      useTerragonAgUiRuntime({
+        agent,
+        queue: { shouldQueue, enqueue },
+      });
+      return createElement("div");
+    }
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(createElement(QueueHarness));
+    });
+
+    const store = mocks.state
+      .capturedStore as ExternalStoreAdapter<ThreadMessage>;
+    const message: AppendMessage = {
+      role: "user",
+      content: [{ type: "text", text: "queue me" }],
+      createdAt: new Date("2026-05-04T00:00:00.000Z"),
+      metadata: { custom: {} },
+      parentId: null,
+      sourceId: null,
+      runConfig: undefined,
+    };
+
+    await act(async () => {
+      await store.onNew(message);
+    });
+
+    expect(shouldQueue).toHaveBeenCalledWith(message);
+    expect(enqueue).toHaveBeenCalledWith(message);
+    expect(agent.runAgent).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
   });
 });
 

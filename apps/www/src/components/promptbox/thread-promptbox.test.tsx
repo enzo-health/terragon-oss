@@ -165,7 +165,7 @@ function Harness({ onSubmit }: { onSubmit: HandleSubmit }): null {
 }
 
 // ---------------------------------------------------------------------------
-// Queue integration: ThreadPromptBox + useComposerQueue
+// Queue integration: ThreadPromptBox fallback path
 // ---------------------------------------------------------------------------
 
 type QueueHarness = {
@@ -206,7 +206,7 @@ function QueueHarnessComponent({
   );
 }
 
-describe("ThreadPromptBox queue integration via useComposerQueue", () => {
+describe("ThreadPromptBox fallback submit path", () => {
   it("submits directly when status is complete (not working)", async () => {
     const submitted: DBUserMessage[] = [];
     const handleSubmit: HandleSubmit = async ({ userMessage }) => {
@@ -242,7 +242,7 @@ describe("ThreadPromptBox queue integration via useComposerQueue", () => {
     expect(queueChanges).toHaveLength(0);
   });
 
-  it("queues message when status is working", async () => {
+  it("submits directly when status is working outside an assistant runtime", async () => {
     const submitted: DBUserMessage[] = [];
     const handleSubmit: HandleSubmit = async ({ userMessage }) => {
       submitted.push(userMessage);
@@ -272,11 +272,8 @@ describe("ThreadPromptBox queue integration via useComposerQueue", () => {
       await Promise.resolve();
     });
 
-    // While working, the message is queued — NOT forwarded to handleSubmit
-    expect(submitted).toHaveLength(0);
-    // onUpdateQueuedMessage should have been called with the new queue
-    expect(queueChanges).toHaveLength(1);
-    expect(queueChanges[0]).toHaveLength(1);
+    expect(submitted).toHaveLength(1);
+    expect(queueChanges).toHaveLength(0);
   });
 });
 

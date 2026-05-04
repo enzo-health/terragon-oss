@@ -5,6 +5,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { useTerragonRuntime } from "../assistant-runtime";
+import type { UseTerragonAgUiRuntimeOptions } from "../use-terragon-ag-ui-runtime";
 import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {
   TerragonThreadRuntimeContent,
@@ -31,6 +32,27 @@ class TerragonHistoryLoadError extends Error {
 type TerragonThreadProps = TerragonThreadRuntimeContentProps & {
   agent: HttpAgent;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
+  runtimeQueue?: UseTerragonAgUiRuntimeOptions["queue"];
+};
+
+type TerragonThreadRuntimeFrameProps = {
+  agent: HttpAgent;
+  loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
+  onCancel?: () => Promise<void>;
+  chatAgent: TerragonThreadProps["chatAgent"];
+  isAgentWorking: boolean;
+  threadId: string;
+  threadChatId?: string;
+  callerError?: string | null;
+  callerErrorType?: string;
+  callerErrorInfo?: string;
+  runtimeQueue?: UseTerragonAgUiRuntimeOptions["queue"];
+  children: (props: {
+    errorInfo?: string;
+    errorType?: string;
+    handleRetry?: () => Promise<void>;
+    isRetrying?: boolean;
+  }) => React.ReactNode;
 };
 
 export function resolveTerragonRuntimeLoadConfig({
@@ -96,13 +118,20 @@ export function resolveTerragonThreadErrorProps({
   return {};
 }
 
-export function TerragonThread({
+export function TerragonThreadRuntimeFrame({
   agent,
   loadAgUiHistoryMessages,
   onCancel,
   chatAgent,
-  ...contentProps
-}: TerragonThreadProps) {
+  isAgentWorking,
+  threadId,
+  threadChatId,
+  callerError,
+  callerErrorType,
+  callerErrorInfo,
+  runtimeQueue,
+  children,
+}: TerragonThreadRuntimeFrameProps) {
   const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
   const [historyLoadErrorState, setHistoryLoadErrorState] = useState<{
     agent: HttpAgent;
@@ -124,15 +153,11 @@ export function TerragonThread({
   const runtimeLoadConfig = useMemo(
     () =>
       resolveTerragonRuntimeLoadConfig({
-        isAgentWorking: contentProps.isAgentWorking,
-        threadChatId: contentProps.threadChatId,
+        isAgentWorking,
+        threadChatId,
         retryNonce: runtimeRecoveryNonce,
       }),
-    [
-      contentProps.isAgentWorking,
-      contentProps.threadChatId,
-      runtimeRecoveryNonce,
-    ],
+    [isAgentWorking, threadChatId, runtimeRecoveryNonce],
   );
 
   const handleLocalRuntimeRetry = useCallback(async () => {
@@ -181,8 +206,9 @@ export function TerragonThread({
       onCancel,
       resumeOnLoad: runtimeLoadConfig.resumeOnLoad,
       historyLoadKey: runtimeLoadConfig.historyLoadKey,
-      threadId: contentProps.thread.id,
-      threadChatId: contentProps.threadChatId,
+      threadId,
+      threadChatId,
+      queue: runtimeQueue,
     }),
     [
       agent,
@@ -190,37 +216,69 @@ export function TerragonThread({
       showThinking,
       onCancel,
       runtimeLoadConfig,
-      contentProps.thread.id,
-      contentProps.threadChatId,
+      threadId,
+      threadChatId,
+      runtimeQueue,
     ],
   );
 
   const runtime = useTerragonRuntime(runtimeConfig);
   const resolvedErrorProps = resolveTerragonThreadErrorProps({
-    callerError: contentProps.error,
-    callerErrorType: contentProps.errorType,
-    callerErrorInfo: contentProps.errorInfo,
+    callerError,
+    callerErrorType,
+    callerErrorInfo,
     historyLoadError,
     runtimeError,
   });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <TerragonThreadRuntimeContent
-        {...contentProps}
-        chatAgent={chatAgent}
-        onCancel={onCancel}
-        errorInfo={resolvedErrorProps.errorInfo}
-        errorType={resolvedErrorProps.errorType}
-        handleRetry={
+      {children({
+        errorInfo: resolvedErrorProps.errorInfo,
+        errorType: resolvedErrorProps.errorType,
+        handleRetry:
           historyLoadError || runtimeError
             ? handleLocalRuntimeRetry
-            : contentProps.handleRetry
-        }
-        isRetrying={
-          historyLoadError || runtimeError ? false : contentProps.isRetrying
-        }
-      />
+            : undefined,
+        isRetrying: historyLoadError || runtimeError ? false : undefined,
+      })}
     </AssistantRuntimeProvider>
+  );
+}
+
+export function TerragonThread({
+  agent,
+  loadAgUiHistoryMessages,
+  onCancel,
+  chatAgent,
+  runtimeQueue,
+  ...contentProps
+}: TerragonThreadProps) {
+  return (
+    <TerragonThreadRuntimeFrame
+      agent={agent}
+      loadAgUiHistoryMessages={loadAgUiHistoryMessages}
+      onCancel={onCancel}
+      chatAgent={chatAgent}
+      isAgentWorking={contentProps.isAgentWorking}
+      threadId={contentProps.thread.id}
+      threadChatId={contentProps.threadChatId}
+      callerError={contentProps.error}
+      callerErrorType={contentProps.errorType}
+      callerErrorInfo={contentProps.errorInfo}
+      runtimeQueue={runtimeQueue}
+    >
+      {(runtimeProps) => (
+        <TerragonThreadRuntimeContent
+          {...contentProps}
+          chatAgent={chatAgent}
+          onCancel={onCancel}
+          errorInfo={runtimeProps.errorInfo}
+          errorType={runtimeProps.errorType}
+          handleRetry={runtimeProps.handleRetry ?? contentProps.handleRetry}
+          isRetrying={runtimeProps.isRetrying ?? contentProps.isRetrying}
+        />
+      )}
+    </TerragonThreadRuntimeFrame>
   );
 }

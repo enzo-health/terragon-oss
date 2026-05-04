@@ -741,16 +741,7 @@ export function usePromptBox({
         // creation mutation the caller wires in. Thread creation and
         // appending to an existing thread are different operations — they
         // intentionally take different paths.
-        if (isQueueingEnabled && isAgentWorking) {
-          await handleSubmit({
-            userMessage,
-            selectedModels,
-            repoFullName: repoFullName ?? "",
-            branchName: branchName ?? "",
-            saveAsDraft,
-            scheduleAt,
-          });
-        } else if (threadRuntime != null) {
+        if (threadRuntime != null) {
           const content = dbPartsToAssistantUiContent(userMessage.parts);
           if (content.length > 0) {
             threadRuntime.append({
@@ -805,8 +796,6 @@ export function usePromptBox({
       clearContent,
       isMultiAgentMode,
       threadRuntime,
-      isQueueingEnabled,
-      isAgentWorking,
     ],
   );
 
