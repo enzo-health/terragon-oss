@@ -61,7 +61,7 @@ RUN npm install -g pnpm \\
     @anthropic-ai/claude-code@2.1.107 \\
     @google/gemini-cli@0.29.7 \\
     @sourcegraph/amp@0.0.1771963583-ga618c9 \\
-    @openai/codex@0.116.0 \\
+    @openai/codex@0.128.0 \\
     opencode-ai@1.2.10 \\
     @sandbox-agent/cli@0.2.1
 
@@ -158,7 +158,7 @@ RUN npm install -g pnpm \\
     @anthropic-ai/claude-code@2.1.107 \\
     @google/gemini-cli@0.29.7 \\
     @sourcegraph/amp@0.0.1771963583-ga618c9 \\
-    @openai/codex@0.116.0 \\
+    @openai/codex@0.128.0 \\
     opencode-ai@1.2.10 \\
     @sandbox-agent/cli@0.2.1
 

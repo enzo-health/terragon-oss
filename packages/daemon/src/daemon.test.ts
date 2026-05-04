@@ -1340,6 +1340,115 @@ describe("daemon", () => {
     );
   });
 
+  it("reports failed app-server turn/completed errors instead of empty-output fallback", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            } | null;
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "thread-failed-turn",
+            },
+          };
+        }
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {
+                turn: {
+                  id: "turn-failed",
+                  status: "failed",
+                  error: {
+                    message:
+                      "The 'gpt-5.5' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+                  },
+                },
+              },
+            },
+            {
+              threadId: "thread-failed-turn",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    type AppServerTestDaemon = {
+      getOrCreateAppServerManager: () => Promise<typeof appServerManager>;
+      runAppServerCommand: (input: DaemonMessageClaude) => Promise<void>;
+    };
+    const testDaemon = daemon as unknown as AppServerTestDaemon;
+    vi.spyOn(testDaemon, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await testDaemon.runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5.5",
+      transportMode: "codex-app-server",
+      sessionId: null,
+    } satisfies DaemonMessageClaude);
+
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            type: "custom-error",
+            error_info: expect.stringContaining(
+              "requires a newer version of Codex",
+            ),
+          }),
+        ]),
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+    expect(serverPostMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            type: "custom-error",
+            error_info: expect.stringContaining(
+              "completed without producing assistant output",
+            ),
+          }),
+        ]),
+      }),
+      TEST_INPUT_MESSAGE.token,
+    );
+  });
+
   it("does not delete newer app-server context in stale run cleanup", async () => {
     let notificationHandler:
       | ((

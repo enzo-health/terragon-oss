@@ -302,6 +302,7 @@ export const SILENTLY_IGNORED_ITEM_TYPES = new Set(["userMessage"]);
 const METHOD_TO_THREAD_EVENT_TYPE: Partial<
   Record<string, ThreadEvent["type"]>
 > = {
+  error: "error",
   "thread/started": "thread.started",
   "turn/started": "turn.started",
   "turn/completed": "turn.completed",
@@ -751,10 +752,22 @@ function extractErrorMessage(errorValue: unknown): string {
   if (errorRecord) {
     const message = readString(errorRecord, "message");
     if (message) {
-      return message;
+      return extractErrorMessage(message);
+    }
+    const nestedError = errorRecord.error;
+    if (nestedError !== undefined) {
+      return extractErrorMessage(nestedError);
     }
   }
   if (typeof errorValue === "string") {
+    try {
+      const parsed = JSON.parse(errorValue);
+      if (parsed && typeof parsed === "object") {
+        return extractErrorMessage(parsed);
+      }
+    } catch {
+      // Plain strings are already the most useful error message.
+    }
     return errorValue;
   }
   return "Codex app-server reported an error";
@@ -1056,6 +1069,15 @@ function extractThreadEventFromMethod({
     }
     case "turn.completed": {
       const turnRecord = toRecord(params.turn);
+      const turnStatus = readString(turnRecord ?? {}, "status");
+      if (turnStatus === "failed") {
+        return {
+          type: "turn.failed",
+          error: {
+            message: extractErrorMessage(turnRecord?.error ?? params.error),
+          },
+        };
+      }
       return {
         type: "turn.completed",
         usage: parseUsage(turnRecord?.usage ?? params.usage),
