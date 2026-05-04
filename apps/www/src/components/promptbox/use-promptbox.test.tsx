@@ -247,6 +247,65 @@ describe("usePromptBox runtime routing", () => {
     container.remove();
     mocks.useThreadRuntimeReturn = null;
   });
+
+  it("uses handleSubmit instead of runtime.append when queueing is enabled and the agent is active", async () => {
+    mocks.appendFn.mockReset();
+    mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
+
+    const submittedMessages: DBUserMessage[] = [];
+    const handleSubmit: HandleSubmit = async ({ userMessage }) => {
+      submittedMessages.push(userMessage);
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function ActiveRuntimeHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+        isAgentWorking: true,
+        isQueueingEnabled: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(ActiveRuntimeHarness));
+    });
+    await act(async () => {
+      capturedController?.submitForm({ saveAsDraft: false, scheduleAt: null });
+      await Promise.resolve();
+    });
+
+    expect(submittedMessages).toHaveLength(1);
+    expect(mocks.appendFn).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    mocks.useThreadRuntimeReturn = null;
+  });
 });
 
 describe("usePromptBox permission mode", () => {
