@@ -14,10 +14,15 @@ import { eq } from "drizzle-orm";
 // test: prove persist + XADD actually work end-to-end.
 const redisMocks = vi.hoisted(() => ({
   xadd: vi.fn(),
+  pipeline: vi.fn(),
+  pipelineXadd: vi.fn(),
+  pipelineExec: vi.fn(),
+  isLocalRedisHttpMode: vi.fn(),
 }));
 
 vi.mock("@/lib/redis", () => ({
   redis: redisMocks,
+  isLocalRedisHttpMode: redisMocks.isLocalRedisHttpMode,
 }));
 
 vi.resetModules();
@@ -90,10 +95,25 @@ async function fetchRowsForThreadChat(threadChatId: string) {
     .orderBy(schema.agentEventLog.seq);
 }
 
+function getPipelineXaddData(index: number): {
+  event: string;
+  envelope: string;
+} {
+  const call = redisMocks.pipelineXadd.mock.calls[index];
+  expect(call).toBeDefined();
+  return call![2] as { event: string; envelope: string };
+}
+
 describe("ag-ui-publisher", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     redisMocks.xadd.mockResolvedValue("1-0");
+    redisMocks.pipelineExec.mockResolvedValue([]);
+    redisMocks.pipeline.mockImplementation(() => ({
+      xadd: redisMocks.pipelineXadd,
+      exec: redisMocks.pipelineExec,
+    }));
+    redisMocks.isLocalRedisHttpMode.mockReturnValue(true);
   });
 
   it("happy path: one canonical event expanding to 3 rows produces 3 inserts and 3 ordered XADDs", async () => {
@@ -1024,6 +1044,97 @@ describe("ag-ui-publisher", () => {
       type: EventType.RUN_FINISHED,
     });
     expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 12 });
+  });
+
+  it("pipelines durable live-tail publishes in seq order outside local Redis HTTP mode", async () => {
+    redisMocks.isLocalRedisHttpMode.mockReturnValue(false);
+    const fixture = await createRunFixture();
+    const textEnd = makeTextEndEvent("m-pipeline");
+    const runFinished = {
+      type: EventType.RUN_FINISHED,
+      timestamp: 1_700_000_001,
+      threadId: fixture.threadId,
+      runId: fixture.runId,
+    } as BaseEvent;
+
+    await publishPersistedAgUiEvents({
+      threadChatId: fixture.threadChatId,
+      persistedEvents: [runFinished, textEnd],
+      insertedEventIds: ["finish", "end"],
+      persistedEnvelopes: [
+        {
+          eventId: "finish",
+          seq: 22,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:finish`,
+          payload: runFinished,
+        },
+        {
+          eventId: "end",
+          seq: 21,
+          runId: fixture.runId,
+          threadId: fixture.threadId,
+          threadChatId: fixture.threadChatId,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: `${fixture.runId}:end`,
+          payload: textEnd,
+        },
+      ],
+    });
+
+    expect(redisMocks.xadd).not.toHaveBeenCalled();
+    expect(redisMocks.pipeline).toHaveBeenCalledTimes(1);
+    expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(2);
+    expect(redisMocks.pipelineExec).toHaveBeenCalledTimes(1);
+    const firstData = getPipelineXaddData(0);
+    const secondData = getPipelineXaddData(1);
+    expect(JSON.parse(firstData.event)).toMatchObject({
+      type: EventType.TEXT_MESSAGE_END,
+    });
+    expect(JSON.parse(firstData.envelope)).toMatchObject({ seq: 21 });
+    expect(JSON.parse(secondData.event)).toMatchObject({
+      type: EventType.RUN_FINISHED,
+    });
+    expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 22 });
+  });
+
+  it("logs once and does not throw when pipelined XADD fails", async () => {
+    redisMocks.isLocalRedisHttpMode.mockReturnValue(false);
+    redisMocks.pipelineExec.mockRejectedValueOnce(new Error("redis pipeline"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await publishPersistedAgUiEvents({
+        threadChatId: "chat-pipeline-fail",
+        persistedEvents: [makeTextEndEvent("m-pipeline-fail")],
+        insertedEventIds: ["event-pipeline-fail"],
+        persistedEnvelopes: [
+          {
+            eventId: "event-pipeline-fail",
+            seq: 1,
+            runId: "run-pipeline-fail",
+            threadId: "thread-pipeline-fail",
+            threadChatId: "chat-pipeline-fail",
+            timestamp: new Date().toISOString(),
+            idempotencyKey: "run-pipeline-fail:event-pipeline-fail",
+            payload: makeTextEndEvent("m-pipeline-fail"),
+          },
+        ],
+      });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls[0]![0]).toMatch(/XADD failed/);
+      expect(errorSpy.mock.calls[0]![1]).toMatchObject({
+        threadChatId: "chat-pipeline-fail",
+        publishedCount: 0,
+        remainingCount: 1,
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   // -------------------------------------------------------------------
