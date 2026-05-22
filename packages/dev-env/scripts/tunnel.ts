@@ -6,8 +6,13 @@ let isShuttingDown = false;
 let currentListener: Awaited<ReturnType<typeof ngrok.forward>> | null = null;
 let customTunnelProcess: ReturnType<typeof spawn> | null = null;
 let restartCount = 0;
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 const MAX_RESTART_DELAY = 30000; // 30 seconds
 const INITIAL_RESTART_DELAY = 1000; // 1 second
+
+function keepProcessAlive() {
+  keepAliveTimer ??= setInterval(() => {}, 60_000);
+}
 
 async function createTunnel() {
   try {
@@ -145,12 +150,17 @@ async function main() {
     }
     const cleanup = async () => {
       isShuttingDown = true;
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
       await closeTunnel();
       process.exit(0);
     };
     process.on("SIGINT", cleanup);
     process.on("SIGTERM", cleanup);
     process.on("SIGHUP", cleanup);
+    keepProcessAlive();
     process.stdin.resume();
   } catch (error) {
     console.error(
@@ -158,6 +168,7 @@ async function main() {
       error,
     );
     setTimeout(() => restartTunnel(), INITIAL_RESTART_DELAY);
+    keepProcessAlive();
     process.stdin.resume();
   }
 }
