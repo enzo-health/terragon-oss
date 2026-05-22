@@ -6,24 +6,273 @@ import {
   apiKey,
   bearer,
   createAuthMiddleware,
+  createAuthEndpoint,
+  type BetterAuthPlugin,
   magicLink,
 } from "better-auth/plugins";
+import { setSessionCookie } from "better-auth/cookies";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { db } from "./db";
 import { env } from "@terragon/env/apps-www";
+import { getUserFlags } from "@terragon/shared/model/user-flags";
 import { getPostHogServer } from "./posthog-server";
 import { nonLocalhostPublicAppUrl } from "./server-utils";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { maybeGrantSignupBonus } from "@/server-lib/credits";
 import { LoopsClient } from "loops";
 import { Resend } from "resend";
+import { z } from "zod";
+
+export const DEV_LOGIN_PROVIDER_ID = "dev-login";
+
+const DEV_LOGIN_ACCOUNT_ID = "dev-login-account";
+const DEV_LOGIN_DEFAULT_EMAIL = "dev@terragon.local";
+const DEV_LOGIN_DEFAULT_NAME = "Terragon Dev";
+const DEV_LOGIN_SUBSCRIPTION_ID = "dev-login-subscription";
+
+type DevLoginUser = typeof schema.user.$inferSelect;
+type DevLoginSandboxProvider =
+  (typeof schema.userSettings.$inferInsert)["sandboxProvider"];
+
+export function isDevLoginEnabled({
+  enabled = env.ENABLE_DEV_LOGIN,
+  nodeEnv = process.env.NODE_ENV,
+}: {
+  nodeEnv?: string;
+  enabled?: boolean;
+} = {}): boolean {
+  return (
+    enabled &&
+    (nodeEnv === "development" ||
+      process.env.TERRAGON_ALLOW_DEV_LOGIN_OUTSIDE_DEVELOPMENT === "true")
+  );
+}
+
+export function resolveDevLoginReturnUrl(
+  returnUrl: string | undefined,
+): string {
+  if (!returnUrl || !returnUrl.startsWith("/") || returnUrl.startsWith("//")) {
+    return "/dashboard";
+  }
+  return returnUrl;
+}
+
+function resolveDevLoginGitHubToken(): string | undefined {
+  if (!isDevLoginEnabled()) return undefined;
+  return process.env.DEV_LOGIN_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+}
+
+function resolveDevLoginSandboxProvider(): DevLoginSandboxProvider | undefined {
+  if (!isDevLoginEnabled()) return undefined;
+  switch (process.env.DEV_LOGIN_SANDBOX_PROVIDER) {
+    case "docker":
+    case "e2b":
+    case "daytona":
+    case "mock":
+    case "default":
+      return process.env.DEV_LOGIN_SANDBOX_PROVIDER;
+    default:
+      return undefined;
+  }
+}
 
 const initialAdminEmails = new Set(
   env.INITIAL_ADMIN_EMAILS.split(",")
     .map((email) => email.trim().toLowerCase())
     .filter((email) => email.length > 0),
 );
+
+async function ensureDevLoginUser(): Promise<DevLoginUser> {
+  const now = new Date();
+  const insertUserResult = await db
+    .insert(schema.user)
+    .values({
+      id: "dev-login-user",
+      name: DEV_LOGIN_DEFAULT_NAME,
+      email: DEV_LOGIN_DEFAULT_EMAIL,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: schema.user.email,
+      set: {
+        name: DEV_LOGIN_DEFAULT_NAME,
+        emailVerified: true,
+        updatedAt: now,
+      },
+    })
+    .returning();
+  const user = insertUserResult[0];
+  if (!user) {
+    throw new Error("Failed to create dev login user");
+  }
+
+  await db
+    .insert(schema.account)
+    .values({
+      id: DEV_LOGIN_ACCOUNT_ID,
+      accountId: DEV_LOGIN_DEFAULT_EMAIL,
+      providerId: DEV_LOGIN_PROVIDER_ID,
+      userId: user.id,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: schema.account.id,
+      set: {
+        accountId: DEV_LOGIN_DEFAULT_EMAIL,
+        providerId: DEV_LOGIN_PROVIDER_ID,
+        userId: user.id,
+        updatedAt: now,
+      },
+    });
+
+  const githubToken = resolveDevLoginGitHubToken();
+  if (githubToken) {
+    await db
+      .insert(schema.account)
+      .values({
+        id: "dev-login-github-account",
+        accountId: DEV_LOGIN_DEFAULT_EMAIL,
+        providerId: "github",
+        userId: user.id,
+        accessToken: githubToken,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.account.id,
+        set: {
+          accessToken: githubToken,
+          updatedAt: now,
+        },
+      });
+  }
+
+  const sandboxProvider = resolveDevLoginSandboxProvider();
+  if (sandboxProvider) {
+    await db
+      .insert(schema.userSettings)
+      .values({
+        userId: user.id,
+        sandboxProvider,
+      })
+      .onConflictDoUpdate({
+        target: schema.userSettings.userId,
+        set: {
+          sandboxProvider,
+        },
+      });
+  }
+
+  const subscription = await db.query.subscription.findFirst({
+    where: eq(schema.subscription.referenceId, user.id),
+  });
+  if (subscription) {
+    await db
+      .update(schema.subscription)
+      .set({
+        plan: "core",
+        status: "active",
+        periodStart: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 30),
+        periodEnd: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30),
+        updatedAt: now,
+      })
+      .where(eq(schema.subscription.id, subscription.id));
+  } else {
+    await db
+      .insert(schema.subscription)
+      .values({
+        id: DEV_LOGIN_SUBSCRIPTION_ID,
+        plan: "core",
+        referenceId: user.id,
+        status: "active",
+        periodStart: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 30),
+        periodEnd: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.subscription.id,
+        set: {
+          plan: "core",
+          referenceId: user.id,
+          status: "active",
+          periodStart: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 30),
+          periodEnd: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30),
+          updatedAt: now,
+        },
+      });
+  }
+
+  await getUserFlags({ db, userId: user.id });
+  return user;
+}
+
+function devLoginPlugin(): BetterAuthPlugin {
+  return {
+    id: "terragon-dev-login",
+    endpoints: {
+      signInDevLoginRedirect: createAuthEndpoint(
+        "/sign-in/dev-login",
+        {
+          method: "GET",
+          query: z.object({
+            returnUrl: z.string().optional(),
+          }),
+        },
+        async (ctx) => {
+          if (!isDevLoginEnabled()) {
+            throw new Error("Dev login is not enabled");
+          }
+
+          const user = await ensureDevLoginUser();
+          const session = await ctx.context.internalAdapter.createSession(
+            user.id,
+            ctx,
+          );
+          if (!session) {
+            throw new Error("Failed to create dev login session");
+          }
+
+          await setSessionCookie(ctx, { session, user });
+          throw ctx.redirect(resolveDevLoginReturnUrl(ctx.query.returnUrl));
+        },
+      ),
+      signInDevLogin: createAuthEndpoint(
+        "/sign-in/dev-login",
+        {
+          method: "POST",
+          body: z.object({
+            returnUrl: z.string().optional(),
+          }),
+        },
+        async (ctx) => {
+          if (!isDevLoginEnabled()) {
+            throw new Error("Dev login is not enabled");
+          }
+
+          const user = await ensureDevLoginUser();
+          const session = await ctx.context.internalAdapter.createSession(
+            user.id,
+            ctx,
+          );
+          if (!session) {
+            throw new Error("Failed to create dev login session");
+          }
+
+          await setSessionCookie(ctx, { session, user });
+          return ctx.json({
+            redirectTo: resolveDevLoginReturnUrl(ctx.body.returnUrl),
+            user,
+          });
+        },
+      ),
+    },
+  };
+}
 
 async function isRequiredGitHubOrgMember({
   userId,
@@ -275,6 +524,7 @@ export const auth = betterAuth({
         }
       },
     }),
+    ...(isDevLoginEnabled() ? [devLoginPlugin()] : []),
   ],
   trustedOrigins: [
     "https://www.terragonlabs.com",

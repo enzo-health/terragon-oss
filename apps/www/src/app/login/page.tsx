@@ -1,4 +1,5 @@
 import { getUserIdOrNull } from "@/lib/auth-server";
+import { isDevLoginEnabled } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Login from "./login";
 import type { Metadata } from "next";
@@ -18,5 +19,5 @@ export default async function LoginPage({
     redirect(returnUrl);
   }
 
-  return <Login returnUrl={returnUrl} />;
+  return <Login returnUrl={returnUrl} devLoginEnabled={isDevLoginEnabled()} />;
 }
