@@ -339,7 +339,7 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
     expect(agent.runAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         forwardedProps: expect.objectContaining({
-          terragon: { intent: "resume" },
+          terragon: expect.objectContaining({ intent: "resume" }),
         }),
       }),
       expect.any(Object),
@@ -408,7 +408,7 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
     expect(runAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         forwardedProps: expect.objectContaining({
-          terragon: { intent: "resume" },
+          terragon: expect.objectContaining({ intent: "resume" }),
         }),
       }),
       expect.any(Object),
@@ -788,6 +788,7 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
 
     await core.__internal_load();
     const callsBeforeFrame = notifyUpdate.mock.calls.length;
+    vi.runOnlyPendingTimers();
     const assistant = core
       .getMessages()
       .find((message) => message.id === "assistant-live");
@@ -799,9 +800,85 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
         : [],
     ).toHaveLength(5);
 
-    vi.advanceTimersByTime(16);
+    vi.runOnlyPendingTimers();
 
     expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 1);
+    vi.useRealTimers();
+  });
+
+  it("batches live assistant text notifications until the next frame", async () => {
+    vi.useFakeTimers();
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const notifyUpdate = vi.fn();
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          for (const delta of ["one", " two", " three"]) {
+            await subscriber?.onTextMessageContentEvent?.({
+              event: {
+                type: EventType.TEXT_MESSAGE_CONTENT,
+                messageId: "assistant-live",
+                delta,
+              },
+              textMessageBuffer: "",
+              messages: [],
+              state: {},
+              agent: agent as HttpAgent,
+              input,
+            });
+          }
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate,
+    });
+
+    await core.__internal_load();
+    const callsBeforeFrame = notifyUpdate.mock.calls.length;
+    vi.runOnlyPendingTimers();
+    const assistant = core
+      .getMessages()
+      .find((message) => message.id === "assistant-live");
+
+    expect(
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "text")
+        : [],
+    ).toEqual([{ type: "text", text: "one two three" }]);
+
+    vi.runOnlyPendingTimers();
+
+    // One scheduled text projection and one runtime store notification, not
+    // one React notification per text delta.
+    expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 2);
     vi.useRealTimers();
   });
 

@@ -646,10 +646,13 @@ export class TerragonAgUiThreadRuntimeCore {
     }
     if (touched) {
       this.markProjectionChange(changedIndex ?? null);
-      this.notifyUpdate();
       if (this.isTerminalStatus(latestStatus)) {
+        this.flushScheduledNotifyUpdate();
+        this.notifyUpdate();
         this.persistAssistantHistory(messageId);
+        return;
       }
+      this.scheduleNotifyUpdate();
     }
   }
 
@@ -863,6 +866,19 @@ export class TerragonAgUiThreadRuntimeCore {
       kind: "timeout",
       id: globalThis.setTimeout(flush, 16),
     };
+  }
+
+  private flushScheduledNotifyUpdate(): void {
+    const handle = this.scheduledNotifyHandle;
+    if (handle === undefined) {
+      return;
+    }
+    this.scheduledNotifyHandle = undefined;
+    if (handle.kind === "animation-frame") {
+      window.cancelAnimationFrame(handle.id);
+    } else {
+      globalThis.clearTimeout(handle.id);
+    }
   }
 
   private isTerminalStatus(status?: MessageStatus): boolean {
