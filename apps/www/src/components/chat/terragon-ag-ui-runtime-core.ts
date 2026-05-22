@@ -14,6 +14,7 @@ import type {
   ThreadSystemMessage,
   ThreadUserMessage,
 } from "@assistant-ui/react";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { agUiMessagesToThreadMessages } from "./ag-ui-history-adapter";
 import {
   appendTerragonDataPart,
@@ -405,6 +406,16 @@ export class TerragonAgUiThreadRuntimeCore {
       historicalMessages,
       intent,
     );
+    recordAgentTraceSpan({
+      traceId: runId,
+      name: "client.prompt.submitted",
+      attributes: {
+        threadId: input.threadId,
+        runId,
+        intent,
+        messageCount: input.messages.length,
+      },
+    });
     const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
     let assistantMessageId: string | undefined;
     const ensureAssistant = (targetMessageId: string | undefined) => {
@@ -532,6 +543,7 @@ export class TerragonAgUiThreadRuntimeCore {
         terragon: {
           ...directTerragon,
           intent,
+          traceId: runId,
         },
       },
     };

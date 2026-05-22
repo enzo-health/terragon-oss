@@ -20,6 +20,10 @@ import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-cont
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
+import {
+  getTraceIdFromAgUiForwardedProps,
+  recordAgentTraceSpan,
+} from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import {
@@ -1000,6 +1004,22 @@ export async function GET(
           xreadBackoffCount: diagnostics.xreadBackoffCount,
           xreadErrorCount: diagnostics.xreadErrorCount,
         });
+        recordAgentTraceSpan({
+          traceId: resolvedRunId,
+          name: "server.agui.sse.closed",
+          startedAtMs: diagnostics.openedAtMs,
+          endedAtMs: Date.now(),
+          attributes: {
+            threadId,
+            threadChatId,
+            closeReason,
+            replayCount: diagnostics.replayCount,
+            dedupeCount: diagnostics.dedupeCount,
+            xreadTimeoutCount: diagnostics.xreadTimeoutCount,
+            xreadBackoffCount: diagnostics.xreadBackoffCount,
+            xreadErrorCount: diagnostics.xreadErrorCount,
+          },
+        });
       };
 
       const markFirstFrameIfNeeded = () => {
@@ -1012,6 +1032,17 @@ export async function GET(
           threadChatId,
           runId: resolvedRunId,
           firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
+        });
+        recordAgentTraceSpan({
+          traceId: resolvedRunId,
+          name: "server.agui.sse.first_frame",
+          startedAtMs: diagnostics.openedAtMs,
+          endedAtMs: Date.now(),
+          attributes: {
+            threadId,
+            threadChatId,
+            firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
+          },
         });
       };
 
@@ -1031,6 +1062,18 @@ export async function GET(
         runId: resolvedRunId,
         hasRunIdParam: runIdParam !== null,
         replayCursorSeq,
+      });
+      recordAgentTraceSpan({
+        traceId: resolvedRunId,
+        name: "server.agui.sse.opened",
+        startedAtMs: diagnostics.openedAtMs,
+        endedAtMs: diagnostics.openedAtMs,
+        attributes: {
+          threadId,
+          threadChatId,
+          hasRunIdParam: runIdParam !== null,
+          replayCursorSeq,
+        },
       });
 
       // Tear down on client abort. `once: true` handles listener cleanup.
@@ -1842,14 +1885,45 @@ export async function POST(
     // Active history resumes use AG-UI POST only to open the SSE stream; they
     // must not replay the last user message back into the follow-up queue.
     if (parsed.success) {
+      const traceId =
+        getTraceIdFromAgUiForwardedProps(parsed.data.forwardedProps) ??
+        parsed.data.runId;
+      recordAgentTraceSpan({
+        traceId,
+        name: "server.agui.post.received",
+        attributes: {
+          threadId,
+          threadChatId,
+          runId: parsed.data.runId,
+        },
+      });
       const intent = readTerragonPostIntent(parsed.data.forwardedProps);
       if (intent === "append") {
+        const followUpStartedAtMs = Date.now();
         const result = await runFollowUpFromAgUiInput({
           threadId,
           threadChatId,
           userId,
           body: parsed.data,
           isReplayMode: false,
+        });
+        const resultKind =
+          "error" in result
+            ? result.error.kind
+            : "runId" in result
+              ? "dispatched"
+              : result.skipped;
+        recordAgentTraceSpan({
+          traceId,
+          name: "server.agui.followup.dispatched",
+          startedAtMs: followUpStartedAtMs,
+          endedAtMs: Date.now(),
+          attributes: {
+            threadId,
+            threadChatId,
+            runId: "runId" in result ? result.runId : parsed.data.runId,
+            result: resultKind,
+          },
         });
 
         if ("error" in result) {

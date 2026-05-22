@@ -43,6 +43,7 @@ import {
   getDaemonTokenAuthContextOrNull,
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import {
   type AssistantMessagePartsInput,
@@ -840,6 +841,20 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  recordAgentTraceSpan({
+    traceId: authoritativeRunId,
+    name: "server.daemon_event.received",
+    attributes: {
+      threadId,
+      threadChatId,
+      runId: authoritativeRunId,
+      payloadVersion: json.payloadVersion ?? null,
+      seq: envelopeV2?.seq ?? null,
+      canonicalEventCount: rawCanonicalEvents?.length ?? 0,
+      deltaCount: deltas?.length ?? 0,
+      metaEventCount: metaEvents?.length ?? 0,
+    },
+  });
   runContext = await getAgentRunContextByRunId({
     db,
     runId: authoritativeRunId,
@@ -1206,6 +1221,18 @@ export async function POST(request: Request) {
   if (canonicalPersistence.response) {
     return canonicalPersistence.response;
   }
+  recordAgentTraceSpan({
+    traceId: runContext.runId,
+    name: "server.daemon_event.canonical.persisted",
+    attributes: {
+      threadId,
+      threadChatId,
+      runId: runContext.runId,
+      attempted: canonicalPersistence.summary.attempted,
+      inserted: canonicalPersistence.summary.inserted,
+      deduplicated: canonicalPersistence.summary.deduplicated,
+    },
+  });
   let terminalCanonicalPersistence:
     | { summary: CanonicalPersistenceSummary; response?: undefined }
     | { summary?: undefined; response: Response }
@@ -1248,7 +1275,7 @@ export async function POST(request: Request) {
       );
     }
     try {
-      await persistAndPublishAgUiEvents({
+      const deltaPersistence = await persistAndPublishAgUiEvents({
         db,
         runId: authoritativeRunId,
         threadId,
@@ -1257,6 +1284,18 @@ export async function POST(request: Request) {
           runId: authoritativeRunId,
           deltas,
         }),
+      });
+      recordAgentTraceSpan({
+        traceId: authoritativeRunId,
+        name: "server.daemon_event.delta.persisted",
+        attributes: {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          deltaCount: deltas.length,
+          inserted: deltaPersistence.inserted,
+          deduplicated: deltaPersistence.skipped,
+        },
       });
     } catch (error) {
       console.error("[daemon-event] AG-UI delta persistence failed", {

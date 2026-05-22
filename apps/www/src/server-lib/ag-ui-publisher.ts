@@ -21,11 +21,12 @@ import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
   agUiStreamKey,
   type AgUiEventEnvelope,
-  appendAgUiEventRow,
+  appendAgUiEventRows,
   peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
 import type { DB } from "@terragon/shared/db";
 import { redis } from "@/lib/redis";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 
 /**
  * Shape of a single AG-UI event to be persisted + streamed.
@@ -133,6 +134,7 @@ export async function persistAgUiEvents(params: {
   const persistedEnvelopes: TerragonAgUiTransportEnvelope[] = [];
   const persistedEvents: BaseEvent[] = [];
 
+  const persistStartedAtMs = Date.now();
   await db.transaction(async (tx) => {
     const startSeq = await peekNextThreadChatSeqLocked({
       tx,
@@ -140,51 +142,67 @@ export async function persistAgUiEvents(params: {
       count: rows.length,
     });
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]!;
-      const seq = startSeq + i;
-      const result = await appendAgUiEventRow({
-        tx,
-        row: {
+    const candidateRows = rows.map((row, index) => {
+      const seq = startSeq + index;
+      return {
+        source: row,
+        seq,
+        envelope: buildTransportEnvelope({
+          event: row.event,
           eventId: row.eventId,
+          runId,
           threadId,
-          eventType: String(row.event.type),
-          // AG-UI BaseEvent has no explicit category; reuse event type as a
-          // stable proxy. Readers project via readAgUiPayload anyway.
-          category: String(row.event.type),
-          idempotencyKey: `${runId}:${row.eventId}`,
+          threadChatId,
+          seq,
           timestamp: row.timestamp,
-          threadChatMessageSeq: row.threadChatMessageSeq,
-          envelope: buildTransportEnvelope({
-            event: row.event,
-            eventId: row.eventId,
-            runId,
-            threadId,
-            threadChatId,
-            seq,
-            timestamp: row.timestamp,
-          }),
-        },
-      });
-      if (result.inserted) {
+        }),
+      };
+    });
+    const result = await appendAgUiEventRows({
+      tx,
+      rows: candidateRows.map(({ source, envelope }) => ({
+        eventId: source.eventId,
+        threadId,
+        eventType: String(source.event.type),
+        // AG-UI BaseEvent has no explicit category; reuse event type as a
+        // stable proxy. Readers project via readAgUiPayload anyway.
+        category: String(source.event.type),
+        idempotencyKey: `${runId}:${source.eventId}`,
+        timestamp: source.timestamp,
+        threadChatMessageSeq: source.threadChatMessageSeq,
+        envelope,
+      })),
+    });
+    const insertedEventIdSet = new Set(result.insertedEventIds);
+
+    for (const candidate of candidateRows) {
+      if (insertedEventIdSet.has(candidate.source.eventId)) {
         inserted += 1;
-        insertedEventIds.push(row.eventId);
-        persistedEnvelopes.push(
-          buildTransportEnvelope({
-            event: row.event,
-            eventId: row.eventId,
-            runId,
-            threadId,
-            threadChatId,
-            seq,
-            timestamp: row.timestamp,
-          }),
-        );
-        persistedEvents.push(row.event);
+        insertedEventIds.push(candidate.source.eventId);
+        persistedEnvelopes.push(candidate.envelope);
+        persistedEvents.push(candidate.source.event);
       } else {
         skipped += 1;
       }
     }
+  });
+
+  const seqs = persistedEnvelopes.map((envelope) => envelope.seq);
+  recordAgentTraceSpan({
+    traceId: runId,
+    name: "server.agui.event_log.persisted",
+    startedAtMs: persistStartedAtMs,
+    endedAtMs: Date.now(),
+    attributes: {
+      threadId,
+      threadChatId,
+      runId,
+      attempted: rows.length,
+      inserted,
+      deduplicated: skipped,
+      seqMin: seqs.length > 0 ? Math.min(...seqs) : null,
+      seqMax: seqs.length > 0 ? Math.max(...seqs) : null,
+    },
   });
 
   return {
@@ -233,6 +251,8 @@ export async function publishPersistedAgUiEvents(
   }
 
   const streamKey = agUiStreamKey(threadChatId);
+  const startedAtMs = Date.now();
+  let publishedCount = 0;
   for (let i = 0; i < publishEntries.length; i++) {
     const { event, envelope } = publishEntries[i]!;
     try {
@@ -244,6 +264,7 @@ export async function publishPersistedAgUiEvents(
               envelope: serializeAgUiTransportEnvelope(envelope),
             };
       await redis.xadd(streamKey, "*", data);
+      publishedCount += 1;
     } catch (err) {
       console.error(
         "[ag-ui-publisher] XADD failed — halting live-tail publish for this batch; clients will recover via SSE replay-from-seq",
@@ -266,6 +287,20 @@ export async function publishPersistedAgUiEvents(
       break;
     }
   }
+  const runId = publishEntries[0]?.envelope?.runId ?? null;
+  recordAgentTraceSpan({
+    traceId: runId,
+    name: "server.agui.redis.published",
+    startedAtMs,
+    endedAtMs: Date.now(),
+    attributes: {
+      threadChatId,
+      attempted: publishEntries.length,
+      published: publishedCount,
+      eventIdFirst: insertedEventIds[0] ?? null,
+      eventIdLast: insertedEventIds[insertedEventIds.length - 1] ?? null,
+    },
+  });
 }
 
 /**

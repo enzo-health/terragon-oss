@@ -17,6 +17,7 @@ import * as schema from "../db/schema";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import {
   appendAgUiEventRow,
+  appendAgUiEventRows,
   appendCanonicalEvent,
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
@@ -1249,6 +1250,71 @@ describe("agent-event-log", () => {
         type: EventType.RUN_STARTED,
         runId: fixture.runId,
       });
+    });
+  });
+
+  describe("appendAgUiEventRows", () => {
+    it("bulk inserts fresh rows and skips duplicate run/event pairs", async () => {
+      const fixture = await createRunFixture();
+      const firstEventId = newId("event");
+      const secondEventId = newId("event");
+      const payload = {
+        type: EventType.RUN_STARTED,
+        timestamp: 1_700_000_000_002,
+        threadId: fixture.threadId,
+        runId: fixture.runId,
+      };
+
+      const first = await appendAgUiEventRows({
+        tx: db,
+        rows: [
+          {
+            eventId: firstEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 0,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${firstEventId}`,
+            timestamp: new Date(),
+          },
+          {
+            eventId: secondEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 1,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${secondEventId}`,
+            timestamp: new Date(),
+          },
+        ],
+      });
+      expect(first.insertedEventIds).toEqual([firstEventId, secondEventId]);
+
+      const second = await appendAgUiEventRows({
+        tx: db,
+        rows: [
+          {
+            eventId: firstEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 2,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${firstEventId}`,
+            timestamp: new Date(),
+          },
+        ],
+      });
+
+      expect(second.insertedEventIds).toEqual([]);
     });
   });
 

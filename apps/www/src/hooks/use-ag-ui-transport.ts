@@ -78,6 +78,14 @@ export function useAgUiTransport(args: {
     }
     if (runId) {
       query.set("runId", runId);
+      agent.headers = {
+        ...agent.headers,
+        "x-terragon-trace-id": runId,
+      };
+    } else {
+      const headers = { ...agent.headers };
+      delete headers["x-terragon-trace-id"];
+      agent.headers = headers;
     }
     agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
   }, [agent, threadId, threadChatId, runId]);

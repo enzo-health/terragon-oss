@@ -1558,3 +1558,44 @@ export async function appendAgUiEventRow({
 
   return { inserted: inserted.length > 0 };
 }
+
+export async function appendAgUiEventRows({
+  tx,
+  rows,
+}: {
+  tx: Pick<DB, "insert">;
+  rows: AppendAgUiEventRow[];
+}): Promise<{ insertedEventIds: string[] }> {
+  if (rows.length === 0) {
+    return { insertedEventIds: [] };
+  }
+
+  const inserted = await tx
+    .insert(schema.agentEventLog)
+    .values(
+      rows.map((row) => {
+        const normalizedRow = normalizeAppendAgUiEventRow(row);
+        return {
+          eventId: normalizedRow.eventId,
+          runId: normalizedRow.runId,
+          threadId: normalizedRow.threadId,
+          threadChatId: normalizedRow.threadChatId,
+          seq: normalizedRow.seq,
+          eventType: normalizedRow.eventType,
+          category: normalizedRow.category,
+          payloadJson: toPayloadJson(normalizedRow.payload),
+          idempotencyKey: normalizedRow.idempotencyKey,
+          timestamp: normalizedRow.timestamp,
+          threadChatMessageSeq: normalizedRow.threadChatMessageSeq,
+        };
+      }),
+    )
+    .onConflictDoNothing({
+      target: [schema.agentEventLog.runId, schema.agentEventLog.eventId],
+    })
+    .returning({ eventId: schema.agentEventLog.eventId });
+
+  return {
+    insertedEventIds: inserted.map((row) => row.eventId),
+  };
+}

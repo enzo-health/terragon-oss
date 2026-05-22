@@ -2,7 +2,8 @@
 
 import type { HttpAgent } from "@ag-ui/client";
 import { EventType } from "@ag-ui/core";
-import { useEffect, useMemo, useReducer } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,
@@ -52,6 +53,7 @@ export function useThreadViewModel({
   projectEvent,
   includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
+  const projectedTraceKeysRef = useRef<Set<string>>(new Set());
   const [state, dispatch] = useReducer(
     threadViewModelReducer,
     snapshot,
@@ -71,6 +73,14 @@ export function useThreadViewModel({
         if (!projectedEvent) {
           return;
         }
+        const traceId = getStringEventField(projectedEvent, "runId");
+        recordAgentTraceSpan({
+          traceId,
+          name: "client.agui.event.received",
+          attributes: {
+            eventType: String(projectedEvent.type),
+          },
+        });
         try {
           dispatch(
             createThreadViewEventFromAgUiEvent(projectedEvent, {
@@ -88,13 +98,36 @@ export function useThreadViewModel({
     };
   }, [agent, includeTranscriptMessages, projectEvent]);
 
-  return useMemo(
+  const viewModel = useMemo(
     () => ({
       ...projectThreadViewModel(state, { includeTranscriptMessages }),
       dispatchThreadViewEvent: dispatch,
     }),
     [includeTranscriptMessages, state],
   );
+
+  useEffect(() => {
+    const runId = viewModel.lifecycle.runId;
+    if (!runId || viewModel.lifecycle.runStarted) {
+      return;
+    }
+    const traceKey = `${runId}:${viewModel.lifecycle.threadStatus}`;
+    if (projectedTraceKeysRef.current.has(traceKey)) {
+      return;
+    }
+    projectedTraceKeysRef.current.add(traceKey);
+    recordAgentTraceSpan({
+      traceId: runId,
+      name: "client.ui.projected",
+      attributes: {
+        threadStatus: viewModel.lifecycle.threadStatus,
+        messageCount: viewModel.messages.length,
+        quarantineCount: viewModel.quarantine.length,
+      },
+    });
+  }, [viewModel]);
+
+  return viewModel;
 }
 
 export type ThreadViewEventForAgUi = Parameters<
