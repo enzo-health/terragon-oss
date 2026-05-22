@@ -36,6 +36,12 @@ function isNavigationEntryWithType(
   );
 }
 
+function isContainerAtBottom(container: HTMLElement): boolean {
+  return (
+    container.scrollTop + container.clientHeight >= container.scrollHeight - 10
+  );
+}
+
 export function useScrollToBottom({
   observedRef,
 }: {
@@ -50,6 +56,9 @@ export function useScrollToBottom({
   const endRef = useRef<HTMLDivElement | null>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const hasInitialScrollRef = useRef(false);
+  const resizeScrollFrameRef = useRef<number | null>(null);
+  const imperativeScrollFrameRef = useRef<number | null>(null);
+  const lastUserScrollUpAtRef = useRef(0);
 
   const updateContainer = useCallback(() => {
     const nextContainer = getScrollParentOrNull(endRef.current);
@@ -59,11 +68,11 @@ export function useScrollToBottom({
   }, []);
 
   const updateIsAtBottom = useCallback((nextContainer: HTMLElement) => {
-    const atBottom =
-      nextContainer.scrollTop + nextContainer.clientHeight >=
-      nextContainer.scrollHeight - 10;
+    const atBottom = isContainerAtBottom(nextContainer);
     isAtBottom.current = atBottom;
-    setIsAtBottomState(atBottom);
+    setIsAtBottomState((current) =>
+      current === atBottom ? current : atBottom,
+    );
     return atBottom;
   }, []);
 
@@ -106,6 +115,15 @@ export function useScrollToBottom({
     // re-rendering the scroll-to-bottom button on every pixel.
     let rafId: number | null = null;
     const onScroll = () => {
+      if (resizeScrollFrameRef.current !== null) {
+        cancelAnimationFrame(resizeScrollFrameRef.current);
+        resizeScrollFrameRef.current = null;
+      }
+      const atBottom = isContainerAtBottom(container);
+      if (!atBottom) {
+        lastUserScrollUpAtRef.current = performance.now();
+      }
+      isAtBottom.current = atBottom;
       if (rafId === null) {
         rafId = requestAnimationFrame(() => {
           rafId = null;
@@ -130,7 +148,11 @@ export function useScrollToBottom({
       }
 
       if (behavior !== "smooth" || isIOSSafari()) {
-        requestAnimationFrame(() => {
+        if (imperativeScrollFrameRef.current !== null) {
+          cancelAnimationFrame(imperativeScrollFrameRef.current);
+        }
+        imperativeScrollFrameRef.current = requestAnimationFrame(() => {
+          imperativeScrollFrameRef.current = null;
           scrollContainerToBottom(nextContainer);
           updateIsAtBottom(nextContainer);
         });
@@ -148,10 +170,22 @@ export function useScrollToBottom({
   );
 
   const maybeScrollToBottom = useCallback(() => {
-    if (isAtBottom.current) {
+    const nextContainer = getScrollParentOrNull(endRef.current);
+    if (!nextContainer) {
+      return;
+    }
+    const wasPinned = isAtBottom.current;
+    const currentlyAtBottom = isContainerAtBottom(nextContainer);
+    const userRecentlyScrolledUp =
+      performance.now() - lastUserScrollUpAtRef.current < 250;
+    if (!currentlyAtBottom && userRecentlyScrolledUp) {
+      updateIsAtBottom(nextContainer);
+      return;
+    }
+    if (wasPinned || currentlyAtBottom) {
       forceScrollToBottom("auto");
     }
-  }, [forceScrollToBottom]);
+  }, [forceScrollToBottom, updateIsAtBottom]);
 
   useLayoutEffect(() => {
     if (!container || hasInitialScrollRef.current) {
@@ -186,28 +220,54 @@ export function useScrollToBottom({
 
   useEffect(() => {
     const observedNode = observedRef?.current ?? container;
-    if (container && observedNode) {
-      // Coalesce rapid DOM mutations (e.g. streaming text) into one
-      // scroll-to-bottom check per frame instead of per mutation.
-      let rafId: number | null = null;
-      const observer = new MutationObserver(() => {
-        if (rafId === null) {
-          rafId = requestAnimationFrame(() => {
-            rafId = null;
-            maybeScrollToBottom();
-          });
-        }
+    if (!container || !observedNode) {
+      return;
+    }
+
+    const scheduleScrollCheck = () => {
+      if (resizeScrollFrameRef.current !== null) return;
+      resizeScrollFrameRef.current = requestAnimationFrame(() => {
+        resizeScrollFrameRef.current = null;
+        maybeScrollToBottom();
       });
-      observer.observe(observedNode, {
-        childList: true,
-        subtree: true,
-      });
+    };
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(scheduleScrollCheck);
+      observer.observe(observedNode);
       return () => {
         observer.disconnect();
-        if (rafId !== null) cancelAnimationFrame(rafId);
+        if (resizeScrollFrameRef.current !== null) {
+          cancelAnimationFrame(resizeScrollFrameRef.current);
+          resizeScrollFrameRef.current = null;
+        }
       };
     }
+
+    const observer = new MutationObserver(scheduleScrollCheck);
+    observer.observe(observedNode, {
+      childList: true,
+      subtree: true,
+    });
+    return () => {
+      observer.disconnect();
+      if (resizeScrollFrameRef.current !== null) {
+        cancelAnimationFrame(resizeScrollFrameRef.current);
+        resizeScrollFrameRef.current = null;
+      }
+    };
   }, [container, maybeScrollToBottom, observedRef]);
+  useEffect(
+    () => () => {
+      if (imperativeScrollFrameRef.current !== null) {
+        cancelAnimationFrame(imperativeScrollFrameRef.current);
+      }
+      if (resizeScrollFrameRef.current !== null) {
+        cancelAnimationFrame(resizeScrollFrameRef.current);
+      }
+    },
+    [],
+  );
   return {
     messagesEndRef: endRef,
     isAtBottom: isAtBottomState,
