@@ -676,16 +676,10 @@ function historyRunErrorMessage(event: BaseEvent): string {
 }
 
 function isFailedToolResultEvent(event: ToolCallResultEvent): boolean {
-  const role = Reflect.get(event, "role");
   const isError = Reflect.get(event, "isError");
   const status = Reflect.get(event, "status");
   const error = Reflect.get(event, "error");
-  return (
-    role === "tool" ||
-    isError === true ||
-    status === "error" ||
-    typeof error === "string"
-  );
+  return isError === true || status === "error" || typeof error === "string";
 }
 
 function isTerragonCustomPartEvent(event: BaseEvent): event is CustomEvent {

@@ -89,6 +89,24 @@ type ReplayCursor = {
 };
 
 type AgUiUserMessage = Extract<Message, { role: "user" }>;
+type TerragonPostIntent = "append" | "resume";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readTerragonPostIntent(forwardedProps: unknown): TerragonPostIntent {
+  const runConfig = isRecord(forwardedProps)
+    ? (forwardedProps["runConfig"] ?? null)
+    : null;
+  const terragon = isRecord(runConfig)
+    ? (runConfig["terragon"] ?? null)
+    : isRecord(forwardedProps)
+      ? (forwardedProps["terragon"] ?? null)
+      : null;
+  if (!isRecord(terragon)) return "append";
+  return terragon["intent"] === "resume" ? "resume" : "append";
+}
 
 function isAgUiUserMessage(
   item: DurableAgUiHistoryItem,
@@ -120,13 +138,10 @@ function agUiMessageContentText(content: Message["content"]): string {
 function mergeMissingDbUserMessagesIntoHistory({
   historyItems,
   dbMessages,
-  fallbackUserPrompt,
 }: {
   historyItems: DurableAgUiHistoryItem[];
   dbMessages: readonly DBMessage[];
-  fallbackUserPrompt?: string | null;
 }): DurableAgUiHistoryItem[] {
-  const historyUserMessages = historyItems.filter(isAgUiUserMessage);
   const historyUserIndicesBySignature = new Map<string, number[]>();
   historyItems.forEach((item, index) => {
     if (!isAgUiUserMessage(item)) {
@@ -178,25 +193,7 @@ function mergeMissingDbUserMessagesIntoHistory({
     ]);
   }
 
-  const fallbackContent = fallbackUserPrompt?.trim() ?? "";
-  const fallbackUserMessages: AgUiUserMessage[] =
-    pendingMissingUserMessages.length === 0 &&
-    historyUserMessages.length === 0 &&
-    fallbackContent.length > 0
-      ? [
-          {
-            id: "thread-title-user-prompt",
-            role: "user",
-            content: fallbackContent,
-            name: "terragon-user:source=thread-title",
-          },
-        ]
-      : [];
-
-  const prependedMessages = [
-    ...pendingMissingUserMessages,
-    ...fallbackUserMessages,
-  ];
+  const prependedMessages = [...pendingMissingUserMessages];
   if (
     prependedMessages.length === 0 &&
     missingBeforeIndex.size === 0 &&
@@ -459,6 +456,8 @@ function parseStreamPayload(value: unknown): {
   const seq = readNumberField(value, "seq");
   const payload = Reflect.get(value, "payload");
   if (isValidKnownAgUiEvent(payload)) {
+    const projectionIndex = readNumberField(value, "projectionIndex");
+    const projectionCount = readNumberField(value, "projectionCount");
     return {
       seq,
       event: payload,
@@ -466,6 +465,8 @@ function parseStreamPayload(value: unknown): {
         runId: readStringFieldOrUndefined(value, "runId"),
         eventId: readStringFieldOrUndefined(value, "eventId"),
         idempotencyKey: readStringFieldOrUndefined(value, "idempotencyKey"),
+        ...(projectionIndex !== null ? { projectionIndex } : {}),
+        ...(projectionCount !== null ? { projectionCount } : {}),
         ...(seq !== null ? { seq } : {}),
       },
     };
@@ -881,7 +882,6 @@ export async function GET(
     .select({
       id: schema.threadChat.id,
       messages: schema.threadChat.messages,
-      threadName: schema.thread.name,
     })
     .from(schema.threadChat)
     .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
@@ -912,7 +912,6 @@ export async function GET(
     const messages = mergeMissingDbUserMessagesIntoHistory({
       historyItems: history.items,
       dbMessages: ownership[0]?.messages ?? [],
-      fallbackUserPrompt: ownership[0]?.threadName,
     });
     const includedCursor =
       history.lastSeqOffset >= 0
@@ -1839,38 +1838,43 @@ export async function POST(
         ? RunAgentInputSchema.safeParse(rawBody)
         : { success: false as const };
 
-    // 6. If body parsed successfully, call the adapter
+    // 6. If body parsed successfully, call the adapter for new appends.
+    // Active history resumes use AG-UI POST only to open the SSE stream; they
+    // must not replay the last user message back into the follow-up queue.
     if (parsed.success) {
-      const result = await runFollowUpFromAgUiInput({
-        threadId,
-        threadChatId,
-        userId,
-        body: parsed.data,
-        isReplayMode: false,
-      });
+      const intent = readTerragonPostIntent(parsed.data.forwardedProps);
+      if (intent === "append") {
+        const result = await runFollowUpFromAgUiInput({
+          threadId,
+          threadChatId,
+          userId,
+          body: parsed.data,
+          isReplayMode: false,
+        });
 
-      if ("error" in result) {
-        const { error } = result;
-        if (error.kind === "unauthorized") {
-          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        if ("error" in result) {
+          const { error } = result;
+          if (error.kind === "unauthorized") {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+          }
+          if (error.kind === "thread-not-found") {
+            return NextResponse.json(
+              { error: "Thread not found" },
+              { status: 404 },
+            );
+          }
+          if (error.kind === "lock-held") {
+            return NextResponse.json(
+              { error: "Run already in progress" },
+              { status: 409 },
+            );
+          }
+          if (error.kind === "invalid-input") {
+            return NextResponse.json({ error: error.reason }, { status: 400 });
+          }
         }
-        if (error.kind === "thread-not-found") {
-          return NextResponse.json(
-            { error: "Thread not found" },
-            { status: 404 },
-          );
-        }
-        if (error.kind === "lock-held") {
-          return NextResponse.json(
-            { error: "Run already in progress" },
-            { status: 409 },
-          );
-        }
-        if (error.kind === "invalid-input") {
-          return NextResponse.json({ error: error.reason }, { status: 400 });
-        }
+        // { runId } or { skipped } — fall through to SSE stream
       }
-      // { runId } or { skipped } — fall through to SSE stream
     }
     // Body absent or parse failed — fall through to SSE stream (back-compat)
   }

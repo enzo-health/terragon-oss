@@ -9,10 +9,10 @@ import type {
   UIMessage,
   UIPart,
   UIStructuredPlanPart,
-  UIToolPart,
   UIUserMessage,
 } from "@terragon/shared";
 import type { UIPartExtended } from "./ui-parts-extended";
+import { projectDBToolCall } from "./tool-part-projection";
 
 /**
  * Convert a DBAgentMessage part to a UIPartExtended (the local www union),
@@ -55,16 +55,7 @@ function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPartExtended | null {
   }
 }
 
-/**
- * Extended UIToolPart that carries lifecycle metadata from DBToolCall.
- * The extra fields are not part of the shared UIToolPart type (Sprint 5 www-only
- * constraint), so they live here and are read via runtime access in tool-part.tsx.
- */
-type InternalToolPart = UIToolPart<string, Record<string, any>> & {
-  progressChunks?: Array<{ seq: number; text: string }>;
-  mcpMetadata?: { server: string; tool: string };
-  toolStatus?: "started" | "in_progress" | "completed" | "failed";
-};
+type InternalToolPart = Extract<UIPart, { type: "tool" }>;
 
 /**
  * Converts a collection of DBMessages to UIMessages.
@@ -122,8 +113,13 @@ export function toUIMessages({
   ) {
     for (const toolPart of Object.values(toolPartsById)) {
       if (toolPart.status === "pending") {
-        (toolPart as any).status = "completed";
-        (toolPart as any).result = getPendingToolResultMessage(reason);
+        Object.assign(toolPart, {
+          status: "completed",
+          result: getPendingToolResultMessage(reason),
+        });
+        if (toolPart.toolStatus) {
+          toolPart.toolStatus = reason === "error" ? "failed" : "completed";
+        }
       }
     }
   }
@@ -180,6 +176,8 @@ export function toUIMessages({
       existing.name = toolPart.name;
       existing.parameters = toolPart.parameters;
       existing.status = "pending";
+      Reflect.deleteProperty(existing, "result");
+      mergeToolLifecycle(existing, toolPart);
       return;
     }
 
@@ -192,6 +190,24 @@ export function toUIMessages({
       parts[parts.length - 1] = toolPart;
     } else {
       pushPart(parts, toolPart);
+    }
+  }
+
+  function mergeToolLifecycle(
+    target: InternalToolPart,
+    source: InternalToolPart,
+  ) {
+    if (source.progressChunks) {
+      target.progressChunks = source.progressChunks;
+    }
+    if (source.progressHiddenCount !== undefined) {
+      target.progressHiddenCount = source.progressHiddenCount;
+    }
+    if (source.mcpMetadata) {
+      target.mcpMetadata = source.mcpMetadata;
+    }
+    if (source.toolStatus) {
+      target.toolStatus = source.toolStatus;
     }
   }
 
@@ -276,22 +292,7 @@ export function toUIMessages({
     } else if (dbMessage.type === "tool-call") {
       clearCurrentUserMessage();
       const existingToolPart = toolPartsById[dbMessage.id];
-      const newToolPart: InternalToolPart = {
-        type: "tool",
-        id: dbMessage.id,
-        agent,
-        name: dbMessage.name,
-        parameters: dbMessage.parameters,
-        status: "pending",
-        parts: [],
-        ...(dbMessage.progressChunks
-          ? { progressChunks: dbMessage.progressChunks }
-          : {}),
-        ...(dbMessage.mcpMetadata
-          ? { mcpMetadata: dbMessage.mcpMetadata }
-          : {}),
-        ...(dbMessage.status ? { toolStatus: dbMessage.status } : {}),
-      };
+      const newToolPart = projectDBToolCall({ dbToolCall: dbMessage, agent });
       if (dbMessage.parent_tool_use_id) {
         const found = toolPartsById[dbMessage.parent_tool_use_id];
         if (found) {

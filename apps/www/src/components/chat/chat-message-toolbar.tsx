@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { Check, Copy, Link, RefreshCw, Split } from "lucide-react";
 import type { UIMessage } from "@terragon/shared";
@@ -42,6 +41,7 @@ export function MessageToolbar({
   isAgentWorking,
   redoDialogData,
   forkDialogData,
+  taskId,
 }: {
   message: UIMessage;
   messageIndex: number;
@@ -51,8 +51,8 @@ export function MessageToolbar({
   isAgentWorking: boolean;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
+  taskId?: string;
 }) {
-  const params = useParams();
   const forkEnabled = useFeatureFlag("forkTask");
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -69,21 +69,17 @@ export function MessageToolbar({
     }
   }, [parts]);
   const handleLink = useCallback(async () => {
-    // `useParams` returns `string | string[] | undefined`. Catch-all routes
-    // would yield an array, but `/task/[id]` is a single-segment route so
-    // `params.id` is `string | undefined` in practice. Fall back gracefully
-    // rather than coercing through `as string`.
-    const taskId = typeof params.id === "string" ? params.id : "";
+    const resolvedTaskId = taskId ?? getTaskIdFromLocation();
     try {
       await navigator.clipboard.writeText(
-        `${window.location.origin}/task/${taskId}#message-${messageIndex}`,
+        `${window.location.origin}/task/${resolvedTaskId}#message-${messageIndex}`,
       );
       toast.success("Link copied");
       flash(setLinkCopied);
     } catch {
       toast.error("Failed to copy link");
     }
-  }, [params.id, messageIndex]);
+  }, [messageIndex, taskId]);
   const model =
     message.role === "user" && message.model
       ? getModelDisplayName(message.model).fullName
@@ -99,7 +95,7 @@ export function MessageToolbar({
     <>
       <div
         className={cn(
-          "mt-1 flex gap-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity",
+          "mt-1 flex min-h-[28px] gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100 sm:min-h-[32px]",
           message.role === "agent" ? "justify-start" : "justify-end",
           className,
         )}
@@ -165,4 +161,10 @@ export function MessageToolbar({
       )}
     </>
   );
+}
+
+function getTaskIdFromLocation(): string {
+  if (typeof window === "undefined") return "";
+  const match = window.location.pathname.match(/\/task\/([^/?#]+)/);
+  return match?.[1] ?? "";
 }

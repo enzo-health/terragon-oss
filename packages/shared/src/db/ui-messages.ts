@@ -151,6 +151,14 @@ export type AllToolParts =
   | UIToolPart<"FileChange", ToolParams["FileChange"]>
   | UIToolPart<string, Record<string, any>>;
 
+export type UIToolProgressChunk = { seq: number; text: string };
+export type UIToolLifecycleStatus =
+  | "started"
+  | "in_progress"
+  | "completed"
+  | "failed";
+export type UIToolMcpMetadata = { server: string; tool: string };
+
 export type UIToolPart<
   TName extends string,
   TParams extends Record<string, any>,
@@ -166,6 +174,10 @@ interface UIBaseToolPart<
   name: TName;
   parameters: TParams;
   parts: UIPart[];
+  progressChunks?: UIToolProgressChunk[];
+  progressHiddenCount?: number;
+  mcpMetadata?: UIToolMcpMetadata;
+  toolStatus?: UIToolLifecycleStatus;
 }
 
 export interface UIPendingToolPart<

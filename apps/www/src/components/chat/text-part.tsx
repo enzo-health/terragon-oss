@@ -24,6 +24,7 @@ function convertCitationsToGitHubLinks(
   hasCheckpoint?: boolean,
 ): string {
   if (!githubRepoFullName) return text;
+  if (!text.includes("【F:")) return text;
 
   // Pattern to match citations like 【F:filename†L1-L6】or 【F:filename†L1】
   const citationPattern = /【F:([^†]+)†L(\d+)(?:-L?(\d+))?】/g;
@@ -51,10 +52,14 @@ function convertCitationsToGitHubLinks(
  * by the response body with no newline, which renders as one cramped paragraph.
  */
 function normalizeBoldHeaders(text: string): string {
+  if (!text.includes("**")) return text;
   return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
 }
 
 const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
+const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
+const MARKDOWN_SYNTAX_RE =
+  /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
@@ -134,6 +139,10 @@ const TextPart = memo(function TextPart({
     PROPOSED_PLAN_RE.lastIndex = 0;
     return PROPOSED_PLAN_RE.test(text);
   }, [text]);
+  const hasPossibleCodeBlock = useMemo(
+    () => POSSIBLE_CODE_BLOCK_RE.test(text),
+    [text],
+  );
 
   const processedText = useMemo(() => {
     let t = normalizeBoldHeaders(
@@ -165,6 +174,12 @@ const TextPart = memo(function TextPart({
   // observer fires hundreds of times per second. We debounce to 150ms which
   // is well below human-perceptible latency for "show more" affordances.
   useEffect(() => {
+    if (!hasPossibleCodeBlock) {
+      lastScanRef.current = "";
+      setBlocks((prev) => (prev.size > 0 ? new Map() : prev));
+      return;
+    }
+
     const container = containerRef.current;
     if (!container) return;
 
@@ -206,7 +221,7 @@ const TextPart = memo(function TextPart({
       observer.disconnect();
       if (timer !== null) clearTimeout(timer);
     };
-  }, []);
+  }, [hasPossibleCodeBlock]);
 
   // Apply collapse styles imperatively to code-block-body elements
   useEffect(() => {
@@ -285,6 +300,14 @@ const TextPart = memo(function TextPart({
   }, [blocks, toggleBlock]);
 
   const showStreamdown = processedText.length > 0;
+  const hasMarkdownSyntax = useMemo(
+    () => MARKDOWN_SYNTAX_RE.test(processedText),
+    [processedText],
+  );
+  const renderImage = useCallback(
+    (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,
+    [],
+  );
 
   return (
     <div>
@@ -300,7 +323,17 @@ const TextPart = memo(function TextPart({
           Open plan artifact
         </Button>
       ) : null}
-      {showStreamdown && (
+      {showStreamdown && !hasMarkdownSyntax ? (
+        <div
+          className={cn(
+            "whitespace-pre-wrap break-words text-sm leading-relaxed",
+            streaming && "streaming-cursor",
+          )}
+        >
+          {processedText}
+        </div>
+      ) : null}
+      {showStreamdown && hasMarkdownSyntax ? (
         <div
           className={cn(
             "prose prose-sm max-w-none",
@@ -312,11 +345,11 @@ const TextPart = memo(function TextPart({
             content={processedText}
             controls={{ code: true }}
             streaming={streaming}
-            renderImage={(src, alt) => <ImagePart imageUrl={src} alt={alt} />}
+            renderImage={renderImage}
           />
           {overlays}
         </div>
-      )}
+      ) : null}
     </div>
   );
 });

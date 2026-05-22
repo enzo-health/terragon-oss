@@ -5,7 +5,11 @@ import {
   extractProposedPlanText,
 } from "@terragon/shared/db/artifact-descriptors";
 import { ToolPartProps } from "./tool-part";
-import { findArtifactDescriptorForPart } from "./secondary-panel";
+import {
+  createArtifactDescriptorLookup,
+  findArtifactDescriptorForPart,
+  type ArtifactDescriptorLookup,
+} from "./secondary-panel";
 import type { UIPartExtended } from "./ui-parts-extended";
 import {
   type PartRegistryContext,
@@ -18,6 +22,7 @@ export interface MessagePartProps {
   isLatest?: boolean;
   isAgentWorking?: boolean;
   artifactDescriptors?: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   /** When multiple text parts contain `<proposed_plan>` with identical content,
    *  this ordinal (0-based) disambiguates which plan descriptor to open. */
@@ -35,6 +40,7 @@ export const MessagePart = memo(function MessagePart({
   isLatest = false,
   isAgentWorking = false,
   artifactDescriptors = [],
+  artifactDescriptorLookup,
   onOpenArtifact,
   planOccurrenceIndex = 0,
   githubRepoFullName,
@@ -43,10 +49,20 @@ export const MessagePart = memo(function MessagePart({
   hasCheckpoint,
   toolProps,
 }: MessagePartProps) {
+  const fallbackArtifactDescriptorLookup = useMemo(
+    () =>
+      artifactDescriptorLookup ??
+      createArtifactDescriptorLookup(artifactDescriptors),
+    [artifactDescriptorLookup, artifactDescriptors],
+  );
   const artifactDescriptor = useMemo(
     () =>
-      findArtifactDescriptorForPart({ artifacts: artifactDescriptors, part }),
-    [artifactDescriptors, part],
+      findArtifactDescriptorForPart({
+        artifacts: artifactDescriptors,
+        lookup: fallbackArtifactDescriptorLookup,
+        part,
+      }),
+    [artifactDescriptors, fallbackArtifactDescriptorLookup, part],
   );
   const handleOpenArtifact = useMemo(() => {
     if (!artifactDescriptor || !onOpenArtifact) return undefined;
@@ -107,6 +123,7 @@ export const MessagePart = memo(function MessagePart({
     onClick,
     toolProps,
     artifactDescriptors,
+    artifactDescriptorLookup: fallbackArtifactDescriptorLookup,
     onOpenArtifact,
     artifactDescriptor,
     onOpenInArtifactWorkspace: handleOpenArtifact,
@@ -139,6 +156,7 @@ function areMessagePartPropsEqual(
     prevProps.baseBranchName !== nextProps.baseBranchName ||
     prevProps.hasCheckpoint !== nextProps.hasCheckpoint ||
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
     prevProps.planOccurrenceIndex !== nextProps.planOccurrenceIndex
   ) {

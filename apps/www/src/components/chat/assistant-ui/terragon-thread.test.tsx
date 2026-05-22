@@ -134,9 +134,9 @@ describe("TerragonTranscriptSurface", () => {
             parts: [{ type: "text", text: "DB fallback should not render" }],
           },
         ],
-        runtimeMessageProjectionById: new Map(),
         latestAgentMessageIndex: -1,
         chatAgent: "codex",
+        reserveWorkingMessageSlot: false,
         showWorkingMessage: false,
         threadStatus: null,
         reattemptQueueAt: null,
@@ -146,7 +146,7 @@ describe("TerragonTranscriptSurface", () => {
       }),
     );
 
-    expect(container!.textContent).toContain("Loading task history");
+    expect(container!.textContent).toContain("Connecting to live task");
     expect(container!.textContent).not.toContain(
       "DB fallback should not render",
     );
@@ -158,9 +158,9 @@ describe("TerragonTranscriptSurface", () => {
         lifecycleMessages: [],
         isRuntimeHydrating: false,
         messages: [],
-        runtimeMessageProjectionById: new Map(),
         latestAgentMessageIndex: -1,
         chatAgent: "codex",
+        reserveWorkingMessageSlot: false,
         showWorkingMessage: false,
         threadStatus: null,
         reattemptQueueAt: null,

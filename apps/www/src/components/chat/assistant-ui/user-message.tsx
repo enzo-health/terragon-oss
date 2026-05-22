@@ -39,12 +39,14 @@ export const TerragonUserMessage = memo(function TerragonUserMessage({
         isAgentWorking={false}
         messagePartProps={ctx.messagePartProps}
         artifactDescriptors={ctx.artifactDescriptors}
+        artifactDescriptorLookup={ctx.artifactDescriptorLookup}
         onOpenArtifact={ctx.onOpenArtifact}
         planOccurrences={ctx.planOccurrences}
       />
       <MessageToolbar
         message={message}
         messageIndex={messageIndex}
+        taskId={ctx.toolProps.threadId}
         isFirstUserMessage={isFirstUserMessage}
         isLatestAgentMessage={false}
         isAgentWorking={ctx.isAgentWorking}

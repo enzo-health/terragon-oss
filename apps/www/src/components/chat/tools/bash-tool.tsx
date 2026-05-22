@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import { Copy, Check } from "lucide-react";
 import {
@@ -9,6 +9,7 @@ import {
   GenericToolPartClickToExpand,
   AnsiText,
 } from "./generic-ui";
+import { createTextLinePreview } from "./utils";
 
 function parseExitCode(result: string): number | null {
   const match = result.match(/\[exit code: (\d+)\]/);
@@ -56,9 +57,11 @@ function BashToolResult({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const lines = result.trim() === "" ? [] : result.split("\n");
-  const lineClamp = 3;
-  const isExpandable = lines.length > lineClamp;
+  const trimmedResult = useMemo(() => result.trim(), [result]);
+  const linePreview = useMemo(
+    () => createTextLinePreview(trimmedResult, 3),
+    [trimmedResult],
+  );
 
   const handleCopy = async () => {
     if (copied) return;
@@ -69,7 +72,7 @@ function BashToolResult({
     } catch {}
   };
 
-  if (lines.length === 0) {
+  if (trimmedResult === "") {
     return (
       <GenericToolPartContent toolStatus={toolStatus}>
         <GenericToolPartContentRow index={0}>
@@ -79,12 +82,10 @@ function BashToolResult({
     );
   }
 
-  const previewLines = lines.slice(0, lineClamp);
-
-  if (!isExpandable) {
+  if (linePreview.remainingLines === 0) {
     return (
       <GenericToolPartContent toolStatus={toolStatus}>
-        {lines.map((line, index) => (
+        {linePreview.previewLines.map((line, index) => (
           <GenericToolPartContentRow key={index} index={index}>
             <AnsiText text={line} />
           </GenericToolPartContentRow>
@@ -96,7 +97,7 @@ function BashToolResult({
   if (!expanded) {
     return (
       <GenericToolPartContent toolStatus={toolStatus}>
-        {previewLines.map((line, index) => (
+        {linePreview.previewLines.map((line, index) => (
           <GenericToolPartContentRow key={index} index={index}>
             <span className="truncate block">
               <AnsiText text={line} />
@@ -104,7 +105,7 @@ function BashToolResult({
           </GenericToolPartContentRow>
         ))}
         <GenericToolPartContentRow index={-1}>
-          <span>... +{lines.length - lineClamp} more lines</span>{" "}
+          <span>... +{linePreview.remainingLines} more lines</span>{" "}
           <GenericToolPartClickToExpand
             label="Show all"
             onClick={() => setExpanded(true)}
@@ -115,7 +116,6 @@ function BashToolResult({
     );
   }
 
-  const expandedContent = lines.join("\n");
   return (
     <GenericToolPartContent toolStatus={toolStatus}>
       <GenericToolPartContentRow index={0}>
@@ -143,7 +143,7 @@ function BashToolResult({
           )}
         </button>
         <pre>
-          <AnsiText text={expandedContent} />
+          <AnsiText text={trimmedResult} />
         </pre>
       </GenericToolPartContentRow>
     </GenericToolPartContent>

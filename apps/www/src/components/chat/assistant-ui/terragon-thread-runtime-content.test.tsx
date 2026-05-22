@@ -383,4 +383,52 @@ describe("TerragonThreadRuntimeContent", () => {
 
     expect(transcriptSurfaceProps[0]?.showWorkingMessage).toBe(true);
   });
+
+  it("keeps the working indicator visible after assistant text when no tool row is pending", () => {
+    runtimeState.thread.messages = [
+      {
+        id: "assistant-text",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [{ type: "text", text: "Streaming response" }],
+        status: { type: "running" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+    const messagesRef = { current: [] as UIMessage[] };
+
+    mount(
+      createElement(TerragonThreadRuntimeContent, {
+        lifecycleMessages: [],
+        threadStatus: "working",
+        thread: makeThreadWithDbTranscriptSentinel(),
+        latestGitDiffTimestamp: null,
+        isAgentWorking: true,
+        artifactDescriptors: [],
+        onOpenArtifact: vi.fn(),
+        toolProps: {
+          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messagesRef,
+          githubRepoFullName: "acme/app",
+          repoBaseBranchName: "main",
+          branchName: "feature/runtime-contract",
+        },
+        hasCheckpoint: false,
+        chatAgent: "codex",
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        reattemptQueueAt: null,
+        threadChatId: "chat-1",
+      }),
+    );
+
+    expect(transcriptSurfaceProps[0]?.showWorkingMessage).toBe(true);
+  });
 });

@@ -33,7 +33,7 @@ import { ImagePart } from "./image-part";
 import { findArtifactDescriptorForPart } from "./secondary-panel";
 import { PromptBoxRef } from "./thread-context";
 import { ChildThreadInfo } from "@terragon/shared/db/types";
-import type { UIToolPartWithLifecycle } from "./ui-parts-extended";
+import type { ArtifactDescriptorLookup } from "./secondary-panel";
 
 /**
  * Sibling state needed by a subset of tool renderers (Task, ExitPlanMode,
@@ -53,6 +53,7 @@ export type ToolRenderContext = {
   branchName: string | null;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
 };
@@ -149,6 +150,7 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       isReadOnly={ctx.isReadOnly}
       onOptimisticPermissionModeUpdate={ctx.onOptimisticPermissionModeUpdate}
       artifactDescriptors={ctx.artifactDescriptors}
+      artifactDescriptorLookup={ctx.artifactDescriptorLookup}
       onOpenArtifact={ctx.onOpenArtifact}
     />
   ),
@@ -213,6 +215,7 @@ export type ToolPartProps = {
   branchName: string | null;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
 };
 
@@ -221,19 +224,15 @@ export function renderToolPartContent(
   renderCtx: ToolRenderContext,
 ): ReactNode {
   const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
-  const renderedTool = renderToolPart(rawToolPart, renderCtx);
+  const renderedTool = renderNormalizedToolPart(toolPart, renderCtx);
 
   const artifactParts = toolPart.parts.filter(isArtifactPart);
 
-  // Extended lifecycle fields carried from DBToolCall via InternalToolPart.
-  // These live on the daemon-side `DBToolCall` (db-message.ts) but are not on
-  // the UI `AllToolParts` union — `UIToolPartWithLifecycle` (ui-parts-extended.ts)
-  // is the minimum-surface bridge until the UI union is widened.
-  const extendedPart = toolPart as UIToolPartWithLifecycle;
-  const progressChunks = extendedPart.progressChunks;
-  const mcpMetadata = extendedPart.mcpMetadata;
+  const progressChunks = toolPart.progressChunks;
+  const progressHiddenCount = toolPart.progressHiddenCount ?? 0;
+  const mcpMetadata = toolPart.mcpMetadata;
   const isInProgress =
-    extendedPart.toolStatus === "in_progress" && toolPart.status === "pending";
+    toolPart.toolStatus === "in_progress" && toolPart.status === "pending";
 
   // Show MCP server badge for mcp__ prefixed tools or when mcpMetadata present
   const mcpServer =
@@ -257,7 +256,10 @@ export function renderToolPartContent(
         </Badge>
       )}
       {progressChunks && progressChunks.length > 0 && (
-        <ProgressChunks chunks={progressChunks} />
+        <ProgressChunks
+          chunks={progressChunks}
+          hiddenCount={progressHiddenCount}
+        />
       )}
       {isInProgress && !progressChunks?.length && (
         <span className="text-xs text-muted-foreground animate-pulse">
@@ -288,6 +290,7 @@ export function renderToolPartContent(
         {artifactParts.map((part, index) => {
           const artifactDescriptor = findArtifactDescriptorForPart({
             artifacts: renderCtx.artifactDescriptors,
+            lookup: renderCtx.artifactDescriptorLookup,
             part,
           });
           const handleOpenArtifact =
@@ -345,6 +348,13 @@ export function renderToolPart(
   renderCtx: ToolRenderContext,
 ): ReactNode {
   const toolPart = normalizeToolCall(rawToolPart.agent, rawToolPart);
+  return renderNormalizedToolPart(toolPart, renderCtx);
+}
+
+function renderNormalizedToolPart(
+  toolPart: AllToolParts,
+  renderCtx: ToolRenderContext,
+): ReactNode {
   // `isToolName` proves membership in `TOOL_DISPATCH`, but TS still sees the
   // looked-up entry as a contravariant union of `ToolRenderer<N>` for each N
   // in `ToolName` — and the intersected parameter type collapses to `never`.
@@ -371,6 +381,7 @@ const ToolPart = memo(function ToolPart({
   branchName,
   onOptimisticPermissionModeUpdate,
   artifactDescriptors = [],
+  artifactDescriptorLookup,
   onOpenArtifact,
 }: ToolPartProps) {
   // Stable recursive renderer. Deps mirror the props compared by
@@ -392,6 +403,7 @@ const ToolPart = memo(function ToolPart({
         branchName={branchName}
         onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
         artifactDescriptors={artifactDescriptors}
+        artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
       />
     ),
@@ -407,6 +419,7 @@ const ToolPart = memo(function ToolPart({
       branchName,
       onOptimisticPermissionModeUpdate,
       artifactDescriptors,
+      artifactDescriptorLookup,
       onOpenArtifact,
       ToolPart,
     ],
@@ -429,6 +442,7 @@ const ToolPart = memo(function ToolPart({
       branchName,
       onOptimisticPermissionModeUpdate,
       artifactDescriptors,
+      artifactDescriptorLookup,
       onOpenArtifact,
       renderChildToolPart,
     }),
@@ -444,6 +458,7 @@ const ToolPart = memo(function ToolPart({
       branchName,
       onOptimisticPermissionModeUpdate,
       artifactDescriptors,
+      artifactDescriptorLookup,
       onOpenArtifact,
       renderChildToolPart,
     ],
@@ -462,6 +477,7 @@ function areToolPartPropsEqual(
   if (
     prevProps.threadId !== nextProps.threadId ||
     prevProps.threadChatId !== nextProps.threadChatId ||
+    prevProps.messagesRef !== nextProps.messagesRef ||
     prevProps.isReadOnly !== nextProps.isReadOnly ||
     prevProps.promptBoxRef !== nextProps.promptBoxRef ||
     prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||
@@ -470,21 +486,31 @@ function areToolPartPropsEqual(
     prevProps.onOptimisticPermissionModeUpdate !==
       nextProps.onOptimisticPermissionModeUpdate ||
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact
   ) {
     return false;
   }
 
-  const normalizedToolPart = normalizeToolCall(
-    prevProps.toolPart.agent,
-    prevProps.toolPart,
-  );
-  switch (normalizedToolPart.name) {
+  if (shouldToolPartTrackChildThreads(prevProps.toolPart)) {
+    return prevProps.childThreads === nextProps.childThreads;
+  }
+  return true;
+}
+
+function shouldToolPartTrackChildThreads(toolPart: AllToolParts): boolean {
+  switch (toolPart.name) {
+    case "Task":
     case "SuggestFollowupTask":
     case "mcp__terry__SuggestFollowupTask":
-      return prevProps.childThreads === nextProps.childThreads;
-    default:
       return true;
+    case "MCPTool":
+      return (
+        toolPart.parameters.server === "terry" &&
+        toolPart.parameters.tool === "SuggestFollowupTask"
+      );
+    default:
+      return false;
   }
 }
 

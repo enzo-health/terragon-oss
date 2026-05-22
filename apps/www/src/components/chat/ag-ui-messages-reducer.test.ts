@@ -250,7 +250,7 @@ describe("agUiMessagesReducer", () => {
       ]);
     });
 
-    it("TOOL_CALL_RESULT with role:tool marks the tool as error", () => {
+    it("TOOL_CALL_RESULT with role:tool completes the tool", () => {
       const next = apply(mkState(), [
         { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
         {
@@ -263,6 +263,28 @@ describe("agUiMessagesReducer", () => {
           type: EventType.TOOL_CALL_RESULT,
           toolCallId: "t1",
           content: "boom",
+          role: "tool",
+        } as BaseEvent,
+      ]);
+      const parts = (next.messages[0] as { parts: Array<{ status: string }> })
+        .parts;
+      expect(parts[0]).toMatchObject({ status: "completed", result: "boom" });
+    });
+
+    it("TOOL_CALL_RESULT with an explicit error marks the tool as error", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Bash",
+        } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: "t1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: "t1",
+          content: "boom",
+          isError: true,
           role: "tool",
         } as BaseEvent,
       ]);
@@ -329,6 +351,77 @@ describe("agUiMessagesReducer", () => {
         next.messages[0] as { parts: Array<{ parameters: unknown }> }
       ).parts;
       expect(parts[0]!.parameters).toEqual({ pattern: "foo" });
+    });
+
+    it("duplicate TOOL_CALL_START preserves buffered argument chunks", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Grep",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "t1",
+          delta: '{"pattern":',
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Grep",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "t1",
+          delta: '"foo"}',
+        } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: "t1" } as BaseEvent,
+      ]);
+      const parts = (
+        next.messages[0] as { parts: Array<{ parameters: unknown }> }
+      ).parts;
+
+      expect(parts[0]!.parameters).toEqual({ pattern: "foo" });
+      expect(next.toolArgsBuffers).toEqual({});
+    });
+
+    it("cleans up tool argument buffers after parameters are applied", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Grep",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "t1",
+          delta: '{"pattern":"foo"}',
+        } as BaseEvent,
+        { type: EventType.TOOL_CALL_END, toolCallId: "t1" } as BaseEvent,
+      ]);
+
+      expect(next.toolArgsBuffers).toEqual({});
+    });
+
+    it("cleans up tool argument buffers when a run ends before tool completion", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Grep",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "t1",
+          delta: '{"pattern":"foo"',
+        } as BaseEvent,
+        { type: EventType.RUN_ERROR, message: "failed" } as BaseEvent,
+      ]);
+
+      expect(next.toolArgsBuffers).toEqual({});
     });
 
     it("TOOL_CALL_CHUNK appends visible progress to the pending tool part", () => {

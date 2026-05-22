@@ -100,7 +100,7 @@ export type ReplayAgUiResult = {
 };
 
 /**
- * Mounts `useAgUiMessages` into a detached DOM, drives it with a fake
+ * Mounts `useThreadViewModel` into a detached DOM, drives it with a fake
  * HttpAgent, emits each event in order, and captures the resulting
  * `UIMessage[]` projections.
  *
@@ -343,7 +343,8 @@ export function toolCallResult(
     messageId: toolCallId,
     toolCallId,
     content,
-    ...(isError ? { role: "tool" as const } : {}),
+    role: "tool" as const,
+    ...(isError ? { isError: true } : {}),
   } as BaseEvent;
 }
 

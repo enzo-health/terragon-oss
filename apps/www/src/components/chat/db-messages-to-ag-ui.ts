@@ -29,10 +29,8 @@ type DbMessagesToAgUiOptions = {
  * runtime with enough state that it knows the prior conversation before the
  * SSE stream begins emitting live events. We only encode what AG-UI's
  * `Message` union expresses natively (role + text content + tool calls/
- * results). Rich Terragon parts (plans, diffs, artifacts, thinking) are not
- * surfaced — those continue to render from the external TerragonThreadContext
- * in Phase 4. Phase 6 will migrate rendering onto the runtime and this mapper
- * may expand (or be replaced with a MESSAGES_SNAPSHOT event).
+ * results). Rich Terragon parts stay on the persisted DB message path until
+ * durable AG-UI history covers them directly.
  *
  * Unknown DB variants are skipped rather than throwing, consistent with the
  * read-side tolerance rule for the DBMessage discriminated union.

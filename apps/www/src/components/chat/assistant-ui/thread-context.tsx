@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import type { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "../secondary-panel";
 import type { PromptBoxRef } from "../thread-context";
 import type {
   RedoDialogData,
@@ -25,6 +26,7 @@ export type TerragonThreadContext = {
   latestGitDiffTimestamp: string | null;
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;

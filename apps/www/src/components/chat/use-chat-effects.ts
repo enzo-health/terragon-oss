@@ -10,11 +10,13 @@ import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptor
  * signal on desktop. The cookie write is owned by `setIsSecondaryPanelOpen`.
  */
 export function useAutoOpenSecondaryPanelOnDiff({
+  hasArtifactDescriptors,
   hasLiveDiffSignal,
   shouldAutoOpenSecondaryPanel,
   isSecondaryPanelOpen,
   setIsSecondaryPanelOpen,
 }: {
+  hasArtifactDescriptors: boolean;
   hasLiveDiffSignal: boolean;
   shouldAutoOpenSecondaryPanel: boolean;
   isSecondaryPanelOpen: boolean;
@@ -22,6 +24,7 @@ export function useAutoOpenSecondaryPanelOnDiff({
 }) {
   useEffect(() => {
     if (
+      hasArtifactDescriptors &&
       hasLiveDiffSignal &&
       shouldAutoOpenSecondaryPanel &&
       !isSecondaryPanelOpen
@@ -29,6 +32,7 @@ export function useAutoOpenSecondaryPanelOnDiff({
       setIsSecondaryPanelOpen(true);
     }
   }, [
+    hasArtifactDescriptors,
     hasLiveDiffSignal,
     isSecondaryPanelOpen,
     setIsSecondaryPanelOpen,

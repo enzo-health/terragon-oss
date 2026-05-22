@@ -7,7 +7,7 @@ import {
   GenericToolPartContentRow,
   GenericToolPartClickToExpand,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
 } from "./generic-ui";
 import { formatToolParameters } from "./utils";
 
@@ -50,8 +50,8 @@ function ToolPartMultiEditResult({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );

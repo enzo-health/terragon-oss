@@ -16,8 +16,9 @@ import type {
 } from "@assistant-ui/react";
 import { agUiMessagesToThreadMessages } from "./ag-ui-history-adapter";
 import {
-  applyCustomPartEvent,
+  appendTerragonDataPart,
   terragonDataPartFromCustomEvent,
+  type TerragonDataPart,
   type ReadonlyJSONValue,
 } from "./ag-ui-custom-parts";
 import {
@@ -39,6 +40,10 @@ type ResumeRunConfig = {
   runConfig: RunConfig;
   stream?: unknown;
 };
+type TerragonRunIntent = "append" | "resume";
+type ScheduledNotifyHandle =
+  | { kind: "animation-frame"; id: number }
+  | { kind: "timeout"; id: ReturnType<typeof globalThis.setTimeout> };
 type AppendFields = Pick<
   AppendMessage,
   "parentId" | "sourceId" | "runConfig" | "startRun"
@@ -54,10 +59,24 @@ export type TerragonAgUiRuntimeCoreOptions = {
   onError?: (error: Error) => void;
   onCancel?: () => void;
   history?: ThreadHistoryAdapter;
+  projectionHintRef?: TerragonRuntimeProjectionHintRef;
   notifyUpdate: () => void;
 };
 
+export type TerragonRuntimeProjectionHint = {
+  version: number;
+  firstChangedRuntimeMessageIndex: number | null;
+};
+
+export type TerragonRuntimeProjectionHintRef = {
+  current: TerragonRuntimeProjectionHint;
+};
+
 const FALLBACK_USER_STATUS = { type: "complete", reason: "unknown" } as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function generateId(): string {
   return (
@@ -93,17 +112,22 @@ export class TerragonAgUiThreadRuntimeCore {
 
   private runtime: AssistantRuntime | undefined;
   private messages: ThreadMessage[] = [];
+  private readonly messageIndexById = new Map<string, number>();
   private isRunningFlag = false;
   private abortController: AbortController | null = null;
   private stateSnapshot: ReadonlyJSONValue | undefined;
   private pendingError: Error | null = null;
   private history: ThreadHistoryAdapter | undefined;
+  private projectionHintRef: TerragonRuntimeProjectionHintRef | undefined;
+  private projectionHintVersion = 0;
   private lastRunConfig: RunConfig | undefined;
   private readonly assistantHistoryParents = new Map<string, string | null>();
   private readonly recordedHistoryIds = new Set<string>();
   private _isLoading = false;
   private _loadPromise: Promise<void> | undefined;
   private _loadKey: string | undefined;
+  private loadGeneration = 0;
+  private scheduledNotifyHandle: ScheduledNotifyHandle | undefined;
 
   constructor(options: TerragonAgUiRuntimeCoreOptions) {
     this.agent = options.agent;
@@ -112,16 +136,25 @@ export class TerragonAgUiThreadRuntimeCore {
     this.onError = options.onError;
     this.onCancel = options.onCancel;
     this.history = options.history;
+    this.projectionHintRef = options.projectionHintRef;
     this.notifyUpdate = options.notifyUpdate;
   }
 
   updateOptions(options: Omit<TerragonAgUiRuntimeCoreOptions, "notifyUpdate">) {
+    const loadSourceChanged = this.agent !== options.agent;
     this.agent = options.agent;
     this.logger = options.logger;
     this.showThinking = options.showThinking;
     this.onError = options.onError;
     this.onCancel = options.onCancel;
     this.history = options.history;
+    this.projectionHintRef = options.projectionHintRef;
+    if (loadSourceChanged) {
+      this.loadGeneration += 1;
+      this._loadPromise = undefined;
+      this._loadKey = undefined;
+      this._isLoading = false;
+    }
   }
 
   attachRuntime(runtime: AssistantRuntime) {
@@ -152,10 +185,9 @@ export class TerragonAgUiThreadRuntimeCore {
     if (this._loadPromise && this._loadKey === loadKey) {
       return this._loadPromise;
     }
-    if (this._isLoading && this._loadPromise) {
-      return this._loadPromise;
-    }
 
+    const generation = this.loadGeneration + 1;
+    this.loadGeneration = generation;
     const promise = this.history?.load() ?? Promise.resolve(null);
 
     this._loadKey = loadKey;
@@ -164,17 +196,26 @@ export class TerragonAgUiThreadRuntimeCore {
     let loadFailed = false;
     this._loadPromise = promise
       .then(async (repo) => {
+        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
+          return;
+        }
         if (!repo) return;
 
         const messages = repo.messages.map((item) => item.message);
         this.applyExternalMessages(messages);
 
         if (repo.unstable_resume) {
+          if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
+            return;
+          }
           const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
-          await this.startRun(parentId, this.lastRunConfig);
+          await this.startRun(parentId, this.lastRunConfig, "resume");
         }
       })
       .catch((error: unknown) => {
+        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
+          return;
+        }
         loadFailed = true;
         this.logger.error?.("[agui] failed to load history", error);
         this.onError?.(
@@ -182,6 +223,9 @@ export class TerragonAgUiThreadRuntimeCore {
         );
       })
       .finally(() => {
+        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
+          return;
+        }
         this._isLoading = false;
         if (loadFailed) {
           this._loadPromise = undefined;
@@ -197,19 +241,18 @@ export class TerragonAgUiThreadRuntimeCore {
   async append(message: AppendMessage): Promise<void> {
     const startRun = message.startRun ?? message.role === "user";
     if (message.sourceId) {
-      this.messages = this.messages.filter(
-        (entry) => entry.id !== message.sourceId,
-      );
+      this.removeMessageById(message.sourceId);
     }
     this.resetHead(message.parentId);
 
     const threadMessage = this.toThreadMessage(message);
-    this.messages = [...this.messages, threadMessage];
+    this.appendRuntimeMessage(threadMessage);
+    this.markProjectionChange(this.messages.length - 1);
     this.notifyUpdate();
     this.recordHistoryEntry(message.parentId ?? null, threadMessage);
 
     if (!startRun) return;
-    await this.startRun(threadMessage.id, message.runConfig);
+    await this.startRun(threadMessage.id, message.runConfig, "append");
   }
 
   async edit(message: AppendMessage): Promise<void> {
@@ -222,7 +265,7 @@ export class TerragonAgUiThreadRuntimeCore {
   ): Promise<void> {
     this.resetHead(parentId);
     this.notifyUpdate();
-    await this.startRun(parentId, config.runConfig);
+    await this.startRun(parentId, config.runConfig, "append");
   }
 
   async cancel(): Promise<void> {
@@ -239,6 +282,7 @@ export class TerragonAgUiThreadRuntimeCore {
     await this.startRun(
       config.parentId,
       config.runConfig ?? this.lastRunConfig,
+      "resume",
     );
   }
 
@@ -262,12 +306,12 @@ export class TerragonAgUiThreadRuntimeCore {
   addToolResult(options: AddToolResultOptions): void {
     let updated = false;
     let shouldResume = false;
-    this.messages = this.messages.map((message) => {
-      if (message.id !== options.messageId || message.role !== "assistant")
-        return message;
-      const assistant = message;
+    const changedIndex = this.getMessageIndex(options.messageId);
+    const message =
+      changedIndex !== undefined ? this.messages[changedIndex] : undefined;
+    if (changedIndex !== undefined && message?.role === "assistant") {
       let matchedToolCall = false;
-      const content = assistant.content.map((part) => {
+      const content = message.content.map((part) => {
         if (part.type !== "tool-call" || part.toolCallId !== options.toolCallId)
           return part;
         matchedToolCall = true;
@@ -278,46 +322,50 @@ export class TerragonAgUiThreadRuntimeCore {
           isError: options.isError,
         };
       });
-      if (!matchedToolCall) return message;
-      updated = true;
-
-      if (
-        assistant.status?.type === "requires-action" &&
-        assistant.status.reason === "tool-calls" &&
-        content.every(
-          (part) =>
-            part.type !== "tool-call" ||
-            ("result" in part && part.result !== undefined),
-        )
-      ) {
-        shouldResume = true;
-        return {
-          ...assistant,
-          content,
-          status: { type: "complete" as const, reason: "unknown" as const },
-        };
+      if (matchedToolCall) {
+        updated = true;
+        const nextMessage =
+          message.status?.type === "requires-action" &&
+          message.status.reason === "tool-calls" &&
+          content.every(
+            (part) =>
+              part.type !== "tool-call" ||
+              ("result" in part && part.result !== undefined),
+          )
+            ? {
+                ...message,
+                content,
+                status: {
+                  type: "complete" as const,
+                  reason: "unknown" as const,
+                },
+              }
+            : {
+                ...message,
+                content,
+              };
+        shouldResume = nextMessage.status !== message.status;
+        this.replaceMessageAt(changedIndex, nextMessage);
       }
-
-      return {
-        ...assistant,
-        content,
-      };
-    });
+    }
 
     if (updated) {
+      this.markProjectionChange(changedIndex ?? null);
       this.notifyUpdate();
 
       if (shouldResume) {
         this.persistAssistantHistory(options.messageId);
 
         if (!this.isRunningFlag) {
-          void this.startRun(options.messageId, this.lastRunConfig).catch(
-            (error: unknown) => {
-              this.onError?.(
-                error instanceof Error ? error : new Error(String(error)),
-              );
-            },
-          );
+          void this.startRun(
+            options.messageId,
+            this.lastRunConfig,
+            "resume",
+          ).catch((error: unknown) => {
+            this.onError?.(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          });
         }
       }
     }
@@ -325,7 +373,8 @@ export class TerragonAgUiThreadRuntimeCore {
 
   applyExternalMessages(messages: readonly ThreadMessage[]): void {
     this.assistantHistoryParents.clear();
-    this.messages = [...messages];
+    this.replaceAllMessages(messages);
+    this.markUnknownProjectionChange();
     this.recordedHistoryIds.clear();
     for (const message of this.messages) {
       this.recordedHistoryIds.add(message.id);
@@ -341,6 +390,7 @@ export class TerragonAgUiThreadRuntimeCore {
   private async startRun(
     parentId: string | null,
     runConfig?: RunConfig,
+    intent: TerragonRunIntent = "append",
   ): Promise<void> {
     const normalizedRunConfig = runConfig ?? {};
     this.lastRunConfig = normalizedRunConfig;
@@ -353,20 +403,17 @@ export class TerragonAgUiThreadRuntimeCore {
       runId,
       normalizedRunConfig,
       historicalMessages,
+      intent,
     );
     const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
     let assistantMessageId: string | undefined;
     const ensureAssistant = (targetMessageId: string | undefined) => {
       if (targetMessageId) {
-        const existing = this.messages.find(
-          (message) =>
-            message.role === "assistant" && message.id === targetMessageId,
-        );
+        const existing = this.getMessageById(targetMessageId);
         if (!existing) {
-          this.messages = [
-            ...this.messages,
+          this.appendRuntimeMessage(
             this.createAssistantMessage(targetMessageId),
-          ];
+          );
           this.notifyUpdate();
         }
         this.markPendingAssistantHistory(targetMessageId, assistantParentId);
@@ -441,10 +488,25 @@ export class TerragonAgUiThreadRuntimeCore {
     runId: string,
     runConfig: RunConfig | undefined,
     historyMessages: readonly ThreadMessage[] | undefined,
+    intent: TerragonRunIntent,
   ) {
     const threadId = this.agent.threadId || "main";
     const messages = toAgUiMessages(historyMessages ?? this.messages);
     const context = this.runtime?.thread.getModelContext();
+    const forwardedProps: Record<string, unknown> = {
+      ...(context?.callSettings ?? {}),
+      ...(context?.config ?? {}),
+      ...(runConfig?.custom ? { runConfig: runConfig.custom } : {}),
+    };
+    const directTerragon = isRecord(forwardedProps["terragon"])
+      ? forwardedProps["terragon"]
+      : {};
+    const runConfigProps = isRecord(forwardedProps["runConfig"])
+      ? forwardedProps["runConfig"]
+      : null;
+    const runConfigTerragon = isRecord(runConfigProps?.["terragon"])
+      ? runConfigProps["terragon"]
+      : {};
     return {
       threadId,
       runId,
@@ -455,9 +517,22 @@ export class TerragonAgUiThreadRuntimeCore {
         ? [{ description: "system", value: context.system }]
         : [],
       forwardedProps: {
-        ...(context?.callSettings ?? {}),
-        ...(context?.config ?? {}),
-        ...(runConfig?.custom ? { runConfig: runConfig.custom } : {}),
+        ...forwardedProps,
+        ...(runConfigProps !== null
+          ? {
+              runConfig: {
+                ...runConfigProps,
+                terragon: {
+                  ...runConfigTerragon,
+                  intent,
+                },
+              },
+            }
+          : {}),
+        terragon: {
+          ...directTerragon,
+          intent,
+        },
       },
     };
   }
@@ -493,7 +568,8 @@ export class TerragonAgUiThreadRuntimeCore {
 
   private insertAssistantPlaceholder(): string {
     const id = generateId();
-    this.messages = [...this.messages, this.createAssistantMessage(id)];
+    this.appendRuntimeMessage(this.createAssistantMessage(id));
+    this.markProjectionChange(this.messages.length - 1);
     this.notifyUpdate();
     return id;
   }
@@ -517,7 +593,7 @@ export class TerragonAgUiThreadRuntimeCore {
 
   private removeEmptySyntheticAssistant(messageId: string | undefined): void {
     if (!messageId) return;
-    const message = this.messages.find((entry) => entry.id === messageId);
+    const message = this.getMessageById(messageId);
     if (
       !message ||
       message.role !== "assistant" ||
@@ -525,7 +601,7 @@ export class TerragonAgUiThreadRuntimeCore {
     ) {
       return;
     }
-    this.messages = this.messages.filter((entry) => entry.id !== messageId);
+    this.removeMessageById(messageId);
     this.assistantHistoryParents.delete(messageId);
     this.recordedHistoryIds.delete(messageId);
     this.notifyUpdate();
@@ -537,9 +613,10 @@ export class TerragonAgUiThreadRuntimeCore {
   ) {
     let touched = false;
     let latestStatus: MessageStatus | undefined;
-    this.messages = this.messages.map((message) => {
-      if (message.id !== messageId || message.role !== "assistant")
-        return message;
+    const changedIndex = this.getMessageIndex(messageId);
+    const message =
+      changedIndex !== undefined ? this.messages[changedIndex] : undefined;
+    if (changedIndex !== undefined && message?.role === "assistant") {
       touched = true;
       const metadata = update.metadata
         ? this.mergeAssistantMetadata(message.metadata, update.metadata)
@@ -548,14 +625,15 @@ export class TerragonAgUiThreadRuntimeCore {
       const content = update.content
         ? this.mergeAssistantContent(message.content, update.content)
         : message.content;
-      return {
+      this.replaceMessageAt(changedIndex, {
         ...message,
         content,
         status: latestStatus,
         metadata,
-      };
-    });
+      });
+    }
     if (touched) {
+      this.markProjectionChange(changedIndex ?? null);
       this.notifyUpdate();
       if (this.isTerminalStatus(latestStatus)) {
         this.persistAssistantHistory(messageId);
@@ -567,6 +645,9 @@ export class TerragonAgUiThreadRuntimeCore {
     existing: ThreadAssistantMessage["content"],
     incoming: NonNullable<ChatModelRunResult["content"]>,
   ): ThreadAssistantMessage["content"] {
+    if (!existing.some((part) => part.type === "data")) {
+      return incoming;
+    }
     const existingDataParts = existing.filter((part) => part.type === "data");
     const incomingWithoutData = incoming.filter((part) => part.type !== "data");
     return [...existingDataParts, ...incomingWithoutData];
@@ -605,19 +686,14 @@ export class TerragonAgUiThreadRuntimeCore {
   ) {
     switch (event.type) {
       case "CUSTOM": {
-        const isTerragonDataPart = terragonDataPartFromCustomEvent(event);
-        if (!isTerragonDataPart) {
+        const dataPart = terragonDataPartFromCustomEvent(event);
+        if (!dataPart) {
           aggregator.handle(event);
           return;
         }
-        const applied = applyCustomPartEvent({
-          messages: this.messages,
-          event,
-          createAssistantMessage: (messageId) =>
-            this.createAssistantMessage(messageId),
-        });
+        const applied = this.applyTerragonDataPart(dataPart);
         if (applied) {
-          this.notifyUpdate();
+          this.scheduleNotifyUpdate();
         }
         return;
       }
@@ -700,13 +776,81 @@ export class TerragonAgUiThreadRuntimeCore {
   private resetHead(parentId: string | null | undefined) {
     if (!parentId) {
       if (this.messages.length) {
-        this.messages = [];
+        this.replaceAllMessages([]);
+        this.markUnknownProjectionChange();
       }
       return;
     }
-    const idx = this.messages.findIndex((message) => message.id === parentId);
-    if (idx === -1) return;
-    this.messages = this.messages.slice(0, idx + 1);
+    const idx = this.getMessageIndex(parentId);
+    if (idx === undefined) return;
+    if (idx < this.messages.length - 1) {
+      this.replaceAllMessages(this.messages.slice(0, idx + 1));
+      this.markUnknownProjectionChange();
+    }
+  }
+
+  private markProjectionChange(firstChangedRuntimeMessageIndex: number | null) {
+    if (!this.projectionHintRef) return;
+    this.projectionHintVersion += 1;
+    this.projectionHintRef.current = {
+      version: this.projectionHintVersion,
+      firstChangedRuntimeMessageIndex,
+    };
+  }
+
+  private markUnknownProjectionChange() {
+    this.markProjectionChange(null);
+  }
+
+  private applyTerragonDataPart(dataPart: TerragonDataPart): boolean {
+    let messageIndex = this.getMessageIndex(dataPart.data.messageId);
+    if (messageIndex === undefined) {
+      this.appendRuntimeMessage(
+        this.createAssistantMessage(dataPart.data.messageId),
+      );
+      messageIndex = this.messages.length - 1;
+    }
+
+    const message = this.messages[messageIndex];
+    if (!message || message.role !== "assistant") {
+      return false;
+    }
+
+    const content = appendTerragonDataPart(message.content, dataPart);
+    if (!content) {
+      return false;
+    }
+
+    this.replaceMessageAt(messageIndex, {
+      ...message,
+      content,
+    });
+    this.markProjectionChange(messageIndex);
+    return true;
+  }
+
+  private scheduleNotifyUpdate(): void {
+    if (this.scheduledNotifyHandle !== undefined) {
+      return;
+    }
+
+    const flush = () => {
+      this.scheduledNotifyHandle = undefined;
+      this.notifyUpdate();
+    };
+
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+      this.scheduledNotifyHandle = {
+        kind: "animation-frame",
+        id: window.requestAnimationFrame(flush),
+      };
+      return;
+    }
+
+    this.scheduledNotifyHandle = {
+      kind: "timeout",
+      id: globalThis.setTimeout(flush, 16),
+    };
   }
 
   private isTerminalStatus(status?: MessageStatus): boolean {
@@ -729,7 +873,7 @@ export class TerragonAgUiThreadRuntimeCore {
     if (!this.history) return;
     const parentId = this.assistantHistoryParents.get(messageId);
     if (parentId === undefined) return;
-    const message = this.messages.find((m) => m.id === messageId);
+    const message = this.getMessageById(messageId);
     if (!message || message.role !== "assistant") return;
     if (!this.isTerminalStatus(message.status)) return;
     this.assistantHistoryParents.delete(messageId);
@@ -742,6 +886,56 @@ export class TerragonAgUiThreadRuntimeCore {
     void this.history.append({ parentId, message }).catch((error: unknown) => {
       this.recordedHistoryIds.delete(message.id);
       this.logger.error?.("[agui] failed to append history entry", error);
+    });
+  }
+
+  private getMessageIndex(messageId: string): number | undefined {
+    const index = this.messageIndexById.get(messageId);
+    if (index === undefined || this.messages[index]?.id !== messageId) {
+      return undefined;
+    }
+    return index;
+  }
+
+  private getMessageById(messageId: string): ThreadMessage | undefined {
+    const index = this.getMessageIndex(messageId);
+    return index === undefined ? undefined : this.messages[index];
+  }
+
+  private appendRuntimeMessage(message: ThreadMessage): void {
+    this.messages = [...this.messages, message];
+    this.messageIndexById.set(message.id, this.messages.length - 1);
+  }
+
+  private replaceMessageAt(index: number, message: ThreadMessage): void {
+    const previous = this.messages[index];
+    this.messages = this.messages.slice();
+    this.messages[index] = message;
+    if (previous?.id !== message.id) {
+      this.rebuildMessageIndex();
+    }
+  }
+
+  private removeMessageById(messageId: string): void {
+    const index = this.getMessageIndex(messageId);
+    if (index === undefined) return;
+    this.messages = [
+      ...this.messages.slice(0, index),
+      ...this.messages.slice(index + 1),
+    ];
+    this.rebuildMessageIndex();
+    this.markUnknownProjectionChange();
+  }
+
+  private replaceAllMessages(messages: readonly ThreadMessage[]): void {
+    this.messages = [...messages];
+    this.rebuildMessageIndex();
+  }
+
+  private rebuildMessageIndex(): void {
+    this.messageIndexById.clear();
+    this.messages.forEach((message, index) => {
+      this.messageIndexById.set(message.id, index);
     });
   }
 }

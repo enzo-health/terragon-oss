@@ -4,7 +4,7 @@ import {
   GenericToolPart,
   GenericToolPartContent,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
   GenericToolPartContentResultWithPreview,
   GenericToolPartContentRow,
   GenericToolPartClickToExpand,
@@ -40,8 +40,8 @@ function WebFetchToolContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );
@@ -117,8 +117,8 @@ function WebSearchToolContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );

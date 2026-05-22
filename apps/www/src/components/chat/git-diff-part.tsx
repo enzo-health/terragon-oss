@@ -1,6 +1,7 @@
 import { memo, useState, useMemo } from "react";
 import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "./secondary-panel";
 import { ThreadInfoFull } from "@terragon/shared";
 import {
   ChevronRight,
@@ -20,6 +21,7 @@ import { findArtifactDescriptorForPart } from "./secondary-panel";
 interface GitDiffPartProps {
   gitDiffPart: UIGitDiffPart;
   artifactDescriptors?: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   thread?: ThreadInfoFull | null;
   isLatest?: boolean;
@@ -28,6 +30,7 @@ interface GitDiffPartProps {
 export const GitDiffPart = memo(function GitDiffPart({
   gitDiffPart,
   artifactDescriptors = [],
+  artifactDescriptorLookup,
   onOpenArtifact,
   thread = null,
   isLatest = false,
@@ -42,9 +45,10 @@ export const GitDiffPart = memo(function GitDiffPart({
     () =>
       findArtifactDescriptorForPart({
         artifacts: artifactDescriptors,
+        lookup: artifactDescriptorLookup,
         part: gitDiffPart,
       }),
-    [artifactDescriptors, gitDiffPart],
+    [artifactDescriptors, artifactDescriptorLookup, gitDiffPart],
   );
 
   const diffInstances = useMemo(() => {

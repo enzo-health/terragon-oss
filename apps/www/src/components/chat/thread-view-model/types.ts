@@ -95,10 +95,12 @@ export type ThreadViewEvent =
   | {
       type: "ag-ui.event";
       event: BaseEvent;
+      projectTranscript?: boolean;
     }
   | {
       type: "runtime.event";
       event: BaseEvent;
+      projectTranscript?: boolean;
     }
   | {
       type: "optimistic.user-submitted";

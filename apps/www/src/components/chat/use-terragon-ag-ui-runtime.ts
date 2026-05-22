@@ -14,7 +14,10 @@ import { useToolInvocations } from "@assistant-ui/core/react";
 import type { ToolExecutionStatus } from "@assistant-ui/core/react";
 import type { HttpAgent } from "@ag-ui/client";
 import type { ReadonlyJSONValue } from "./ag-ui-custom-parts";
-import { TerragonAgUiThreadRuntimeCore } from "./terragon-ag-ui-runtime-core";
+import {
+  TerragonAgUiThreadRuntimeCore,
+  type TerragonRuntimeProjectionHintRef,
+} from "./terragon-ag-ui-runtime-core";
 
 type Logger = {
   debug?: (message: string, ...args: unknown[]) => void;
@@ -50,6 +53,7 @@ export type UseTerragonAgUiRuntimeOptions = {
    */
   threadId?: string;
   threadChatId?: string;
+  projectionHintRef?: TerragonRuntimeProjectionHintRef;
   queue?: {
     shouldQueue: (message: AppendMessage) => boolean;
     enqueue: (message: AppendMessage) => Promise<void> | void;
@@ -102,6 +106,9 @@ export function useTerragonAgUiRuntime(
       ...(options.onError && { onError: options.onError }),
       ...(options.onCancel && { onCancel: options.onCancel }),
       ...(historyAdapter && { history: historyAdapter }),
+      ...(options.projectionHintRef && {
+        projectionHintRef: options.projectionHintRef,
+      }),
       notifyUpdate,
     });
   }
@@ -114,6 +121,9 @@ export function useTerragonAgUiRuntime(
     ...(options.onError && { onError: options.onError }),
     ...(options.onCancel && { onCancel: options.onCancel }),
     ...(historyAdapter && { history: historyAdapter }),
+    ...(options.projectionHintRef && {
+      projectionHintRef: options.projectionHintRef,
+    }),
   });
 
   const [toolStatuses, setToolStatuses] = useState<

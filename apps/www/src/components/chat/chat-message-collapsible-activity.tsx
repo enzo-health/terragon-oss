@@ -4,6 +4,7 @@ import React, { memo } from "react";
 import { useState } from "react";
 import { UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "./secondary-panel";
 import { AIAgent } from "@terragon/agent/types";
 import { ChevronRight } from "lucide-react";
 import { MessagePart } from "./message-part";
@@ -28,6 +29,7 @@ type CollapsibleAgentActivityGroupProps = {
   isAgentWorking: boolean;
   messagePartProps: MessagePartRenderProps;
   artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
   planOccurrences: Map<UIPart, number>;
 };
@@ -40,6 +42,7 @@ export const CollapsibleAgentActivityGroup = memo(
     isAgentWorking = false,
     messagePartProps,
     artifactDescriptors,
+    artifactDescriptorLookup,
     onOpenArtifact,
     planOccurrences,
   }: CollapsibleAgentActivityGroupProps) {
@@ -73,6 +76,7 @@ export const CollapsibleAgentActivityGroup = memo(
                   isAgentWorking={isAgentWorking}
                   {...messagePartProps}
                   artifactDescriptors={artifactDescriptors}
+                  artifactDescriptorLookup={artifactDescriptorLookup}
                   onOpenArtifact={onOpenArtifact}
                   planOccurrenceIndex={planOccurrences.get(part)}
                 />
@@ -101,6 +105,7 @@ function areCollapsibleAgentActivityGroupPropsEqual(
     prev.isAgentWorking === next.isAgentWorking &&
     prev.messagePartProps === next.messagePartProps &&
     prev.artifactDescriptors === next.artifactDescriptors &&
+    prev.artifactDescriptorLookup === next.artifactDescriptorLookup &&
     prev.onOpenArtifact === next.onOpenArtifact &&
     prev.planOccurrences === next.planOccurrences
   );

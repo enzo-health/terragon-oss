@@ -187,7 +187,7 @@ function mapToolCallResult(
   };
 
   if (event.isError) {
-    return { ...result, role: "tool" };
+    return { ...result, role: "tool", isError: true };
   }
 
   return result;

@@ -77,7 +77,11 @@ export function threadViewModelReducer(
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
     case "runtime.event":
-      return applyAgUiEvent(state, event.event);
+      return applyAgUiEvent(
+        state,
+        event.event,
+        event.projectTranscript ?? true,
+      );
     case "optimistic.user-submitted":
       return applyOptimisticUserSubmit(state, event);
     case "optimistic.queued-messages-updated":
@@ -101,10 +105,19 @@ export function threadViewModelReducer(
 
 export function projectThreadViewModel(
   state: ThreadViewModelState,
+  options?: { includeTranscriptMessages?: boolean },
 ): ThreadViewModel {
-  const splitMessages = splitThreadLifecycleMessages(
-    collapseHydrationReplayTextDuplicates(state.transcript.messages),
-  );
+  const includeTranscriptMessages = options?.includeTranscriptMessages ?? true;
+  const splitMessages = includeTranscriptMessages
+    ? splitThreadLifecycleMessages(
+        collapseHydrationReplayTextDuplicates(state.transcript.messages),
+      )
+    : {
+        transcriptMessages: [],
+        lifecycleMessages: extractThreadLifecycleMessages(
+          state.transcript.messages,
+        ),
+      };
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
@@ -163,6 +176,23 @@ function splitThreadLifecycleMessages(messages: UIMessage[]): {
   return { transcriptMessages, lifecycleMessages };
 }
 
+function extractThreadLifecycleMessages(
+  messages: UIMessage[],
+): UISystemMessage[] {
+  const lifecycleMessages: UISystemMessage[] = [];
+  for (const message of messages) {
+    if (
+      message.role === "system" &&
+      message.message_type !== "stop" &&
+      message.message_type !== "git-diff" &&
+      THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
+    ) {
+      lifecycleMessages.push(message);
+    }
+  }
+  return lifecycleMessages;
+}
+
 export function collapseHydrationReplayTextDuplicates(
   messages: UIMessage[],
 ): UIMessage[] {
@@ -180,13 +210,15 @@ export function collapseHydrationReplayTextDuplicates(
       continue;
     }
 
-    const previousText = getTextOnlyAgentMessageContent(previous);
-    const currentText = getTextOnlyAgentMessageContent(message);
-    if (
-      previousText === null ||
-      currentText === null ||
-      previousText !== currentText
-    ) {
+    const previousText = getAgentMessageTextContent(previous);
+    const currentText = getAgentMessageTextContent(message);
+    const textMatches =
+      previousText !== null &&
+      currentText !== null &&
+      (previousText === currentText ||
+        previousText.startsWith(currentText) ||
+        currentText.startsWith(previousText));
+    if (!textMatches) {
       next.push(message);
       continue;
     }
@@ -210,7 +242,13 @@ export function collapseHydrationReplayTextDuplicates(
       (previousDelta && currentCanonical)
     ) {
       changed = true;
-      if (previousCanonical) {
+      if (
+        shouldPreferHydrationReplayMessage({
+          previous,
+          current: message,
+          previousIsCanonical: previousCanonical,
+        })
+      ) {
         next[next.length - 1] = message;
       }
       continue;
@@ -303,6 +341,7 @@ function applySnapshot(
 function applyAgUiEvent(
   state: ThreadViewModelState,
   event: BaseEvent,
+  projectTranscript: boolean,
 ): ThreadViewModelState {
   const dedupeKey = getAgUiEventDedupeKey(event);
   if (dedupeKey && state.seenEventKeys.has(dedupeKey)) {
@@ -348,7 +387,9 @@ function applyAgUiEvent(
 
   const meta = applyMetaEvent(state.meta, event);
   const lifecycle = applyLifecycleEvent(state.lifecycle, event);
-  const transcript = agUiMessagesReducer(state.transcript, event);
+  const transcript = projectTranscript
+    ? agUiMessagesReducer(state.transcript, event)
+    : state.transcript;
   const runtimeState =
     nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
   const runtimeActivities =
@@ -394,8 +435,9 @@ function applyAgUiEvent(
     threadStatus: lifecycle.threadStatus,
     seenEventKeys,
     seenEventOrder,
-    hasLiveTranscriptEvents:
-      transcript !== state.transcript || state.hasLiveTranscriptEvents,
+    hasLiveTranscriptEvents: projectTranscript
+      ? transcript !== state.transcript || state.hasLiveTranscriptEvents
+      : state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents:
       lifecycle !== state.lifecycle || state.hasLiveLifecycleEvents,
   };
@@ -604,12 +646,33 @@ function areArtifactDescriptorsStable(
       left.kind !== right.kind ||
       left.status !== right.status ||
       left.title !== right.title ||
-      left.updatedAt !== right.updatedAt
+      left.updatedAt !== right.updatedAt ||
+      left.summary !== right.summary ||
+      getArtifactDescriptorStableValue(left.origin) !==
+        getArtifactDescriptorStableValue(right.origin) ||
+      getArtifactDescriptorStableValue(left.part) !==
+        getArtifactDescriptorStableValue(right.part)
     ) {
       return false;
     }
   }
   return true;
+}
+
+function getArtifactDescriptorStableValue(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return JSON.stringify(value) ?? "";
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => getArtifactDescriptorStableValue(entry)).join(",")}]`;
+  }
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(
+      ([key, entry]) =>
+        `${JSON.stringify(key)}:${getArtifactDescriptorStableValue(entry)}`,
+    )
+    .join(",")}}`;
 }
 
 function applyLifecycleEvent(
@@ -1097,7 +1160,7 @@ function getRecordValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function getTextOnlyAgentMessageContent(message: UIMessage): string | null {
+function getAgentMessageTextContent(message: UIMessage): string | null {
   if (message.role !== "agent") {
     return null;
   }
@@ -1107,13 +1170,36 @@ function getTextOnlyAgentMessageContent(message: UIMessage): string | null {
   let hasTextPart = false;
   let content = "";
   for (const part of message.parts) {
-    if (part.type !== "text") {
-      return null;
+    if (part.type === "text") {
+      hasTextPart = true;
+      content += part.text;
     }
-    hasTextPart = true;
-    content += part.text;
   }
   return hasTextPart ? content : null;
+}
+
+function shouldPreferHydrationReplayMessage({
+  previous,
+  current,
+  previousIsCanonical,
+}: {
+  previous: UIMessage;
+  current: UIMessage;
+  previousIsCanonical: boolean;
+}): boolean {
+  if (previous.role !== "agent" || current.role !== "agent") {
+    return false;
+  }
+  if (previousIsCanonical) {
+    return true;
+  }
+  return (
+    countRenderableAgentParts(current) >= countRenderableAgentParts(previous)
+  );
+}
+
+function countRenderableAgentParts(message: UIMessage & { role: "agent" }) {
+  return message.parts.filter((part) => part.type !== "text").length;
 }
 
 function isSameUserMessage(left: UIMessage, right: UIMessage): boolean {

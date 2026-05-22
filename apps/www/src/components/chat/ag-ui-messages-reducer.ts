@@ -89,11 +89,13 @@ export type AgUiMessagesState = {
 
 const REASONING_MARKER = ":thinking:";
 type ToolProgressChunk = { seq: number; text: string };
+const MAX_PROGRESS_CHUNKS = 50;
 type ToolStatus = "started" | "in_progress" | "completed" | "failed";
 type ToolPartWithProgress = UIPart & {
   type: "tool";
   id: string;
   progressChunks?: ToolProgressChunk[];
+  progressHiddenCount?: number;
   toolStatus?: ToolStatus;
 };
 
@@ -203,7 +205,10 @@ export function agUiMessagesReducer(
       const nextMessages =
         messageChanged || toolChanged ? withTool : state.messages;
       const nextActive = state.activeAssistantMessageId ?? targetMessageId;
-      const buffers = { ...state.toolArgsBuffers, [toolCallId]: "" };
+      const buffers =
+        toolCallId in state.toolArgsBuffers
+          ? state.toolArgsBuffers
+          : { ...state.toolArgsBuffers, [toolCallId]: "" };
 
       if (
         !messageChanged &&
@@ -259,20 +264,30 @@ export function agUiMessagesReducer(
         toolCallId,
         parsed,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers = removeToolArgsBuffer(
+        state.toolArgsBuffers,
+        toolCallId,
+      );
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.TOOL_CALL_RESULT: {
       const toolCallId = getField<string>(event, "toolCallId");
       const content = getField<unknown>(event, "content");
       if (!toolCallId || content === undefined) return state;
-      // AG-UI's TOOL_CALL_RESULT doesn't carry an explicit error flag in
-      // the current schema; the mapper encodes errors by setting `role`
-      // to "tool" alongside the payload. Treat an `isError` field OR a
-      // `role === "tool"` hint as error.
-      const role = getField<string>(event, "role");
+      // AG-UI uses `role: "tool"` for normal tool-result messages. Treat
+      // only explicit error fields/status as failure.
+      const error = getField<unknown>(event, "error");
+      const status = getField<string>(event, "status");
       const isError =
-        Boolean(getField<boolean>(event, "isError")) || role === "tool";
+        getField<boolean>(event, "isError") === true ||
+        status === "error" ||
+        typeof error === "string";
       const resultText =
         typeof content === "string" ? content : safeStringify(content);
       const { messages, changed } = completeToolPart(
@@ -281,7 +296,16 @@ export function agUiMessagesReducer(
         resultText,
         isError,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers = removeToolArgsBuffer(
+        state.toolArgsBuffers,
+        toolCallId,
+      );
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.CUSTOM: {
@@ -319,7 +343,16 @@ export function agUiMessagesReducer(
         state.messages,
         "Tool call ended without a result.",
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers =
+        Object.keys(state.toolArgsBuffers).length > 0
+          ? {}
+          : state.toolArgsBuffers;
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.RUN_ERROR: {
@@ -330,7 +363,16 @@ export function agUiMessagesReducer(
         state.messages,
         errorMessage,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers =
+        Object.keys(state.toolArgsBuffers).length > 0
+          ? {}
+          : state.toolArgsBuffers;
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.TEXT_MESSAGE_CHUNK:
@@ -545,16 +587,34 @@ function appendToolProgressChunk(
     const progressPart = part as ToolPartWithProgress;
     const existing = progressPart.progressChunks ?? [];
     const previousSeq = existing.at(-1)?.seq ?? -1;
+    const nextProgressChunks = [...existing, { seq: previousSeq + 1, text }];
+    const overflow = Math.max(
+      0,
+      nextProgressChunks.length - MAX_PROGRESS_CHUNKS,
+    );
     const nextParts = m.parts.slice();
     nextParts[idx] = {
       ...progressPart,
-      progressChunks: [...existing, { seq: previousSeq + 1, text }],
+      progressChunks: nextProgressChunks.slice(-MAX_PROGRESS_CHUNKS),
+      progressHiddenCount: (progressPart.progressHiddenCount ?? 0) + overflow,
       toolStatus: "in_progress",
     } as unknown as UIPart;
     changed = true;
     return { ...m, parts: nextParts };
   });
   return { messages: next, changed };
+}
+
+function removeToolArgsBuffer(
+  buffers: AgUiMessagesState["toolArgsBuffers"],
+  toolCallId: string,
+): AgUiMessagesState["toolArgsBuffers"] {
+  if (!(toolCallId in buffers)) {
+    return buffers;
+  }
+  const next = { ...buffers };
+  delete next[toolCallId];
+  return next;
 }
 
 function completeToolPart(

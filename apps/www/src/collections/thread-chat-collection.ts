@@ -124,10 +124,10 @@ function isIncomingChatSeedFresh(
   const existingPatchVersion = existing.patchVersion ?? null;
   const incomingPatchVersion = incoming.patchVersion ?? null;
   if (existingPatchVersion !== null && incomingPatchVersion !== null) {
-    return incomingPatchVersion >= existingPatchVersion;
+    return incomingPatchVersion > existingPatchVersion;
   }
 
-  return getTime(incoming.updatedAt) >= getTime(existing.updatedAt);
+  return getTime(incoming.updatedAt) > getTime(existing.updatedAt);
 }
 
 function getTime(value: Date | string | null | undefined): number {

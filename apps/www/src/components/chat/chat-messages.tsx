@@ -7,6 +7,7 @@ import {
   UIMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { createArtifactDescriptorLookup } from "./secondary-panel";
 
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
@@ -83,6 +84,10 @@ export const ChatMessages = memo(function ChatMessages({
   artifactDescriptors?: ArtifactDescriptor[];
   onOpenArtifact?: (artifactId: string) => void;
 }) {
+  const artifactDescriptorLookup = useMemo(
+    () => createArtifactDescriptorLookup(artifactDescriptors),
+    [artifactDescriptors],
+  );
   const messagePartProps = useMemo(
     () => ({
       githubRepoFullName: githubRepoFullName ?? "",
@@ -162,6 +167,7 @@ export const ChatMessages = memo(function ChatMessages({
             redoDialogData={isFirstUserMessage ? redoDialogData : undefined}
             forkDialogData={isLatestAgentMessage ? forkDialogData : undefined}
             artifactDescriptors={artifactDescriptors}
+            artifactDescriptorLookup={artifactDescriptorLookup}
             onOpenArtifact={onOpenArtifact}
             planOccurrences={planOccurrences}
           />

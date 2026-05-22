@@ -262,6 +262,59 @@ describe("ag-ui-side-effect-messages", () => {
     });
   });
 
+  it("treats role tool results as successful unless an error is explicit", () => {
+    const events = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 2,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+        parentMessageId: "assistant-1",
+      },
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        timestamp: 3,
+        messageId: "tool-result-1",
+        toolCallId: "tool-1",
+        role: "tool",
+        content: "passed",
+      },
+    ] satisfies BaseEvent[];
+
+    expect(getDurableAgUiHistoryItemsFromEvents(events)).toEqual({
+      items: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: "",
+              },
+            },
+          ],
+        },
+        {
+          id: "tool-result-1",
+          role: "tool",
+          toolCallId: "tool-1",
+          content: "passed",
+        },
+      ],
+      lastSeqOffset: 2,
+    });
+  });
+
   it("synthesizes failed tool results for unresolved tool calls on run finish", () => {
     const events = [
       {

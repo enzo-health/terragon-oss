@@ -48,6 +48,7 @@ output.txt
 
 # claude code
 .claude/settings.local.json
+.claude/plans/
 .claude/mind.*
 .claude/.mind.*
 .claude/session-reads.txt

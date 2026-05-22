@@ -8,6 +8,7 @@ import {
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "./secondary-panel";
 import { cn } from "@/lib/utils";
 import { GitDiffPart } from "./git-diff-part";
 
@@ -16,12 +17,14 @@ export function SystemMessage({
   thread,
   latestGitDiffTimestamp,
   artifactDescriptors,
+  artifactDescriptorLookup,
   onOpenArtifact,
 }: {
   message: UISystemMessage;
   thread: ThreadInfoFull | null;
   latestGitDiffTimestamp: string | null;
   artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -101,6 +104,7 @@ export function SystemMessage({
           thread={thread}
           isLatest={latestGitDiffTimestamp === gitDiffPart.timestamp}
           artifactDescriptors={artifactDescriptors}
+          artifactDescriptorLookup={artifactDescriptorLookup}
           onOpenArtifact={onOpenArtifact}
         />
       </div>

@@ -2,23 +2,33 @@ import type {
   ThreadMessage,
   ThreadAssistantMessagePart,
   ThreadUserMessagePart,
+  ToolCallMessagePart,
 } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type {
-  AllToolParts,
   DBAudioPart,
   DBAutoApprovalReviewPart,
   DBDelegationMessage,
   DBPlanPart,
   DBResourceLinkPart,
   DBTerminalPart,
-  UIAgentMessage,
   UIMessage,
+  UIImagePart,
+  UIPdfPart,
   UIPart,
+  UIPlanPart,
+  UIRichTextPart,
   UIStructuredPlanPart,
+  UITextFilePart,
   UIUserMessage,
+  UIToolLifecycleStatus,
 } from "@terragon/shared";
 import type { UIPartExtended } from "../ui-parts-extended";
+import type { TerragonRuntimeProjectionHint } from "../terragon-ag-ui-runtime-core";
+import {
+  projectCompletedToolPart,
+  projectPendingToolPart,
+} from "../tool-part-projection";
 import { stringifyRuntimeValue } from "./runtime-stringify";
 
 type RuntimeTranscriptProjection = {
@@ -26,18 +36,33 @@ type RuntimeTranscriptProjection = {
   messages: UIMessage[];
 };
 type RuntimeProjectionCacheEntry = {
-  signature: string;
+  snapshot: RuntimeMessageSnapshot;
   agent: AIAgent;
   projected: UIMessage | null;
+  partSnapshots: RuntimePartSnapshot[];
+  projectedParts: RuntimeProjectedPart[];
 };
 type RuntimeTranscriptProjector = (params: {
   runtimeMessages: readonly ThreadMessage[];
   agent: AIAgent;
+  projectionHint?: TerragonRuntimeProjectionHint;
 }) => RuntimeTranscriptProjection;
 
 type JSONPrimitive = string | number | boolean | null;
 type JSONValue = JSONPrimitive | JSONValue[] | { [key: string]: JSONValue };
 type JSONObject = { [key: string]: JSONValue };
+type RuntimeToolCallPartWithLifecycle = ToolCallMessagePart<JSONObject> & {
+  artifact?: JSONValue;
+  progressChunks?: Array<{ seq: number; text: string }>;
+  progressHiddenCount?: number;
+  toolStatus?: string;
+};
+type RuntimeToolArtifactPart =
+  | UIImagePart
+  | UIPdfPart
+  | UITextFilePart
+  | UIRichTextPart
+  | UIPlanPart;
 type TerragonDataPartName =
   | "terragon.audio"
   | "terragon.resource-link"
@@ -46,6 +71,41 @@ type TerragonDataPartName =
   | "terragon.plan"
   | "terragon.plan-structured"
   | "terragon.delegation";
+type RuntimeMessageSnapshot = {
+  role: ThreadMessage["role"];
+  parts: RuntimePartSnapshot[];
+};
+type RuntimePartSnapshot =
+  | { type: "text" | "reasoning"; text: string }
+  | { type: "image"; image: string }
+  | {
+      type: "file";
+      mimeType: string;
+      filename: string | undefined;
+      data: string;
+    }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      args: string;
+      hasResult: boolean;
+      result: string | null;
+      isError: boolean;
+      progressChunkCount: number;
+      progressLastSeq: number | null;
+      progressLastText: string | null;
+      progressHiddenCount: number;
+      toolStatus: string | null;
+      artifact: string | null;
+    }
+  | { type: "data"; name: string; data: string }
+  | { type: "source"; value: string }
+  | { type: "audio"; audio: string };
+type RuntimeProjectedPart =
+  | UIPartExtended
+  | UIUserMessage["parts"][number]
+  | null;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -75,6 +135,29 @@ function toJSONObject(value: unknown): JSONObject {
     }
   }
   return result;
+}
+
+function isUIToolLifecycleStatus(
+  status: string | undefined,
+): status is UIToolLifecycleStatus {
+  return (
+    status === "started" ||
+    status === "in_progress" ||
+    status === "completed" ||
+    status === "failed"
+  );
+}
+
+function runtimeToolLifecycle(part: RuntimeToolCallPartWithLifecycle) {
+  return {
+    ...(part.progressChunks ? { progressChunks: part.progressChunks } : {}),
+    ...(part.progressHiddenCount
+      ? { progressHiddenCount: part.progressHiddenCount }
+      : {}),
+    ...(isUIToolLifecycleStatus(part.toolStatus)
+      ? { toolStatus: part.toolStatus }
+      : {}),
+  };
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -172,6 +255,91 @@ function isStructuredPlanPart(value: unknown): value is UIStructuredPlanPart {
     isPlanEntries(value.entries) &&
     (value.title === undefined || typeof value.title === "string")
   );
+}
+
+function isRichTextPart(value: unknown): value is UIRichTextPart {
+  if (!isObject(value) || value.type !== "rich-text") return false;
+  if (!Array.isArray(value.nodes)) return false;
+  return value.nodes.every(
+    (node) =>
+      isObject(node) &&
+      (node.type === "text" ||
+        node.type === "mention" ||
+        node.type === "link") &&
+      typeof node.text === "string",
+  );
+}
+
+function isImageArtifactPart(value: unknown): value is UIImagePart {
+  return (
+    isObject(value) &&
+    value.type === "image" &&
+    typeof value.image_url === "string"
+  );
+}
+
+function imageArtifactPart(value: unknown): UIImagePart | null {
+  if (isImageArtifactPart(value)) return value;
+  if (
+    isObject(value) &&
+    value.type === "image" &&
+    typeof value.image === "string"
+  ) {
+    return { type: "image", image_url: value.image };
+  }
+  return null;
+}
+
+function isPdfArtifactPart(value: unknown): value is UIPdfPart {
+  return (
+    isObject(value) &&
+    value.type === "pdf" &&
+    typeof value.pdf_url === "string" &&
+    (value.filename === undefined || typeof value.filename === "string")
+  );
+}
+
+function isTextFileArtifactPart(value: unknown): value is UITextFilePart {
+  return (
+    isObject(value) &&
+    value.type === "text-file" &&
+    typeof value.file_url === "string" &&
+    (value.filename === undefined || typeof value.filename === "string") &&
+    (value.mime_type === undefined || typeof value.mime_type === "string")
+  );
+}
+
+function isPlanTextArtifactPart(value: unknown): value is UIPlanPart {
+  return (
+    isObject(value) &&
+    value.type === "plan" &&
+    typeof value.planText === "string" &&
+    (value.title === undefined || typeof value.title === "string") &&
+    (value.taskCount === undefined || typeof value.taskCount === "number")
+  );
+}
+
+function runtimeToolArtifactPart(
+  value: unknown,
+): RuntimeToolArtifactPart | null {
+  const image = imageArtifactPart(value);
+  if (image) return image;
+  if (isPdfArtifactPart(value)) return value;
+  if (isTextFileArtifactPart(value)) return value;
+  if (isRichTextPart(value)) return value;
+  if (isPlanTextArtifactPart(value)) return value;
+  return null;
+}
+
+function runtimeToolArtifactParts(value: unknown): UIPart[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(runtimeToolArtifactParts);
+  }
+  if (isObject(value) && Array.isArray(value.parts)) {
+    return value.parts.flatMap(runtimeToolArtifactParts);
+  }
+  const part = runtimeToolArtifactPart(value);
+  return part ? [part] : [];
 }
 
 function structuredPlanPart(value: unknown): UIStructuredPlanPart | null {
@@ -365,27 +533,28 @@ function assistantPartToUIPart(
       }
       return null;
     case "tool-call": {
+      const lifecyclePart = part as RuntimeToolCallPartWithLifecycle;
+      const artifactParts = runtimeToolArtifactParts(lifecyclePart.artifact);
       if (part.result === undefined) {
-        return {
-          type: "tool",
+        return projectPendingToolPart({
           id: part.toolCallId,
           agent,
           name: part.toolName,
           parameters: toJSONObject(part.args),
-          parts: [],
-          status: "pending",
-        } satisfies AllToolParts;
+          parts: artifactParts,
+          lifecycle: runtimeToolLifecycle(lifecyclePart),
+        });
       }
-      return {
-        type: "tool",
+      return projectCompletedToolPart({
         id: part.toolCallId,
         agent,
         name: part.toolName,
         parameters: toJSONObject(part.args),
-        parts: [],
-        status: part.isError ? "error" : "completed",
+        parts: artifactParts,
         result: stringifyRuntimeValue(part.result),
-      } satisfies AllToolParts;
+        isError: part.isError,
+        lifecycle: runtimeToolLifecycle(lifecyclePart),
+      });
     }
     case "data":
       return terragonDataPartToUIPart(part);
@@ -394,97 +563,718 @@ function assistantPartToUIPart(
   }
 }
 
-function runtimeMessageToUIMessage(
-  message: ThreadMessage,
-  agent: AIAgent,
-): UIMessage | null {
-  switch (message.role) {
-    case "user": {
-      const parts: UIUserMessage["parts"] = [];
-      for (const part of message.content) {
-        const projectedPart = userPartToUIPart(part);
-        if (projectedPart !== null) {
-          parts.push(projectedPart);
-        }
+function projectRuntimeMessage({
+  message,
+  agent,
+  snapshot,
+  cached,
+}: {
+  message: ThreadMessage;
+  agent: AIAgent;
+  snapshot: RuntimeMessageSnapshot;
+  cached: RuntimeProjectionCacheEntry | undefined;
+}): RuntimeProjectionCacheEntry {
+  if (
+    cached?.agent === agent &&
+    sameRuntimeMessageSnapshot(cached.snapshot, snapshot)
+  ) {
+    return cached;
+  }
+  return runtimeMessageToUIMessageCached({ message, agent, snapshot, cached });
+}
+
+function runtimeMessageToUIMessageCached({
+  message,
+  agent,
+  snapshot,
+  cached,
+}: {
+  message: ThreadMessage;
+  agent: AIAgent;
+  snapshot: RuntimeMessageSnapshot;
+  cached: RuntimeProjectionCacheEntry | undefined;
+}): RuntimeProjectionCacheEntry {
+  if (message.role === "system") {
+    return {
+      snapshot,
+      agent,
+      projected: null,
+      partSnapshots: snapshot.parts,
+      projectedParts: [],
+    };
+  }
+
+  const canReuseCachedParts =
+    cached?.agent === agent &&
+    cached.snapshot.role === snapshot.role &&
+    cached.partSnapshots.length === snapshot.parts.length;
+  const projectedParts: RuntimeProjectedPart[] = [];
+
+  for (let index = 0; index < message.content.length; index += 1) {
+    const partSnapshot = snapshot.parts[index];
+    if (!partSnapshot) continue;
+    const cachedPartSnapshot = cached?.partSnapshots[index];
+    if (
+      canReuseCachedParts &&
+      cachedPartSnapshot &&
+      sameRuntimePartSnapshot(cachedPartSnapshot, partSnapshot)
+    ) {
+      projectedParts[index] = cached.projectedParts[index] ?? null;
+      continue;
+    }
+    const part = message.content[index]!;
+    projectedParts[index] =
+      message.role === "user"
+        ? userPartToUIPart(part as ThreadUserMessagePart)
+        : assistantPartToUIPart(part as ThreadAssistantMessagePart, agent);
+  }
+
+  if (message.role === "user") {
+    const parts: UIUserMessage["parts"] = [];
+    for (const part of projectedParts) {
+      if (part !== null) {
+        parts.push(part as UIUserMessage["parts"][number]);
       }
-      return {
+    }
+    return {
+      snapshot,
+      agent,
+      projected: {
         id: message.id,
         role: "user",
         parts,
-      } satisfies UIUserMessage;
+      },
+      partSnapshots: snapshot.parts,
+      projectedParts,
+    };
+  }
+
+  const parts: UIPart[] = [];
+  for (const part of projectedParts) {
+    if (part !== null) {
+      parts.push(part as UIPart);
     }
-    case "assistant": {
-      const parts: UIPart[] = [];
-      for (const part of message.content) {
-        const projectedPart = assistantPartToUIPart(part, agent);
-        if (projectedPart !== null) {
-          parts.push(projectedPart as UIPart);
-        }
-      }
+  }
+  return {
+    snapshot,
+    agent,
+    projected: {
+      id: message.id,
+      role: "agent",
+      agent,
+      parts,
+    },
+    partSnapshots: snapshot.parts,
+    projectedParts,
+  };
+}
+
+function createRuntimeMessageSnapshot(
+  message: ThreadMessage,
+): RuntimeMessageSnapshot {
+  return {
+    role: message.role,
+    parts: message.content.map(runtimeMessagePartSnapshot),
+  };
+}
+
+function runtimeMessagePartSnapshot(
+  part: ThreadAssistantMessagePart | ThreadUserMessagePart,
+): RuntimePartSnapshot {
+  switch (part.type) {
+    case "text":
+    case "reasoning":
+      return { type: part.type, text: part.text };
+    case "image":
+      return { type: "image", image: part.image };
+    case "file":
       return {
-        id: message.id,
-        role: "agent",
-        agent,
-        parts,
-      } satisfies UIAgentMessage;
-    }
-    case "system":
-      return null;
+        type: "file",
+        mimeType: part.mimeType,
+        filename: part.filename,
+        data: part.data,
+      };
+    case "tool-call":
+      const progressChunks =
+        (part as RuntimeToolCallPartWithLifecycle).progressChunks ?? [];
+      const lastProgressChunk = progressChunks.at(-1);
+      return {
+        type: "tool-call",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        args: stableRuntimeValueFingerprint(part.args),
+        hasResult: part.result !== undefined,
+        result:
+          part.result === undefined
+            ? null
+            : stableRuntimeValueFingerprint(part.result),
+        isError: part.isError === true,
+        progressChunkCount: progressChunks.length,
+        progressLastSeq: lastProgressChunk?.seq ?? null,
+        progressLastText: lastProgressChunk?.text ?? null,
+        progressHiddenCount:
+          (part as RuntimeToolCallPartWithLifecycle).progressHiddenCount ?? 0,
+        toolStatus:
+          (part as RuntimeToolCallPartWithLifecycle).toolStatus ?? null,
+        artifact: runtimeArtifactFingerprint(
+          (part as RuntimeToolCallPartWithLifecycle).artifact,
+        ),
+      };
+    case "data":
+      return {
+        type: "data",
+        name: part.name,
+        data: runtimeDataPartFingerprint(part),
+      };
+    case "source":
+      return { type: "source", value: stableRuntimeValueFingerprint(part) };
+    case "audio":
+      return {
+        type: "audio",
+        audio: stableRuntimeValueFingerprint(part.audio),
+      };
   }
 }
 
-function runtimeMessageSignature(message: ThreadMessage): string {
-  return JSON.stringify({
-    role: message.role,
-    content: message.content,
+function sameRuntimeMessageSnapshot(
+  left: RuntimeMessageSnapshot,
+  right: RuntimeMessageSnapshot,
+): boolean {
+  if (left.role !== right.role || left.parts.length !== right.parts.length) {
+    return false;
+  }
+  for (let index = 0; index < left.parts.length; index += 1) {
+    if (!sameRuntimePartSnapshot(left.parts[index]!, right.parts[index]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameRuntimePartSnapshot(
+  left: RuntimePartSnapshot,
+  right: RuntimePartSnapshot,
+): boolean {
+  if (left.type !== right.type) return false;
+  switch (left.type) {
+    case "text":
+    case "reasoning":
+      return right.type === left.type && left.text === right.text;
+    case "image":
+      return right.type === "image" && left.image === right.image;
+    case "file":
+      return (
+        right.type === "file" &&
+        left.mimeType === right.mimeType &&
+        left.filename === right.filename &&
+        left.data === right.data
+      );
+    case "tool-call":
+      return (
+        right.type === "tool-call" &&
+        left.toolCallId === right.toolCallId &&
+        left.toolName === right.toolName &&
+        left.args === right.args &&
+        left.hasResult === right.hasResult &&
+        left.result === right.result &&
+        left.isError === right.isError &&
+        left.progressChunkCount === right.progressChunkCount &&
+        left.progressLastSeq === right.progressLastSeq &&
+        left.progressLastText === right.progressLastText &&
+        left.progressHiddenCount === right.progressHiddenCount &&
+        left.toolStatus === right.toolStatus &&
+        left.artifact === right.artifact
+      );
+    case "data":
+      return (
+        right.type === "data" &&
+        left.name === right.name &&
+        left.data === right.data
+      );
+    case "source":
+      return right.type === "source" && left.value === right.value;
+    case "audio":
+      return right.type === "audio" && left.audio === right.audio;
+  }
+}
+
+function stableRuntimeValueFingerprint(value: unknown): string {
+  return stableRuntimeValueFingerprintWithCache(value);
+}
+
+function uncachedRuntimeValueFingerprint(value: unknown): string {
+  return stableRuntimeValueFingerprintWithCache(value);
+}
+
+function stableRuntimeValueFingerprintWithCache(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return JSON.stringify(value) ?? "";
+  let fingerprint: string;
+  if (Array.isArray(value)) {
+    fingerprint = `[${value.map(stableRuntimeValueFingerprintWithCache).join(",")}]`;
+  } else {
+    fingerprint = `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(
+        ([key, entry]) =>
+          `${JSON.stringify(key)}:${stableRuntimeValueFingerprintWithCache(entry)}`,
+      )
+      .join(",")}}`;
+  }
+  return fingerprint;
+}
+
+function runtimeArtifactFingerprint(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  return stableRuntimeValueFingerprint(compactArtifactFingerprintValue(value));
+}
+
+function compactArtifactFingerprintValue(value: unknown): unknown {
+  if (typeof value === "string") return compactArtifactString(value);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return {
+      length: value.length,
+      first: compactArtifactFingerprintValue(value[0]),
+      last: compactArtifactFingerprintValue(value.at(-1)),
+    };
+  }
+  const record = value as Record<string, unknown>;
+  const compact: Record<string, unknown> = {};
+  for (const key of [
+    "type",
+    "id",
+    "artifactId",
+    "artifactType",
+    "status",
+    "uri",
+    "url",
+    "image_url",
+    "image",
+    "pdf_url",
+    "file_url",
+    "filename",
+    "mime_type",
+    "mimeType",
+    "size",
+    "contentHash",
+    "version",
+    "title",
+    "summary",
+  ]) {
+    if (key in record) {
+      compact[key] = compactArtifactFingerprintValue(record[key]);
+    }
+  }
+  if (Array.isArray(record.parts)) {
+    compact.parts = compactArtifactFingerprintValue(record.parts);
+  }
+  if (Array.isArray(record.nodes)) {
+    compact.nodes = compactArtifactSequenceFingerprint(record.nodes);
+  }
+  if (Array.isArray(record.entries)) {
+    compact.entries = compactArtifactSequenceFingerprint(record.entries);
+  }
+  if (typeof record.planText === "string") {
+    compact.planText = compactArtifactString(record.planText);
+  }
+  return compact;
+}
+
+function compactArtifactSequenceFingerprint(value: unknown[]): unknown {
+  return {
+    length: value.length,
+    first: compactArtifactFingerprintValue(value[0]),
+    last: compactArtifactFingerprintValue(value.at(-1)),
+  };
+}
+
+function compactArtifactString(value: string): string {
+  if (value.length <= 256) return value;
+  return `${value.slice(0, 128)}:${value.length}:${value.slice(-128)}`;
+}
+
+function runtimeDataPartFingerprint(
+  part: Extract<ThreadAssistantMessagePart, { type: "data" }>,
+): string {
+  const payload = terragonDataPayload(part);
+  if (!payload) {
+    return uncachedRuntimeValueFingerprint(part.data);
+  }
+
+  if (payload.name === "terragon.terminal" && isTerminalPart(payload.data)) {
+    return terminalPartFingerprint(payload.data);
+  }
+
+  return uncachedRuntimeValueFingerprint(part.data);
+}
+
+function terminalPartFingerprint(part: DBTerminalPart): string {
+  const lastChunk = part.chunks.at(-1);
+  return stableRuntimeValueFingerprint({
+    type: part.type,
+    sandboxId: part.sandboxId,
+    terminalId: part.terminalId,
+    chunksLength: part.chunks.length,
+    lastStreamSeq: lastChunk?.streamSeq ?? null,
+    lastKind: lastChunk?.kind ?? null,
+    lastText: lastChunk?.text ?? null,
+    chunksHash: terminalChunksHash(part.chunks),
   });
+}
+
+function terminalChunksHash(chunks: DBTerminalPart["chunks"]): number {
+  let hash = 0;
+  for (const chunk of chunks) {
+    hash = hashStringIntoHash(hash, String(chunk.streamSeq));
+    hash = hashStringIntoHash(hash, chunk.kind);
+    hash = hashStringIntoHash(hash, chunk.text);
+  }
+  return hash >>> 0;
+}
+
+function hashStringIntoHash(initialHash: number, value: string): number {
+  let hash = initialHash;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return hash;
 }
 
 export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
   const cache = new Map<string, RuntimeProjectionCacheEntry>();
+  let previousAgent: AIAgent | null = null;
+  let previousRuntimeMessages: readonly ThreadMessage[] = [];
+  let previousProjectedByRuntimeIndex: Array<UIMessage | null> = [];
+  let previousCompactIndexByRuntimeIndex: number[] = [];
+  let previousProjectedMessages: UIMessage[] = [];
+  let previousProjectionHintVersion = 0;
 
-  return ({ runtimeMessages, agent }) => {
-    const projectedMessages: UIMessage[] = [];
-    const liveIds = new Set<string>();
-
-    for (const message of runtimeMessages) {
-      liveIds.add(message.id);
-      const signature = runtimeMessageSignature(message);
+  return ({ runtimeMessages, agent, projectionHint }) => {
+    const canReusePrefix = previousAgent === agent;
+    const trustedFirstChangedIndex = getTrustedProjectionHintIndex({
+      projectionHint,
+      previousProjectionHintVersion,
+      previousAgent,
+      agent,
+      runtimeMessages,
+    });
+    if (
+      canUseTailProjectionFastPath({
+        previousAgent,
+        agent,
+        previousRuntimeMessages,
+        runtimeMessages,
+        trustedFirstChangedIndex,
+      })
+    ) {
+      const tailIndex = runtimeMessages.length - 1;
+      const message = runtimeMessages[tailIndex]!;
       const cached = cache.get(message.id);
-      const projected =
-        cached?.signature === signature && cached.agent === agent
-          ? cached.projected
-          : runtimeMessageToUIMessage(message, agent);
+      const snapshot = createRuntimeMessageSnapshot(message);
+      const nextCacheEntry = projectRuntimeMessage({
+        message,
+        agent,
+        snapshot,
+        cached,
+      });
+      const projected = nextCacheEntry.projected;
+      const previousProjected = previousProjectedByRuntimeIndex[tailIndex];
 
-      cache.set(message.id, { signature, agent, projected });
+      cache.set(message.id, nextCacheEntry);
+      previousRuntimeMessages = runtimeMessages;
+      previousProjectionHintVersion =
+        projectionHint?.version ?? previousProjectionHintVersion;
+
+      if (projected === previousProjected) {
+        return { source: "runtime", messages: previousProjectedMessages };
+      }
+
+      const compactIndex = previousCompactIndexByRuntimeIndex[tailIndex];
+      previousProjectedByRuntimeIndex[tailIndex] = projected;
+
+      if (compactIndex === undefined || compactIndex < 0) {
+        return rebuildProjectedTranscriptState({
+          runtimeMessages,
+          projectedByRuntimeIndex: previousProjectedByRuntimeIndex,
+          agent,
+          cache,
+          setState: (state) => {
+            previousProjectedByRuntimeIndex = state.projectedByRuntimeIndex;
+            previousCompactIndexByRuntimeIndex =
+              state.compactIndexByRuntimeIndex;
+            previousProjectedMessages = state.projectedMessages;
+            previousProjectionHintVersion =
+              projectionHint?.version ?? previousProjectionHintVersion;
+          },
+        });
+      }
+
+      const nextProjectedMessages = previousProjectedMessages.slice();
+      if (projected === null) {
+        nextProjectedMessages.splice(compactIndex, 1);
+      } else {
+        nextProjectedMessages[compactIndex] = projected;
+      }
+      previousProjectedMessages = nextProjectedMessages;
+      return { source: "runtime", messages: nextProjectedMessages };
+    }
+
+    const firstChangedIndex = canReusePrefix
+      ? (trustedFirstChangedIndex ??
+        getFirstChangedRuntimeMessageIndex(
+          previousRuntimeMessages,
+          runtimeMessages,
+        ))
+      : 0;
+    const firstProjectedIndex =
+      runtimeMessages.length > 0
+        ? Math.min(firstChangedIndex, runtimeMessages.length - 1)
+        : 0;
+    const projectedByRuntimeIndex =
+      firstProjectedIndex > 0
+        ? previousProjectedByRuntimeIndex.slice(0, firstProjectedIndex)
+        : [];
+    const compactIndexByRuntimeIndex =
+      firstProjectedIndex > 0
+        ? previousCompactIndexByRuntimeIndex.slice(0, firstProjectedIndex)
+        : [];
+    let changed =
+      previousAgent !== agent ||
+      previousRuntimeMessages.length !== runtimeMessages.length;
+
+    for (
+      let index = firstProjectedIndex;
+      index < runtimeMessages.length;
+      index += 1
+    ) {
+      const message = runtimeMessages[index]!;
+      const cached = cache.get(message.id);
+      const snapshot = createRuntimeMessageSnapshot(message);
+      const nextCacheEntry = projectRuntimeMessage({
+        message,
+        agent,
+        snapshot,
+        cached,
+      });
+      const projected = nextCacheEntry.projected;
+
+      cache.set(message.id, nextCacheEntry);
+      projectedByRuntimeIndex[index] = projected;
+      if (projected !== previousProjectedByRuntimeIndex[index]) {
+        changed = true;
+      }
+    }
+
+    if (
+      shouldPruneRuntimeProjectionCache(
+        previousRuntimeMessages,
+        runtimeMessages,
+      )
+    ) {
+      pruneRuntimeProjectionCache(cache, runtimeMessages);
+    }
+
+    const projectedMessages: UIMessage[] = [];
+    for (let index = 0; index < projectedByRuntimeIndex.length; index += 1) {
+      const projected = projectedByRuntimeIndex[index] ?? null;
       if (projected !== null) {
+        compactIndexByRuntimeIndex[index] = projectedMessages.length;
         projectedMessages.push(projected);
+      } else {
+        compactIndexByRuntimeIndex[index] = -1;
       }
     }
 
-    for (const cachedId of cache.keys()) {
-      if (!liveIds.has(cachedId)) {
-        cache.delete(cachedId);
-      }
+    if (
+      !changed &&
+      projectedMessages.length === previousProjectedMessages.length &&
+      projectedMessages.every(
+        (message, index) => message === previousProjectedMessages[index],
+      )
+    ) {
+      return { source: "runtime", messages: previousProjectedMessages };
     }
 
+    previousAgent = agent;
+    previousRuntimeMessages = runtimeMessages;
+    previousProjectedByRuntimeIndex = projectedByRuntimeIndex;
+    previousCompactIndexByRuntimeIndex = compactIndexByRuntimeIndex;
+    previousProjectedMessages = projectedMessages;
+    previousProjectionHintVersion =
+      projectionHint?.version ?? previousProjectionHintVersion;
     return { source: "runtime", messages: projectedMessages };
   };
 }
 
-export function projectRuntimeTranscriptMessages(params: {
-  runtimeMessages: readonly ThreadMessage[];
-  agent: AIAgent;
-}): RuntimeTranscriptProjection {
-  const { runtimeMessages, agent } = params;
+type ProjectedTranscriptState = {
+  projectedByRuntimeIndex: Array<UIMessage | null>;
+  compactIndexByRuntimeIndex: number[];
+  projectedMessages: UIMessage[];
+};
 
+function canUseTailProjectionFastPath({
+  previousAgent,
+  agent,
+  previousRuntimeMessages,
+  runtimeMessages,
+  trustedFirstChangedIndex,
+}: {
+  previousAgent: AIAgent | null;
+  agent: AIAgent;
+  previousRuntimeMessages: readonly ThreadMessage[];
+  runtimeMessages: readonly ThreadMessage[];
+  trustedFirstChangedIndex: number | null;
+}): boolean {
+  if (
+    previousAgent !== agent ||
+    runtimeMessages.length === 0 ||
+    previousRuntimeMessages.length !== runtimeMessages.length
+  ) {
+    return false;
+  }
+
+  const tailIndex = runtimeMessages.length - 1;
+  if (trustedFirstChangedIndex !== null) {
+    return (
+      trustedFirstChangedIndex >= tailIndex &&
+      previousRuntimeMessages[tailIndex]?.id === runtimeMessages[tailIndex]?.id
+    );
+  }
+
+  if (
+    previousRuntimeMessages[tailIndex]?.id !== runtimeMessages[tailIndex]?.id
+  ) {
+    return false;
+  }
+
+  for (let index = 0; index < tailIndex; index += 1) {
+    if (previousRuntimeMessages[index] !== runtimeMessages[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getTrustedProjectionHintIndex({
+  projectionHint,
+  previousProjectionHintVersion,
+  previousAgent,
+  agent,
+  runtimeMessages,
+}: {
+  projectionHint: TerragonRuntimeProjectionHint | undefined;
+  previousProjectionHintVersion: number;
+  previousAgent: AIAgent | null;
+  agent: AIAgent;
+  runtimeMessages: readonly ThreadMessage[];
+}): number | null {
+  if (
+    !projectionHint ||
+    projectionHint.version <= previousProjectionHintVersion ||
+    previousAgent !== agent ||
+    projectionHint.firstChangedRuntimeMessageIndex === null
+  ) {
+    return null;
+  }
+  if (
+    projectionHint.firstChangedRuntimeMessageIndex < 0 ||
+    projectionHint.firstChangedRuntimeMessageIndex > runtimeMessages.length
+  ) {
+    return null;
+  }
+  return projectionHint.firstChangedRuntimeMessageIndex;
+}
+
+function rebuildProjectedTranscriptState({
+  runtimeMessages,
+  projectedByRuntimeIndex,
+  agent,
+  cache,
+  setState,
+}: {
+  runtimeMessages: readonly ThreadMessage[];
+  projectedByRuntimeIndex: Array<UIMessage | null>;
+  agent: AIAgent;
+  cache: Map<string, RuntimeProjectionCacheEntry>;
+  setState: (state: ProjectedTranscriptState) => void;
+}): RuntimeTranscriptProjection {
+  const nextProjectedByRuntimeIndex = projectedByRuntimeIndex.slice(
+    0,
+    runtimeMessages.length,
+  );
+  const compactIndexByRuntimeIndex: number[] = [];
   const projectedMessages: UIMessage[] = [];
-  for (const message of runtimeMessages) {
-    const projected = runtimeMessageToUIMessage(message, agent);
+
+  for (let index = 0; index < runtimeMessages.length; index += 1) {
+    const message = runtimeMessages[index]!;
+    let projected = nextProjectedByRuntimeIndex[index];
+    if (projected === undefined) {
+      const cached = cache.get(message.id);
+      const snapshot = createRuntimeMessageSnapshot(message);
+      const nextCacheEntry = projectRuntimeMessage({
+        message,
+        agent,
+        snapshot,
+        cached,
+      });
+      projected = nextCacheEntry.projected;
+      cache.set(message.id, nextCacheEntry);
+      nextProjectedByRuntimeIndex[index] = projected;
+    }
     if (projected !== null) {
+      compactIndexByRuntimeIndex[index] = projectedMessages.length;
       projectedMessages.push(projected);
+    } else {
+      compactIndexByRuntimeIndex[index] = -1;
     }
   }
 
+  setState({
+    projectedByRuntimeIndex: nextProjectedByRuntimeIndex,
+    compactIndexByRuntimeIndex,
+    projectedMessages,
+  });
   return { source: "runtime", messages: projectedMessages };
+}
+
+function getFirstChangedRuntimeMessageIndex(
+  previous: readonly ThreadMessage[],
+  current: readonly ThreadMessage[],
+): number {
+  const sharedLength = Math.min(previous.length, current.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    if (previous[index] !== current[index]) {
+      return index;
+    }
+  }
+  return sharedLength;
+}
+
+function shouldPruneRuntimeProjectionCache(
+  previous: readonly ThreadMessage[],
+  current: readonly ThreadMessage[],
+): boolean {
+  if (current.length < previous.length) {
+    return true;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index]?.id !== current[index]?.id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pruneRuntimeProjectionCache(
+  cache: Map<string, RuntimeProjectionCacheEntry>,
+  runtimeMessages: readonly ThreadMessage[],
+) {
+  const liveIds = new Set(runtimeMessages.map((message) => message.id));
+  for (const cachedId of cache.keys()) {
+    if (!liveIds.has(cachedId)) {
+      cache.delete(cachedId);
+    }
+  }
 }

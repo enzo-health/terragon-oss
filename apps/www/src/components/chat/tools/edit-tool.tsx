@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import { EditDiffView } from "@/components/shared/diff-view";
 import {
@@ -7,9 +7,9 @@ import {
   GenericToolPartContentRow,
   GenericToolPartClickToExpand,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
 } from "./generic-ui";
-import { formatToolParameters } from "./utils";
+import { countTextLines, formatToolParameters } from "./utils";
 
 export function EditTool({
   toolPart,
@@ -36,6 +36,14 @@ function ToolPartEditResult({
   toolPart: Extract<AllToolParts, { name: "Edit" }>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const newLineCount = useMemo(
+    () => countTextLines(toolPart.parameters.new_string),
+    [toolPart.parameters.new_string],
+  );
+  const oldLineCount = useMemo(
+    () => countTextLines(toolPart.parameters.old_string),
+    [toolPart.parameters.old_string],
+  );
   if (toolPart.status === "pending") {
     return (
       <GenericToolPartContentOneLine toolStatus="pending">
@@ -45,9 +53,9 @@ function ToolPartEditResult({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
+      <GenericToolPartContentResultWithText
         toolStatus="error"
-        lines={toolPart.result?.split("\n") ?? []}
+        content={toolPart.result ?? ""}
       />
     );
   }
@@ -56,12 +64,8 @@ function ToolPartEditResult({
       <GenericToolPartContentRow index={0}>
         <span>
           <span className="font-semibold">
-            <span className="text-success">
-              +{toolPart.parameters.new_string.split("\n").length}
-            </span>{" "}
-            <span className="text-error">
-              -{toolPart.parameters.old_string.split("\n").length}
-            </span>
+            <span className="text-success">+{newLineCount}</span>{" "}
+            <span className="text-error">-{oldLineCount}</span>
           </span>{" "}
           <GenericToolPartClickToExpand
             label={expanded ? "Hide diff" : "Show diff"}

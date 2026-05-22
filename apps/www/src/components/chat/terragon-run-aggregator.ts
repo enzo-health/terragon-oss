@@ -27,10 +27,29 @@ type ToolCallState = {
   toolCallName: string;
   argsText: string;
   parsedArgs: ReadonlyJSONObject | undefined;
+  parsedArgsText: string | undefined;
+  progressChunks: ToolProgressChunk[];
+  progressHiddenCount: number;
+  toolStatus: ToolLifecycleStatus | undefined;
   result: unknown;
   isError: boolean | undefined;
   parentMessageId?: string;
 };
+
+type ToolProgressChunk = { seq: number; text: string };
+const MAX_PROGRESS_CHUNKS = 50;
+type ToolLifecycleStatus = "started" | "in_progress" | "completed" | "failed";
+type RuntimeToolCallMessagePart = ToolCallMessagePart<ReadonlyJSONObject> & {
+  progressChunks?: ToolProgressChunk[];
+  progressHiddenCount?: number;
+  toolStatus?: ToolLifecycleStatus;
+};
+const EMPTY_TOOL_ARGS: ReadonlyJSONObject = Object.freeze({});
+
+function toolArgsMayBeComplete(text: string): boolean {
+  const trimmed = text.trimEnd();
+  return trimmed.endsWith("}") || trimmed.endsWith("]");
+}
 
 type RunLifecycleEvent =
   | { type: "RUN_STARTED"; runId: string }
@@ -52,6 +71,10 @@ type OrderedPart =
   | { kind: "tool-call"; toolCallId: string }
   | { kind: "data"; key: string };
 
+type ScheduledEmitHandle =
+  | { kind: "animation-frame"; id: number }
+  | { kind: "timeout"; id: ReturnType<typeof globalThis.setTimeout> };
+
 export class TerragonRunAggregator {
   private readonly emitUpdate: Emit;
   private readonly showThinking: boolean;
@@ -71,6 +94,8 @@ export class TerragonRunAggregator {
   private hasReasoningPart = false;
   private textPartCounter = 0;
   private lastTargetMessageId: string | undefined;
+  private pendingEmitTargetMessageId: string | undefined;
+  private pendingEmitHandle: ScheduledEmitHandle | undefined;
 
   constructor(options: TerragonRunAggregatorOptions) {
     this.emitUpdate = options.emit;
@@ -126,7 +151,7 @@ export class TerragonRunAggregator {
           "messageId" in event ? event.messageId : undefined,
         );
         this.appendText(id, event.delta);
-        this.emit(this.targetMessageIdForText(id));
+        this.scheduleEmit(this.targetMessageIdForText(id));
         break;
       }
       case EventType.TEXT_MESSAGE_END: {
@@ -172,21 +197,27 @@ export class TerragonRunAggregator {
         this.emit(this.lastTargetMessageId);
         break;
       }
-      case EventType.TOOL_CALL_ARGS:
-      case EventType.TOOL_CALL_CHUNK: {
+      case EventType.TOOL_CALL_ARGS: {
         if (!event.delta) break;
         this.appendToolArgs(event.toolCallId, event.delta);
-        this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+        this.scheduleEmit(this.targetMessageIdForToolCall(event.toolCallId));
+        break;
+      }
+      case EventType.TOOL_CALL_CHUNK: {
+        if (!event.delta) break;
+        this.appendToolProgress(event.toolCallId, event.delta);
+        this.scheduleEmit(this.targetMessageIdForToolCall(event.toolCallId));
         break;
       }
       case EventType.TOOL_CALL_END: {
+        this.finalizeToolArgs(event.toolCallId);
         this.emit(this.targetMessageIdForToolCall(event.toolCallId));
         break;
       }
       case EventType.TOOL_CALL_RESULT: {
         this.finishToolCall(
           event.toolCallId,
-          event.content ?? "",
+          "content" in event ? event.content : "",
           this.toolResultErrorStatus(event),
         );
         this.emit(this.targetMessageIdForToolCall(event.toolCallId));
@@ -200,6 +231,7 @@ export class TerragonRunAggregator {
   }
 
   private reset(): void {
+    this.cancelScheduledEmit();
     this.textParts.clear();
     this.reasoningBuffer = "";
     this.reasoningActive = false;
@@ -210,6 +242,7 @@ export class TerragonRunAggregator {
     this.textPartCounter = 0;
     this.activeTextMessageId = undefined;
     this.lastTargetMessageId = undefined;
+    this.pendingEmitTargetMessageId = undefined;
   }
 
   private generateTextKey(): string {
@@ -331,6 +364,10 @@ export class TerragonRunAggregator {
       toolCallName: name ?? "tool",
       argsText: "",
       parsedArgs: undefined,
+      parsedArgsText: undefined,
+      progressChunks: [],
+      progressHiddenCount: 0,
+      toolStatus: "started",
       result: undefined,
       isError: undefined,
     };
@@ -356,12 +393,30 @@ export class TerragonRunAggregator {
     const entry = id ? this.toolCalls.get(id) : undefined;
     if (!entry) return;
     entry.argsText += delta;
-    try {
-      const parsed: unknown = JSON.parse(entry.argsText);
-      entry.parsedArgs = isReadonlyJSONObject(parsed) ? parsed : undefined;
-    } catch {
-      entry.parsedArgs = undefined;
+    if (toolArgsMayBeComplete(entry.argsText)) {
+      this.parseToolArgs(entry);
     }
+  }
+
+  private appendToolProgress(id: string | undefined, text: string): void {
+    const entry = id ? this.toolCalls.get(id) : undefined;
+    if (!entry) return;
+    const seq = (entry.progressChunks.at(-1)?.seq ?? 0) + 1;
+    const chunk = { seq, text };
+    if (entry.progressChunks.length >= MAX_PROGRESS_CHUNKS) {
+      entry.progressHiddenCount += 1;
+      entry.progressChunks.shift();
+      entry.progressChunks.push(chunk);
+    } else {
+      entry.progressChunks.push(chunk);
+    }
+    entry.toolStatus = "in_progress";
+  }
+
+  private finalizeToolArgs(id: string | undefined): void {
+    const entry = id ? this.toolCalls.get(id) : undefined;
+    if (!entry) return;
+    this.parseToolArgs(entry);
   }
 
   private toolResultErrorStatus(
@@ -370,10 +425,17 @@ export class TerragonRunAggregator {
     if ("isError" in event && typeof event.isError === "boolean") {
       return event.isError;
     }
-    return event.role === "tool" ? true : undefined;
+    const status = Reflect.get(event, "status");
+    if (status === "error") return true;
+    const error = Reflect.get(event, "error");
+    return typeof error === "string" ? true : undefined;
   }
 
-  private finishToolCall(id: string, content: string, isError?: boolean): void {
+  private finishToolCall(
+    id: string,
+    content: unknown,
+    isError?: boolean,
+  ): void {
     if (!id) return;
     let entry = this.toolCalls.get(id);
     if (!entry) {
@@ -382,6 +444,10 @@ export class TerragonRunAggregator {
         toolCallName: "tool",
         argsText: "",
         parsedArgs: undefined,
+        parsedArgsText: undefined,
+        progressChunks: [],
+        progressHiddenCount: 0,
+        toolStatus: "started",
         result: undefined,
         isError: undefined,
       };
@@ -394,8 +460,10 @@ export class TerragonRunAggregator {
     ) {
       this.partOrder.push({ kind: "tool-call", toolCallId: id });
     }
+    this.parseToolArgs(entry);
     entry.result = this.tryParseJSON(content);
     entry.isError = isError;
+    entry.toolStatus = isError ? "failed" : "completed";
   }
 
   private finishUnresolvedToolCalls(content: string): void {
@@ -403,10 +471,12 @@ export class TerragonRunAggregator {
       if (entry.result !== undefined) continue;
       entry.result = content;
       entry.isError = true;
+      entry.toolStatus = "failed";
     }
   }
 
-  private tryParseJSON(value: string): unknown {
+  private tryParseJSON(value: unknown): unknown {
+    if (typeof value !== "string") return value;
     if (!value) return value;
     try {
       return JSON.parse(value);
@@ -415,7 +485,25 @@ export class TerragonRunAggregator {
     }
   }
 
+  private parseToolArgs(entry: ToolCallState): void {
+    if (entry.parsedArgsText === entry.argsText) {
+      return;
+    }
+    entry.parsedArgsText = entry.argsText;
+    if (!entry.argsText) {
+      entry.parsedArgs = undefined;
+      return;
+    }
+    try {
+      const parsed: unknown = JSON.parse(entry.argsText);
+      entry.parsedArgs = isReadonlyJSONObject(parsed) ? parsed : undefined;
+    } catch {
+      entry.parsedArgs = undefined;
+    }
+  }
+
   private emit(targetMessageId: string | undefined): void {
+    this.cancelScheduledEmit();
     const snapshot: ThreadAssistantMessagePart[] = [];
 
     for (const part of this.partOrder) {
@@ -450,12 +538,21 @@ export class TerragonRunAggregator {
 
       const entry = this.toolCalls.get(part.toolCallId);
       if (!entry) continue;
-      const toolPart: ToolCallMessagePart<ReadonlyJSONObject> = {
+      const toolPart: RuntimeToolCallMessagePart = {
         type: "tool-call",
         toolCallId: entry.toolCallId,
         toolName: entry.toolCallName,
-        args: entry.parsedArgs ?? {},
+        args: entry.parsedArgs ?? EMPTY_TOOL_ARGS,
         argsText: entry.argsText,
+        ...(entry.progressChunks.length > 0
+          ? { progressChunks: entry.progressChunks.slice() }
+          : {}),
+        ...(entry.progressHiddenCount > 0
+          ? { progressHiddenCount: entry.progressHiddenCount }
+          : {}),
+        ...(entry.progressChunks.length > 0 && entry.toolStatus
+          ? { toolStatus: entry.toolStatus }
+          : {}),
         ...(entry.result !== undefined ? { result: entry.result } : {}),
         ...(entry.isError !== undefined ? { isError: entry.isError } : {}),
         ...(entry.parentMessageId ? { parentId: entry.parentMessageId } : {}),
@@ -470,6 +567,50 @@ export class TerragonRunAggregator {
     this.emitUpdate(result, targetMessageId);
   }
 
+  private scheduleEmit(targetMessageId: string | undefined): void {
+    this.pendingEmitTargetMessageId =
+      targetMessageId ?? this.pendingEmitTargetMessageId;
+    if (this.pendingEmitHandle !== undefined) {
+      return;
+    }
+
+    const flush = () => {
+      const pendingTargetMessageId = this.pendingEmitTargetMessageId;
+      this.pendingEmitHandle = undefined;
+      this.pendingEmitTargetMessageId = undefined;
+      this.emit(pendingTargetMessageId);
+    };
+
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+      this.pendingEmitHandle = {
+        kind: "animation-frame",
+        id: window.requestAnimationFrame(flush),
+      };
+      return;
+    }
+
+    this.pendingEmitHandle = {
+      kind: "timeout",
+      id: globalThis.setTimeout(flush, 16),
+    };
+  }
+
+  private cancelScheduledEmit(): void {
+    if (this.pendingEmitHandle === undefined) {
+      return;
+    }
+    if (
+      this.pendingEmitHandle.kind === "animation-frame" &&
+      typeof window !== "undefined" &&
+      window.cancelAnimationFrame
+    ) {
+      window.cancelAnimationFrame(this.pendingEmitHandle.id);
+    } else {
+      globalThis.clearTimeout(this.pendingEmitHandle.id);
+    }
+    this.pendingEmitHandle = undefined;
+  }
+
   private handleReasoningStart(): void {
     if (!this.showThinking) return;
     this.reasoningActive = true;
@@ -481,7 +622,7 @@ export class TerragonRunAggregator {
     if (!this.showThinking || !delta) return;
     this.reasoningBuffer += delta;
     this.ensureReasoningPart();
-    this.emit(this.lastTargetMessageId);
+    this.scheduleEmit(this.lastTargetMessageId);
   }
 
   private handleReasoningEnd(): void {

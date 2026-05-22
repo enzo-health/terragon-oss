@@ -7,7 +7,7 @@ import {
   GenericToolPartContent,
   GenericToolPartContentRow,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
 } from "./generic-ui";
 import {
   FILE_CHANGE_DIFF_RESULT_TYPE,
@@ -111,8 +111,8 @@ function FileChangeToolContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );

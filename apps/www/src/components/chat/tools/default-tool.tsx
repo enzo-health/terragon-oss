@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { AllToolParts } from "@terragon/shared";
 import {
   GenericToolPart,
@@ -43,15 +43,29 @@ export function McpToolDisplay({
 }
 
 export function DefaultTool({ toolPart }: { toolPart: AllToolParts }) {
-  const mcpInfo = parseMcpToolName(toolPart.name);
+  const mcpInfo = useMemo(
+    () => parseMcpToolName(toolPart.name),
+    [toolPart.name],
+  );
   const displayName = mcpInfo ? (
     <McpToolDisplay serverName={mcpInfo.server} toolName={mcpInfo.tool} />
   ) : null;
-  const toolArg = mcpInfo
-    ? formatToolParameters(toolPart.parameters, {
-        excludeKeys: ["server", "tool"],
-      })
-    : formatToolParameters(toolPart.parameters);
+  const toolArg = useMemo(
+    () =>
+      mcpInfo
+        ? formatToolParameters(toolPart.parameters, {
+            excludeKeys: ["server", "tool"],
+          })
+        : formatToolParameters(toolPart.parameters),
+    [mcpInfo, toolPart.parameters],
+  );
+  const resultPreview = useMemo(
+    () =>
+      toolPart.status === "completed"
+        ? summarizeToolResult(toolPart.result)
+        : null,
+    [toolPart],
+  );
 
   return (
     <GenericToolPart
@@ -71,7 +85,7 @@ export function DefaultTool({ toolPart }: { toolPart: AllToolParts }) {
         />
       ) : (
         <GenericToolPartContentResultWithPreview
-          preview={summarizeToolResult(toolPart.result)}
+          preview={resultPreview}
           content={toolPart.result}
           toolStatus="completed"
         />

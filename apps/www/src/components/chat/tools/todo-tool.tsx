@@ -35,9 +35,20 @@ function TodoProgressBar({ todos }: { todos: { status: string }[] }) {
   const completed = todos.filter((t) => t.status === "completed").length;
   const inProgress = todos.filter((t) => t.status === "in_progress").length;
   const pct = Math.round((completed / total) * 100);
+  const label = `${completed} of ${total} todos completed${
+    inProgress > 0 ? `, ${inProgress} active` : ""
+  }`;
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+      <div
+        className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden"
+        role="progressbar"
+        aria-label="Todo progress"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={completed}
+        aria-valuetext={label}
+      >
         <div
           className="h-full bg-success rounded-full transition-[width] duration-300 ease-out"
           style={{ width: `${pct}%` }}

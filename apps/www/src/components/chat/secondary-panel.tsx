@@ -26,10 +26,12 @@ import type { PromptBoxRef } from "./thread-context";
 
 // Re-exports preserved for external importers and tests.
 export {
+  createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
+  type ArtifactDescriptorLookup,
   type ArtifactWorkspaceItemSummary,
   type ArtifactWorkspaceStatus,
 } from "./secondary-panel-helpers";
