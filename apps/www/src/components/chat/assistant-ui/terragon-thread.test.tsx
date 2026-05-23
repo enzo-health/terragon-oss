@@ -174,6 +174,28 @@ describe("TerragonTranscriptSurface", () => {
 
     expect(container!.textContent).toContain("Failed to load task history");
   });
+
+  it("reserves checklist height for the booting footer", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "booting",
+        bootingSubstatus: "provisioning",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.querySelector(".min-h-\\[168px\\]")).not.toBeNull();
+  });
 });
 
 describe("resolveTerragonThreadErrorProps", () => {

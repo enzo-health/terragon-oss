@@ -71,6 +71,8 @@ export function TerragonTranscriptSurface({
     Math.max(0, lastIndex),
   );
   const liveMessage = lastIndex >= 0 ? messages[lastIndex] : undefined;
+  const workingMessageSlotClassName =
+    threadStatus === "booting" ? "min-h-[168px]" : "min-h-11";
 
   return (
     <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-6 sm:mt-8 mb-8">
@@ -117,7 +119,7 @@ export function TerragonTranscriptSurface({
         />
       )}
       {reserveWorkingMessageSlot && (
-        <div className="min-h-11">
+        <div className={workingMessageSlotClassName}>
           {showWorkingMessage ? (
             <WorkingMessage
               agent={chatAgent}

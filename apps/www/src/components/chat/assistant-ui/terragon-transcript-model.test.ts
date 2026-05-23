@@ -89,8 +89,58 @@ describe("buildTerragonTranscriptModel", () => {
       optimisticUserMessages: [],
     });
 
-    expect(model.latestAgentMessageIndex).toBe(1);
+    expect(model.latestAgentMessageIndex).toBe(0);
     expect(model.hasPendingToolCall).toBe(true);
+  });
+
+  it("coalesces contiguous agent runtime messages into one assistant turn", () => {
+    const firstTextMessage: UIMessage = {
+      id: "agent-text-1",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "Starting" }],
+    };
+    const toolMessage: UIMessage = {
+      id: "agent-tool-1",
+      role: "agent",
+      agent: "codex",
+      parts: [
+        {
+          type: "tool",
+          id: "tool-1",
+          agent: "codex",
+          name: "Bash",
+          parameters: {},
+          status: "completed",
+          result: "ok",
+          parts: [],
+        },
+      ],
+    };
+    const finalTextMessage: UIMessage = {
+      id: "agent-text-2",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "Done" }],
+    };
+
+    const model = buildTerragonTranscriptModel({
+      runtimeMessages: [firstTextMessage, toolMessage, finalTextMessage],
+      optimisticUserMessages: [],
+    });
+
+    expect(model.messages).toHaveLength(1);
+    expect(model.messages[0]).toMatchObject({
+      id: "agent-text-1",
+      role: "agent",
+      agent: "codex",
+      parts: [
+        { type: "text", text: "Starting" },
+        { type: "tool", id: "tool-1" },
+        { type: "text", text: "Done" },
+      ],
+    });
+    expect(model.latestAgentMessageIndex).toBe(0);
   });
 
   it("builds plan occurrences from runtime-owned final transcript messages", () => {

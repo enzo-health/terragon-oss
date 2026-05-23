@@ -41,9 +41,8 @@ export function buildTerragonTranscriptModel({
   runtimeMessages,
   optimisticUserMessages,
 }: BuildTerragonTranscriptModelInput): TerragonTranscriptModel {
-  const messages = appendOptimisticUserMessages(
-    runtimeMessages,
-    optimisticUserMessages,
+  const messages = coalesceContiguousAgentMessages(
+    appendOptimisticUserMessages(runtimeMessages, optimisticUserMessages),
   );
 
   const facts = deriveTranscriptFacts(messages);
@@ -55,6 +54,34 @@ export function buildTerragonTranscriptModel({
       ? buildThreadPlanOccurrenceMap(messages)
       : EMPTY_PLAN_OCCURRENCES,
   };
+}
+
+function coalesceContiguousAgentMessages(messages: UIMessage[]): UIMessage[] {
+  let didCoalesce = false;
+  const coalesced: UIMessage[] = [];
+
+  for (const message of messages) {
+    const previous = coalesced.at(-1);
+    if (
+      previous?.role === "agent" &&
+      message.role === "agent" &&
+      previous.agent === message.agent &&
+      !messageMayContainProposedPlan(previous) &&
+      !messageMayContainProposedPlan(message)
+    ) {
+      didCoalesce = true;
+      coalesced[coalesced.length - 1] = {
+        ...previous,
+        parts: [...previous.parts, ...message.parts],
+        meta: message.meta ?? previous.meta,
+      };
+      continue;
+    }
+
+    coalesced.push(message);
+  }
+
+  return didCoalesce ? coalesced : messages;
 }
 
 function deriveTranscriptFacts(
