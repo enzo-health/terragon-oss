@@ -275,6 +275,63 @@ describe("TerragonTranscriptSurface", () => {
     expect(container!.querySelector(".min-h-\\[168px\\]")).toBeNull();
     expect(container!.querySelector(".min-h-11")).not.toBeNull();
   });
+
+  it("keeps the compact working lane reserved while a tool row suppresses status text", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "system",
+            parts: [{ type: "text", text: "Tool row owns the live tail" }],
+          },
+        ],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "working",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Tool row owns the live tail");
+    expect(container!.querySelector(".min-h-11")).not.toBeNull();
+    expect(container!.textContent).not.toContain("Codex is working");
+  });
+
+  it("renders passive-wait text in the reserved lane even when animated status is suppressed", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "system",
+            parts: [{ type: "text", text: "Prompt already in transcript" }],
+          },
+        ],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "working",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: { message: "Waiting for review", reason: null },
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Waiting for review");
+    expect(container!.querySelector(".min-h-11")).not.toBeNull();
+  });
 });
 
 describe("resolveTerragonThreadErrorProps", () => {

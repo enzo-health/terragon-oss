@@ -162,25 +162,30 @@ export function TerragonThreadRuntimeContent({
   }, [isAgentWorking]);
 
   const hasSandboxError = isSandboxErrorType(errorType ?? null);
+  const suppressPreStartLifecycleFooter = shouldSuppressPreStartLifecycleFooter(
+    {
+      threadStatus,
+      hasAgentMessages: transcriptModel.hasRenderableAgentParts,
+    },
+  );
   const baseShowWorking =
     isAgentWorking &&
     (!transcriptModel.hasPendingToolCall ||
       !transcriptModel.hasRenderableAgentParts) &&
     !hasSandboxError &&
-    !shouldSuppressPreStartLifecycleFooter({
-      threadStatus,
-      hasAgentMessages: transcriptModel.hasRenderableAgentParts,
-    });
+    !suppressPreStartLifecycleFooter;
+  const shouldCheckWorkingFooterFreshness =
+    isAgentWorking && !hasSandboxError && !suppressPreStartLifecycleFooter;
 
   const footerFreshness = useMemo(
     () =>
       getWorkingFooterFreshness({
         now: new Date(nowMs),
-        isWorkingCandidate: baseShowWorking,
+        isWorkingCandidate: shouldCheckWorkingFooterFreshness,
         threadChatUpdatedAt: threadChatUpdatedAt ?? null,
         uncertainMessage: "Waiting for updates",
       }),
-    [baseShowWorking, nowMs, threadChatUpdatedAt],
+    [nowMs, shouldCheckWorkingFooterFreshness, threadChatUpdatedAt],
   );
 
   const passiveWaitProp =

@@ -1,6 +1,9 @@
 /* @vitest-environment jsdom */
 
-import type { ThreadMessage } from "@assistant-ui/react";
+import type {
+  ThreadAssistantMessagePart,
+  ThreadMessage,
+} from "@assistant-ui/react";
 import type {
   DBUserMessage,
   ThreadInfoFull,
@@ -24,6 +27,8 @@ const transcriptSurfaceProps = vi.hoisted(
     [] as Array<{
       messages: UIMessage[];
       isRuntimeHydrating: boolean;
+      passiveWait: { message: string; reason: null } | null;
+      reserveWorkingMessageSlot: boolean;
       showWorkingMessage: boolean;
     }>,
 );
@@ -40,6 +45,8 @@ vi.mock("./terragon-transcript-surface", async () => {
     TerragonTranscriptSurface: (props: {
       messages: UIMessage[];
       isRuntimeHydrating: boolean;
+      passiveWait: { message: string; reason: null } | null;
+      reserveWorkingMessageSlot: boolean;
       showWorkingMessage: boolean;
     }) => {
       transcriptSurfaceProps.push(props);
@@ -430,5 +437,67 @@ describe("TerragonThreadRuntimeContent", () => {
     );
 
     expect(transcriptSurfaceProps[0]?.showWorkingMessage).toBe(true);
+  });
+
+  it("keeps passive wait available when a pending tool row suppresses animated status", () => {
+    runtimeState.thread.messages = [
+      {
+        id: "assistant-tool",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "Bash",
+            args: { command: "pnpm test" },
+            argsText: '{"command":"pnpm test"}',
+          } satisfies ThreadAssistantMessagePart,
+        ],
+        status: { type: "running" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+    const messagesRef = { current: [] as UIMessage[] };
+
+    mount(
+      createElement(TerragonThreadRuntimeContent, {
+        lifecycleMessages: [],
+        threadStatus: "working",
+        thread: makeThreadWithDbTranscriptSentinel(),
+        latestGitDiffTimestamp: null,
+        isAgentWorking: true,
+        artifactDescriptors: [],
+        onOpenArtifact: vi.fn(),
+        toolProps: {
+          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messagesRef,
+          githubRepoFullName: "acme/app",
+          repoBaseBranchName: "main",
+          branchName: "feature/runtime-contract",
+        },
+        hasCheckpoint: false,
+        chatAgent: "codex",
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        reattemptQueueAt: null,
+        threadChatId: "chat-1",
+        threadChatUpdatedAt: new Date(Date.now() - 6 * 60 * 1_000),
+      }),
+    );
+
+    expect(transcriptSurfaceProps[0]?.reserveWorkingMessageSlot).toBe(true);
+    expect(transcriptSurfaceProps[0]?.showWorkingMessage).toBe(false);
+    expect(transcriptSurfaceProps[0]?.passiveWait).toEqual({
+      message: "Waiting for updates",
+      reason: null,
+    });
   });
 });

@@ -72,9 +72,7 @@ export function TerragonTranscriptSurface({
   );
   const liveMessage = lastIndex >= 0 ? messages[lastIndex] : undefined;
   const hasTranscriptMessages = messages.length > 0;
-  const shouldRenderWorkingMessageSlot =
-    reserveWorkingMessageSlot &&
-    (!hasTranscriptMessages || showWorkingMessage || passiveWait);
+  const shouldRenderWorkingMessage = showWorkingMessage || passiveWait !== null;
   const workingMessageSlotClassName = getWorkingMessageSlotClassName({
     hasTranscriptMessages,
     threadStatus,
@@ -124,9 +122,9 @@ export function TerragonTranscriptSurface({
           isRetrying={isRetrying}
         />
       )}
-      {shouldRenderWorkingMessageSlot && (
+      {reserveWorkingMessageSlot && (
         <div className={workingMessageSlotClassName}>
-          {showWorkingMessage ? (
+          {shouldRenderWorkingMessage ? (
             <WorkingMessage
               agent={chatAgent}
               status={threadStatus ?? "working"}
@@ -223,7 +221,7 @@ export function getWorkingMessageSlotClassName({
 }): string {
   return threadStatus === "booting" && !hasTranscriptMessages
     ? "min-h-[168px]"
-    : "min-h-11";
+    : "min-h-11 flex items-start";
 }
 
 function useStableMessagePrefix(
