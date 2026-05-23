@@ -1,13 +1,16 @@
 "use client";
 
-import type { UIMessage } from "@terragon/shared";
-import { memo } from "react";
+import type { UIMessage, UIPart } from "@terragon/shared";
+import { memo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { AgentMetaFooter } from "../chat-message-agent-meta-footer";
 import { MessageToolbar } from "../chat-message-toolbar";
 import { MessagePart } from "../message-part";
 import { TerragonSystemMessage } from "./system-message";
-import { useTerragonThread } from "./thread-context";
+import {
+  type TerragonThreadContext,
+  useTerragonThread,
+} from "./thread-context";
 
 type RuntimeTerragonMessageProps = {
   message: UIMessage;
@@ -27,6 +30,15 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
   const ctx = useTerragonThread();
   const rowIsAgentWorking =
     ctx.isAgentWorking && isLatestMessage && message.role === "agent";
+  const renderableParts = getRenderableParts(message);
+  const shouldSplitLiveTail = rowIsAgentWorking && renderableParts.length > 1;
+  const staticParts = useStablePartPrefix(
+    renderableParts,
+    shouldSplitLiveTail ? renderableParts.length - 1 : 0,
+  );
+  const livePart = shouldSplitLiveTail
+    ? renderableParts[renderableParts.length - 1]
+    : null;
 
   if (message.role === "system") {
     return (
@@ -61,23 +73,34 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
       >
         <div className="flex flex-col gap-3 text-sm leading-relaxed">
           <div className="flex flex-col gap-3">
-            {message.parts.map((part, partIndex) => (
-              <MessagePart
-                key={partIndex}
-                part={part}
-                isLatest={isLatestMessage}
-                isAgentWorking={rowIsAgentWorking}
-                githubRepoFullName={ctx.messagePartProps.githubRepoFullName}
-                branchName={ctx.messagePartProps.branchName}
-                baseBranchName={ctx.messagePartProps.baseBranchName}
-                hasCheckpoint={ctx.messagePartProps.hasCheckpoint}
-                toolProps={ctx.messagePartProps.toolProps}
-                artifactDescriptors={ctx.artifactDescriptors}
-                artifactDescriptorLookup={ctx.artifactDescriptorLookup}
-                onOpenArtifact={ctx.onOpenArtifact}
-                planOccurrenceIndex={ctx.planOccurrences.get(part)}
+            {shouldSplitLiveTail ? (
+              <>
+                <RuntimeMessageParts
+                  parts={staticParts}
+                  partIndexOffset={0}
+                  isLatestMessage={isLatestMessage}
+                  rowIsAgentWorking={rowIsAgentWorking}
+                  ctx={ctx}
+                />
+                {livePart ? (
+                  <RuntimeMessagePart
+                    part={livePart}
+                    partIndex={renderableParts.length - 1}
+                    isLatestMessage={isLatestMessage}
+                    rowIsAgentWorking={rowIsAgentWorking}
+                    ctx={ctx}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <RuntimeMessageParts
+                parts={renderableParts}
+                partIndexOffset={0}
+                isLatestMessage={isLatestMessage}
+                rowIsAgentWorking={rowIsAgentWorking}
+                ctx={ctx}
               />
-            ))}
+            )}
             {message.role === "agent" && message.meta ? (
               <AgentMetaFooter meta={message.meta} />
             ) : null}
@@ -97,3 +120,98 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
     </div>
   );
 });
+
+type RuntimeMessagePartsProps = {
+  parts: UIPart[];
+  partIndexOffset: number;
+  isLatestMessage: boolean;
+  rowIsAgentWorking: boolean;
+  ctx: TerragonThreadContext;
+};
+
+const RuntimeMessageParts = memo(function RuntimeMessageParts({
+  parts,
+  partIndexOffset,
+  isLatestMessage,
+  rowIsAgentWorking,
+  ctx,
+}: RuntimeMessagePartsProps) {
+  return (
+    <>
+      {parts.map((part, index) => (
+        <RuntimeMessagePart
+          key={partIndexOffset + index}
+          part={part}
+          partIndex={partIndexOffset + index}
+          isLatestMessage={isLatestMessage}
+          rowIsAgentWorking={rowIsAgentWorking}
+          ctx={ctx}
+        />
+      ))}
+    </>
+  );
+});
+
+type RuntimeMessagePartProps = {
+  part: UIPart;
+  partIndex: number;
+  isLatestMessage: boolean;
+  rowIsAgentWorking: boolean;
+  ctx: TerragonThreadContext;
+};
+
+const RuntimeMessagePart = memo(function RuntimeMessagePart({
+  part,
+  partIndex,
+  isLatestMessage,
+  rowIsAgentWorking,
+  ctx,
+}: RuntimeMessagePartProps) {
+  return (
+    <MessagePart
+      part={part}
+      isLatest={isLatestMessage}
+      isAgentWorking={rowIsAgentWorking}
+      githubRepoFullName={ctx.messagePartProps.githubRepoFullName}
+      branchName={ctx.messagePartProps.branchName}
+      baseBranchName={ctx.messagePartProps.baseBranchName}
+      hasCheckpoint={ctx.messagePartProps.hasCheckpoint}
+      toolProps={ctx.messagePartProps.toolProps}
+      artifactDescriptors={ctx.artifactDescriptors}
+      artifactDescriptorLookup={ctx.artifactDescriptorLookup}
+      onOpenArtifact={ctx.onOpenArtifact}
+      planOccurrenceIndex={ctx.planOccurrences.get(part)}
+    />
+  );
+});
+
+function useStablePartPrefix(parts: UIPart[], endExclusive: number): UIPart[] {
+  const previousRef = useRef<{
+    endExclusive: number;
+    prefix: UIPart[];
+  } | null>(null);
+  const previous = previousRef.current;
+
+  if (
+    previous &&
+    previous.endExclusive === endExclusive &&
+    parts.length >= endExclusive &&
+    previous.prefix.every((part, index) => parts[index] === part)
+  ) {
+    return previous.prefix;
+  }
+
+  const prefix = parts.slice(0, endExclusive);
+  previousRef.current = { endExclusive, prefix };
+  return prefix;
+}
+
+function getRenderableParts(message: UIMessage): UIPart[] {
+  switch (message.role) {
+    case "agent":
+    case "user":
+      return message.parts;
+    case "system":
+      return [];
+  }
+}
