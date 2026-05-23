@@ -1144,6 +1144,143 @@ describe("createRuntimeTranscriptProjector", () => {
     });
   });
 
+  it("skips deep snapshot work for unchanged suffix messages", () => {
+    const projector = createRuntimeTranscriptProjector();
+    let argsReadCount = 0;
+    const args = Object.defineProperty(
+      {} as { readonly command: string },
+      "command",
+      {
+        enumerable: true,
+        get() {
+          argsReadCount += 1;
+          return "pwd";
+        },
+      },
+    );
+    const userMessage: ThreadMessage = {
+      id: "user-1",
+      role: "user",
+      createdAt,
+      content: [{ type: "text", text: "Run it" }],
+      attachments: [],
+      metadata: { custom: {} },
+    };
+    const suffixMessage: ThreadMessage = {
+      id: "assistant-suffix",
+      role: "assistant",
+      createdAt,
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "Bash",
+          args,
+          argsText: '{"command":"pwd"}',
+        },
+      ],
+      status: { type: "running" },
+      metadata: {
+        unstable_state: null,
+        unstable_annotations: [],
+        unstable_data: [],
+        steps: [],
+        custom: {},
+      },
+    };
+    const first = projector({
+      runtimeMessages: [userMessage, suffixMessage],
+      agent: "codex",
+    });
+    const firstArgsReadCount = argsReadCount;
+    expect(firstArgsReadCount).toBeGreaterThan(0);
+
+    const changedUserMessage: ThreadMessage = {
+      ...userMessage,
+      content: [{ type: "text", text: "Run it again" }],
+    };
+    const second = projector({
+      runtimeMessages: [changedUserMessage, suffixMessage],
+      agent: "codex",
+      projectionHint: {
+        version: 1,
+        firstChangedRuntimeMessageIndex: 0,
+      },
+    });
+
+    expect(second.messages[0]).not.toBe(first.messages[0]);
+    expect(second.messages[0]).toMatchObject({
+      parts: [{ type: "text", text: "Run it again" }],
+    });
+    expect(second.messages[1]).toBe(first.messages[1]);
+    expect(argsReadCount).toBe(firstArgsReadCount);
+  });
+
+  it("clamps fresh projection hints to earlier runtime reference changes", () => {
+    const projector = createRuntimeTranscriptProjector();
+    const userMessage: ThreadMessage = {
+      id: "user-1",
+      role: "user",
+      createdAt,
+      content: [{ type: "text", text: "Run it" }],
+      attachments: [],
+      metadata: { custom: {} },
+    };
+    const middleMessage: ThreadMessage = {
+      id: "assistant-middle",
+      role: "assistant",
+      createdAt,
+      content: [{ type: "text", text: "old middle" }],
+      status: { type: "running" },
+      metadata: {
+        unstable_state: null,
+        unstable_annotations: [],
+        unstable_data: [],
+        steps: [],
+        custom: {},
+      },
+    };
+    const tailMessage: ThreadMessage = {
+      id: "assistant-tail",
+      role: "assistant",
+      createdAt,
+      content: [{ type: "text", text: "old tail" }],
+      status: { type: "running" },
+      metadata: {
+        unstable_state: null,
+        unstable_annotations: [],
+        unstable_data: [],
+        steps: [],
+        custom: {},
+      },
+    };
+    const first = projector({
+      runtimeMessages: [userMessage, middleMessage, tailMessage],
+      agent: "codex",
+    });
+
+    const changedMiddleMessage: ThreadMessage = {
+      ...middleMessage,
+      content: [{ type: "text", text: "new middle" }],
+    };
+    const second = projector({
+      runtimeMessages: [userMessage, changedMiddleMessage, tailMessage],
+      agent: "codex",
+      projectionHint: {
+        version: 1,
+        firstChangedRuntimeMessageIndex: 2,
+      },
+    });
+
+    expect(second.messages[0]).toBe(first.messages[0]);
+    expect(second.messages[1]).not.toBe(first.messages[1]);
+    expect(second.messages[1]).toMatchObject({
+      id: "assistant-middle",
+      parts: [{ type: "text", text: "new middle" }],
+    });
+    expect(second.messages[2]).toBe(first.messages[2]);
+  });
+
   it("reuses unchanged sibling parts when one active message part changes", () => {
     const projector = createRuntimeTranscriptProjector();
     const textPart: ThreadAssistantMessagePart = {

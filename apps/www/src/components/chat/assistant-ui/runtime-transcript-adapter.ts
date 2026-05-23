@@ -960,13 +960,20 @@ export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
       agent,
       runtimeMessages,
     });
+    const firstChangedIndex = canReusePrefix
+      ? resolveFirstChangedRuntimeMessageIndex({
+          trustedFirstChangedIndex,
+          previousRuntimeMessages,
+          runtimeMessages,
+        })
+      : 0;
     if (
       canUseTailProjectionFastPath({
         previousAgent,
         agent,
         previousRuntimeMessages,
         runtimeMessages,
-        trustedFirstChangedIndex,
+        firstChangedIndex,
       })
     ) {
       const tailIndex = runtimeMessages.length - 1;
@@ -1021,13 +1028,6 @@ export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
       return { source: "runtime", messages: nextProjectedMessages };
     }
 
-    const firstChangedIndex = canReusePrefix
-      ? (trustedFirstChangedIndex ??
-        getFirstChangedRuntimeMessageIndex(
-          previousRuntimeMessages,
-          runtimeMessages,
-        ))
-      : 0;
     const firstProjectedIndex =
       runtimeMessages.length > 0
         ? Math.min(firstChangedIndex, runtimeMessages.length - 1)
@@ -1050,6 +1050,17 @@ export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
       index += 1
     ) {
       const message = runtimeMessages[index]!;
+      const previousProjected = previousProjectedByRuntimeIndex[index];
+      if (
+        canReusePrefix &&
+        index > firstChangedIndex &&
+        previousRuntimeMessages[index] === message &&
+        previousProjected !== undefined
+      ) {
+        projectedByRuntimeIndex[index] = previousProjected;
+        continue;
+      }
+
       const cached = cache.get(message.id);
       const snapshot = createRuntimeMessageSnapshot(message);
       const nextCacheEntry = projectRuntimeMessage({
@@ -1119,13 +1130,13 @@ function canUseTailProjectionFastPath({
   agent,
   previousRuntimeMessages,
   runtimeMessages,
-  trustedFirstChangedIndex,
+  firstChangedIndex,
 }: {
   previousAgent: AIAgent | null;
   agent: AIAgent;
   previousRuntimeMessages: readonly ThreadMessage[];
   runtimeMessages: readonly ThreadMessage[];
-  trustedFirstChangedIndex: number | null;
+  firstChangedIndex: number;
 }): boolean {
   if (
     previousAgent !== agent ||
@@ -1136,25 +1147,29 @@ function canUseTailProjectionFastPath({
   }
 
   const tailIndex = runtimeMessages.length - 1;
-  if (trustedFirstChangedIndex !== null) {
-    return (
-      trustedFirstChangedIndex >= tailIndex &&
-      previousRuntimeMessages[tailIndex]?.id === runtimeMessages[tailIndex]?.id
-    );
-  }
+  return (
+    firstChangedIndex >= tailIndex &&
+    previousRuntimeMessages[tailIndex]?.id === runtimeMessages[tailIndex]?.id
+  );
+}
 
-  if (
-    previousRuntimeMessages[tailIndex]?.id !== runtimeMessages[tailIndex]?.id
-  ) {
-    return false;
+function resolveFirstChangedRuntimeMessageIndex({
+  trustedFirstChangedIndex,
+  previousRuntimeMessages,
+  runtimeMessages,
+}: {
+  trustedFirstChangedIndex: number | null;
+  previousRuntimeMessages: readonly ThreadMessage[];
+  runtimeMessages: readonly ThreadMessage[];
+}): number {
+  const referenceFirstChangedIndex = getFirstChangedRuntimeMessageIndex(
+    previousRuntimeMessages,
+    runtimeMessages,
+  );
+  if (trustedFirstChangedIndex === null) {
+    return referenceFirstChangedIndex;
   }
-
-  for (let index = 0; index < tailIndex; index += 1) {
-    if (previousRuntimeMessages[index] !== runtimeMessages[index]) {
-      return false;
-    }
-  }
-  return true;
+  return Math.min(trustedFirstChangedIndex, referenceFirstChangedIndex);
 }
 
 function getTrustedProjectionHintIndex({
