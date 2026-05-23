@@ -97,6 +97,8 @@ type TerragonTraceSidebandValue = {
   seq?: number;
   projectionIndex?: number;
   projectionCount?: number;
+  agUiEventType: string;
+  messageId?: string;
   daemonEventId: string | null;
   daemonEventReceivedAtMs: number;
 };
@@ -590,6 +592,7 @@ function isAgUiTraceMetadata(value: unknown): value is AgUiTraceMetadata {
 }
 
 function toTerragonTraceSidebandValue(
+  event: BaseEvent,
   identity?: ReplayIdentity,
 ): TerragonTraceSidebandValue | null {
   if (!identity?.trace) {
@@ -607,15 +610,20 @@ function toTerragonTraceSidebandValue(
     ...(identity.projectionCount !== undefined
       ? { projectionCount: identity.projectionCount }
       : {}),
+    agUiEventType: event.type,
+    ...(getStringEventField(event, "messageId")
+      ? { messageId: getStringEventField(event, "messageId")! }
+      : {}),
     daemonEventId: identity.trace.daemonEventId,
     daemonEventReceivedAtMs: identity.trace.daemonEventReceivedAtMs,
   };
 }
 
 function buildTerragonTraceSidebandEvent(
+  event: BaseEvent,
   identity?: ReplayIdentity,
 ): BaseEvent | null {
-  const value = toTerragonTraceSidebandValue(identity);
+  const value = toTerragonTraceSidebandValue(event, identity);
   if (!value) {
     return null;
   }
@@ -1274,7 +1282,7 @@ export async function GET(
           resolvedRunId = nextRunId;
         }
         hasEmittedAgUiDataEvent = true;
-        const traceEvent = buildTerragonTraceSidebandEvent(identity);
+        const traceEvent = buildTerragonTraceSidebandEvent(event, identity);
         if (traceEvent && event.type !== EventType.RUN_STARTED) {
           enqueue(encodeSseEvent(traceEvent));
         }

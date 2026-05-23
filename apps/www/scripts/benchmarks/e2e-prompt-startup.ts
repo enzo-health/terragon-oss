@@ -157,7 +157,7 @@ const DEFAULT_THRESHOLDS: Thresholds = {
   activeStreamGapMs: 750,
   daemonEventToVisibleUpdateMs: 250,
   minAssistantTextChunks: 1,
-  minVisibleUpdates: 1,
+  minVisibleUpdates: 2,
   maxLongTaskMs: 100,
   totalLongTaskMs: 300,
   rafFrameGapP95Ms: 80,
@@ -385,9 +385,25 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       return typeof value === "number" && Number.isFinite(value) ? value : null;
     };
 
-    const latestDaemonReceivedAtMs = (visibleEpochMs) => {
+    const isVisibleTextTraceSpan = (span, messageId) => {
+      if (span?.attributes?.traceKind !== "terragon.trace.daemon_event.received") {
+        return false;
+      }
+      if (span.attributes.messageId !== messageId) {
+        return false;
+      }
+      return (
+        span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
+        span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT"
+      );
+    };
+
+    const latestDaemonReceivedAtMs = (visibleEpochMs, messageId) => {
       for (let index = state.agentTraceSpans.length - 1; index >= 0; index--) {
         const span = state.agentTraceSpans[index];
+        if (!isVisibleTextTraceSpan(span, messageId)) {
+          continue;
+        }
         const direct =
           traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
           traceAttributeNumber(span, "daemonReceivedAtMs") ??
@@ -462,7 +478,10 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           gapMs,
         });
       }
-      const daemonReceivedAtMs = latestDaemonReceivedAtMs(visibleEpochMs);
+      const daemonReceivedAtMs = latestDaemonReceivedAtMs(
+        visibleEpochMs,
+        message.id,
+      );
       if (daemonReceivedAtMs !== null) {
         state.daemonEventToVisibleUpdateSamples.push(
           Math.max(0, Math.round(visibleEpochMs - daemonReceivedAtMs)),
@@ -595,12 +614,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           maxSilentGapMs: gaps.length ? Math.max(...gaps) : 0,
           visibleUpdateCount: state.visibleUpdates.length,
           activeStreamGapCount: state.activeStreamGaps.length,
-          activeStreamGapP95Ms:
-            state.activeStreamGaps.length > 0
-              ? pickPercentile(state.activeStreamGaps, 95)
-              : state.visibleUpdates.length > 0
-                ? 0
-                : null,
+          activeStreamGapP95Ms: pickPercentile(state.activeStreamGaps, 95),
           daemonEventToVisibleUpdateMsP95: pickPercentile(
             state.daemonEventToVisibleUpdateSamples,
             95,

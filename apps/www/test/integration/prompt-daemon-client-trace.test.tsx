@@ -297,6 +297,8 @@ describe("prompt to daemon to client trace", () => {
       runId,
       eventId: "trace-event-1",
       seq: 1,
+      agUiEventType: EventType.TEXT_MESSAGE_START,
+      messageId: "assistant-trace-1",
       daemonEventId: "daemon-event-trace-1",
       daemonEventReceivedAtMs: 123_456,
     });
@@ -341,6 +343,8 @@ describe("prompt to daemon to client trace", () => {
           span.name === "client.agui.event.received" &&
           span.attributes["traceKind"] ===
             "terragon.trace.daemon_event.received" &&
+          span.attributes["agUiEventType"] === EventType.TEXT_MESSAGE_CONTENT &&
+          span.attributes["messageId"] === "assistant-trace-1" &&
           span.attributes["daemonEventReceivedAtMs"] === 123_456,
       ),
     ).toBe(true);

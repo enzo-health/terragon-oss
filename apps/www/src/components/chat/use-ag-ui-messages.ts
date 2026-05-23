@@ -158,12 +158,16 @@ function getTerragonTraceAttributes(
   const daemonEventId = Reflect.get(value, "daemonEventId");
   const eventId = Reflect.get(value, "eventId");
   const seq = Reflect.get(value, "seq");
+  const agUiEventType = Reflect.get(value, "agUiEventType");
+  const messageId = Reflect.get(value, "messageId");
   return {
     traceKind: "terragon.trace.daemon_event.received",
     daemonEventReceivedAtMs,
     daemonEventId: typeof daemonEventId === "string" ? daemonEventId : null,
     eventId: typeof eventId === "string" ? eventId : null,
     seq: typeof seq === "number" ? seq : null,
+    agUiEventType: typeof agUiEventType === "string" ? agUiEventType : null,
+    messageId: typeof messageId === "string" ? messageId : null,
   };
 }
 
