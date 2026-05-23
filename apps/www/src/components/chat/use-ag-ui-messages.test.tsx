@@ -6,7 +6,8 @@ import { EventType } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
 import { act, createElement, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,
@@ -18,6 +19,10 @@ import {
   createThreadViewSidecarEventProjector,
   useThreadViewModel,
 } from "./use-ag-ui-messages";
+
+vi.mock("@/lib/agent-trace", () => ({
+  recordAgentTraceSpan: vi.fn(),
+}));
 
 interface FakeAgent {
   subscribe: (subscriber: {
@@ -101,6 +106,7 @@ afterEach(() => {
   }
   container?.remove();
   container = null;
+  vi.clearAllMocks();
 });
 
 describe("useThreadViewModel sidecar projection", () => {
@@ -426,6 +432,63 @@ describe("useThreadViewModel sidecar projection", () => {
     const last = seen[seen.length - 1]!;
     expect(last).toHaveLength(1);
     expect(last[0]).toBe(beforeStreaming[0]);
+  });
+
+  it("records daemon trace custom events without dispatching sidecar state", () => {
+    const agent = createFakeAgent();
+    const onMessages = vi.fn();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(SidecarHarness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages,
+        }),
+      );
+    });
+    const callsBeforeTraceEvent = onMessages.mock.calls.length;
+
+    act(() => {
+      agent.emit({
+        type: EventType.CUSTOM,
+        name: "terragon.trace.daemon_event.received",
+        value: {
+          runId: "run-1",
+          daemonEventReceivedAtMs: 123,
+          daemonEventId: "daemon-event-1",
+          eventId: "ag-ui-event-1",
+          seq: 7,
+          projectionIndex: 0,
+          projectionCount: 1,
+          agUiEventType: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "agent-1",
+        },
+      } as BaseEvent);
+    });
+
+    expect(onMessages).toHaveBeenCalledTimes(callsBeforeTraceEvent);
+    expect(recordAgentTraceSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: "run-1",
+        name: "client.agui.event.received",
+        attributes: expect.objectContaining({
+          traceKind: "terragon.trace.daemon_event.received",
+          daemonEventReceivedAtMs: 123,
+          daemonEventId: "daemon-event-1",
+          eventId: "ag-ui-event-1",
+          seq: 7,
+          projectionIndex: 0,
+          projectionCount: 1,
+          agUiEventType: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "agent-1",
+        }),
+      }),
+    );
   });
 
   it("can skip legacy transcript projection for runtime-owned rendering", () => {

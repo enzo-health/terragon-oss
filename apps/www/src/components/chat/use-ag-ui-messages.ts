@@ -84,6 +84,9 @@ export function useThreadViewModel({
             ...getTerragonTraceAttributes(projectedEvent),
           },
         });
+        if (isTerragonTraceEvent(projectedEvent)) {
+          return;
+        }
         try {
           dispatch(
             createThreadViewEventFromAgUiEvent(projectedEvent, {
@@ -136,6 +139,13 @@ export function useThreadViewModel({
 export type ThreadViewEventForAgUi = Parameters<
   NonNullable<Parameters<HttpAgent["subscribe"]>[0]["onEvent"]>
 >[0]["event"];
+
+function isTerragonTraceEvent(event: ThreadViewEventForAgUi): boolean {
+  return (
+    event.type === EventType.CUSTOM &&
+    Reflect.get(event, "name") === "terragon.trace.daemon_event.received"
+  );
+}
 
 function getTerragonTraceAttributes(
   event: ThreadViewEventForAgUi,
