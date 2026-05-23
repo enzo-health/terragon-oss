@@ -13,7 +13,9 @@ type Thresholds = {
   totalRunMs: number;
   maxSilentGapMs: number;
   scopedMaxSilentGapMs: number;
+  activeStreamGapMs: number;
   minAssistantTextChunks: number;
+  minVisibleUpdates: number;
   maxLongTaskMs: number;
   totalLongTaskMs: number;
   rafFrameGapP95Ms: number;
@@ -71,6 +73,10 @@ type RunMetrics = {
   scopedInterChunkGapP50Ms: number | null;
   scopedInterChunkGapP95Ms: number | null;
   scopedMaxSilentGapMs: number | null;
+  visibleUpdateCount: number;
+  activeStreamGapCount: number;
+  activeStreamGapP95Ms: number | null;
+  daemonEventToVisibleUpdateMsP95: number | null;
   longTaskCount: number;
   maxLongTaskMs: number;
   totalLongTaskMs: number;
@@ -95,6 +101,10 @@ type BrowserStreamMetricSnapshot = {
   interChunkGapP50Ms: number | null;
   interChunkGapP95Ms: number | null;
   maxSilentGapMs: number | null;
+  visibleUpdateCount: number;
+  activeStreamGapCount: number;
+  activeStreamGapP95Ms: number | null;
+  daemonEventToVisibleUpdateMsP95: number | null;
   longTaskCount: number;
   maxLongTaskMs: number;
   totalLongTaskMs: number;
@@ -143,7 +153,9 @@ const DEFAULT_THRESHOLDS: Thresholds = {
   totalRunMs: 600_000,
   maxSilentGapMs: 45_000,
   scopedMaxSilentGapMs: 1_500,
+  activeStreamGapMs: 750,
   minAssistantTextChunks: 1,
+  minVisibleUpdates: 1,
   maxLongTaskMs: 100,
   totalLongTaskMs: 300,
   rafFrameGapP95Ms: 80,
@@ -308,8 +320,12 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
 
     const state = {
       startedAtEpochMs: null,
-      previousAgentText: "",
+      previousAgentTextByMessageId: {},
       chunkTimes: [],
+      visibleUpdates: [],
+      activeStreamGaps: [],
+      daemonEventToVisibleUpdateSamples: [],
+      agentTraceSpans: [],
       streamedTextBytes: 0,
       longTasks: [],
       rafFrameGaps: [],
@@ -334,6 +350,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       state.startedAtEpochMs === null
         ? null
         : performance.timeOrigin + performance.now() - state.startedAtEpochMs;
+    const epochNow = () => performance.timeOrigin + performance.now();
 
     const sorted = (values) =>
       Array.from(values).sort((left, right) => left - right);
@@ -348,20 +365,129 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       return sortedValues[index] ?? null;
     };
 
-    const lastAgentText = () => {
+    const lastAgentMessage = () => {
       const rows = document.querySelectorAll('[data-message-role="agent"]');
       const last = rows.item(rows.length - 1);
-      return last ? last.textContent ?? "" : "";
+      return last
+        ? {
+            id:
+              last.getAttribute("data-message-id") ??
+              String(rows.length - 1),
+            text: last.textContent ?? "",
+          }
+        : null;
+    };
+
+    const traceAttributeNumber = (span, key) => {
+      const value = span?.attributes?.[key];
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    };
+
+    const latestDaemonReceivedAtMs = (visibleEpochMs) => {
+      for (let index = state.agentTraceSpans.length - 1; index >= 0; index--) {
+        const span = state.agentTraceSpans[index];
+        const direct =
+          traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
+          traceAttributeNumber(span, "daemonReceivedAtMs") ??
+          traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
+        if (direct !== null) return direct;
+        if (
+          span?.name === "server.daemon_event.received" &&
+          typeof span.endedAtMs === "number" &&
+          span.endedAtMs <= visibleEpochMs
+        ) {
+          return span.endedAtMs;
+        }
+      }
+      return null;
+    };
+
+    const recordBenchmarkTraceSpan = (name, attributes) => {
+      const endedAtMs = epochNow();
+      const traceId =
+        state.agentTraceSpans[state.agentTraceSpans.length - 1]?.traceId ??
+        "browser-benchmark";
+      const span = {
+        schemaVersion: 1,
+        traceId,
+        spanId:
+          name +
+          ":" +
+          Math.round(endedAtMs) +
+          ":" +
+          Math.random().toString(36).slice(2),
+        name,
+        startedAtMs: endedAtMs,
+        endedAtMs,
+        durationMs: 0,
+        attributes,
+      };
+      state.agentTraceSpans.push(span);
+      if (typeof window.performance?.mark === "function") {
+        window.performance.mark(
+          "terragon.agent_trace." + name + "." + traceId,
+          {
+            detail: span,
+            startTime: Math.max(0, endedAtMs - window.performance.timeOrigin),
+          },
+        );
+      }
+      window.dispatchEvent(
+        new CustomEvent("terragon:agent-trace", { detail: span }),
+      );
     };
 
     const recordTextMutation = () => {
       const at = relativeNow();
       if (at === null) return;
-      const text = lastAgentText();
-      if (text.length <= state.previousAgentText.length) return;
-      state.chunkTimes.push(Math.round(at));
-      state.streamedTextBytes += text.length - state.previousAgentText.length;
-      state.previousAgentText = text;
+      const message = lastAgentMessage();
+      if (!message) return;
+      const previousText = state.previousAgentTextByMessageId[message.id] ?? "";
+      if (message.text.length <= previousText.length) return;
+      const visibleAtMs = Math.round(at);
+      const visibleEpochMs = epochNow();
+      const textDeltaBytes = message.text.length - previousText.length;
+      const previousVisibleUpdate =
+        state.visibleUpdates[state.visibleUpdates.length - 1];
+      const gapMs =
+        previousVisibleUpdate === undefined
+          ? null
+          : visibleAtMs - previousVisibleUpdate.visibleAtMs;
+      if (gapMs !== null) {
+        state.activeStreamGaps.push(gapMs);
+        recordBenchmarkTraceSpan("browser.agent_text.chunk_gap", {
+          messageId: message.id,
+          gapMs,
+        });
+      }
+      const daemonReceivedAtMs = latestDaemonReceivedAtMs(visibleEpochMs);
+      if (daemonReceivedAtMs !== null) {
+        state.daemonEventToVisibleUpdateSamples.push(
+          Math.max(0, Math.round(visibleEpochMs - daemonReceivedAtMs)),
+        );
+      }
+      state.visibleUpdates.push({
+        messageId: message.id,
+        visibleAtMs,
+        visibleEpochMs: Math.round(visibleEpochMs),
+        textLength: message.text.length,
+        textDeltaBytes,
+        gapMs,
+        daemonReceivedAtMs,
+      });
+      state.chunkTimes.push(visibleAtMs);
+      state.streamedTextBytes += textDeltaBytes;
+      state.previousAgentTextByMessageId[message.id] = message.text;
+      recordBenchmarkTraceSpan("browser.agent_text.visible", {
+        messageId: message.id,
+        visibleAtMs,
+        textLength: message.text.length,
+        textDeltaBytes,
+        daemonEventToVisibleUpdateMs:
+          daemonReceivedAtMs === null
+            ? null
+            : Math.max(0, Math.round(visibleEpochMs - daemonReceivedAtMs)),
+      });
     };
 
     const tick = (now) => {
@@ -386,6 +512,14 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       });
     };
     observeTextMutations();
+
+    const previousTraceSink = window.__terragonAgentTraceSink;
+    window.__terragonAgentTraceSink = (span) => {
+      state.agentTraceSpans.push(span);
+      if (typeof previousTraceSink === "function") {
+        previousTraceSink(span);
+      }
+    };
 
     if ("PerformanceObserver" in window) {
       try {
@@ -422,8 +556,17 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           submitStartedAtStorageKey,
           String(state.startedAtEpochMs),
         );
-        state.previousAgentText = lastAgentText();
+        const lastMessage = lastAgentMessage();
+        state.previousAgentTextByMessageId = {};
+        if (lastMessage) {
+          state.previousAgentTextByMessageId[lastMessage.id] =
+            lastMessage.text;
+        }
         state.chunkTimes = [];
+        state.visibleUpdates = [];
+        state.activeStreamGaps = [];
+        state.daemonEventToVisibleUpdateSamples = [];
+        state.agentTraceSpans = [];
         state.streamedTextBytes = 0;
         state.longTasks = [];
         state.rafFrameGaps = [];
@@ -448,6 +591,18 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           interChunkGapP50Ms: pickPercentile(gaps, 50),
           interChunkGapP95Ms: pickPercentile(gaps, 95),
           maxSilentGapMs: gaps.length ? Math.max(...gaps) : 0,
+          visibleUpdateCount: state.visibleUpdates.length,
+          activeStreamGapCount: state.activeStreamGaps.length,
+          activeStreamGapP95Ms:
+            state.activeStreamGaps.length > 0
+              ? pickPercentile(state.activeStreamGaps, 95)
+              : state.visibleUpdates.length > 0
+                ? 0
+                : null,
+          daemonEventToVisibleUpdateMsP95: pickPercentile(
+            state.daemonEventToVisibleUpdateSamples,
+            95,
+          ),
           longTaskCount: state.longTasks.length,
           maxLongTaskMs: state.longTasks.length ? Math.max(...state.longTasks) : 0,
           totalLongTaskMs: state.longTasks.reduce(
@@ -465,6 +620,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         if (state.observer) state.observer.disconnect();
         if (state.longTaskObserver) state.longTaskObserver.disconnect();
         if (state.layoutShiftObserver) state.layoutShiftObserver.disconnect();
+        window.__terragonAgentTraceSink = previousTraceSink;
         if (state.rafId !== null) {
           window.cancelAnimationFrame(state.rafId);
         }
@@ -512,6 +668,10 @@ async function readBrowserStreamMetrics(
         interChunkGapP50Ms: null,
         interChunkGapP95Ms: null,
         maxSilentGapMs: null,
+        visibleUpdateCount: 0,
+        activeStreamGapCount: 0,
+        activeStreamGapP95Ms: null,
+        daemonEventToVisibleUpdateMsP95: null,
         longTaskCount: 0,
         maxLongTaskMs: 0,
         totalLongTaskMs: 0,
@@ -895,6 +1055,11 @@ async function runIteration(params: {
       scopedInterChunkGapP50Ms: browserMetrics.interChunkGapP50Ms,
       scopedInterChunkGapP95Ms: browserMetrics.interChunkGapP95Ms,
       scopedMaxSilentGapMs: browserMetrics.maxSilentGapMs,
+      visibleUpdateCount: browserMetrics.visibleUpdateCount,
+      activeStreamGapCount: browserMetrics.activeStreamGapCount,
+      activeStreamGapP95Ms: browserMetrics.activeStreamGapP95Ms,
+      daemonEventToVisibleUpdateMsP95:
+        browserMetrics.daemonEventToVisibleUpdateMsP95,
       longTaskCount: browserMetrics.longTaskCount,
       maxLongTaskMs: browserMetrics.maxLongTaskMs,
       totalLongTaskMs: browserMetrics.totalLongTaskMs,
@@ -946,6 +1111,10 @@ async function runIteration(params: {
       scopedInterChunkGapP50Ms: null,
       scopedInterChunkGapP95Ms: null,
       scopedMaxSilentGapMs: null,
+      visibleUpdateCount: 0,
+      activeStreamGapCount: 0,
+      activeStreamGapP95Ms: null,
+      daemonEventToVisibleUpdateMsP95: null,
       longTaskCount: 0,
       maxLongTaskMs: 0,
       totalLongTaskMs: 0,
@@ -995,6 +1164,11 @@ function buildChecks(metrics: RunMetrics, thresholds: Thresholds): Check[] {
       metrics.scopedMaxSilentGapMs,
       thresholds.scopedMaxSilentGapMs,
     ),
+    budgetCheck(
+      "active-stream-gap-budget",
+      metrics.activeStreamGapP95Ms,
+      thresholds.activeStreamGapMs,
+    ),
     {
       name: "assistant-text-chunk-count",
       status:
@@ -1004,6 +1178,15 @@ function buildChecks(metrics: RunMetrics, thresholds: Thresholds): Check[] {
           : "fail",
       actual: metrics.scopedAssistantTextChunkCount,
       expected: thresholds.minAssistantTextChunks,
+    },
+    {
+      name: "visible-update-count",
+      status:
+        metrics.visibleUpdateCount >= thresholds.minVisibleUpdates
+          ? "pass"
+          : "fail",
+      actual: metrics.visibleUpdateCount,
+      expected: thresholds.minVisibleUpdates,
     },
     budgetCheck(
       "max-long-task-budget",
@@ -1099,6 +1282,12 @@ function summarize(
       95,
     ),
     scopedMaxSilentGapMsP95: percentile(metric("scopedMaxSilentGapMs"), 95),
+    visibleUpdateCountP50: percentile(metric("visibleUpdateCount"), 50),
+    activeStreamGapMsP95: percentile(metric("activeStreamGapP95Ms"), 95),
+    daemonEventToVisibleUpdateMsP95: percentile(
+      metric("daemonEventToVisibleUpdateMsP95"),
+      95,
+    ),
     maxLongTaskMsP95: percentile(metric("maxLongTaskMs"), 95),
     totalLongTaskMsP95: percentile(metric("totalLongTaskMs"), 95),
     rafFrameGapP95Ms: percentile(metric("rafFrameGapP95Ms"), 95),
@@ -1132,6 +1321,11 @@ function summarize(
       metrics.scopedMaxSilentGapMsP95,
       config.thresholds.scopedMaxSilentGapMs,
     ),
+    budgetCheck(
+      "active-stream-gap-budget-p95",
+      metrics.activeStreamGapMsP95,
+      config.thresholds.activeStreamGapMs,
+    ),
     {
       name: "assistant-text-chunk-count-p50",
       status:
@@ -1142,6 +1336,16 @@ function summarize(
           : "fail",
       actual: metrics.scopedAssistantTextChunkCountP50 ?? "missing",
       expected: config.thresholds.minAssistantTextChunks,
+    },
+    {
+      name: "visible-update-count-p50",
+      status:
+        metrics.visibleUpdateCountP50 !== null &&
+        metrics.visibleUpdateCountP50 >= config.thresholds.minVisibleUpdates
+          ? "pass"
+          : "fail",
+      actual: metrics.visibleUpdateCountP50 ?? "missing",
+      expected: config.thresholds.minVisibleUpdates,
     },
     budgetCheck(
       "max-long-task-budget-p95",

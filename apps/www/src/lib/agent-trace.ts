@@ -4,6 +4,8 @@ export type AgentTraceSpanName =
   | "client.prompt.submitted"
   | "client.agui.event.received"
   | "client.ui.projected"
+  | "browser.agent_text.visible"
+  | "browser.agent_text.chunk_gap"
   | "server.agui.post.received"
   | "server.agui.followup.dispatched"
   | "server.daemon_event.received"

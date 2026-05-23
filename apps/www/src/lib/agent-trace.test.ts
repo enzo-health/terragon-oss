@@ -45,4 +45,27 @@ describe("recordAgentTraceSpan", () => {
     });
     expect(spans).toEqual([span]);
   });
+
+  it("allows browser-visible streaming spans", () => {
+    const spans: AgentTraceSpan[] = [];
+    globalThis.__terragonAgentTraceSink = (span) => {
+      spans.push(span);
+    };
+
+    recordAgentTraceSpan({
+      traceId: "trace-visible",
+      name: "browser.agent_text.visible",
+      attributes: { messageId: "message-1", textDeltaBytes: 24 },
+    });
+    recordAgentTraceSpan({
+      traceId: "trace-visible",
+      name: "browser.agent_text.chunk_gap",
+      attributes: { messageId: "message-1", gapMs: 120 },
+    });
+
+    expect(spans.map((span) => span.name)).toEqual([
+      "browser.agent_text.visible",
+      "browser.agent_text.chunk_gap",
+    ]);
+  });
 });
