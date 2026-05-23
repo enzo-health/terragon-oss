@@ -375,6 +375,11 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
             id:
               last.getAttribute("data-message-id") ??
               String(rows.length - 1),
+            sourceIds: (
+              last.getAttribute("data-message-source-ids") ?? ""
+            )
+              .split(/\\s+/)
+              .filter(Boolean),
             text: last.textContent ?? "",
           }
         : null;
@@ -385,11 +390,11 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       return typeof value === "number" && Number.isFinite(value) ? value : null;
     };
 
-    const isVisibleTextTraceSpan = (span, messageId) => {
+    const isVisibleTextTraceSpan = (span, messageIds) => {
       if (span?.attributes?.traceKind !== "terragon.trace.daemon_event.received") {
         return false;
       }
-      if (span.attributes.messageId !== messageId) {
+      if (!messageIds.includes(span.attributes.messageId)) {
         return false;
       }
       return (
@@ -398,17 +403,17 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       );
     };
 
-    const latestDaemonReceivedAtMs = (visibleEpochMs, messageId) => {
+    const latestDaemonReceivedAtMs = (visibleEpochMs, messageIds) => {
       for (let index = state.agentTraceSpans.length - 1; index >= 0; index--) {
         const span = state.agentTraceSpans[index];
-        if (!isVisibleTextTraceSpan(span, messageId)) {
+        if (!isVisibleTextTraceSpan(span, messageIds)) {
           continue;
         }
         const direct =
           traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
           traceAttributeNumber(span, "daemonReceivedAtMs") ??
           traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
-        if (direct !== null) return direct;
+        if (direct !== null && direct <= visibleEpochMs) return direct;
         if (
           span?.name === "server.daemon_event.received" &&
           typeof span.endedAtMs === "number" &&
@@ -480,7 +485,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       }
       const daemonReceivedAtMs = latestDaemonReceivedAtMs(
         visibleEpochMs,
-        message.id,
+        message.sourceIds.length > 0 ? message.sourceIds : [message.id],
       );
       if (daemonReceivedAtMs !== null) {
         state.daemonEventToVisibleUpdateSamples.push(

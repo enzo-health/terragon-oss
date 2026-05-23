@@ -43,6 +43,11 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
       className="flex flex-col gap-1 group [scroll-margin-top:6rem] [content-visibility:auto] [contain-intrinsic-size:auto_160px]"
       data-message-index={messageIndex}
       data-message-id={message.id}
+      data-message-source-ids={
+        message.role === "agent"
+          ? message.sourceMessageIds?.join(" ")
+          : undefined
+      }
       data-message-role={message.role}
     >
       <div

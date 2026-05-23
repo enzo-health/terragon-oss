@@ -73,6 +73,10 @@ function coalesceContiguousAgentMessages(messages: UIMessage[]): UIMessage[] {
       coalesced[coalesced.length - 1] = {
         ...previous,
         parts: [...previous.parts, ...message.parts],
+        sourceMessageIds: [
+          ...(previous.sourceMessageIds ?? [previous.id]),
+          ...(message.sourceMessageIds ?? [message.id]),
+        ],
         meta: message.meta ?? previous.meta,
       };
       continue;
@@ -121,7 +125,12 @@ function tryBuildSteadyRuntimeModel({
   previousInput: BuildTerragonTranscriptModelInput | null;
   previousModel: TerragonTranscriptModel | null;
 }): TerragonTranscriptModel | null {
-  if (!previousInput || !previousModel || input.runtimeMessages.length === 0) {
+  if (
+    !previousInput ||
+    !previousModel ||
+    input.runtimeMessages.length === 0 ||
+    input.optimisticUserMessages.length > 0
+  ) {
     return null;
   }
   if (

@@ -27,6 +27,7 @@ export type UIAgentMessage = {
   role: "agent";
   agent: AIAgent;
   parts: UIPart[];
+  sourceMessageIds?: string[];
   meta?: {
     cost_usd: number;
     duration_ms: number;

@@ -134,6 +134,7 @@ describe("buildTerragonTranscriptModel", () => {
       id: "agent-text-1",
       role: "agent",
       agent: "codex",
+      sourceMessageIds: ["agent-text-1", "agent-tool-1", "agent-text-2"],
       parts: [
         { type: "text", text: "Starting" },
         { type: "tool", id: "tool-1" },
@@ -205,6 +206,54 @@ describe("createTerragonTranscriptModelBuilder", () => {
 
     expect(second).not.toBe(first);
     expect(second.messages).toEqual([nextMessage]);
+  });
+
+  it("rebuilds instead of using the steady fast path when optimistic messages are present", () => {
+    const buildModel = createTerragonTranscriptModelBuilder();
+    const firstAgentMessage: UIMessage = {
+      id: "agent-1",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "first" }],
+    };
+    const tailAgentMessage: UIMessage = {
+      id: "agent-2",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "second" }],
+    };
+    const nextTailAgentMessage: UIMessage = {
+      ...tailAgentMessage,
+      parts: [{ type: "text", text: "second updated" }],
+    };
+    const optimisticMessage: UIUserMessage = {
+      id: "user-optimistic-1",
+      role: "user",
+      parts: [{ type: "text", text: "queued" }],
+      timestamp: "2026-01-01T00:00:00.000Z",
+      model: null,
+    };
+
+    buildModel({
+      runtimeMessages: [firstAgentMessage, tailAgentMessage],
+      optimisticUserMessages: [optimisticMessage],
+    });
+    const second = buildModel({
+      runtimeMessages: [firstAgentMessage, nextTailAgentMessage],
+      optimisticUserMessages: [optimisticMessage],
+    });
+
+    expect(second.messages).toHaveLength(2);
+    expect(second.messages[0]).toMatchObject({
+      id: "agent-1",
+      role: "agent",
+      sourceMessageIds: ["agent-1", "agent-2"],
+      parts: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second updated" },
+      ],
+    });
+    expect(second.messages[1]).toBe(optimisticMessage);
   });
 
   it("updates pending tool state when a steady tail gains a pending tool", () => {
