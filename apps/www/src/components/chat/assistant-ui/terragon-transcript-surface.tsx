@@ -71,8 +71,14 @@ export function TerragonTranscriptSurface({
     Math.max(0, lastIndex),
   );
   const liveMessage = lastIndex >= 0 ? messages[lastIndex] : undefined;
-  const workingMessageSlotClassName =
-    threadStatus === "booting" ? "min-h-[168px]" : "min-h-11";
+  const hasTranscriptMessages = messages.length > 0;
+  const shouldRenderWorkingMessageSlot =
+    reserveWorkingMessageSlot &&
+    (!hasTranscriptMessages || showWorkingMessage || passiveWait);
+  const workingMessageSlotClassName = getWorkingMessageSlotClassName({
+    hasTranscriptMessages,
+    threadStatus,
+  });
 
   return (
     <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-6 sm:mt-8 mb-8">
@@ -118,7 +124,7 @@ export function TerragonTranscriptSurface({
           isRetrying={isRetrying}
         />
       )}
-      {reserveWorkingMessageSlot && (
+      {shouldRenderWorkingMessageSlot && (
         <div className={workingMessageSlotClassName}>
           {showWorkingMessage ? (
             <WorkingMessage
@@ -207,6 +213,18 @@ const StaticTranscriptHistory = memo(function StaticTranscriptHistory({
     </>
   );
 });
+
+export function getWorkingMessageSlotClassName({
+  hasTranscriptMessages,
+  threadStatus,
+}: {
+  hasTranscriptMessages: boolean;
+  threadStatus: ThreadStatus | null;
+}): string {
+  return threadStatus === "booting" && !hasTranscriptMessages
+    ? "min-h-[168px]"
+    : "min-h-11";
+}
 
 function useStableMessagePrefix(
   messages: UIMessage[],

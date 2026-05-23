@@ -94,6 +94,29 @@ type RunResult = {
   checks: Check[];
   errors: string[];
   screenshots: Record<string, string>;
+  diagnostics?: BrowserStreamMetricDiagnostics;
+};
+
+type DaemonEventToVisibleSample = {
+  messageId: string;
+  visibleAtMs: number;
+  visibleEpochMs: number;
+  daemonReceivedAtMs: number;
+  daemonEventToVisibleUpdateMs: number;
+  traceKey: string;
+  textLength: number;
+  textDeltaBytes: number;
+};
+
+type LayoutShiftSample = {
+  startTime: number;
+  value: number;
+  sources: string[];
+};
+
+type BrowserStreamMetricDiagnostics = {
+  daemonEventToVisibleSamples: DaemonEventToVisibleSample[];
+  layoutShiftEntries: LayoutShiftSample[];
 };
 
 type BrowserStreamMetricSnapshot = {
@@ -111,6 +134,7 @@ type BrowserStreamMetricSnapshot = {
   totalLongTaskMs: number;
   rafFrameGapP95Ms: number | null;
   cumulativeLayoutShift: number;
+  diagnostics: BrowserStreamMetricDiagnostics;
 };
 
 type BenchmarkReport = {
@@ -327,6 +351,8 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       visibleUpdates: [],
       activeStreamGaps: [],
       daemonEventToVisibleUpdateSamples: [],
+      daemonEventToVisibleSamples: [],
+      consumedDaemonTraceKeys: new Set(),
       agentTraceSpans: [],
       streamedTextBytes: 0,
       longTasks: [],
@@ -403,23 +429,44 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       );
     };
 
-    const latestDaemonReceivedAtMs = (visibleEpochMs, messageIds) => {
+    const traceConsumptionKey = (span) =>
+      [
+        span?.attributes?.daemonEventId ?? "",
+        span?.attributes?.eventId ?? "",
+        span?.attributes?.seq ?? "",
+        span?.attributes?.projectionIndex ?? "",
+        span?.attributes?.messageId ?? "",
+        span?.attributes?.agUiEventType ?? "",
+      ].join(":");
+
+    const consumeDaemonTrace = (visibleEpochMs, messageIds) => {
       for (let index = state.agentTraceSpans.length - 1; index >= 0; index--) {
         const span = state.agentTraceSpans[index];
         if (!isVisibleTextTraceSpan(span, messageIds)) {
+          continue;
+        }
+        if (typeof span?.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
+          continue;
+        }
+        const consumptionKey = traceConsumptionKey(span);
+        if (state.consumedDaemonTraceKeys.has(consumptionKey)) {
           continue;
         }
         const direct =
           traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
           traceAttributeNumber(span, "daemonReceivedAtMs") ??
           traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
-        if (direct !== null && direct <= visibleEpochMs) return direct;
+        if (direct !== null && direct <= visibleEpochMs) {
+          state.consumedDaemonTraceKeys.add(consumptionKey);
+          return { receivedAtMs: direct, traceKey: consumptionKey };
+        }
         if (
           span?.name === "server.daemon_event.received" &&
           typeof span.endedAtMs === "number" &&
           span.endedAtMs <= visibleEpochMs
         ) {
-          return span.endedAtMs;
+          state.consumedDaemonTraceKeys.add(consumptionKey);
+          return { receivedAtMs: span.endedAtMs, traceKey: consumptionKey };
         }
       }
       return null;
@@ -483,14 +530,29 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           gapMs,
         });
       }
-      const daemonReceivedAtMs = latestDaemonReceivedAtMs(
+      const daemonTrace = consumeDaemonTrace(
         visibleEpochMs,
         message.sourceIds.length > 0 ? message.sourceIds : [message.id],
       );
+      const daemonReceivedAtMs = daemonTrace?.receivedAtMs ?? null;
       if (daemonReceivedAtMs !== null) {
-        state.daemonEventToVisibleUpdateSamples.push(
-          Math.max(0, Math.round(visibleEpochMs - daemonReceivedAtMs)),
+        const daemonEventToVisibleUpdateMs = Math.max(
+          0,
+          Math.round(visibleEpochMs - daemonReceivedAtMs),
         );
+        state.daemonEventToVisibleUpdateSamples.push(
+          daemonEventToVisibleUpdateMs,
+        );
+        state.daemonEventToVisibleSamples.push({
+          messageId: message.id,
+          visibleAtMs,
+          visibleEpochMs: Math.round(visibleEpochMs),
+          daemonReceivedAtMs,
+          daemonEventToVisibleUpdateMs,
+          traceKey: daemonTrace.traceKey,
+          textLength: message.text.length,
+          textDeltaBytes,
+        });
       }
       state.visibleUpdates.push({
         messageId: message.id,
@@ -566,6 +628,27 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
             state.layoutShiftEntries.push({
               startTime: entry.startTime,
               value: entry.value ?? 0,
+              sources: Array.from(entry.sources ?? [])
+                .map((source) => {
+                  const node = source.node;
+                  if (!(node instanceof Element)) return null;
+                  const tag = node.tagName.toLowerCase();
+                  const id = node.id ? "#" + node.id : "";
+                  const testId = node.getAttribute("data-testid");
+                  const role = node.getAttribute("data-message-role");
+                  const classes = Array.from(node.classList)
+                    .slice(0, 3)
+                    .map((className) => "." + className)
+                    .join("");
+                  return [
+                    tag + id + classes,
+                    testId ? "data-testid=" + testId : null,
+                    role ? "data-message-role=" + role : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+                })
+                .filter(Boolean),
             });
           }
         });
@@ -592,6 +675,8 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         state.visibleUpdates = [];
         state.activeStreamGaps = [];
         state.daemonEventToVisibleUpdateSamples = [];
+        state.daemonEventToVisibleSamples = [];
+        state.consumedDaemonTraceKeys = new Set();
         state.agentTraceSpans = [];
         state.streamedTextBytes = 0;
         state.longTasks = [];
@@ -632,6 +717,10 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           ),
           rafFrameGapP95Ms: pickPercentile(state.rafFrameGaps, 95),
           cumulativeLayoutShift: Number(cumulativeLayoutShift.toFixed(4)),
+          diagnostics: {
+            daemonEventToVisibleSamples: state.daemonEventToVisibleSamples,
+            layoutShiftEntries: state.layoutShiftEntries,
+          },
         };
       },
       resetLayoutShift: () => {
@@ -698,6 +787,10 @@ async function readBrowserStreamMetrics(
         totalLongTaskMs: 0,
         rafFrameGapP95Ms: null,
         cumulativeLayoutShift: 0,
+        diagnostics: {
+          daemonEventToVisibleSamples: [],
+          layoutShiftEntries: [],
+        },
       }
     );
   });
@@ -996,6 +1089,7 @@ async function runIteration(params: {
         const last = rows.item(rows.length - 1);
         return (last?.textContent ?? "").trim().length > 0;
       },
+      undefined,
       { timeout: config.timeoutMs },
     );
     firstAssistantTextMs = nowMs(startedAt);
@@ -1100,6 +1194,7 @@ async function runIteration(params: {
       checks,
       errors,
       screenshots,
+      diagnostics: browserMetrics.diagnostics,
     };
   } catch (error) {
     const totalRunMs = nowMs(startedAt);
