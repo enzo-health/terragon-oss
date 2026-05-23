@@ -32,6 +32,7 @@ import {
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
+import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
 
@@ -190,6 +191,12 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = optimisticHandlers;
 
   const { error, setError, isRetrying, handleRetry } = errorState;
+  const queuedMessagesRef = React.useRef(queuedMessages);
+  const queueWriteRef = React.useRef<Promise<void>>(Promise.resolve());
+
+  React.useEffect(() => {
+    queuedMessagesRef.current = queuedMessages;
+  }, [queuedMessages]);
 
   const handleCancel = useCallback(async () => {
     await stopThread({
@@ -210,26 +217,39 @@ export function ChatUILayout(props: ChatUILayoutProps) {
         }
         forceScrollToBottom();
         setError(null);
-        const nextMessages = [...(queuedMessages ?? []), userMessage];
-        onOptimisticQueuedMessagesUpdate(nextMessages);
-        const result = await queueFollowUp({
-          threadId: thread.id,
-          threadChatId: threadChat.id,
-          messages: nextMessages,
-        });
-        if (!result.success) {
-          setError(result.errorMessage);
-          await reconcileActiveChatFromServer();
-          return;
-        }
-        await reconcileActiveChatFromServer();
+        const write = queueWriteRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            const baseQueuedMessages = queuedMessagesRef.current ?? [];
+            const nextMessages = appendUniqueQueuedMessages(
+              baseQueuedMessages,
+              [userMessage],
+            );
+            if (nextMessages === baseQueuedMessages) {
+              return;
+            }
+            queuedMessagesRef.current = nextMessages;
+            onOptimisticQueuedMessagesUpdate(nextMessages);
+            const result = await queueFollowUp({
+              threadId: thread.id,
+              threadChatId: threadChat.id,
+              messages: nextMessages,
+            });
+            if (!result.success) {
+              setError(result.errorMessage);
+              await reconcileActiveChatFromServer();
+              return;
+            }
+            await reconcileActiveChatFromServer();
+          });
+        queueWriteRef.current = write.catch(() => undefined);
+        await write;
       },
     }),
     [
       forceScrollToBottom,
       isAgentCurrentlyWorking,
       onOptimisticQueuedMessagesUpdate,
-      queuedMessages,
       reconcileActiveChatFromServer,
       setError,
       thread.id,
