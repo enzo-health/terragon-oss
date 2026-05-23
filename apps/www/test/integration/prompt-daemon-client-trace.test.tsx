@@ -121,6 +121,7 @@ function makePostRequest(url: string, body: unknown): NextRequest {
 function mockAgUiEventEnvelopesForThreadChat(params: {
   events: BaseEvent[];
   runId: string;
+  daemonEventReceivedAtMs?: number;
 }): void {
   const envelopes = params.events.map((payload, index) => ({
     eventId: `trace-event-${index}`,
@@ -130,6 +131,14 @@ function mockAgUiEventEnvelopesForThreadChat(params: {
     threadChatId: "chat-1",
     timestamp: String(index + 1),
     idempotencyKey: `${params.runId}:trace-event-${index}`,
+    ...(params.daemonEventReceivedAtMs !== undefined
+      ? {
+          trace: {
+            daemonEventId: "daemon-event-trace-1",
+            daemonEventReceivedAtMs: params.daemonEventReceivedAtMs,
+          },
+        }
+      : {}),
     payload,
   }));
   vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
@@ -228,6 +237,7 @@ describe("prompt to daemon to client trace", () => {
     mockAgUiEventEnvelopesForThreadChat({
       events: daemonEvents,
       runId,
+      daemonEventReceivedAtMs: 123_456,
     });
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(runId);
     vi.mocked(runFollowUpFromAgUiInput).mockImplementation(async () => {
@@ -266,8 +276,30 @@ describe("prompt to daemon to client trace", () => {
       isReplayMode: false,
     });
 
-    const receivedEvents = await readReplayBurst(response, daemonEvents.length);
-    expect(receivedEvents).toEqual(daemonEvents);
+    const receivedEvents = await readReplayBurst(
+      response,
+      daemonEvents.length * 2 - 1,
+    );
+    const agUiEvents = receivedEvents.filter(
+      (event) =>
+        event.type !== EventType.CUSTOM ||
+        Reflect.get(event, "name") !== "terragon.trace.daemon_event.received",
+    );
+    expect(agUiEvents).toEqual(daemonEvents);
+    const traceEvents = receivedEvents.filter(
+      (event) =>
+        event.type === EventType.CUSTOM &&
+        Reflect.get(event, "name") === "terragon.trace.daemon_event.received",
+    );
+    expect(traceEvents).toHaveLength(daemonEvents.length - 1);
+    expect(Reflect.get(traceEvents[0]!, "value")).toMatchObject({
+      kind: "terragon.trace.daemon_event.received",
+      runId,
+      eventId: "trace-event-1",
+      seq: 1,
+      daemonEventId: "daemon-event-trace-1",
+      daemonEventReceivedAtMs: 123_456,
+    });
 
     const { messages, lifecycle, quarantine } =
       await replayAgUi(receivedEvents);
@@ -303,6 +335,15 @@ describe("prompt to daemon to client trace", () => {
         "client.ui.projected",
       ]),
     );
+    expect(
+      traceSpans.some(
+        (span) =>
+          span.name === "client.agui.event.received" &&
+          span.attributes["traceKind"] ===
+            "terragon.trace.daemon_event.received" &&
+          span.attributes["daemonEventReceivedAtMs"] === 123_456,
+      ),
+    ).toBe(true);
     expect(indexOfSpan("server.agui.post.received")).toBeLessThan(
       indexOfSpan("server.agui.followup.dispatched"),
     );

@@ -73,12 +73,15 @@ export function useThreadViewModel({
         if (!projectedEvent) {
           return;
         }
-        const traceId = getStringEventField(projectedEvent, "runId");
+        const traceId =
+          getStringEventField(projectedEvent, "runId") ??
+          getTerragonTraceRunId(projectedEvent);
         recordAgentTraceSpan({
           traceId,
           name: "client.agui.event.received",
           attributes: {
             eventType: String(projectedEvent.type),
+            ...getTerragonTraceAttributes(projectedEvent),
           },
         });
         try {
@@ -133,6 +136,52 @@ export function useThreadViewModel({
 export type ThreadViewEventForAgUi = Parameters<
   NonNullable<Parameters<HttpAgent["subscribe"]>[0]["onEvent"]>
 >[0]["event"];
+
+function getTerragonTraceAttributes(
+  event: ThreadViewEventForAgUi,
+): Record<string, string | number | null> {
+  if (event.type !== EventType.CUSTOM) {
+    return {};
+  }
+  const name = Reflect.get(event, "name");
+  if (name !== "terragon.trace.daemon_event.received") {
+    return {};
+  }
+  const value = Reflect.get(event, "value");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const daemonEventReceivedAtMs = Reflect.get(value, "daemonEventReceivedAtMs");
+  if (typeof daemonEventReceivedAtMs !== "number") {
+    return {};
+  }
+  const daemonEventId = Reflect.get(value, "daemonEventId");
+  const eventId = Reflect.get(value, "eventId");
+  const seq = Reflect.get(value, "seq");
+  return {
+    traceKind: "terragon.trace.daemon_event.received",
+    daemonEventReceivedAtMs,
+    daemonEventId: typeof daemonEventId === "string" ? daemonEventId : null,
+    eventId: typeof eventId === "string" ? eventId : null,
+    seq: typeof seq === "number" ? seq : null,
+  };
+}
+
+function getTerragonTraceRunId(event: ThreadViewEventForAgUi): string | null {
+  if (event.type !== EventType.CUSTOM) {
+    return null;
+  }
+  const name = Reflect.get(event, "name");
+  if (name !== "terragon.trace.daemon_event.received") {
+    return null;
+  }
+  const value = Reflect.get(event, "value");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const runId = Reflect.get(value, "runId");
+  return typeof runId === "string" && runId.length > 0 ? runId : null;
+}
 
 type ThreadViewSidecarEventProjectorOptions = {
   includeTranscriptEvents?: boolean;

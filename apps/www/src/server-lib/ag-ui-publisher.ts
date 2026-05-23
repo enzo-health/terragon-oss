@@ -20,6 +20,7 @@ import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
   agUiStreamKey,
+  type AgUiTraceMetadata,
   type AgUiEventEnvelope,
   appendAgUiEventRows,
   peekNextThreadChatSeqLocked,
@@ -43,6 +44,7 @@ export type AgUiPublishRow = {
   eventId: string;
   timestamp: Date;
   threadChatMessageSeq?: number;
+  trace?: AgUiTraceMetadata;
 };
 
 export type PersistAndPublishResult = {
@@ -87,6 +89,7 @@ function buildTransportEnvelope(params: {
   threadChatId: string;
   seq: number;
   timestamp: Date;
+  trace?: AgUiTraceMetadata;
 }): TerragonAgUiTransportEnvelope {
   return {
     eventId: params.eventId,
@@ -96,6 +99,7 @@ function buildTransportEnvelope(params: {
     threadChatId: params.threadChatId,
     timestamp: params.timestamp.toISOString(),
     idempotencyKey: `${params.runId}:${params.eventId}`,
+    ...(params.trace ? { trace: params.trace } : {}),
     payload: params.event,
   };
 }
@@ -155,6 +159,7 @@ export async function persistAgUiEvents(params: {
           threadChatId,
           seq,
           timestamp: row.timestamp,
+          trace: row.trace,
         }),
       };
     });

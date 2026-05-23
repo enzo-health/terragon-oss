@@ -14,6 +14,7 @@ type Thresholds = {
   maxSilentGapMs: number;
   scopedMaxSilentGapMs: number;
   activeStreamGapMs: number;
+  daemonEventToVisibleUpdateMs: number;
   minAssistantTextChunks: number;
   minVisibleUpdates: number;
   maxLongTaskMs: number;
@@ -154,6 +155,7 @@ const DEFAULT_THRESHOLDS: Thresholds = {
   maxSilentGapMs: 45_000,
   scopedMaxSilentGapMs: 1_500,
   activeStreamGapMs: 750,
+  daemonEventToVisibleUpdateMs: 250,
   minAssistantTextChunks: 1,
   minVisibleUpdates: 1,
   maxLongTaskMs: 100,
@@ -1169,6 +1171,11 @@ function buildChecks(metrics: RunMetrics, thresholds: Thresholds): Check[] {
       metrics.activeStreamGapP95Ms,
       thresholds.activeStreamGapMs,
     ),
+    budgetCheck(
+      "daemon-event-to-visible-update-budget",
+      metrics.daemonEventToVisibleUpdateMsP95,
+      thresholds.daemonEventToVisibleUpdateMs,
+    ),
     {
       name: "assistant-text-chunk-count",
       status:
@@ -1325,6 +1332,11 @@ function summarize(
       "active-stream-gap-budget-p95",
       metrics.activeStreamGapMsP95,
       config.thresholds.activeStreamGapMs,
+    ),
+    budgetCheck(
+      "daemon-event-to-visible-update-budget-p95",
+      metrics.daemonEventToVisibleUpdateMsP95,
+      config.thresholds.daemonEventToVisibleUpdateMs,
     ),
     {
       name: "assistant-text-chunk-count-p50",

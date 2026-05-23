@@ -10,6 +10,7 @@ import type { DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
+  type AgUiTraceMetadata,
   agUiStreamKey,
   getAgUiEventEnvelopesForRun,
   getAgUiEventEnvelopesForThreadChat,
@@ -85,6 +86,19 @@ type ReplayIdentity = {
   seq?: number;
   projectionIndex?: number;
   projectionCount?: number;
+  trace?: AgUiTraceMetadata;
+};
+
+type TerragonTraceSidebandValue = {
+  schemaVersion: 1;
+  kind: "terragon.trace.daemon_event.received";
+  runId?: string;
+  eventId?: string;
+  seq?: number;
+  projectionIndex?: number;
+  projectionCount?: number;
+  daemonEventId: string | null;
+  daemonEventReceivedAtMs: number;
 };
 
 type ReplayCursor = {
@@ -472,6 +486,9 @@ function parseStreamPayload(value: unknown): {
         ...(projectionIndex !== null ? { projectionIndex } : {}),
         ...(projectionCount !== null ? { projectionCount } : {}),
         ...(seq !== null ? { seq } : {}),
+        ...(isAgUiTraceMetadata(Reflect.get(value, "trace"))
+          ? { trace: Reflect.get(value, "trace") as AgUiTraceMetadata }
+          : {}),
       },
     };
   }
@@ -560,6 +577,55 @@ function encodeSseEvent(event: BaseEvent, id?: string): Uint8Array {
   return ENCODER.encode(`${idLine}data: ${JSON.stringify(event)}\n\n`);
 }
 
+function isAgUiTraceMetadata(value: unknown): value is AgUiTraceMetadata {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const daemonEventId = value["daemonEventId"];
+  return (
+    (daemonEventId === null || typeof daemonEventId === "string") &&
+    typeof value["daemonEventReceivedAtMs"] === "number" &&
+    Number.isFinite(value["daemonEventReceivedAtMs"])
+  );
+}
+
+function toTerragonTraceSidebandValue(
+  identity?: ReplayIdentity,
+): TerragonTraceSidebandValue | null {
+  if (!identity?.trace) {
+    return null;
+  }
+  return {
+    schemaVersion: 1,
+    kind: "terragon.trace.daemon_event.received",
+    ...(identity.runId ? { runId: identity.runId } : {}),
+    ...(identity.eventId ? { eventId: identity.eventId } : {}),
+    ...(identity.seq !== undefined ? { seq: identity.seq } : {}),
+    ...(identity.projectionIndex !== undefined
+      ? { projectionIndex: identity.projectionIndex }
+      : {}),
+    ...(identity.projectionCount !== undefined
+      ? { projectionCount: identity.projectionCount }
+      : {}),
+    daemonEventId: identity.trace.daemonEventId,
+    daemonEventReceivedAtMs: identity.trace.daemonEventReceivedAtMs,
+  };
+}
+
+function buildTerragonTraceSidebandEvent(
+  identity?: ReplayIdentity,
+): BaseEvent | null {
+  const value = toTerragonTraceSidebandValue(identity);
+  if (!value) {
+    return null;
+  }
+  return {
+    type: EventType.CUSTOM,
+    name: "terragon.trace.daemon_event.received",
+    value,
+  } as BaseEvent;
+}
+
 function encodeSseComment(comment: string): Uint8Array {
   return ENCODER.encode(`: ${comment}\n\n`);
 }
@@ -635,6 +701,7 @@ function toReplayEntries(
             seq: entry.seq,
             projectionIndex: entry.projectionIndex,
             projectionCount: entry.projectionCount,
+            ...(entry.trace ? { trace: entry.trace } : {}),
           },
         })),
     ),
@@ -735,6 +802,7 @@ function toReplayEntriesWithoutTerminalFilter(
           seq: entry.seq,
           projectionIndex: entry.projectionIndex,
           projectionCount: entry.projectionCount,
+          ...(entry.trace ? { trace: entry.trace } : {}),
         },
       })),
   );
@@ -1206,6 +1274,10 @@ export async function GET(
           resolvedRunId = nextRunId;
         }
         hasEmittedAgUiDataEvent = true;
+        const traceEvent = buildTerragonTraceSidebandEvent(identity);
+        if (traceEvent && event.type !== EventType.RUN_STARTED) {
+          enqueue(encodeSseEvent(traceEvent));
+        }
         enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
         if (isTerminalRunEventType(event.type)) {
           const terminalRunId = getStringEventField(event, "runId");

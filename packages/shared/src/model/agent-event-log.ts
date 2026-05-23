@@ -74,6 +74,11 @@ type AgUiEventEnvelopeIdentity = {
   idempotencyKey: string;
 };
 
+export type AgUiTraceMetadata = {
+  daemonEventId: string | null;
+  daemonEventReceivedAtMs: number;
+};
+
 export type AgUiEventEnvelope<
   TEvent extends BaseEvent = BaseEvent,
   TIdentity extends "legacy" | "full" = "legacy",
@@ -85,6 +90,7 @@ export type AgUiEventEnvelope<
   projectionCount?: number;
   runId: string;
   threadChatId: string;
+  trace?: AgUiTraceMetadata;
   payload: TEvent;
 };
 

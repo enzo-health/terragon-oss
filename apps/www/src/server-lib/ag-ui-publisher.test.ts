@@ -347,6 +347,10 @@ describe("ag-ui-publisher", () => {
       threadChatId: "chat-envelope-1",
       timestamp: "2026-04-27T12:00:00.000Z",
       idempotencyKey: "run-envelope-1:event-envelope-1",
+      trace: {
+        daemonEventId: "daemon-envelope-1",
+        daemonEventReceivedAtMs: 1_779_552_000_000,
+      },
       payload: event,
     });
 
@@ -359,6 +363,10 @@ describe("ag-ui-publisher", () => {
       threadChatId: "chat-envelope-1",
       timestamp: "2026-04-27T12:00:00.000Z",
       idempotencyKey: "run-envelope-1:event-envelope-1",
+      trace: {
+        daemonEventId: "daemon-envelope-1",
+        daemonEventReceivedAtMs: 1_779_552_000_000,
+      },
       payload: {
         type: EventType.TEXT_MESSAGE_CONTENT,
         messageId: "msg-envelope",
@@ -368,6 +376,7 @@ describe("ag-ui-publisher", () => {
     expect(parsed.payload.eventId).toBeUndefined();
     expect(parsed.payload.seq).toBeUndefined();
     expect(parsed.payload.threadChatId).toBeUndefined();
+    expect(parsed.payload.trace).toBeUndefined();
   });
 
   it("keeps quarantined provider payloads out of the AG UI publish path", async () => {
