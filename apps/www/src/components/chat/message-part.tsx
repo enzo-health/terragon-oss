@@ -76,6 +76,12 @@ export const MessagePart = memo(function MessagePart({
   // planOccurrenceIndex + artifactOrdinal disambiguate.
   const planArtifactDescriptor = useMemo(() => {
     if (part.type !== "text") return null;
+    if (
+      artifactDescriptors.length === 0 ||
+      !part.text.includes("<proposed_plan")
+    ) {
+      return null;
+    }
     const planText = extractProposedPlanText(part.text);
     if (!planText) return null;
     // First try exact match by occurrence index (stored as artifactOrdinal)

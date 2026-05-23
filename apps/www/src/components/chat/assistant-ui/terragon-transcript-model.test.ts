@@ -377,4 +377,179 @@ describe("createTerragonTranscriptModelBuilder", () => {
     expect(second.messages[0]).toBe(first.messages[0]);
     expect(second.messages[1]).toBe(nextTail);
   });
+
+  it("appends contiguous agent messages without rebuilding stable transcript rows", () => {
+    const buildModel = createTerragonTranscriptModelBuilder();
+    const optimisticUserMessages: UIUserMessage[] = [];
+    const firstAgentMessage: UIMessage = {
+      id: "agent-1",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "starting" }],
+    };
+    const userMessage: UIMessage = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "next" }],
+    };
+    const appendedAgentMessage: UIMessage = {
+      id: "agent-2",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "done" }],
+    };
+    const first = buildModel({
+      runtimeMessages: [firstAgentMessage, userMessage],
+      optimisticUserMessages,
+    });
+    const second = buildModel({
+      runtimeMessages: [firstAgentMessage, userMessage, appendedAgentMessage],
+      optimisticUserMessages,
+    });
+
+    expect(second.messages[0]).toBe(first.messages[0]);
+    expect(second.messages[1]).toBe(first.messages[1]);
+    expect(second.messages[2]).toBe(appendedAgentMessage);
+    expect(second.planOccurrencesRaw).toBe(first.planOccurrencesRaw);
+  });
+
+  it("coalesces appended contiguous agent messages incrementally", () => {
+    const buildModel = createTerragonTranscriptModelBuilder();
+    const optimisticUserMessages: UIUserMessage[] = [];
+    const firstPart = { type: "text" as const, text: "starting" };
+    const firstAgentMessage: UIMessage = {
+      id: "agent-1",
+      role: "agent",
+      agent: "codex",
+      parts: [firstPart],
+    };
+    const appendedPart = { type: "text" as const, text: "done" };
+    const appendedAgentMessage: UIMessage = {
+      id: "agent-2",
+      role: "agent",
+      agent: "codex",
+      parts: [appendedPart],
+    };
+    const first = buildModel({
+      runtimeMessages: [firstAgentMessage],
+      optimisticUserMessages,
+    });
+    const second = buildModel({
+      runtimeMessages: [firstAgentMessage, appendedAgentMessage],
+      optimisticUserMessages,
+    });
+
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0]).not.toBe(first.messages[0]);
+    expect(second.messages[0]).toMatchObject({
+      id: "agent-1",
+      role: "agent",
+      sourceMessageIds: ["agent-1", "agent-2"],
+      parts: [
+        { type: "text", text: "starting" },
+        { type: "text", text: "done" },
+      ],
+    });
+    expect(
+      second.messages[0]?.role === "agent" && second.messages[0].parts[0],
+    ).toBe(firstPart);
+    expect(
+      second.messages[0]?.role === "agent" && second.messages[0].parts[1],
+    ).toBe(appendedPart);
+    expect(second.planOccurrencesRaw).toBe(first.planOccurrencesRaw);
+  });
+
+  it("updates coalesced live agent tails without rebuilding stable parts", () => {
+    const buildModel = createTerragonTranscriptModelBuilder();
+    const optimisticUserMessages: UIUserMessage[] = [];
+    const staticTextPart = { type: "text" as const, text: "starting" };
+    const toolPart = {
+      type: "tool" as const,
+      id: "tool-1",
+      agent: "codex" as const,
+      name: "Bash",
+      parameters: {},
+      status: "completed" as const,
+      result: "ok",
+      parts: [],
+    };
+    const firstAgentMessage: UIMessage = {
+      id: "agent-1",
+      role: "agent",
+      agent: "codex",
+      parts: [staticTextPart],
+    };
+    const toolMessage: UIMessage = {
+      id: "agent-2",
+      role: "agent",
+      agent: "codex",
+      parts: [toolPart],
+    };
+    const firstTailPart = { type: "text" as const, text: "tail" };
+    const firstTail: UIMessage = {
+      id: "agent-3",
+      role: "agent",
+      agent: "codex",
+      parts: [firstTailPart],
+    };
+    const nextTailPart = { type: "text" as const, text: "tail updated" };
+    const nextTail: UIMessage = {
+      ...firstTail,
+      parts: [nextTailPart],
+    };
+    const first = buildModel({
+      runtimeMessages: [firstAgentMessage, toolMessage, firstTail],
+      optimisticUserMessages,
+    });
+    const second = buildModel({
+      runtimeMessages: [firstAgentMessage, toolMessage, nextTail],
+      optimisticUserMessages,
+    });
+
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0]).not.toBe(first.messages[0]);
+    if (second.messages[0]?.role !== "agent") {
+      throw new Error("expected coalesced agent message");
+    }
+    expect(second.messages[0].parts).toHaveLength(3);
+    expect(second.messages[0].parts[0]).toBe(staticTextPart);
+    expect(second.messages[0].parts[1]).toBe(toolPart);
+    expect(second.messages[0].parts[2]).toBe(nextTailPart);
+    expect(second.planOccurrencesRaw).toBe(first.planOccurrencesRaw);
+  });
+
+  it("falls back when appended runtime messages contain proposed plans", () => {
+    const buildModel = createTerragonTranscriptModelBuilder();
+    const optimisticUserMessages: UIUserMessage[] = [];
+    const firstAgentMessage: UIMessage = {
+      id: "agent-1",
+      role: "agent",
+      agent: "codex",
+      parts: [{ type: "text", text: "starting" }],
+    };
+    const planPart = {
+      type: "text" as const,
+      text: "<proposed_plan>new plan</proposed_plan>",
+    };
+    const planMessage: UIMessage = {
+      id: "agent-plan",
+      role: "agent",
+      agent: "codex",
+      parts: [planPart],
+    };
+    const first = buildModel({
+      runtimeMessages: [firstAgentMessage],
+      optimisticUserMessages,
+    });
+    const second = buildModel({
+      runtimeMessages: [firstAgentMessage, planMessage],
+      optimisticUserMessages,
+    });
+
+    expect(second.messages).toHaveLength(2);
+    expect(second.messages[0]).toBe(first.messages[0]);
+    expect(second.messages[1]).toBe(planMessage);
+    expect(second.planOccurrencesRaw).not.toBe(first.planOccurrencesRaw);
+    expect(second.planOccurrencesRaw.get(planPart)).toBe(0);
+  });
 });
