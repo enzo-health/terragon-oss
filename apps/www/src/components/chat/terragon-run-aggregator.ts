@@ -71,10 +71,6 @@ type OrderedPart =
   | { kind: "tool-call"; toolCallId: string }
   | { kind: "data"; key: string };
 
-type ScheduledEmitHandle =
-  | { kind: "animation-frame"; id: number }
-  | { kind: "timeout"; id: ReturnType<typeof globalThis.setTimeout> };
-
 export class TerragonRunAggregator {
   private readonly emitUpdate: Emit;
   private readonly showThinking: boolean;
@@ -94,8 +90,6 @@ export class TerragonRunAggregator {
   private hasReasoningPart = false;
   private textPartCounter = 0;
   private lastTargetMessageId: string | undefined;
-  private pendingEmitTargetMessageId: string | undefined;
-  private pendingEmitHandle: ScheduledEmitHandle | undefined;
 
   constructor(options: TerragonRunAggregatorOptions) {
     this.emitUpdate = options.emit;
@@ -231,7 +225,6 @@ export class TerragonRunAggregator {
   }
 
   private reset(): void {
-    this.cancelScheduledEmit();
     this.textParts.clear();
     this.reasoningBuffer = "";
     this.reasoningActive = false;
@@ -242,7 +235,6 @@ export class TerragonRunAggregator {
     this.textPartCounter = 0;
     this.activeTextMessageId = undefined;
     this.lastTargetMessageId = undefined;
-    this.pendingEmitTargetMessageId = undefined;
   }
 
   private generateTextKey(): string {
@@ -503,7 +495,6 @@ export class TerragonRunAggregator {
   }
 
   private emit(targetMessageId: string | undefined): void {
-    this.cancelScheduledEmit();
     const snapshot: ThreadAssistantMessagePart[] = [];
 
     for (const part of this.partOrder) {
@@ -568,47 +559,7 @@ export class TerragonRunAggregator {
   }
 
   private scheduleEmit(targetMessageId: string | undefined): void {
-    this.pendingEmitTargetMessageId =
-      targetMessageId ?? this.pendingEmitTargetMessageId;
-    if (this.pendingEmitHandle !== undefined) {
-      return;
-    }
-
-    const flush = () => {
-      const pendingTargetMessageId = this.pendingEmitTargetMessageId;
-      this.pendingEmitHandle = undefined;
-      this.pendingEmitTargetMessageId = undefined;
-      this.emit(pendingTargetMessageId);
-    };
-
-    if (typeof window !== "undefined" && window.requestAnimationFrame) {
-      this.pendingEmitHandle = {
-        kind: "animation-frame",
-        id: window.requestAnimationFrame(flush),
-      };
-      return;
-    }
-
-    this.pendingEmitHandle = {
-      kind: "timeout",
-      id: globalThis.setTimeout(flush, 16),
-    };
-  }
-
-  private cancelScheduledEmit(): void {
-    if (this.pendingEmitHandle === undefined) {
-      return;
-    }
-    if (
-      this.pendingEmitHandle.kind === "animation-frame" &&
-      typeof window !== "undefined" &&
-      window.cancelAnimationFrame
-    ) {
-      window.cancelAnimationFrame(this.pendingEmitHandle.id);
-    } else {
-      globalThis.clearTimeout(this.pendingEmitHandle.id);
-    }
-    this.pendingEmitHandle = undefined;
+    this.emit(targetMessageId);
   }
 
   private handleReasoningStart(): void {

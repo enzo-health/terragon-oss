@@ -876,9 +876,9 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
 
     vi.runOnlyPendingTimers();
 
-    // One scheduled text projection and one runtime store notification, not
-    // one React notification per text delta.
-    expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 2);
+    // The aggregator now applies text to the runtime message immediately and
+    // leaves a single frame boundary to the runtime store notification.
+    expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 1);
     vi.useRealTimers();
   });
 
