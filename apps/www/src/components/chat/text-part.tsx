@@ -61,7 +61,7 @@ const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_SYNTAX_RE =
   /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 const STREAMING_MARKDOWN_SYNTAX_RE =
-  /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+  /```|~~~|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
@@ -70,6 +70,16 @@ const LINE_HEIGHT_PX = 22;
 interface BlockInfo {
   totalLines: number;
   expanded: boolean;
+}
+
+export function shouldScanCodeBlocks({
+  hasPossibleCodeBlock,
+  streaming,
+}: {
+  hasPossibleCodeBlock: boolean;
+  streaming: boolean;
+}): boolean {
+  return hasPossibleCodeBlock && !streaming;
 }
 
 function CollapsibleCodeBlockOverlay({
@@ -145,6 +155,10 @@ const TextPart = memo(function TextPart({
     () => POSSIBLE_CODE_BLOCK_RE.test(text),
     [text],
   );
+  const canScanCodeBlocks = shouldScanCodeBlocks({
+    hasPossibleCodeBlock,
+    streaming,
+  });
 
   const processedText = useMemo(() => {
     let t = normalizeBoldHeaders(
@@ -176,7 +190,7 @@ const TextPart = memo(function TextPart({
   // observer fires hundreds of times per second. We debounce to 150ms which
   // is well below human-perceptible latency for "show more" affordances.
   useEffect(() => {
-    if (!hasPossibleCodeBlock) {
+    if (!canScanCodeBlocks) {
       lastScanRef.current = "";
       setBlocks((prev) => (prev.size > 0 ? new Map() : prev));
       return;
@@ -223,7 +237,7 @@ const TextPart = memo(function TextPart({
       observer.disconnect();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [hasPossibleCodeBlock]);
+  }, [canScanCodeBlocks]);
 
   // Apply collapse styles imperatively to code-block-body elements
   useEffect(() => {

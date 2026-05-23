@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { TextPart } from "./text-part";
+import { shouldScanCodeBlocks, TextPart } from "./text-part";
 
 const markdownRendererSpy = vi.hoisted(() => vi.fn());
 
@@ -62,6 +62,41 @@ describe("TextPart", () => {
 
     expect(html).toContain('data-testid="markdown"');
     expect(markdownRendererSpy).toHaveBeenCalledWith("1. Starting\n2. Done");
+  });
+
+  it("keeps inline code on the cheap text path while streaming", () => {
+    markdownRendererSpy.mockClear();
+
+    const html = renderToStaticMarkup(
+      <TextPart text={"Then run `pwd` and keep going."} streaming />,
+    );
+
+    expect(html).toContain("Then run `pwd` and keep going.");
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).not.toContain('data-testid="markdown"');
+    expect(markdownRendererSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders inline code as markdown after streaming completes", () => {
+    markdownRendererSpy.mockClear();
+
+    const html = renderToStaticMarkup(
+      <TextPart text={"Then run `pwd` and stop."} streaming={false} />,
+    );
+
+    expect(html).toContain('data-testid="markdown"');
+    expect(markdownRendererSpy).toHaveBeenCalledWith(
+      "Then run `pwd` and stop.",
+    );
+  });
+
+  it("waits until streaming completes before scanning rendered code blocks", () => {
+    expect(
+      shouldScanCodeBlocks({ hasPossibleCodeBlock: true, streaming: true }),
+    ).toBe(false);
+    expect(
+      shouldScanCodeBlocks({ hasPossibleCodeBlock: true, streaming: false }),
+    ).toBe(true);
   });
 
   it("uses the canonical artifact workspace affordance for complete proposed_plan text", () => {
