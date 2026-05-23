@@ -60,6 +60,8 @@ const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
 const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_SYNTAX_RE =
   /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+const STREAMING_MARKDOWN_SYNTAX_RE =
+  /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
@@ -301,8 +303,11 @@ const TextPart = memo(function TextPart({
 
   const showStreamdown = processedText.length > 0;
   const hasMarkdownSyntax = useMemo(
-    () => MARKDOWN_SYNTAX_RE.test(processedText),
-    [processedText],
+    () =>
+      (streaming ? STREAMING_MARKDOWN_SYNTAX_RE : MARKDOWN_SYNTAX_RE).test(
+        processedText,
+      ),
+    [processedText, streaming],
   );
   const renderImage = useCallback(
     (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,

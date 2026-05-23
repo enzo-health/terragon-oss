@@ -40,6 +40,30 @@ describe("TextPart", () => {
     expect(markdownRendererSpy).toHaveBeenCalledWith("**Done**\n\n- item");
   });
 
+  it("keeps simple streaming progress lists on the cheap text path", () => {
+    markdownRendererSpy.mockClear();
+
+    const html = renderToStaticMarkup(
+      <TextPart text={"1. Starting\n2. Still working"} streaming />,
+    );
+
+    expect(html).toContain("1. Starting");
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).not.toContain('data-testid="markdown"');
+    expect(markdownRendererSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders simple progress lists as markdown after streaming completes", () => {
+    markdownRendererSpy.mockClear();
+
+    const html = renderToStaticMarkup(
+      <TextPart text={"1. Starting\n2. Done"} streaming={false} />,
+    );
+
+    expect(html).toContain('data-testid="markdown"');
+    expect(markdownRendererSpy).toHaveBeenCalledWith("1. Starting\n2. Done");
+  });
+
   it("uses the canonical artifact workspace affordance for complete proposed_plan text", () => {
     const html = renderToStaticMarkup(
       <TextPart

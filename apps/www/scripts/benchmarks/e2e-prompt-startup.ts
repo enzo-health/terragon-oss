@@ -134,6 +134,12 @@ type TextTraceSpanSample = {
   consumed: boolean;
 };
 
+export type LongTaskSample = {
+  startTimeMs: number;
+  durationMs: number;
+  attributionNames: string[];
+};
+
 type LayoutShiftSample = {
   startTime: number;
   value: number;
@@ -144,6 +150,7 @@ type BrowserStreamMetricDiagnostics = {
   daemonEventToVisibleSamples: DaemonEventToVisibleSample[];
   visibleUpdates: VisibleUpdateSample[];
   textTraceSpans: TextTraceSpanSample[];
+  longTaskEntries: LongTaskSample[];
   layoutShiftEntries: LayoutShiftSample[];
 };
 
@@ -160,6 +167,27 @@ export type BenchmarkDaemonTraceBatch = {
   traceKeys: string[];
   consumedTraceCount: number;
 };
+
+export function summarizeLongTaskSamples(samples: LongTaskSample[]): {
+  longTaskCount: number;
+  maxLongTaskMs: number;
+  totalLongTaskMs: number;
+  topLongTaskEntries: LongTaskSample[];
+} {
+  return {
+    longTaskCount: samples.length,
+    maxLongTaskMs: samples.length
+      ? Math.max(...samples.map((sample) => sample.durationMs))
+      : 0,
+    totalLongTaskMs: samples.reduce(
+      (total, sample) => total + sample.durationMs,
+      0,
+    ),
+    topLongTaskEntries: [...samples]
+      .sort((left, right) => right.durationMs - left.durationMs)
+      .slice(0, 10),
+  };
+}
 
 export function consumeDaemonTraceBatchForVisibleUpdate({
   spans,
@@ -842,7 +870,20 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         state.longTaskObserver = new PerformanceObserver((list) => {
           if (state.startedAtEpochMs === null) return;
           for (const entry of list.getEntries()) {
-            state.longTasks.push(Math.round(entry.duration));
+            state.longTasks.push({
+              startTimeMs: Math.round(entry.startTime),
+              durationMs: Math.round(entry.duration),
+              attributionNames: Array.from(entry.attribution ?? [])
+                .map(
+                  (attribution) =>
+                    attribution.name ||
+                    attribution.containerName ||
+                    attribution.containerId ||
+                    attribution.containerSrc ||
+                    attribution.containerType,
+                )
+                .filter(Boolean),
+            });
           }
         });
         state.longTaskObserver.observe({ entryTypes: ["longtask"] });
@@ -919,6 +960,19 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       },
       snapshot: () => {
         const gaps = state.activeStreamGaps;
+        const longTaskSummary = {
+          longTaskCount: state.longTasks.length,
+          maxLongTaskMs: state.longTasks.length
+            ? Math.max(...state.longTasks.map((task) => task.durationMs))
+            : 0,
+          totalLongTaskMs: state.longTasks.reduce(
+            (total, task) => total + task.durationMs,
+            0,
+          ),
+          topLongTaskEntries: Array.from(state.longTasks)
+            .sort((left, right) => right.durationMs - left.durationMs)
+            .slice(0, 10),
+        };
         const cumulativeLayoutShift = state.layoutShiftEntries.reduce(
           (total, entry) =>
             entry.startTime >= state.layoutShiftResetAtMs
@@ -934,17 +988,16 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           maxSilentGapMs: gaps.length ? Math.max(...gaps) : 0,
           visibleUpdateCount: state.visibleUpdates.length,
           activeStreamGapCount: state.activeStreamGaps.length,
-          activeStreamGapP95Ms: pickPercentile(state.activeStreamGaps, 95),
+          activeStreamGapP95Ms: state.daemonEventToVisibleUpdateSamples.length
+            ? (pickPercentile(state.activeStreamGaps, 95) ?? 0)
+            : null,
           daemonEventToVisibleUpdateMsP95: pickPercentile(
             state.daemonEventToVisibleUpdateSamples,
             95,
           ),
-          longTaskCount: state.longTasks.length,
-          maxLongTaskMs: state.longTasks.length ? Math.max(...state.longTasks) : 0,
-          totalLongTaskMs: state.longTasks.reduce(
-            (total, duration) => total + duration,
-            0,
-          ),
+          longTaskCount: longTaskSummary.longTaskCount,
+          maxLongTaskMs: longTaskSummary.maxLongTaskMs,
+          totalLongTaskMs: longTaskSummary.totalLongTaskMs,
           rafFrameGapP95Ms: pickPercentile(state.rafFrameGaps, 95),
           cumulativeLayoutShift: Number(cumulativeLayoutShift.toFixed(4)),
           diagnostics: {
@@ -971,6 +1024,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
                   consumed: state.consumedDaemonTraceKeys.has(traceKey),
                 };
               }),
+            longTaskEntries: longTaskSummary.topLongTaskEntries,
             layoutShiftEntries: state.layoutShiftEntries,
           },
         };
@@ -1046,6 +1100,7 @@ async function readBrowserStreamMetrics(
           daemonEventToVisibleSamples: [],
           visibleUpdates: [],
           textTraceSpans: [],
+          longTaskEntries: [],
           layoutShiftEntries: [],
         },
       }

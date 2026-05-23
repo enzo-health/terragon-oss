@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   consumeDaemonTraceBatchForVisibleUpdate,
+  summarizeLongTaskSamples,
   type BenchmarkTraceSpan,
 } from "./e2e-prompt-startup";
 
@@ -108,5 +109,36 @@ describe("consumeDaemonTraceBatchForVisibleUpdate", () => {
 
     expect(batch).toBeNull();
     expect(consumedTraceKeys.size).toBe(0);
+  });
+});
+
+describe("summarizeLongTaskSamples", () => {
+  it("preserves scalar metrics and returns the largest diagnostics first", () => {
+    const summary = summarizeLongTaskSamples([
+      {
+        startTimeMs: 120,
+        durationMs: 51,
+        attributionNames: ["small-task"],
+      },
+      {
+        startTimeMs: 240,
+        durationMs: 98,
+        attributionNames: ["large-task"],
+      },
+      {
+        startTimeMs: 360,
+        durationMs: 73,
+        attributionNames: [],
+      },
+    ]);
+
+    expect(summary.longTaskCount).toBe(3);
+    expect(summary.maxLongTaskMs).toBe(98);
+    expect(summary.totalLongTaskMs).toBe(222);
+    expect(summary.topLongTaskEntries[0]).toEqual({
+      startTimeMs: 240,
+      durationMs: 98,
+      attributionNames: ["large-task"],
+    });
   });
 });
