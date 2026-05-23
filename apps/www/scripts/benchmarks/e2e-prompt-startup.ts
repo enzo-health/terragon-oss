@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { chromium, type Browser, type Page } from "playwright";
 
 type Status = "pass" | "fail";
@@ -102,10 +103,35 @@ type DaemonEventToVisibleSample = {
   visibleAtMs: number;
   visibleEpochMs: number;
   daemonReceivedAtMs: number;
+  newestDaemonReceivedAtMs: number;
   daemonEventToVisibleUpdateMs: number;
+  newestDaemonEventToVisibleUpdateMs: number;
   traceKey: string;
+  traceKeys: string[];
+  consumedTraceCount: number;
   textLength: number;
   textDeltaBytes: number;
+};
+
+type VisibleUpdateSample = {
+  messageId: string;
+  sourceIds: string[];
+  visibleAtMs: number;
+  visibleEpochMs: number;
+  textLength: number;
+  textDeltaBytes: number;
+  gapMs: number | null;
+  uiOwnedGapMs: number | null;
+  daemonReceivedAtMs: number | null;
+};
+
+type TextTraceSpanSample = {
+  traceKey: string;
+  messageId: string | null;
+  agUiEventType: string | null;
+  receivedAtMs: number | null;
+  endedAtMs: number | null;
+  consumed: boolean;
 };
 
 type LayoutShiftSample = {
@@ -116,8 +142,119 @@ type LayoutShiftSample = {
 
 type BrowserStreamMetricDiagnostics = {
   daemonEventToVisibleSamples: DaemonEventToVisibleSample[];
+  visibleUpdates: VisibleUpdateSample[];
+  textTraceSpans: TextTraceSpanSample[];
   layoutShiftEntries: LayoutShiftSample[];
 };
+
+export type BenchmarkTraceSpan = {
+  name?: string;
+  endedAtMs?: number;
+  attributes?: Record<string, unknown>;
+};
+
+export type BenchmarkDaemonTraceBatch = {
+  oldestReceivedAtMs: number;
+  newestReceivedAtMs: number;
+  oldestTraceKey: string;
+  traceKeys: string[];
+  consumedTraceCount: number;
+};
+
+export function consumeDaemonTraceBatchForVisibleUpdate({
+  spans,
+  consumedTraceKeys,
+  visibleEpochMs,
+  messageIds,
+}: {
+  spans: BenchmarkTraceSpan[];
+  consumedTraceKeys: Set<string>;
+  visibleEpochMs: number;
+  messageIds: string[];
+}): BenchmarkDaemonTraceBatch | null {
+  const traceAttributeNumber = (
+    span: BenchmarkTraceSpan,
+    key: string,
+  ): number | null => {
+    const value = span.attributes?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+
+  const isVisibleTextTraceSpan = (span: BenchmarkTraceSpan): boolean => {
+    if (
+      span.attributes?.["traceKind"] !== "terragon.trace.daemon_event.received"
+    ) {
+      return false;
+    }
+    if (!messageIds.includes(String(span.attributes["messageId"]))) {
+      return false;
+    }
+    return (
+      span.attributes["agUiEventType"] === "TEXT_MESSAGE_CONTENT" ||
+      span.attributes["agUiEventType"] === "REASONING_MESSAGE_CONTENT"
+    );
+  };
+
+  const traceConsumptionKey = (span: BenchmarkTraceSpan): string =>
+    [
+      span.attributes?.["daemonEventId"] ?? "",
+      span.attributes?.["eventId"] ?? "",
+      span.attributes?.["seq"] ?? "",
+      span.attributes?.["projectionIndex"] ?? "",
+      span.attributes?.["messageId"] ?? "",
+      span.attributes?.["agUiEventType"] ?? "",
+    ].join(":");
+
+  const traceReceivedAtMs = (span: BenchmarkTraceSpan): number | null => {
+    const direct =
+      traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
+      traceAttributeNumber(span, "daemonReceivedAtMs") ??
+      traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
+    if (direct !== null) {
+      return direct;
+    }
+    if (
+      span.name === "server.daemon_event.received" &&
+      typeof span.endedAtMs === "number"
+    ) {
+      return span.endedAtMs;
+    }
+    return null;
+  };
+
+  const traces: { receivedAtMs: number; traceKey: string }[] = [];
+  for (let index = spans.length - 1; index >= 0; index--) {
+    const span = spans[index];
+    if (!span || !isVisibleTextTraceSpan(span)) {
+      continue;
+    }
+    if (typeof span.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
+      continue;
+    }
+    const consumptionKey = traceConsumptionKey(span);
+    if (consumedTraceKeys.has(consumptionKey)) {
+      continue;
+    }
+    const receivedAtMs = traceReceivedAtMs(span);
+    if (receivedAtMs !== null && receivedAtMs <= visibleEpochMs) {
+      traces.push({ receivedAtMs, traceKey: consumptionKey });
+    }
+  }
+  if (traces.length === 0) {
+    return null;
+  }
+  traces.sort((left, right) => left.receivedAtMs - right.receivedAtMs);
+  for (const trace of traces) {
+    consumedTraceKeys.add(trace.traceKey);
+  }
+  return {
+    oldestReceivedAtMs: traces[0]!.receivedAtMs,
+    newestReceivedAtMs: traces[traces.length - 1]!.receivedAtMs,
+    oldestTraceKey: traces[0]!.traceKey,
+    traceKeys: traces.map((trace) => trace.traceKey),
+    consumedTraceCount: traces.length,
+  };
+}
 
 type BrowserStreamMetricSnapshot = {
   assistantTextChunkCount: number;
@@ -364,6 +501,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       longTaskObserver: null,
       layoutShiftObserver: null,
       rafId: null,
+      pendingTextMutationRafId: null,
     };
 
     const storedStartedAtEpochMs = window.sessionStorage.getItem(
@@ -411,22 +549,92 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         : null;
     };
 
+    const consumeDaemonTraceBatchForVisibleUpdate = ({
+      spans,
+      consumedTraceKeys,
+      visibleEpochMs,
+      messageIds,
+    }) => {
+      const traceAttributeNumber = (span, key) => {
+        const value = span?.attributes?.[key];
+        return typeof value === "number" && Number.isFinite(value)
+          ? value
+          : null;
+      };
+      const isVisibleTextTraceSpan = (span) => {
+        if (span?.attributes?.traceKind !== "terragon.trace.daemon_event.received") {
+          return false;
+        }
+        if (!messageIds.includes(String(span.attributes.messageId))) {
+          return false;
+        }
+        return (
+          span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
+          span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT"
+        );
+      };
+      const traceConsumptionKey = (span) =>
+        [
+          span?.attributes?.daemonEventId ?? "",
+          span?.attributes?.eventId ?? "",
+          span?.attributes?.seq ?? "",
+          span?.attributes?.projectionIndex ?? "",
+          span?.attributes?.messageId ?? "",
+          span?.attributes?.agUiEventType ?? "",
+        ].join(":");
+      const traceReceivedAtMs = (span) => {
+        const direct =
+          traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
+          traceAttributeNumber(span, "daemonReceivedAtMs") ??
+          traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
+        if (direct !== null) {
+          return direct;
+        }
+        if (
+          span?.name === "server.daemon_event.received" &&
+          typeof span.endedAtMs === "number"
+        ) {
+          return span.endedAtMs;
+        }
+        return null;
+      };
+      const traces = [];
+      for (let index = spans.length - 1; index >= 0; index--) {
+        const span = spans[index];
+        if (!span || !isVisibleTextTraceSpan(span)) {
+          continue;
+        }
+        if (typeof span.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
+          continue;
+        }
+        const consumptionKey = traceConsumptionKey(span);
+        if (consumedTraceKeys.has(consumptionKey)) {
+          continue;
+        }
+        const receivedAtMs = traceReceivedAtMs(span);
+        if (receivedAtMs !== null && receivedAtMs <= visibleEpochMs) {
+          traces.push({ receivedAtMs, traceKey: consumptionKey });
+        }
+      }
+      if (traces.length === 0) {
+        return null;
+      }
+      traces.sort((left, right) => left.receivedAtMs - right.receivedAtMs);
+      for (const trace of traces) {
+        consumedTraceKeys.add(trace.traceKey);
+      }
+      return {
+        oldestReceivedAtMs: traces[0].receivedAtMs,
+        newestReceivedAtMs: traces[traces.length - 1].receivedAtMs,
+        oldestTraceKey: traces[0].traceKey,
+        traceKeys: traces.map((trace) => trace.traceKey),
+        consumedTraceCount: traces.length,
+      };
+    };
+
     const traceAttributeNumber = (span, key) => {
       const value = span?.attributes?.[key];
       return typeof value === "number" && Number.isFinite(value) ? value : null;
-    };
-
-    const isVisibleTextTraceSpan = (span, messageIds) => {
-      if (span?.attributes?.traceKind !== "terragon.trace.daemon_event.received") {
-        return false;
-      }
-      if (!messageIds.includes(span.attributes.messageId)) {
-        return false;
-      }
-      return (
-        span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
-        span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT"
-      );
     };
 
     const traceConsumptionKey = (span) =>
@@ -439,38 +647,19 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         span?.attributes?.agUiEventType ?? "",
       ].join(":");
 
-    const consumeDaemonTrace = (visibleEpochMs, messageIds) => {
-      for (let index = state.agentTraceSpans.length - 1; index >= 0; index--) {
-        const span = state.agentTraceSpans[index];
-        if (!isVisibleTextTraceSpan(span, messageIds)) {
-          continue;
-        }
-        if (typeof span?.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
-          continue;
-        }
-        const consumptionKey = traceConsumptionKey(span);
-        if (state.consumedDaemonTraceKeys.has(consumptionKey)) {
-          continue;
-        }
-        const direct =
-          traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
-          traceAttributeNumber(span, "daemonReceivedAtMs") ??
-          traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
-        if (direct !== null && direct <= visibleEpochMs) {
-          state.consumedDaemonTraceKeys.add(consumptionKey);
-          return { receivedAtMs: direct, traceKey: consumptionKey };
-        }
-        if (
-          span?.name === "server.daemon_event.received" &&
-          typeof span.endedAtMs === "number" &&
-          span.endedAtMs <= visibleEpochMs
-        ) {
-          state.consumedDaemonTraceKeys.add(consumptionKey);
-          return { receivedAtMs: span.endedAtMs, traceKey: consumptionKey };
-        }
-      }
-      return null;
-    };
+    const isTextTraceSpan = (span) =>
+      span?.attributes?.traceKind === "terragon.trace.daemon_event.received" &&
+      (span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
+        span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT");
+
+    const traceReceivedAtMs = (span) =>
+      traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
+      traceAttributeNumber(span, "daemonReceivedAtMs") ??
+      traceAttributeNumber(span, "serverDaemonEventReceivedAtMs") ??
+      (span?.name === "server.daemon_event.received" &&
+      typeof span.endedAtMs === "number"
+        ? span.endedAtMs
+        : null);
 
     const recordBenchmarkTraceSpan = (name, attributes) => {
       const endedAtMs = epochNow();
@@ -523,22 +712,45 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         previousVisibleUpdate === undefined
           ? null
           : visibleAtMs - previousVisibleUpdate.visibleAtMs;
-      if (gapMs !== null) {
-        state.activeStreamGaps.push(gapMs);
-        recordBenchmarkTraceSpan("browser.agent_text.chunk_gap", {
-          messageId: message.id,
-          gapMs,
-        });
-      }
-      const daemonTrace = consumeDaemonTrace(
+      const daemonTrace = consumeDaemonTraceBatchForVisibleUpdate({
+        spans: state.agentTraceSpans,
+        consumedTraceKeys: state.consumedDaemonTraceKeys,
         visibleEpochMs,
-        message.sourceIds.length > 0 ? message.sourceIds : [message.id],
-      );
-      const daemonReceivedAtMs = daemonTrace?.receivedAtMs ?? null;
+        messageIds:
+          message.sourceIds.length > 0 ? message.sourceIds : [message.id],
+      });
+      const daemonReceivedAtMs = daemonTrace?.oldestReceivedAtMs ?? null;
+      const previousTraceBackedUpdate = state.visibleUpdates
+        .slice()
+        .reverse()
+        .find((update) => update.daemonReceivedAtMs !== null);
+      let uiOwnedGapMs = null;
       if (daemonReceivedAtMs !== null) {
+        if (
+          gapMs !== null &&
+          previousTraceBackedUpdate?.daemonReceivedAtMs !== undefined &&
+          previousTraceBackedUpdate.daemonReceivedAtMs !== null
+        ) {
+          const daemonCadenceMs = Math.max(
+            0,
+            daemonReceivedAtMs - previousTraceBackedUpdate.daemonReceivedAtMs,
+          );
+          uiOwnedGapMs = Math.max(0, gapMs - daemonCadenceMs);
+          state.activeStreamGaps.push(uiOwnedGapMs);
+          recordBenchmarkTraceSpan("browser.agent_text.chunk_gap", {
+            messageId: message.id,
+            gapMs,
+            uiOwnedGapMs,
+            daemonCadenceMs,
+          });
+        }
         const daemonEventToVisibleUpdateMs = Math.max(
           0,
           Math.round(visibleEpochMs - daemonReceivedAtMs),
+        );
+        const newestDaemonEventToVisibleUpdateMs = Math.max(
+          0,
+          Math.round(visibleEpochMs - daemonTrace.newestReceivedAtMs),
         );
         state.daemonEventToVisibleUpdateSamples.push(
           daemonEventToVisibleUpdateMs,
@@ -548,23 +760,29 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           visibleAtMs,
           visibleEpochMs: Math.round(visibleEpochMs),
           daemonReceivedAtMs,
+          newestDaemonReceivedAtMs: daemonTrace.newestReceivedAtMs,
           daemonEventToVisibleUpdateMs,
-          traceKey: daemonTrace.traceKey,
+          newestDaemonEventToVisibleUpdateMs,
+          traceKey: daemonTrace.oldestTraceKey,
+          traceKeys: daemonTrace.traceKeys,
+          consumedTraceCount: daemonTrace.consumedTraceCount,
           textLength: message.text.length,
           textDeltaBytes,
         });
+        state.chunkTimes.push(visibleAtMs);
+        state.streamedTextBytes += textDeltaBytes;
       }
       state.visibleUpdates.push({
         messageId: message.id,
+        sourceIds: message.sourceIds,
         visibleAtMs,
         visibleEpochMs: Math.round(visibleEpochMs),
         textLength: message.text.length,
         textDeltaBytes,
         gapMs,
+        uiOwnedGapMs,
         daemonReceivedAtMs,
       });
-      state.chunkTimes.push(visibleAtMs);
-      state.streamedTextBytes += textDeltaBytes;
       state.previousAgentTextByMessageId[message.id] = message.text;
       recordBenchmarkTraceSpan("browser.agent_text.visible", {
         messageId: message.id,
@@ -586,13 +804,23 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       state.rafId = window.requestAnimationFrame(tick);
     };
 
+    const scheduleTextMutationSample = () => {
+      if (state.pendingTextMutationRafId !== null) {
+        return;
+      }
+      state.pendingTextMutationRafId = window.requestAnimationFrame(() => {
+        state.pendingTextMutationRafId = null;
+        recordTextMutation();
+      });
+    };
+
     const observeTextMutations = () => {
       const mutationRoot = document.body ?? document.documentElement;
       if (!mutationRoot) {
         window.requestAnimationFrame(observeTextMutations);
         return;
       }
-      state.observer = new MutationObserver(recordTextMutation);
+      state.observer = new MutationObserver(scheduleTextMutationSample);
       state.observer.observe(mutationRoot, {
         childList: true,
         subtree: true,
@@ -684,11 +912,13 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         state.layoutShiftEntries = [];
         state.layoutShiftResetAtMs = 0;
         state.lastRafAt = null;
+        if (state.pendingTextMutationRafId !== null) {
+          window.cancelAnimationFrame(state.pendingTextMutationRafId);
+          state.pendingTextMutationRafId = null;
+        }
       },
       snapshot: () => {
-        const gaps = state.chunkTimes
-          .slice(1)
-          .map((time, index) => time - state.chunkTimes[index]);
+        const gaps = state.activeStreamGaps;
         const cumulativeLayoutShift = state.layoutShiftEntries.reduce(
           (total, entry) =>
             entry.startTime >= state.layoutShiftResetAtMs
@@ -719,6 +949,28 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           cumulativeLayoutShift: Number(cumulativeLayoutShift.toFixed(4)),
           diagnostics: {
             daemonEventToVisibleSamples: state.daemonEventToVisibleSamples,
+            visibleUpdates: state.visibleUpdates.slice(-40),
+            textTraceSpans: state.agentTraceSpans
+              .filter(isTextTraceSpan)
+              .slice(-80)
+              .map((span) => {
+                const traceKey = traceConsumptionKey(span);
+                return {
+                  traceKey,
+                  messageId:
+                    typeof span?.attributes?.messageId === "string"
+                      ? span.attributes.messageId
+                      : null,
+                  agUiEventType:
+                    typeof span?.attributes?.agUiEventType === "string"
+                      ? span.attributes.agUiEventType
+                      : null,
+                  receivedAtMs: traceReceivedAtMs(span),
+                  endedAtMs:
+                    typeof span?.endedAtMs === "number" ? span.endedAtMs : null,
+                  consumed: state.consumedDaemonTraceKeys.has(traceKey),
+                };
+              }),
             layoutShiftEntries: state.layoutShiftEntries,
           },
         };
@@ -733,6 +985,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         window.__terragonAgentTraceSink = previousTraceSink;
         if (state.rafId !== null) {
           window.cancelAnimationFrame(state.rafId);
+        }
+        if (state.pendingTextMutationRafId !== null) {
+          window.cancelAnimationFrame(state.pendingTextMutationRafId);
         }
       },
     };
@@ -789,6 +1044,8 @@ async function readBrowserStreamMetrics(
         cumulativeLayoutShift: 0,
         diagnostics: {
           daemonEventToVisibleSamples: [],
+          visibleUpdates: [],
+          textTraceSpans: [],
           layoutShiftEntries: [],
         },
       }
@@ -1586,7 +1843,12 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  void main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

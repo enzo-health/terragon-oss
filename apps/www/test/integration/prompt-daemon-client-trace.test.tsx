@@ -126,6 +126,8 @@ function mockAgUiEventEnvelopesForThreadChat(params: {
   const envelopes = params.events.map((payload, index) => ({
     eventId: `trace-event-${index}`,
     seq: index,
+    projectionIndex: index,
+    projectionCount: params.events.length,
     runId: params.runId,
     threadId: "thread-1",
     threadChatId: "chat-1",
@@ -297,6 +299,8 @@ describe("prompt to daemon to client trace", () => {
       runId,
       eventId: "trace-event-1",
       seq: 1,
+      projectionIndex: 1,
+      projectionCount: daemonEvents.length,
       agUiEventType: EventType.TEXT_MESSAGE_START,
       messageId: "assistant-trace-1",
       daemonEventId: "daemon-event-trace-1",
@@ -345,6 +349,8 @@ describe("prompt to daemon to client trace", () => {
             "terragon.trace.daemon_event.received" &&
           span.attributes["agUiEventType"] === EventType.TEXT_MESSAGE_CONTENT &&
           span.attributes["messageId"] === "assistant-trace-1" &&
+          span.attributes["projectionIndex"] === 2 &&
+          span.attributes["projectionCount"] === daemonEvents.length &&
           span.attributes["daemonEventReceivedAtMs"] === 123_456,
       ),
     ).toBe(true);
