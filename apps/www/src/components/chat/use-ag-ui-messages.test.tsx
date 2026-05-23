@@ -17,6 +17,8 @@ import { createEmptyThreadViewSnapshot } from "./thread-view-model/snapshot-adap
 import {
   createThreadViewEventFromAgUiEvent,
   createThreadViewSidecarEventProjector,
+  type ThreadViewEventForAgUi,
+  useAgUiSidecarRouter,
   useThreadViewModel,
 } from "./use-ag-ui-messages";
 
@@ -91,6 +93,52 @@ function SidecarHarness({
     ...(includeTranscriptMessages !== undefined
       ? { includeTranscriptMessages }
       : {}),
+  });
+  onMessages(viewModel.messages);
+  return null;
+}
+
+function RoutedSidecarHarness({
+  agent,
+  initialMessages,
+  onMessages,
+  onStatusOrTerminalEvent,
+  projectEvent: projectEventOverride,
+}: {
+  agent: HttpAgent | null;
+  initialMessages: UIMessage[];
+  onMessages: (messages: UIMessage[]) => void;
+  onStatusOrTerminalEvent: () => void;
+  projectEvent?: (
+    event: ThreadViewEventForAgUi,
+  ) => ThreadViewEventForAgUi | null;
+}): null {
+  const snapshot = useMemo(
+    () =>
+      createEmptyThreadViewSnapshot({
+        agent: "claudeCode",
+        initialMessages,
+      }),
+    [initialMessages],
+  );
+  const projectEvent = useMemo(
+    () =>
+      createThreadViewSidecarEventProjector({
+        includeTranscriptEvents: false,
+      }),
+    [],
+  );
+  const viewModel = useThreadViewModel({
+    agent: null,
+    snapshot,
+    includeTranscriptMessages: false,
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
+    projectEvent: projectEventOverride ?? projectEvent,
+    includeTranscriptMessages: false,
+    onStatusOrTerminalEvent,
   });
   onMessages(viewModel.messages);
   return null;
@@ -489,6 +537,82 @@ describe("useThreadViewModel sidecar projection", () => {
         }),
       }),
     );
+  });
+
+  it("routes sidecar state and status invalidation through one subscription", () => {
+    const agent = createFakeAgent();
+    const onMessages = vi.fn();
+    const onStatusOrTerminalEvent = vi.fn();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(RoutedSidecarHarness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages,
+          onStatusOrTerminalEvent,
+        }),
+      );
+    });
+
+    expect(agent.subscribers).toHaveLength(1);
+
+    act(() => {
+      agent.emit({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "ordinary token",
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: "working" },
+      } as BaseEvent);
+      agent.emit({
+        type: EventType.RUN_FINISHED,
+        runId: "run-1",
+      } as BaseEvent);
+    });
+
+    expect(onStatusOrTerminalEvent).toHaveBeenCalledTimes(2);
+    expect(onMessages).toHaveBeenLastCalledWith([]);
+  });
+
+  it("invalidates status events before sidecar projection can filter them", () => {
+    const agent = createFakeAgent();
+    const onMessages = vi.fn();
+    const onStatusOrTerminalEvent = vi.fn();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(RoutedSidecarHarness, {
+          agent: asHttpAgent(agent),
+          initialMessages: [],
+          onMessages,
+          onStatusOrTerminalEvent,
+          projectEvent: () => null,
+        }),
+      );
+    });
+
+    act(() => {
+      agent.emit({
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: "working" },
+      } as BaseEvent);
+    });
+
+    expect(onStatusOrTerminalEvent).toHaveBeenCalledOnce();
+    expect(onMessages).toHaveBeenLastCalledWith([]);
   });
 
   it("can skip legacy transcript projection for runtime-owned rendering", () => {

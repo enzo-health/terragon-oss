@@ -104,6 +104,12 @@ function makeRunError(): RunErrorEvent {
   } as RunErrorEvent;
 }
 
+async function flushScheduledInvalidations(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 describe("useAgUiQueryInvalidator", () => {
   let container: HTMLDivElement | null = null;
   let invalidateSpy: MockInstance | null = null;
@@ -153,9 +159,12 @@ describe("useAgUiQueryInvalidator", () => {
     const fake = createFakeAgent();
     const { unmount } = renderWith(fake, "thread-1", "chat-1");
 
+    expect(fake.subscribers).toHaveLength(1);
+
     await act(async () => {
       fake.emit(makeCustomEvent("thread.status_changed"));
     });
+    await flushScheduledInvalidations();
 
     expect(invalidateSpy).toHaveBeenCalledTimes(3);
     const calls = invalidateSpy!.mock.calls.map((c) => c[0]);
@@ -174,6 +183,7 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeCustomEvent("thread.token_usage_updated"));
     });
+    await flushScheduledInvalidations();
     expect(invalidateSpy).not.toHaveBeenCalled();
 
     unmount();
@@ -186,6 +196,7 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeRunFinished());
     });
+    await flushScheduledInvalidations();
     expect(invalidateSpy).toHaveBeenCalledTimes(3);
     let calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
@@ -202,6 +213,7 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeRunError());
     });
+    await flushScheduledInvalidations();
     expect(invalidateSpy).toHaveBeenCalledTimes(3);
     calls = invalidateSpy!.mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
@@ -224,6 +236,7 @@ describe("useAgUiQueryInvalidator", () => {
     await act(async () => {
       fake.emit(makeRunFinished());
     });
+    await flushScheduledInvalidations();
 
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
     const calls = invalidateSpy!.mock.calls.map((c) => c[0]);
@@ -255,6 +268,7 @@ describe("useAgUiQueryInvalidator", () => {
 
       await act(async () => {
         vi.advanceTimersByTime(15_000);
+        vi.advanceTimersByTime(0);
       });
 
       expect(invalidateSpy).toHaveBeenCalled();

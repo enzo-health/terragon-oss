@@ -14,6 +14,7 @@ import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
+import { useThreadQueryInvalidationScheduler } from "@/hooks/use-ag-ui-query-invalidator";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
@@ -62,6 +63,7 @@ import {
 } from "./use-thread-mutations";
 import {
   createThreadViewSidecarEventProjector,
+  useAgUiSidecarRouter,
   useThreadViewModel,
 } from "./use-ag-ui-messages";
 
@@ -285,10 +287,21 @@ function ChatUIContent() {
     [],
   );
   const threadViewModel = useThreadViewModel({
-    agent,
+    agent: null,
     snapshot: threadViewSnapshot,
+    includeTranscriptMessages: false,
+  });
+  const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
+    threadId,
+    threadChatId,
+    enabled: Boolean(agent),
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: threadViewModel.dispatchThreadViewEvent,
     projectEvent: projectThreadViewEvent,
     includeTranscriptMessages: false,
+    onStatusOrTerminalEvent: scheduleThreadQueryInvalidation,
   });
   const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;

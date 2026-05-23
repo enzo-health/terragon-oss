@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { EventType, type BaseEvent } from "@ag-ui/core";
 import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef } from "react";
 import { useAgUiAgent } from "@/components/chat/ag-ui-agent-context";
-import { useAgUiCustomEvents } from "@/hooks/use-ag-ui-custom-events";
-import { useAgUiRunEvents } from "@/hooks/use-ag-ui-run-events";
 import { threadQueryKeys } from "@/queries/thread-queries";
 import type { ThreadStatus } from "@terragon/shared";
 
@@ -46,9 +45,38 @@ export function useAgUiQueryInvalidator(args: {
   threadId: string;
   threadChatId: string | null;
 }): void {
-  const { threadId, threadChatId } = args;
-  const queryClient = useQueryClient();
   const agent = useAgUiAgent();
+  const scheduleInvalidate = useThreadQueryInvalidationScheduler({
+    ...args,
+    enabled: Boolean(agent),
+  });
+
+  useEffect(() => {
+    if (!agent) return;
+    const subscription = agent.subscribe({
+      onEvent: ({ event }) => {
+        if (!shouldInvalidateForAgUiEvent(event)) {
+          return;
+        }
+        scheduleInvalidate();
+      },
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [agent, scheduleInvalidate]);
+}
+
+export function useThreadQueryInvalidationScheduler(args: {
+  threadId: string;
+  threadChatId: string | null;
+  enabled?: boolean;
+}): () => void {
+  const { threadId, threadChatId, enabled = true } = args;
+  const queryClient = useQueryClient();
+  const scheduledInvalidationRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -66,16 +94,18 @@ export function useAgUiQueryInvalidator(args: {
     }
   }, [queryClient, threadId, threadChatId]);
 
-  const statusFilter = useCallback(
-    (name: string) => name === "thread.status_changed",
-    [],
-  );
-
-  useAgUiCustomEvents(agent, statusFilter, invalidate);
-  useAgUiRunEvents(agent, invalidate, invalidate);
+  const scheduleInvalidate = useCallback(() => {
+    if (scheduledInvalidationRef.current !== null) {
+      return;
+    }
+    scheduledInvalidationRef.current = setTimeout(() => {
+      scheduledInvalidationRef.current = null;
+      invalidate();
+    }, 0);
+  }, [invalidate]);
 
   useEffect(() => {
-    if (!agent) return;
+    if (!enabled) return;
 
     const interval = setInterval(() => {
       const chatStatus = threadChatId
@@ -93,11 +123,35 @@ export function useAgUiQueryInvalidator(args: {
         (chatStatus != null && LIVE_THREAD_STATUSES.has(chatStatus));
 
       if (!shouldHeartbeat) return;
-      invalidate();
+      scheduleInvalidate();
     }, HEARTBEAT_MS);
 
     return () => {
       clearInterval(interval);
     };
-  }, [agent, invalidate, queryClient, threadChatId, threadId]);
+  }, [enabled, queryClient, scheduleInvalidate, threadChatId, threadId]);
+
+  useEffect(
+    () => () => {
+      if (scheduledInvalidationRef.current !== null) {
+        clearTimeout(scheduledInvalidationRef.current);
+      }
+    },
+    [],
+  );
+
+  return scheduleInvalidate;
+}
+
+function shouldInvalidateForAgUiEvent(event: BaseEvent): boolean {
+  if (
+    event.type === EventType.RUN_FINISHED ||
+    event.type === EventType.RUN_ERROR
+  ) {
+    return true;
+  }
+  return (
+    event.type === EventType.CUSTOM &&
+    Reflect.get(event, "name") === "thread.status_changed"
+  );
 }

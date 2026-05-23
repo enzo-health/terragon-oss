@@ -28,6 +28,16 @@ export type ThreadViewModelController = ThreadViewModel & {
   dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
 };
 
+type UseAgUiSidecarRouterArgs = {
+  agent: HttpAgent | null;
+  dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
+  projectEvent?: (
+    event: ThreadViewEventForAgUi,
+  ) => ThreadViewEventForAgUi | null;
+  includeTranscriptMessages?: boolean;
+  onStatusOrTerminalEvent?: () => void;
+};
+
 export function createThreadViewEventFromAgUiEvent(
   event: ThreadViewEventForAgUi,
   options?: { projectTranscript?: boolean },
@@ -45,6 +55,59 @@ export function createThreadViewEventFromAgUiEvent(
     event,
     ...(projectTranscript !== undefined ? { projectTranscript } : {}),
   };
+}
+
+export function useAgUiSidecarRouter({
+  agent,
+  dispatchThreadViewEvent,
+  projectEvent,
+  includeTranscriptMessages = true,
+  onStatusOrTerminalEvent,
+}: UseAgUiSidecarRouterArgs): void {
+  const dispatchRef = useRef(dispatchThreadViewEvent);
+  const projectEventRef = useRef(projectEvent);
+  const includeTranscriptMessagesRef = useRef(includeTranscriptMessages);
+  const onStatusOrTerminalEventRef = useRef(onStatusOrTerminalEvent);
+
+  dispatchRef.current = dispatchThreadViewEvent;
+  projectEventRef.current = projectEvent;
+  includeTranscriptMessagesRef.current = includeTranscriptMessages;
+  onStatusOrTerminalEventRef.current = onStatusOrTerminalEvent;
+
+  useEffect(() => {
+    if (!agent) return;
+
+    const subscription = agent.subscribe({
+      onEvent: ({ event }) => {
+        if (isStatusOrTerminalEvent(event)) {
+          onStatusOrTerminalEventRef.current?.();
+        }
+        const projectedEvent = projectEventRef.current
+          ? projectEventRef.current(event)
+          : event;
+        if (!projectedEvent) {
+          return;
+        }
+        recordAgUiEventReceipt(projectedEvent);
+        if (isTerragonTraceEvent(projectedEvent)) {
+          return;
+        }
+        try {
+          dispatchRef.current(
+            createThreadViewEventFromAgUiEvent(projectedEvent, {
+              projectTranscript: includeTranscriptMessagesRef.current,
+            }),
+          );
+        } catch {
+          // Malformed projection events are quarantined by the reducer; keep the
+          // subscription healthy if a future event shape still slips through.
+        }
+      },
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [agent]);
 }
 
 export function useThreadViewModel({
@@ -73,17 +136,7 @@ export function useThreadViewModel({
         if (!projectedEvent) {
           return;
         }
-        const traceId =
-          getStringEventField(projectedEvent, "runId") ??
-          getTerragonTraceRunId(projectedEvent);
-        recordAgentTraceSpan({
-          traceId,
-          name: "client.agui.event.received",
-          attributes: {
-            eventType: String(projectedEvent.type),
-            ...getTerragonTraceAttributes(projectedEvent),
-          },
-        });
+        recordAgUiEventReceipt(projectedEvent);
         if (isTerragonTraceEvent(projectedEvent)) {
           return;
         }
@@ -139,6 +192,32 @@ export function useThreadViewModel({
 export type ThreadViewEventForAgUi = Parameters<
   NonNullable<Parameters<HttpAgent["subscribe"]>[0]["onEvent"]>
 >[0]["event"];
+
+function recordAgUiEventReceipt(event: ThreadViewEventForAgUi): void {
+  const traceId =
+    getStringEventField(event, "runId") ?? getTerragonTraceRunId(event);
+  recordAgentTraceSpan({
+    traceId,
+    name: "client.agui.event.received",
+    attributes: {
+      eventType: String(event.type),
+      ...getTerragonTraceAttributes(event),
+    },
+  });
+}
+
+function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
+  if (
+    event.type === EventType.RUN_FINISHED ||
+    event.type === EventType.RUN_ERROR
+  ) {
+    return true;
+  }
+  return (
+    event.type === EventType.CUSTOM &&
+    Reflect.get(event, "name") === "thread.status_changed"
+  );
+}
 
 function isTerragonTraceEvent(event: ThreadViewEventForAgUi): boolean {
   return (

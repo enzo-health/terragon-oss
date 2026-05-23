@@ -16,7 +16,6 @@ import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import React, { useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
 import {
   convertToPlainText,
   getLastUserMessageModel,
@@ -126,9 +125,6 @@ function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
  * widen the relevant group rather than the whole signature. Each group is
  * `useMemo`-stabilized in `ChatUIContent` to keep referential identity stable
  * across parent re-renders.
- *
- * The `<AgUiQueryInvalidatorMount/>` lives inside the `<AgUiAgentProvider/>`
- * so it can read the agent from context.
  */
 export function ChatUILayout(props: ChatUILayoutProps) {
   const {
@@ -145,8 +141,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     agent,
     chatAgent,
     isReadOnly,
-    threadId,
-    threadChatId,
     threadChat,
     thread,
     threadWithViewModelStatus,
@@ -245,10 +239,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
 
   return (
     <AgUiAgentProvider agent={agent}>
-      <AgUiQueryInvalidatorMount
-        threadId={threadId}
-        threadChatId={threadChatId}
-      />
       <div className="flex flex-col h-full w-full">
         <ChatHeader
           thread={threadWithViewModelStatus}
@@ -415,19 +405,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
       )}
     </AgUiAgentProvider>
   );
-}
-
-function AgUiQueryInvalidatorMount({
-  threadId,
-  threadChatId,
-}: {
-  threadId: string;
-  threadChatId: string | null;
-}): null {
-  // Must be rendered INSIDE `AgUiAgentProvider` so the hook can read the
-  // current `HttpAgent` from context.
-  useAgUiQueryInvalidator({ threadId, threadChatId });
-  return null;
 }
 
 /**
