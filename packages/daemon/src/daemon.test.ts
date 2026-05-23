@@ -2155,6 +2155,53 @@ describe("daemon", () => {
     );
   });
 
+  it("does not push back the first visible message flush when more messages arrive", async () => {
+    daemon = new TerragonDaemon({
+      runtime,
+      messageHandleDelay: 5,
+      messageFlushDelay: 50,
+      retryConfig: {
+        baseDelayMs: 10,
+        maxDelayMs: 100,
+        maxAttempts: 10,
+        backoffMultiplier: 2,
+        jitterFactor: 0,
+      },
+    });
+
+    await daemon.start();
+    await writeToUnixSocket({
+      unixSocketPath: runtime.unixSocketPath,
+      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
+    });
+    await sleep();
+
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "FIRST_VISIBLE_MESSAGE",
+    });
+    await sleep(25);
+    mockSpawnCommandStdoutLine({
+      role: "assistant",
+      content: "SECOND_VISIBLE_MESSAGE",
+    });
+    await sleep(35);
+
+    expect(serverPostMock).toHaveBeenCalledTimes(1);
+    expect(serverPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: "assistant", content: "FIRST_VISIBLE_MESSAGE" },
+          { role: "assistant", content: "SECOND_VISIBLE_MESSAGE" },
+        ],
+        threadId: "TEST_THREAD_ID_STRING",
+        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
+        timezone: "America/New_York",
+      }),
+      "TEST_TOKEN_STRING",
+    );
+  });
+
   it("should handle rapid message arrivals without losing messages", async () => {
     // Make serverPost take some time
     serverPostMock.mockImplementation(async () => {

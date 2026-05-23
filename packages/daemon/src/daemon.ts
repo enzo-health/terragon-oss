@@ -1801,10 +1801,11 @@ export class TerragonDaemon {
             });
           }
 
-          // Intermediate flush for codex: coalesce rapid-fire completions
-          // at 250ms instead of the default 33ms messageFlushDelay
+          // Intermediate flush for Codex completions without pushing back an
+          // earlier visible-message flush. Streaming throttling belongs to the
+          // leading-edge flush timer and delta path, not a trailing debounce.
           if (threadEvent.type === "item.completed") {
-            this.scheduleMessageFlush(250, { replaceExisting: true });
+            this.scheduleMessageFlush(250);
           }
 
           if (threadEvent.type === "turn.failed") {
@@ -4465,9 +4466,7 @@ export class TerragonDaemon {
       return;
     }
 
-    this.scheduleMessageFlush(this.messageFlushDelay, {
-      replaceExisting: true,
-    });
+    this.scheduleMessageFlush(this.messageFlushDelay);
   }
 
   private scheduleMessageFlush(
