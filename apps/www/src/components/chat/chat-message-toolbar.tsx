@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Check, Copy, Link, RefreshCw, Split } from "lucide-react";
 import type { UIMessage } from "@terragon/shared";
 import { getModelDisplayName } from "@terragon/agent/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { RedoTaskDialog } from "./redo-task-dialog";
@@ -61,7 +62,7 @@ export function MessageToolbar({
   const parts = message.parts;
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(partsToMd(parts));
+      await copyTextToClipboard(partsToMd(parts));
       toast.success("Copied");
       flash(setCopied);
     } catch {
@@ -71,7 +72,7 @@ export function MessageToolbar({
   const handleLink = useCallback(async () => {
     const resolvedTaskId = taskId ?? getTaskIdFromLocation();
     try {
-      await navigator.clipboard.writeText(
+      await copyTextToClipboard(
         `${window.location.origin}/task/${resolvedTaskId}#message-${messageIndex}`,
       );
       toast.success("Link copied");
