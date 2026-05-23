@@ -466,6 +466,9 @@ function applyMessagesSnapshot(
 ): boolean {
   let changed = false;
   for (const message of event.messages) {
+    if (isEmptyAssistantMessage(message)) {
+      continue;
+    }
     if (isContextResetMessage(message)) {
       changed =
         changed ||
@@ -514,6 +517,14 @@ function indexHistoryMessage(
   }
 }
 
+function isEmptyAssistantMessage(message: Message): boolean {
+  return (
+    message.role === "assistant" &&
+    (message.content ?? "").length === 0 &&
+    (message.toolCalls?.length ?? 0) === 0
+  );
+}
+
 function ensureAssistantHistoryMessage(
   state: HistoryBuilderState,
   messageId: string,
@@ -545,8 +556,8 @@ function startTextHistoryMessage(
   if (state.assistantById.has(event.messageId)) {
     return false;
   }
-  ensureAssistantHistoryMessage(state, event.messageId);
-  return true;
+  state.lastAssistantId = event.messageId;
+  return false;
 }
 
 function appendTextHistoryMessage(
@@ -665,7 +676,7 @@ function finishUnresolvedHistoryToolCalls(
     changed = true;
   }
   state.unresolvedToolCallIds.clear();
-  return changed || state.items.length > 0;
+  return changed;
 }
 
 function historyRunErrorMessage(event: BaseEvent): string {

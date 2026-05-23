@@ -66,6 +66,7 @@ function normalizeBoldHeaders(text: string): string {
 }
 
 const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
+const PROPOSED_PLAN_BODY_RE = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/g;
 const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_SYNTAX_RE =
   /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
@@ -83,6 +84,11 @@ const PROPOSED_PLAN_START = "<proposed_plan";
 interface BlockInfo {
   totalLines: number;
   expanded: boolean;
+}
+
+function getFirstProposedPlanBody(text: string): string {
+  PROPOSED_PLAN_BODY_RE.lastIndex = 0;
+  return PROPOSED_PLAN_BODY_RE.exec(text)?.[1]?.trim() ?? "";
 }
 
 export function shouldScanCodeBlocks({
@@ -185,7 +191,8 @@ const TextPart = memo(function TextPart({
     );
     if (hasCompleteProposedPlan && onOpenInArtifactWorkspace) {
       PROPOSED_PLAN_RE.lastIndex = 0;
-      t = t.replace(PROPOSED_PLAN_RE, "").trim();
+      const withoutPlan = t.replace(PROPOSED_PLAN_RE, "").trim();
+      t = withoutPlan.length > 0 ? withoutPlan : getFirstProposedPlanBody(t);
     }
     return t;
   }, [

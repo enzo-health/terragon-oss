@@ -150,6 +150,25 @@ describe("TextPart", () => {
     expect(markdownRendererSpy).not.toHaveBeenCalled();
   });
 
+  it("keeps pure proposed_plan responses visible after artifact promotion", () => {
+    markdownRendererSpy.mockClear();
+
+    const html = renderToStaticMarkup(
+      <TextPart
+        text={"<proposed_plan>\n# Plan\n\n- Task one\n</proposed_plan>"}
+        onOpenInArtifactWorkspace={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Open plan artifact");
+    expect(html).toContain('data-testid="markdown"');
+    expect(markdownRendererSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "# Plan\n\n- Task one",
+      }),
+    );
+  });
+
   it("disables streaming segmentation for incomplete proposed_plan streams", () => {
     markdownRendererSpy.mockClear();
 

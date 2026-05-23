@@ -124,6 +124,7 @@ export class TerragonAgUiThreadRuntimeCore {
   private lastRunConfig: RunConfig | undefined;
   private readonly assistantHistoryParents = new Map<string, string | null>();
   private readonly recordedHistoryIds = new Set<string>();
+  private hasLocalRuntimeMutations = false;
   private _isLoading = false;
   private _loadPromise: Promise<void> | undefined;
   private _loadKey: string | undefined;
@@ -203,7 +204,11 @@ export class TerragonAgUiThreadRuntimeCore {
         if (!repo) return;
 
         const messages = repo.messages.map((item) => item.message);
-        this.applyExternalMessages(messages);
+        if (this.messages.length === 0 || !this.hasLocalRuntimeMutations) {
+          this.applyExternalMessages(messages);
+        } else {
+          this.mergeExternalMessages(messages);
+        }
 
         if (repo.unstable_resume) {
           if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
@@ -248,6 +253,7 @@ export class TerragonAgUiThreadRuntimeCore {
 
     const threadMessage = this.toThreadMessage(message);
     this.appendRuntimeMessage(threadMessage);
+    this.hasLocalRuntimeMutations = true;
     this.markProjectionChange(this.messages.length - 1);
     this.notifyUpdate();
     this.recordHistoryEntry(message.parentId ?? null, threadMessage);
@@ -351,6 +357,7 @@ export class TerragonAgUiThreadRuntimeCore {
     }
 
     if (updated) {
+      this.hasLocalRuntimeMutations = true;
       this.markProjectionChange(changedIndex ?? null);
       this.notifyUpdate();
 
@@ -377,6 +384,7 @@ export class TerragonAgUiThreadRuntimeCore {
     this.replaceAllMessages(messages);
     this.markUnknownProjectionChange();
     this.recordedHistoryIds.clear();
+    this.hasLocalRuntimeMutations = false;
     for (const message of this.messages) {
       this.recordedHistoryIds.add(message.id);
     }
@@ -645,6 +653,7 @@ export class TerragonAgUiThreadRuntimeCore {
       });
     }
     if (touched) {
+      this.hasLocalRuntimeMutations = true;
       this.markProjectionChange(changedIndex ?? null);
       if (this.isTerminalStatus(latestStatus)) {
         this.flushScheduledNotifyUpdate();
@@ -734,7 +743,7 @@ export class TerragonAgUiThreadRuntimeCore {
     try {
       const messages = rawMessages.filter(this.isAgUiMessage);
       const converted = agUiMessagesToThreadMessages(messages);
-      this.applyExternalMessages(converted);
+      this.mergeExternalMessages(converted);
     } catch (error: unknown) {
       this.logger.error?.("[agui] failed to import messages snapshot", error);
     }
@@ -836,6 +845,7 @@ export class TerragonAgUiThreadRuntimeCore {
       return false;
     }
 
+    this.hasLocalRuntimeMutations = true;
     this.replaceMessageAt(messageIndex, {
       ...message,
       content,
@@ -958,6 +968,50 @@ export class TerragonAgUiThreadRuntimeCore {
   private replaceAllMessages(messages: readonly ThreadMessage[]): void {
     this.messages = [...messages];
     this.rebuildMessageIndex();
+  }
+
+  private mergeExternalMessages(messages: readonly ThreadMessage[]): void {
+    let changed = false;
+    for (const message of messages) {
+      const existingIndex = this.getMessageIndex(message.id);
+      if (existingIndex === undefined) {
+        this.appendRuntimeMessage(message);
+        this.recordedHistoryIds.add(message.id);
+        changed = true;
+        continue;
+      }
+
+      const existing = this.messages[existingIndex];
+      if (!existing) continue;
+      const merged = this.mergeExternalMessage(existing, message);
+      if (merged !== existing) {
+        this.replaceMessageAt(existingIndex, merged);
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    this.markUnknownProjectionChange();
+    this.notifyUpdate();
+  }
+
+  private mergeExternalMessage(
+    existing: ThreadMessage,
+    incoming: ThreadMessage,
+  ): ThreadMessage {
+    if (existing.role !== "assistant" || incoming.role !== "assistant") {
+      return existing;
+    }
+
+    if (existing.content.length > 0) {
+      return existing;
+    }
+
+    if (incoming.content.length === 0) {
+      return existing;
+    }
+
+    return incoming;
   }
 
   private rebuildMessageIndex(): void {

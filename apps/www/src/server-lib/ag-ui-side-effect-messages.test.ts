@@ -526,7 +526,7 @@ describe("ag-ui-side-effect-messages", () => {
           },
         },
       ],
-      lastSeqOffset: 8,
+      lastSeqOffset: 7,
     });
   });
 
@@ -586,6 +586,38 @@ describe("ag-ui-side-effect-messages", () => {
 
     expect(history).toEqual({
       items: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeqOffset: 0,
+    });
+  });
+
+  it("does not represent empty assistant text starts in durable history", () => {
+    const history = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Prompt" }],
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "assistant-empty",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "assistant-empty",
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[]);
+
+    expect(history).toEqual({
+      items: [{ id: "user-1", role: "user", content: "Prompt" }],
       lastSeqOffset: 0,
     });
   });
