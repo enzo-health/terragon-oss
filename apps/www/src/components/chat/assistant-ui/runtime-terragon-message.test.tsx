@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessagePartRenderProps } from "../chat-message.types";
 import { RuntimeTerragonMessage } from "./runtime-terragon-message";
 import {
+  TerragonMessageRenderProvider,
+  type TerragonMessageRenderContext,
   TerragonThreadProvider,
   type TerragonThreadContext,
 } from "./thread-context";
@@ -63,6 +65,21 @@ function makeCtx(): TerragonThreadContext {
   };
 }
 
+function makeRenderCtx(
+  overrides: Partial<TerragonMessageRenderContext> = {},
+): TerragonMessageRenderContext {
+  return {
+    isAgentWorking: true,
+    artifactDescriptors: [],
+    onOpenArtifact: vi.fn(),
+    planOccurrences: new Map(),
+    redoDialogData: undefined,
+    forkDialogData: undefined,
+    messagePartProps: baseMessagePartProps,
+    ...overrides,
+  };
+}
+
 function makeMessage(parts: UIPart[]): UIMessage {
   return {
     id: "agent-turn",
@@ -87,17 +104,29 @@ const stableToolPart: UIPart = {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function renderMessage(message: UIMessage, ctx: TerragonThreadContext) {
+function renderMessage({
+  message,
+  ctx,
+  renderCtx,
+}: {
+  message: UIMessage;
+  ctx: TerragonThreadContext;
+  renderCtx: TerragonMessageRenderContext;
+}) {
   return createElement(
     TerragonThreadProvider,
     { value: ctx },
-    createElement(RuntimeTerragonMessage, {
-      message,
-      messageIndex: 0,
-      isLatestMessage: true,
-      isFirstUserMessage: false,
-      isLatestAgentMessage: true,
-    }),
+    createElement(
+      TerragonMessageRenderProvider,
+      { value: renderCtx },
+      createElement(RuntimeTerragonMessage, {
+        message,
+        messageIndex: 0,
+        isLatestMessage: true,
+        isFirstUserMessage: false,
+        isLatestAgentMessage: true,
+      }),
+    ),
   );
 }
 
@@ -132,20 +161,25 @@ afterEach(() => {
 describe("RuntimeTerragonMessage live part rendering", () => {
   it("does not remap stable earlier parts when the live tail text changes", () => {
     const ctx = makeCtx();
+    const renderCtx = makeRenderCtx();
     const initialMessage = makeMessage([
       stableToolPart,
       { type: "text", text: "streaming" },
     ]);
-    mount(renderMessage(initialMessage, ctx));
+    mount(renderMessage({ message: initialMessage, ctx, renderCtx }));
 
     expect(messagePartSpy).toHaveBeenCalledTimes(2);
     const callsAfterMount = messagePartSpy.mock.calls.length;
 
     update(
-      renderMessage(
-        makeMessage([stableToolPart, { type: "text", text: "streaming more" }]),
+      renderMessage({
+        message: makeMessage([
+          stableToolPart,
+          { type: "text", text: "streaming more" },
+        ]),
         ctx,
-      ),
+        renderCtx,
+      }),
     );
 
     expect(messagePartSpy.mock.calls.length - callsAfterMount).toBe(1);
@@ -153,5 +187,18 @@ describe("RuntimeTerragonMessage live part rendering", () => {
       type: "text",
       text: "streaming more",
     });
+  });
+
+  it("does not rerender runtime rows when only the broad thread context changes", () => {
+    const message = makeMessage([{ type: "text", text: "stable" }]);
+    const renderCtx = makeRenderCtx();
+
+    mount(renderMessage({ message, ctx: makeCtx(), renderCtx }));
+    expect(messagePartSpy).toHaveBeenCalledTimes(1);
+    const callsAfterMount = messagePartSpy.mock.calls.length;
+
+    update(renderMessage({ message, ctx: makeCtx(), renderCtx }));
+
+    expect(messagePartSpy.mock.calls.length - callsAfterMount).toBe(0);
   });
 });

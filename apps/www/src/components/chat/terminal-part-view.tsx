@@ -26,7 +26,9 @@ export interface TerminalPartViewProps {
   part: DBTerminalPart;
 }
 
-export function TerminalPartView({ part }: TerminalPartViewProps) {
+export const TerminalPartView = memo(function TerminalPartView({
+  part,
+}: TerminalPartViewProps) {
   const outputRef = useRef<HTMLDivElement>(null);
   const previousChunkCountRef = useRef(0);
   const [expanded, setExpanded] = useState(false);
@@ -120,4 +122,4 @@ export function TerminalPartView({ part }: TerminalPartViewProps) {
       </div>
     </div>
   );
-}
+});

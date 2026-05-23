@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { useTerragonThread } from "./thread-context";
+import { useTerragonMessageRender } from "./thread-context";
 import { ChatMessage } from "../chat-message";
 import { MessageToolbar } from "../chat-message-toolbar";
 import type { UIMessage } from "@terragon/shared";
@@ -26,7 +26,7 @@ export const TerragonUserMessage = memo(function TerragonUserMessage({
   isLatestMessage: boolean;
   isFirstUserMessage: boolean;
 }) {
-  const ctx = useTerragonThread();
+  const ctx = useTerragonMessageRender();
 
   return (
     <div
@@ -46,7 +46,7 @@ export const TerragonUserMessage = memo(function TerragonUserMessage({
       <MessageToolbar
         message={message}
         messageIndex={messageIndex}
-        taskId={ctx.toolProps.threadId}
+        taskId={ctx.messagePartProps.toolProps.threadId}
         isFirstUserMessage={isFirstUserMessage}
         isLatestAgentMessage={false}
         isAgentWorking={ctx.isAgentWorking}

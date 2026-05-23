@@ -145,4 +145,33 @@ describe("useThreadPageRealtimeSync", () => {
     expect(keys).toContainEqual(["threads", "chat", "thread-a", "chat-1"]);
     expect(keys).toContainEqual(["threads", "diff", "thread-a"]);
   });
+
+  it("dedupes repeated invalidations within one realtime batch", () => {
+    applyChatPatch.mockImplementation(() => ({ shouldInvalidate: true }));
+    render(createElement(HookHost, { threadId: "thread-a" }));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const patch = makePatch({
+      threadChatId: "chat-1",
+      messageSeq: 5,
+      refetch: ["chat"],
+    });
+
+    act(() =>
+      registeredOnThreadChange!([
+        patch,
+        makePatch({
+          threadChatId: "chat-1",
+          messageSeq: 6,
+          refetch: ["chat"],
+        }),
+      ]),
+    );
+
+    const chatInvalidations = invalidate.mock.calls.filter(
+      (call) =>
+        JSON.stringify(call[0]?.queryKey) ===
+        JSON.stringify(["threads", "chat", "thread-a", "chat-1"]),
+    );
+    expect(chatInvalidations).toHaveLength(1);
+  });
 });

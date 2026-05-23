@@ -27,6 +27,8 @@ import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
 import { createTerragonTranscriptModelBuilder } from "./terragon-transcript-model";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
+  type TerragonMessageRenderContext,
+  TerragonMessageRenderProvider,
   type TerragonThreadContext,
   TerragonThreadProvider,
 } from "./thread-context";
@@ -244,32 +246,57 @@ export function TerragonThreadRuntimeContent({
     ],
   );
 
+  const messageRenderCtx = useMemo<TerragonMessageRenderContext>(
+    () => ({
+      isAgentWorking,
+      artifactDescriptors: stableArtifactDescriptors,
+      artifactDescriptorLookup,
+      onOpenArtifact,
+      planOccurrences,
+      redoDialogData,
+      forkDialogData,
+      messagePartProps,
+    }),
+    [
+      isAgentWorking,
+      stableArtifactDescriptors,
+      artifactDescriptorLookup,
+      onOpenArtifact,
+      planOccurrences,
+      redoDialogData,
+      forkDialogData,
+      messagePartProps,
+    ],
+  );
+
   return (
     <TerragonThreadProvider value={ctx}>
-      <TerragonTranscriptSurface
-        lifecycleMessages={lifecycleMessages}
-        isRuntimeHydrating={isRuntimeHydrating}
-        messages={messages}
-        latestAgentMessageIndex={transcriptModel.latestAgentMessageIndex}
-        chatAgent={chatAgent}
-        error={error}
-        errorType={errorType}
-        errorInfo={errorInfo}
-        handleRetry={handleRetry}
-        isRetrying={isRetrying}
-        isReadOnly={isReadOnly}
-        reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
-        showWorkingMessage={baseShowWorking}
-        threadStatus={threadStatus}
-        bootingSubstatus={bootingSubstatus}
-        reattemptQueueAt={reattemptQueueAt}
-        metaSnapshot={metaSnapshot}
-        passiveWait={passiveWaitProp}
-        threadId={thread.id}
-        threadChatId={threadChatId}
-        scheduleAt={scheduleAt}
-        threadChatStatus={threadChatStatus}
-      />
+      <TerragonMessageRenderProvider value={messageRenderCtx}>
+        <TerragonTranscriptSurface
+          lifecycleMessages={lifecycleMessages}
+          isRuntimeHydrating={isRuntimeHydrating}
+          messages={messages}
+          latestAgentMessageIndex={transcriptModel.latestAgentMessageIndex}
+          chatAgent={chatAgent}
+          error={error}
+          errorType={errorType}
+          errorInfo={errorInfo}
+          handleRetry={handleRetry}
+          isRetrying={isRetrying}
+          isReadOnly={isReadOnly}
+          reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
+          showWorkingMessage={baseShowWorking}
+          threadStatus={threadStatus}
+          bootingSubstatus={bootingSubstatus}
+          reattemptQueueAt={reattemptQueueAt}
+          metaSnapshot={metaSnapshot}
+          passiveWait={passiveWaitProp}
+          threadId={thread.id}
+          threadChatId={threadChatId}
+          scheduleAt={scheduleAt}
+          threadChatStatus={threadChatStatus}
+        />
+      </TerragonMessageRenderProvider>
       {children}
     </TerragonThreadProvider>
   );

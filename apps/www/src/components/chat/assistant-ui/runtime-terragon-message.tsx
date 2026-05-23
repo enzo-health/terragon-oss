@@ -8,8 +8,8 @@ import { MessageToolbar } from "../chat-message-toolbar";
 import { MessagePart } from "../message-part";
 import { TerragonSystemMessage } from "./system-message";
 import {
-  type TerragonThreadContext,
-  useTerragonThread,
+  type TerragonMessageRenderContext,
+  useTerragonMessageRender,
 } from "./thread-context";
 
 type RuntimeTerragonMessageProps = {
@@ -27,7 +27,7 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
   isFirstUserMessage,
   isLatestAgentMessage,
 }: RuntimeTerragonMessageProps) {
-  const ctx = useTerragonThread();
+  const ctx = useTerragonMessageRender();
   const rowIsAgentWorking =
     ctx.isAgentWorking && isLatestMessage && message.role === "agent";
   const renderableParts = getRenderableParts(message);
@@ -110,7 +110,7 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
       <MessageToolbar
         message={message}
         messageIndex={messageIndex}
-        taskId={ctx.toolProps.threadId}
+        taskId={ctx.messagePartProps.toolProps.threadId}
         isFirstUserMessage={isFirstUserMessage}
         isLatestAgentMessage={isLatestAgentMessage}
         isAgentWorking={ctx.isAgentWorking}
@@ -126,7 +126,7 @@ type RuntimeMessagePartsProps = {
   partIndexOffset: number;
   isLatestMessage: boolean;
   rowIsAgentWorking: boolean;
-  ctx: TerragonThreadContext;
+  ctx: TerragonMessageRenderContext;
 };
 
 const RuntimeMessageParts = memo(function RuntimeMessageParts({
@@ -157,7 +157,7 @@ type RuntimeMessagePartProps = {
   partIndex: number;
   isLatestMessage: boolean;
   rowIsAgentWorking: boolean;
-  ctx: TerragonThreadContext;
+  ctx: TerragonMessageRenderContext;
 };
 
 const RuntimeMessagePart = memo(function RuntimeMessagePart({
