@@ -1,5 +1,14 @@
 import { ExternalLink } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import { Button } from "@/components/ui/button";
@@ -62,10 +71,14 @@ const MARKDOWN_SYNTAX_RE =
   /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 const STREAMING_MARKDOWN_SYNTAX_RE =
   /```|~~~|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+const MARKDOWN_CONTROLS = { code: true } satisfies NonNullable<
+  ComponentProps<typeof MarkdownRenderer>["controls"]
+>;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
 const LINE_HEIGHT_PX = 22;
+const PROPOSED_PLAN_START = "<proposed_plan";
 
 interface BlockInfo {
   totalLines: number;
@@ -295,7 +308,7 @@ const TextPart = memo(function TextPart({
       '[data-streamdown="code-block-body"]',
     );
 
-    const portals: React.ReactNode[] = [];
+    const portals: ReactNode[] = [];
     bodies.forEach((body, index) => {
       const entry = blocks.get(index);
       if (!entry) return;
@@ -327,6 +340,10 @@ const TextPart = memo(function TextPart({
     (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,
     [],
   );
+  const streamingSegmentation =
+    hasCompleteProposedPlan || processedText.includes(PROPOSED_PLAN_START)
+      ? "off"
+      : "auto";
 
   return (
     <div>
@@ -362,9 +379,10 @@ const TextPart = memo(function TextPart({
         >
           <MarkdownRenderer
             content={processedText}
-            controls={{ code: true }}
+            controls={MARKDOWN_CONTROLS}
             streaming={streaming}
             renderImage={renderImage}
+            streamingSegmentation={streamingSegmentation}
           />
           {overlays}
         </div>

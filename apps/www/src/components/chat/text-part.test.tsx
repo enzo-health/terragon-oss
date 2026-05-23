@@ -6,9 +6,28 @@ import { shouldScanCodeBlocks, TextPart } from "./text-part";
 const markdownRendererSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/ai-elements/markdown-renderer", () => ({
-  MarkdownRenderer: ({ content }: { content: string }) => {
-    markdownRendererSpy(content);
-    return <div data-testid="markdown">{content}</div>;
+  MarkdownRenderer: ({
+    content,
+    streaming,
+    streamingSegmentation,
+    className,
+  }: {
+    content: string;
+    streaming?: boolean;
+    streamingSegmentation?: "auto" | "off";
+    className?: string;
+  }) => {
+    markdownRendererSpy({
+      className,
+      content,
+      streaming,
+      streamingSegmentation,
+    });
+    return (
+      <div data-streaming={String(streaming)} data-testid="markdown">
+        {content}
+      </div>
+    );
   },
 }));
 
@@ -37,7 +56,12 @@ describe("TextPart", () => {
     );
 
     expect(html).toContain('data-testid="markdown"');
-    expect(markdownRendererSpy).toHaveBeenCalledWith("**Done**\n\n- item");
+    expect(markdownRendererSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "**Done**\n\n- item",
+        streaming: true,
+      }),
+    );
   });
 
   it("keeps simple streaming progress lists on the cheap text path", () => {
@@ -61,7 +85,12 @@ describe("TextPart", () => {
     );
 
     expect(html).toContain('data-testid="markdown"');
-    expect(markdownRendererSpy).toHaveBeenCalledWith("1. Starting\n2. Done");
+    expect(markdownRendererSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "1. Starting\n2. Done",
+        streaming: false,
+      }),
+    );
   });
 
   it("keeps inline code on the cheap text path while streaming", () => {
@@ -86,7 +115,10 @@ describe("TextPart", () => {
 
     expect(html).toContain('data-testid="markdown"');
     expect(markdownRendererSpy).toHaveBeenCalledWith(
-      "Then run `pwd` and stop.",
+      expect.objectContaining({
+        content: "Then run `pwd` and stop.",
+        streaming: false,
+      }),
     );
   });
 
@@ -100,6 +132,8 @@ describe("TextPart", () => {
   });
 
   it("uses the canonical artifact workspace affordance for complete proposed_plan text", () => {
+    markdownRendererSpy.mockClear();
+
     const html = renderToStaticMarkup(
       <TextPart
         text={
@@ -113,5 +147,18 @@ describe("TextPart", () => {
     expect(html).toContain("Here is the plan.");
     expect(html).toContain("Ready.");
     expect(html).not.toContain("proposed_plan");
+    expect(markdownRendererSpy).not.toHaveBeenCalled();
+  });
+
+  it("disables streaming segmentation for incomplete proposed_plan streams", () => {
+    markdownRendererSpy.mockClear();
+
+    renderToStaticMarkup(
+      <TextPart text={"Starting\n\n<proposed_plan>\n# Plan"} streaming />,
+    );
+
+    expect(markdownRendererSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ streamingSegmentation: "off" }),
+    );
   });
 });

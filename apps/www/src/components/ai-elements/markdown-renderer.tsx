@@ -1,18 +1,18 @@
 "use client";
 
 import {
-  default as React,
   memo,
+  default as React,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
-import { Streamdown } from "streamdown";
-import { createCodePlugin } from "./code-plugin";
 import type { StreamdownProps } from "streamdown";
+import { parseMarkdownIntoBlocks, Streamdown } from "streamdown";
+import { createCodePlugin } from "./code-plugin";
 import "streamdown/styles.css";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
@@ -22,6 +22,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 type MathPlugin = ReturnType<
   typeof import("@streamdown/math").createMathPlugin
 >;
+
 import { ImagePart } from "@/components/chat/image-part";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,35 @@ function contentNeedsMath(content: string): boolean {
   return MATH_RE.test(content);
 }
 
+const MIN_STABLE_MARKDOWN_PREFIX_LENGTH = 480;
+const RAW_HTML_TAG_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^>\n]*)?>/;
+const REFERENCE_MARKDOWN_RE =
+  /(?:^|\n)[ \t]{0,3}\[[^\]\n]+]:[^\n]+|\[[^\]\n]+]\[[^\]\n]*]/;
+
+interface StreamingMarkdownSegments {
+  stablePrefix: string;
+  liveTail: string;
+}
+
+export function splitStreamingMarkdownContent(
+  content: string,
+): StreamingMarkdownSegments | null {
+  if (content.length < MIN_STABLE_MARKDOWN_PREFIX_LENGTH) return null;
+  if (RAW_HTML_TAG_RE.test(content)) return null;
+  if (REFERENCE_MARKDOWN_RE.test(content)) return null;
+
+  const blocks = parseMarkdownIntoBlocks(content);
+  if (blocks.length < 2) return null;
+
+  const liveTail = blocks.at(-1) ?? "";
+  if (liveTail.trim().length === 0) return null;
+
+  const stablePrefix = blocks.slice(0, -1).join("");
+  if (stablePrefix.length < MIN_STABLE_MARKDOWN_PREFIX_LENGTH) return null;
+
+  return { stablePrefix, liveTail };
+}
+
 export type MarkdownVariant = "response" | "reasoning";
 
 type MarkdownRendererProps = {
@@ -74,6 +104,7 @@ type MarkdownRendererProps = {
   controls?: StreamdownProps["controls"];
   className?: string;
   renderImage?: (src: string, alt?: string) => ReactNode;
+  streamingSegmentation?: "auto" | "off";
 };
 
 function getChildren(props: unknown): ReactNode {
@@ -440,6 +471,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   controls,
   className,
   renderImage,
+  streamingSegmentation = "auto",
 }: MarkdownRendererProps) {
   const components = useMemo(
     () =>
@@ -473,6 +505,42 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
       mathPlugin ? { code: codePlugin, math: mathPlugin } : codeOnlyPlugins,
     [mathPlugin],
   );
+  const streamingSegments = useMemo(
+    () =>
+      streaming && streamingSegmentation === "auto"
+        ? splitStreamingMarkdownContent(content)
+        : null,
+    [content, streaming, streamingSegmentation],
+  );
+
+  if (streamingSegments) {
+    return (
+      <>
+        <Streamdown
+          plugins={plugins}
+          components={components}
+          controls={controls}
+          mode="static"
+          parseIncompleteMarkdown={false}
+          normalizeHtmlIndentation
+          className={cn(className, "[&>*:last-child]:mb-2")}
+        >
+          {streamingSegments.stablePrefix}
+        </Streamdown>
+        <Streamdown
+          plugins={plugins}
+          components={components}
+          controls={controls}
+          mode="streaming"
+          parseIncompleteMarkdown
+          normalizeHtmlIndentation
+          className={className}
+        >
+          {streamingSegments.liveTail}
+        </Streamdown>
+      </>
+    );
+  }
 
   return (
     <Streamdown
