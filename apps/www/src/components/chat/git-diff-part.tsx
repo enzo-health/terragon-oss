@@ -1,7 +1,7 @@
 import { memo, useState, useMemo } from "react";
 import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { ThreadInfoFull } from "@terragon/shared";
 import {
   ChevronRight,
@@ -16,7 +16,7 @@ import { parseMultiFileDiff } from "@/lib/git-diff";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
-import { findArtifactDescriptorForPart } from "./secondary-panel";
+import { findArtifactDescriptorForPart } from "./secondary-panel-helpers";
 
 interface GitDiffPartProps {
   gitDiffPart: UIGitDiffPart;

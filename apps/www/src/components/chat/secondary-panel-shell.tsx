@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { GitDiffView } from "./git-diff-view";
 import { DocumentArtifactRenderer } from "./secondary-panel-document";
 import {
+  ARTIFACT_WORKSPACE_PANEL_ID,
   type ArtifactWorkspaceItem,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
@@ -19,8 +20,6 @@ import { PlanArtifactRenderer } from "./secondary-panel-plan";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import { TextFileArtifactRenderer } from "./secondary-panel-text-file";
 import type { PromptBoxRef } from "./thread-context";
-
-export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
 
 export function SecondaryPanelContent({
   artifacts,

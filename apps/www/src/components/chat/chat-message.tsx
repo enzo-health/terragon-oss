@@ -3,7 +3,7 @@
 import React, { memo, useMemo } from "react";
 import { UIMessage, UIPart, ThreadInfoFull } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
 import { MessageToolbar } from "./chat-message-toolbar";
@@ -279,7 +279,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
     <div
       // gap-0 between bubble and toolbar — toolbar carries its own mt-1
       // breathing internally, so a parent gap stacks two spacers.
-      className="flex flex-col group [scroll-margin-top:6rem]"
+      className="flex flex-col group [scroll-margin-top:6rem] [content-visibility:auto] [contain-intrinsic-size:auto_160px]"
       data-message-index={messageIndex}
       data-message-id={message.id}
       data-message-role={message.role}

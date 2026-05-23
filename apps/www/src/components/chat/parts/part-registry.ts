@@ -22,7 +22,7 @@ import type {
   UITextFilePart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "../secondary-panel";
+import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 
 import { TextPart } from "../text-part";
 import { ThinkingPart } from "../thinking-part";

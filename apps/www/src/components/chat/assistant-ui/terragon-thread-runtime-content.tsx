@@ -10,7 +10,7 @@ import type {
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { createArtifactDescriptorLookup } from "../secondary-panel";
+import { createArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { useEffect, useMemo, useState } from "react";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isSandboxErrorType } from "../chat-error";

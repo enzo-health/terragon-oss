@@ -9,7 +9,7 @@ import { Button } from "../ui/button";
 import { useIsSmallScreen } from "@/hooks/useMediaQuery";
 import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { useSecondaryPanel } from "./hooks";
-import { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel";
+import { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel-helpers";
 import { CodeButton } from "./chat-header-code-button";
 import { ShareButton } from "./chat-header-share-button";
 import { ShareDrawer } from "./chat-header-share-drawer";

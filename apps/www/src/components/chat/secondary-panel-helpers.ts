@@ -9,6 +9,8 @@ import {
   getArtifactDescriptors,
 } from "@terragon/shared/db/artifact-descriptors";
 
+export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
+
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
 export interface ArtifactWorkspaceItemSummary {

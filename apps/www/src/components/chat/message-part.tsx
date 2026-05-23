@@ -9,7 +9,7 @@ import {
   createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
   type ArtifactDescriptorLookup,
-} from "./secondary-panel";
+} from "./secondary-panel-helpers";
 import type { UIPartExtended } from "./ui-parts-extended";
 import {
   type PartRegistryContext,

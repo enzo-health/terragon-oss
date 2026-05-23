@@ -3,7 +3,7 @@
 import React, { memo } from "react";
 import { useState } from "react";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { MessagePart } from "./message-part";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";

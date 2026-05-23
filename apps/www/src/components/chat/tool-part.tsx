@@ -30,10 +30,12 @@ import { RichTextPart } from "./rich-text-part";
 import { TextFilePart } from "./text-file-part";
 import { PdfPart } from "./pdf-part";
 import { ImagePart } from "./image-part";
-import { findArtifactDescriptorForPart } from "./secondary-panel";
+import {
+  findArtifactDescriptorForPart,
+  type ArtifactDescriptorLookup,
+} from "./secondary-panel-helpers";
 import { PromptBoxRef } from "./thread-context";
 import { ChildThreadInfo } from "@terragon/shared/db/types";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
 
 /**
  * Sibling state needed by a subset of tool renderers (Task, ExitPlanMode,

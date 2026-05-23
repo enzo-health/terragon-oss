@@ -7,7 +7,7 @@ import {
   UIMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { createArtifactDescriptorLookup } from "./secondary-panel";
+import { createArtifactDescriptorLookup } from "./secondary-panel-helpers";
 
 import { AIAgent, AIModel } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";

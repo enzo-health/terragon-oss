@@ -4,7 +4,7 @@ import React, { memo } from "react";
 import { useState } from "react";
 import { UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { AIAgent } from "@terragon/agent/types";
 import { ChevronRight } from "lucide-react";
 import { MessagePart } from "./message-part";

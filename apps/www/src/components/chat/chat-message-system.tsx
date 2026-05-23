@@ -8,7 +8,7 @@ import {
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { cn } from "@/lib/utils";
 import { GitDiffPart } from "./git-diff-part";
 
