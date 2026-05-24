@@ -147,7 +147,13 @@ function deriveTranscriptFacts(
   };
 }
 
-function tryBuildSteadyRuntimeModel({
+type SteadyFastPathContext = {
+  input: BuildTerragonTranscriptModelInput;
+  previousInput: BuildTerragonTranscriptModelInput;
+  previousModel: TerragonTranscriptModel;
+};
+
+function resolveSteadyFastPathContext({
   input,
   previousInput,
   previousModel,
@@ -155,17 +161,43 @@ function tryBuildSteadyRuntimeModel({
   input: BuildTerragonTranscriptModelInput;
   previousInput: BuildTerragonTranscriptModelInput | null;
   previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
+}): SteadyFastPathContext | null {
   if (
     !previousInput ||
     !previousModel ||
-    input.runtimeMessages.length === 0 ||
-    input.optimisticUserMessages.length > 0
+    input.optimisticUserMessages.length > 0 ||
+    input.optimisticUserMessages !== previousInput.optimisticUserMessages
   ) {
     return null;
   }
+  return { input, previousInput, previousModel };
+}
+
+function runtimePrefixUnchanged(
+  input: BuildTerragonTranscriptModelInput,
+  previousInput: BuildTerragonTranscriptModelInput,
+  prefixLength: number,
+): boolean {
+  for (let index = 0; index < prefixLength; index += 1) {
+    if (input.runtimeMessages[index] !== previousInput.runtimeMessages[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function tryBuildSteadyRuntimeModel(args: {
+  input: BuildTerragonTranscriptModelInput;
+  previousInput: BuildTerragonTranscriptModelInput | null;
+  previousModel: TerragonTranscriptModel | null;
+}): TerragonTranscriptModel | null {
+  const context = resolveSteadyFastPathContext(args);
+  if (!context) {
+    return null;
+  }
+  const { input, previousInput, previousModel } = context;
   if (
-    input.optimisticUserMessages !== previousInput.optimisticUserMessages ||
+    input.runtimeMessages.length === 0 ||
     input.runtimeMessages.length !== previousInput.runtimeMessages.length ||
     input.runtimeMessages.length !== previousModel.messages.length
   ) {
@@ -173,10 +205,8 @@ function tryBuildSteadyRuntimeModel({
   }
 
   const tailIndex = input.runtimeMessages.length - 1;
-  for (let index = 0; index < tailIndex; index += 1) {
-    if (input.runtimeMessages[index] !== previousInput.runtimeMessages[index]) {
-      return null;
-    }
+  if (!runtimePrefixUnchanged(input, previousInput, tailIndex)) {
+    return null;
   }
 
   const previousTail = previousInput.runtimeMessages[tailIndex];
@@ -210,33 +240,25 @@ function tryBuildSteadyRuntimeModel({
   };
 }
 
-function tryBuildAppendedRuntimeModel({
-  input,
-  previousInput,
-  previousModel,
-}: {
+function tryBuildAppendedRuntimeModel(args: {
   input: BuildTerragonTranscriptModelInput;
   previousInput: BuildTerragonTranscriptModelInput | null;
   previousModel: TerragonTranscriptModel | null;
 }): TerragonTranscriptModel | null {
-  if (
-    !previousInput ||
-    !previousModel ||
-    input.optimisticUserMessages.length > 0 ||
-    input.optimisticUserMessages !== previousInput.optimisticUserMessages ||
-    input.runtimeMessages.length <= previousInput.runtimeMessages.length
-  ) {
+  const context = resolveSteadyFastPathContext(args);
+  if (!context) {
     return null;
   }
-
-  for (
-    let index = 0;
-    index < previousInput.runtimeMessages.length;
-    index += 1
+  const { input, previousInput, previousModel } = context;
+  if (
+    input.runtimeMessages.length <= previousInput.runtimeMessages.length ||
+    !runtimePrefixUnchanged(
+      input,
+      previousInput,
+      previousInput.runtimeMessages.length,
+    )
   ) {
-    if (input.runtimeMessages[index] !== previousInput.runtimeMessages[index]) {
-      return null;
-    }
+    return null;
   }
 
   const appendedMessages = input.runtimeMessages.slice(
@@ -273,20 +295,17 @@ function tryBuildAppendedRuntimeModel({
   };
 }
 
-function tryBuildSteadyCoalescedRuntimeModel({
-  input,
-  previousInput,
-  previousModel,
-}: {
+function tryBuildSteadyCoalescedRuntimeModel(args: {
   input: BuildTerragonTranscriptModelInput;
   previousInput: BuildTerragonTranscriptModelInput | null;
   previousModel: TerragonTranscriptModel | null;
 }): TerragonTranscriptModel | null {
+  const context = resolveSteadyFastPathContext(args);
+  if (!context) {
+    return null;
+  }
+  const { input, previousInput, previousModel } = context;
   if (
-    !previousInput ||
-    !previousModel ||
-    input.optimisticUserMessages.length > 0 ||
-    input.optimisticUserMessages !== previousInput.optimisticUserMessages ||
     input.runtimeMessages.length === 0 ||
     input.runtimeMessages.length !== previousInput.runtimeMessages.length ||
     input.runtimeMessages.length <= previousModel.messages.length
@@ -295,10 +314,8 @@ function tryBuildSteadyCoalescedRuntimeModel({
   }
 
   const tailRuntimeIndex = input.runtimeMessages.length - 1;
-  for (let index = 0; index < tailRuntimeIndex; index += 1) {
-    if (input.runtimeMessages[index] !== previousInput.runtimeMessages[index]) {
-      return null;
-    }
+  if (!runtimePrefixUnchanged(input, previousInput, tailRuntimeIndex)) {
+    return null;
   }
 
   const previousTail = previousInput.runtimeMessages[tailRuntimeIndex];
