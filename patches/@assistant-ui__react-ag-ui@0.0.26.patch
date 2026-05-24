@@ -1,0 +1,102 @@
+diff --git a/dist/runtime/types.d.ts b/dist/runtime/types.d.ts
+index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..bd127673da43bb2c6d1f3f72bed64bdefbb20212 100644
+--- a/dist/runtime/types.d.ts
++++ b/dist/runtime/types.d.ts
+@@ -1,4 +1,4 @@
+-import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
++import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, AppendMessage, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
+ import type { HttpAgent } from "@ag-ui/client";
+ import type { Logger } from "./logger.js";
+ import type { ReadonlyJSONValue } from "assistant-stream/utils";
+@@ -33,6 +33,10 @@ export type UseAgUiRuntimeOptions = {
+     showThinking?: boolean;
+     onError?: (e: Error) => void;
+     onCancel?: () => void;
++    queue?: {
++        shouldQueue: (message: AppendMessage) => boolean;
++        enqueue: (message: AppendMessage) => Promise<void> | void;
++    };
+     adapters?: UseAgUiRuntimeAdapters;
+ };
+ export type AgUiEvent = {
+diff --git a/dist/useAgUiRuntime.js b/dist/useAgUiRuntime.js
+index 94956a06f6087da9f47c0086819786f92b0d8214..e2268f808119031442c53eb320900a5aff51ca3a 100644
+--- a/dist/useAgUiRuntime.js
++++ b/dist/useAgUiRuntime.js
+@@ -9,6 +9,8 @@ export function useAgUiRuntime(options) {
+     const notifyUpdate = useCallback(() => setVersion((v) => v + 1), []);
+     const coreRef = useRef(null);
+     const runtimeAdapters = useRuntimeAdapters();
++    const queueRef = useRef(options.queue);
++    queueRef.current = options.queue;
+     const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
+     const threadListAdapter = options.adapters?.threadList;
+     if (!coreRef.current) {
+@@ -107,7 +109,14 @@ export function useAgUiRuntime(options) {
+             messages: core.getMessages(),
+             state: core.getState(),
+             isRunning: core.isRunning() || hasExecutingTools,
+-            onNew: (message) => core.append(message),
++            onNew: async (message) => {
++                const queue = queueRef.current;
++                if (queue?.shouldQueue(message)) {
++                    await queue.enqueue(message);
++                    return;
++                }
++                await core.append(message);
++            },
+             onEdit: (message) => core.edit(message),
+             onReload: (parentId, config) => core.reload(parentId, config),
+             onCancel: async () => {
+diff --git a/src/runtime/types.ts b/src/runtime/types.ts
+index ba0fda6ec2557b20276f2faec8a9395e54543425..27739d8d8ed7486caf2fd190ac425eec2b2f9354 100644
+--- a/src/runtime/types.ts
++++ b/src/runtime/types.ts
+@@ -2,6 +2,7 @@ import type {
+   AttachmentAdapter,
+   DictationAdapter,
+   FeedbackAdapter,
++  AppendMessage,
+   SpeechSynthesisAdapter,
+   ThreadHistoryAdapter,
+   ThreadMessage,
+@@ -44,6 +45,10 @@ export type UseAgUiRuntimeOptions = {
+   showThinking?: boolean;
+   onError?: (e: Error) => void;
+   onCancel?: () => void;
++  queue?: {
++    shouldQueue: (message: AppendMessage) => boolean;
++    enqueue: (message: AppendMessage) => Promise<void> | void;
++  };
+   adapters?: UseAgUiRuntimeAdapters;
+ };
+ 
+diff --git a/src/useAgUiRuntime.ts b/src/useAgUiRuntime.ts
+index df696bad4c76f279da5b362f26c48c26866adba3..d7230ec08dd3f35dbce6847ecb041fd85cec4d48 100644
+--- a/src/useAgUiRuntime.ts
++++ b/src/useAgUiRuntime.ts
+@@ -26,6 +26,8 @@ export function useAgUiRuntime(
+   const notifyUpdate = useCallback(() => setVersion((v) => v + 1), []);
+   const coreRef = useRef<AgUiThreadRuntimeCore | null>(null);
+   const runtimeAdapters = useRuntimeAdapters();
++  const queueRef = useRef(options.queue);
++  queueRef.current = options.queue;
+ 
+   const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
+   const threadListAdapter = options.adapters?.threadList;
+@@ -145,7 +147,14 @@ export function useAgUiRuntime(
+         messages: core.getMessages(),
+         state: core.getState(),
+         isRunning: core.isRunning() || hasExecutingTools,
+-        onNew: (message: AppendMessage) => core.append(message),
++        onNew: async (message: AppendMessage) => {
++          const queue = queueRef.current;
++          if (queue?.shouldQueue(message)) {
++            await queue.enqueue(message);
++            return;
++          }
++          await core.append(message);
++        },
+         onEdit: (message: AppendMessage) => core.edit(message),
+         onReload: (parentId: string | null, config: { runConfig?: any }) =>
+           core.reload(parentId, config),
