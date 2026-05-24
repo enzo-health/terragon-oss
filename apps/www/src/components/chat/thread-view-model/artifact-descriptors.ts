@@ -165,7 +165,7 @@ function getArtifactDescriptorStableValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((entry) => getArtifactDescriptorStableValue(entry)).join(",")}]`;
   }
-  return `{${Object.entries(value as Record<string, unknown>)
+  return `{${Object.entries(value)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(
       ([key, entry]) =>

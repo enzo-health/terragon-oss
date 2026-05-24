@@ -29,7 +29,7 @@ export function applyJsonPatchOperations(
       return null;
     }
   }
-  return next as Record<string, unknown>;
+  return getRecordValue(next);
 }
 
 function parseJsonPatchOperation(value: unknown): JsonPatchOperation | null {

@@ -8,7 +8,6 @@
 import { describe, it, expect } from "vitest";
 import { getOrCreateSandbox } from "./sandbox";
 import { installDaemon, sendMessage, getDaemonLogs } from "./daemon";
-import { DockerProvider } from "./providers/docker-provider";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import type { DaemonMessageClaude } from "@terragon/daemon/shared";
 
@@ -127,10 +126,9 @@ async function runReliabilityTest(params: {
   } finally {
     if (sandbox) {
       try {
-        await sandbox.hibernate();
+        await sandbox.shutdown();
       } catch {}
     }
-    await DockerProvider.cleanupTestContainers();
   }
 
   return {

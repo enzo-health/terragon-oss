@@ -88,47 +88,7 @@ export const defaultConfig: ArchitectureLintConfig = {
     "packages/shared/src/model/agent-event-log.ts",
   ],
   allowlist: [
-    ...baselineRuleLineDebtAllowlist("require-exhaustive-switch", [
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 602,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 519,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 577,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 755,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 899,
-      },
-    ]),
-    {
-      rule: "no-unsafe-runtime-boundary-casts",
-      file: "apps/www/src/app/api/webhooks/linear/route.ts",
-      line: 167,
-      owner: "smooth-runtime-rewrite",
-      reason: "Linear webhook route still casts provider payloads at ingress",
-      deletionCriterion:
-        "remove after Linear webhook payloads have typed runtime parsers",
-    },
-    {
-      rule: "no-unsafe-runtime-boundary-casts",
-      file: "apps/www/src/app/api/webhooks/linear/route.ts",
-      line: 177,
-      owner: "smooth-runtime-rewrite",
-      reason:
-        "Linear webhook route still casts provider notification payloads at ingress",
-      deletionCriterion:
-        "remove after Linear notification payloads have typed runtime parsers",
-    },
+    ...baselineRuleLineDebtAllowlist("require-exhaustive-switch", []),
     {
       rule: "no-unsafe-runtime-boundary-casts",
       file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
@@ -452,26 +412,6 @@ export const defaultConfig: ArchitectureLintConfig = {
         file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
         line: 181,
       },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 712,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 729,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 844,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 871,
-      },
-      {
-        file: "apps/www/src/components/chat/thread-view-model/reducer.ts",
-        line: 888,
-      },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 296 },
       { file: "packages/daemon/src/acp-adapter.ts", line: 93 },
       { file: "packages/daemon/src/acp-adapter.ts", line: 140 },
@@ -534,50 +474,6 @@ export const defaultConfig: ArchitectureLintConfig = {
         line: 123,
       },
       { file: "apps/www/src/app/api/webhooks/github/route.ts", line: 195 },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 117,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 155,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 162,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 175,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 185,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 195,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 204,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 208,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 219,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 222,
-      },
-      {
-        file: "apps/www/src/app/api/webhooks/github/shadow-refresh.ts",
-        line: 235,
-      },
       { file: "apps/www/src/app/api/webhooks/github/utils.ts", line: 252 },
       { file: "apps/www/src/app/api/webhooks/github/utils.ts", line: 294 },
       { file: "apps/www/src/app/api/webhooks/github/utils.ts", line: 321 },

@@ -111,12 +111,123 @@ type ShadowRefreshWebhookEvent =
       payload: IssuesOpenedWebhookPayload;
     };
 
+function isObject(value: unknown): value is object {
+  return typeof value === "object" && value !== null;
+}
+
+function getField(value: object, field: string): unknown {
+  return Reflect.get(value, field);
+}
+
+function isRepositoryPayload(
+  value: unknown,
+): value is { repository: { full_name: string } } {
+  if (!isObject(value)) {
+    return false;
+  }
+  const repository = getField(value, "repository");
+  if (!isObject(repository)) {
+    return false;
+  }
+  return typeof getField(repository, "full_name") === "string";
+}
+
+function isNumberedPayloadField(value: unknown, field: string): boolean {
+  if (!isObject(value)) {
+    return false;
+  }
+  const child = getField(value, field);
+  if (!isObject(child)) {
+    return false;
+  }
+  return typeof getField(child, "number") === "number";
+}
+
+function isPullRequestWebhookPayload(
+  value: unknown,
+): value is PullRequestWebhookPayload {
+  return (
+    isRepositoryPayload(value) &&
+    typeof getField(value, "action") === "string" &&
+    isNumberedPayloadField(value, "pull_request")
+  );
+}
+
+function isIssueCommentWebhookPayload(
+  value: unknown,
+): value is IssueCommentWebhookPayload {
+  return isRepositoryPayload(value) && isNumberedPayloadField(value, "issue");
+}
+
+function isPullRequestReviewWebhookPayload(
+  value: unknown,
+): value is PullRequestReviewWebhookPayload {
+  return (
+    isRepositoryPayload(value) && isNumberedPayloadField(value, "pull_request")
+  );
+}
+
+function isPullRequestReference(value: unknown): value is { number: number } {
+  if (!isObject(value)) {
+    return false;
+  }
+  return typeof getField(value, "number") === "number";
+}
+
+function isCheckRunWebhookPayload(
+  value: unknown,
+): value is CheckRunWebhookPayload {
+  if (!isRepositoryPayload(value)) {
+    return false;
+  }
+  const checkRun = getField(value, "check_run");
+  if (!isObject(checkRun)) {
+    return false;
+  }
+  const headSha = getField(checkRun, "head_sha");
+  const pullRequests = getField(checkRun, "pull_requests");
+  return (
+    (headSha === undefined ||
+      headSha === null ||
+      typeof headSha === "string") &&
+    Array.isArray(pullRequests) &&
+    pullRequests.every(isPullRequestReference)
+  );
+}
+
+function isCheckSuiteWebhookPayload(
+  value: unknown,
+): value is CheckSuiteWebhookPayload {
+  if (!isRepositoryPayload(value)) {
+    return false;
+  }
+  const checkSuite = getField(value, "check_suite");
+  if (!isObject(checkSuite)) {
+    return false;
+  }
+  const headSha = getField(checkSuite, "head_sha");
+  const pullRequests = getField(checkSuite, "pull_requests");
+  return (
+    (headSha === undefined ||
+      headSha === null ||
+      typeof headSha === "string") &&
+    Array.isArray(pullRequests) &&
+    pullRequests.every(isPullRequestReference)
+  );
+}
+
+function isIssuesOpenedWebhookPayload(
+  value: unknown,
+): value is IssuesOpenedWebhookPayload {
+  return isRepositoryPayload(value);
+}
+
 function getWebhookAction(payload: unknown): string | null {
-  if (typeof payload !== "object" || payload === null) {
+  if (!isObject(payload)) {
     return null;
   }
 
-  const action = (payload as { action?: unknown }).action;
+  const action = getField(payload, "action");
   return typeof action === "string" ? action : null;
 }
 
@@ -146,23 +257,22 @@ export function getShadowRefreshWebhookEvent(
 
   switch (eventType) {
     case "pull_request": {
+      if (!isPullRequestWebhookPayload(payload)) {
+        return null;
+      }
       switch (action) {
         case "opened":
+          return { name: "pull_request.opened", payload };
         case "reopened":
+          return { name: "pull_request.reopened", payload };
         case "closed":
+          return { name: "pull_request.closed", payload };
         case "ready_for_review":
+          return { name: "pull_request.ready_for_review", payload };
         case "converted_to_draft":
+          return { name: "pull_request.converted_to_draft", payload };
         case "synchronize":
-          return {
-            name: `pull_request.${action}` as
-              | "pull_request.opened"
-              | "pull_request.reopened"
-              | "pull_request.closed"
-              | "pull_request.ready_for_review"
-              | "pull_request.converted_to_draft"
-              | "pull_request.synchronize",
-            payload: payload as PullRequestWebhookPayload,
-          };
+          return { name: "pull_request.synchronize", payload };
         default:
           return null;
       }
@@ -172,47 +282,50 @@ export function getShadowRefreshWebhookEvent(
         return null;
       }
 
+      if (!isIssueCommentWebhookPayload(payload)) {
+        return null;
+      }
+
       return {
         name: "issue_comment.created",
-        payload: payload as IssueCommentWebhookPayload,
+        payload,
       };
     }
     case "pull_request_review": {
+      if (!isPullRequestReviewWebhookPayload(payload)) {
+        return null;
+      }
       if (action !== "submitted" && action !== "dismissed") {
         return null;
       }
 
-      return {
-        name: `pull_request_review.${action}` as
-          | "pull_request_review.submitted"
-          | "pull_request_review.dismissed",
-        payload: payload as PullRequestReviewWebhookPayload,
-      };
+      return action === "submitted"
+        ? { name: "pull_request_review.submitted", payload }
+        : { name: "pull_request_review.dismissed", payload };
     }
     case "pull_request_review_comment": {
+      if (!isPullRequestReviewWebhookPayload(payload)) {
+        return null;
+      }
       if (action !== "created" && action !== "edited") {
         return null;
       }
 
-      return {
-        name: `pull_request_review_comment.${action}` as
-          | "pull_request_review_comment.created"
-          | "pull_request_review_comment.edited",
-        payload: payload as PullRequestReviewWebhookPayload,
-      };
+      return action === "created"
+        ? { name: "pull_request_review_comment.created", payload }
+        : { name: "pull_request_review_comment.edited", payload };
     }
     case "check_run": {
+      if (!isCheckRunWebhookPayload(payload)) {
+        return null;
+      }
       switch (action) {
         case "completed":
+          return { name: "check_run.completed", payload };
         case "created":
+          return { name: "check_run.created", payload };
         case "rerequested":
-          return {
-            name: `check_run.${action}` as
-              | "check_run.completed"
-              | "check_run.created"
-              | "check_run.rerequested",
-            payload: payload as CheckRunWebhookPayload,
-          };
+          return { name: "check_run.rerequested", payload };
         default:
           return null;
       }
@@ -221,12 +334,12 @@ export function getShadowRefreshWebhookEvent(
       switch (action) {
         case "completed":
         case "rerequested":
-          return {
-            name: `check_suite.${action}` as
-              | "check_suite.completed"
-              | "check_suite.rerequested",
-            payload: payload as CheckSuiteWebhookPayload,
-          };
+          if (!isCheckSuiteWebhookPayload(payload)) {
+            return null;
+          }
+          return action === "completed"
+            ? { name: "check_suite.completed", payload }
+            : { name: "check_suite.rerequested", payload };
         default:
           return null;
       }
@@ -236,9 +349,13 @@ export function getShadowRefreshWebhookEvent(
         return null;
       }
 
+      if (!isIssuesOpenedWebhookPayload(payload)) {
+        return null;
+      }
+
       return {
         name: "issues.opened",
-        payload: payload as IssuesOpenedWebhookPayload,
+        payload,
       };
     }
     case "status":

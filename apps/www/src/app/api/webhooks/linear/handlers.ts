@@ -76,7 +76,7 @@ interface AgentSessionPromptedPayload {
   } | null;
 }
 
-type AgentSessionEventPayload =
+export type AgentSessionEventPayload =
   | AgentSessionCreatedPayload
   | AgentSessionPromptedPayload
   | {
@@ -86,7 +86,7 @@ type AgentSessionEventPayload =
       agentSession: { id: string };
     };
 
-interface AppUserNotificationPayload {
+export interface AppUserNotificationPayload {
   type: "AppUserNotification";
   action?: string;
   createdAt?: string;
@@ -98,7 +98,7 @@ interface AppUserNotificationPayload {
   };
 }
 
-interface PermissionChangePayload {
+export interface PermissionChangePayload {
   type: "PermissionChange";
   action: "teamAccessChanged";
   createdAt: string;
@@ -108,7 +108,7 @@ interface PermissionChangePayload {
   removedTeamIds: string[];
 }
 
-interface OAuthAppRevokedPayload {
+export interface OAuthAppRevokedPayload {
   type: "OAuthApp";
   action: "revoked";
   organizationId: string;
