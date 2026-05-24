@@ -166,7 +166,10 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       setError(null);
       const baseQueuedMessages = queuedMessages ?? [];
       const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
-        userMessage,
+        {
+          clientSubmissionId: crypto.randomUUID(),
+          message: userMessage,
+        },
       ]);
       if (nextMessages === baseQueuedMessages) {
         return;

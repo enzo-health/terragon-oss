@@ -82,14 +82,11 @@ export function useAgUiSidecarRouter({
         if (isStatusOrTerminalEvent(event)) {
           onStatusOrTerminalEventRef.current?.();
         }
+        recordAgUiEventReceipt(event);
         const projectedEvent = projectEventRef.current
           ? projectEventRef.current(event)
           : event;
         if (!projectedEvent) {
-          return;
-        }
-        recordAgUiEventReceipt(projectedEvent);
-        if (isTerragonTraceEvent(projectedEvent)) {
           return;
         }
         try {
@@ -132,12 +129,9 @@ export function useThreadViewModel({
 
     const subscription = agent.subscribe({
       onEvent: ({ event }) => {
+        recordAgUiEventReceipt(event);
         const projectedEvent = projectEvent ? projectEvent(event) : event;
         if (!projectedEvent) {
-          return;
-        }
-        recordAgUiEventReceipt(projectedEvent);
-        if (isTerragonTraceEvent(projectedEvent)) {
           return;
         }
         try {
@@ -194,16 +188,26 @@ export type ThreadViewEventForAgUi = Parameters<
 >[0]["event"];
 
 function recordAgUiEventReceipt(event: ThreadViewEventForAgUi): void {
-  const traceId =
-    getStringEventField(event, "runId") ?? getTerragonTraceRunId(event);
+  const messageId = getStringEventField(event, "messageId");
+  const traceId = getStringEventField(event, "runId") ?? messageId;
+  const eventTimestampMs = getNumberEventField(event, "timestamp");
   recordAgentTraceSpan({
     traceId,
     name: "client.agui.event.received",
     attributes: {
       eventType: String(event.type),
-      ...getTerragonTraceAttributes(event),
+      messageId,
+      eventTimestampMs,
     },
   });
+}
+
+function getNumberEventField(
+  event: ThreadViewEventForAgUi,
+  key: string,
+): number | null {
+  const value = Reflect.get(event, key);
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
@@ -217,69 +221,6 @@ function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
     event.type === EventType.CUSTOM &&
     Reflect.get(event, "name") === "thread.status_changed"
   );
-}
-
-function isTerragonTraceEvent(event: ThreadViewEventForAgUi): boolean {
-  return (
-    event.type === EventType.CUSTOM &&
-    Reflect.get(event, "name") === "terragon.trace.daemon_event.received"
-  );
-}
-
-function getTerragonTraceAttributes(
-  event: ThreadViewEventForAgUi,
-): Record<string, string | number | null> {
-  if (event.type !== EventType.CUSTOM) {
-    return {};
-  }
-  const name = Reflect.get(event, "name");
-  if (name !== "terragon.trace.daemon_event.received") {
-    return {};
-  }
-  const value = Reflect.get(event, "value");
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-  const daemonEventReceivedAtMs = Reflect.get(value, "daemonEventReceivedAtMs");
-  if (typeof daemonEventReceivedAtMs !== "number") {
-    return {};
-  }
-  const daemonEventId = Reflect.get(value, "daemonEventId");
-  const eventId = Reflect.get(value, "eventId");
-  const seq = Reflect.get(value, "seq");
-  const projectionIndex = Reflect.get(value, "projectionIndex");
-  const projectionCount = Reflect.get(value, "projectionCount");
-  const agUiEventType = Reflect.get(value, "agUiEventType");
-  const messageId = Reflect.get(value, "messageId");
-  return {
-    traceKind: "terragon.trace.daemon_event.received",
-    daemonEventReceivedAtMs,
-    daemonEventId: typeof daemonEventId === "string" ? daemonEventId : null,
-    eventId: typeof eventId === "string" ? eventId : null,
-    seq: typeof seq === "number" ? seq : null,
-    projectionIndex:
-      typeof projectionIndex === "number" ? projectionIndex : null,
-    projectionCount:
-      typeof projectionCount === "number" ? projectionCount : null,
-    agUiEventType: typeof agUiEventType === "string" ? agUiEventType : null,
-    messageId: typeof messageId === "string" ? messageId : null,
-  };
-}
-
-function getTerragonTraceRunId(event: ThreadViewEventForAgUi): string | null {
-  if (event.type !== EventType.CUSTOM) {
-    return null;
-  }
-  const name = Reflect.get(event, "name");
-  if (name !== "terragon.trace.daemon_event.received") {
-    return null;
-  }
-  const value = Reflect.get(event, "value");
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const runId = Reflect.get(value, "runId");
-  return typeof runId === "string" && runId.length > 0 ? runId : null;
 }
 
 type ThreadViewSidecarEventProjectorOptions = {

@@ -482,7 +482,7 @@ describe("useThreadViewModel sidecar projection", () => {
     expect(last[0]).toBe(beforeStreaming[0]);
   });
 
-  it("records daemon trace custom events without dispatching sidecar state", () => {
+  it("records client event receipt spans for native AG-UI events", () => {
     const agent = createFakeAgent();
     const onMessages = vi.fn();
 
@@ -499,41 +499,20 @@ describe("useThreadViewModel sidecar projection", () => {
         }),
       );
     });
-    const callsBeforeTraceEvent = onMessages.mock.calls.length;
-
     act(() => {
       agent.emit({
-        type: EventType.CUSTOM,
-        name: "terragon.trace.daemon_event.received",
-        value: {
-          runId: "run-1",
-          daemonEventReceivedAtMs: 123,
-          daemonEventId: "daemon-event-1",
-          eventId: "ag-ui-event-1",
-          seq: 7,
-          projectionIndex: 0,
-          projectionCount: 1,
-          agUiEventType: EventType.TEXT_MESSAGE_CONTENT,
-          messageId: "agent-1",
-        },
+        type: EventType.RUN_STARTED,
+        runId: "run-1",
+        threadId: "thread-1",
       } as BaseEvent);
     });
 
-    expect(onMessages).toHaveBeenCalledTimes(callsBeforeTraceEvent);
     expect(recordAgentTraceSpan).toHaveBeenCalledWith(
       expect.objectContaining({
         traceId: "run-1",
         name: "client.agui.event.received",
         attributes: expect.objectContaining({
-          traceKind: "terragon.trace.daemon_event.received",
-          daemonEventReceivedAtMs: 123,
-          daemonEventId: "daemon-event-1",
-          eventId: "ag-ui-event-1",
-          seq: 7,
-          projectionIndex: 0,
-          projectionCount: 1,
-          agUiEventType: EventType.TEXT_MESSAGE_CONTENT,
-          messageId: "agent-1",
+          eventType: EventType.RUN_STARTED,
         }),
       }),
     );
@@ -580,6 +559,16 @@ describe("useThreadViewModel sidecar projection", () => {
 
     expect(onStatusOrTerminalEvent).toHaveBeenCalledTimes(2);
     expect(onMessages).toHaveBeenLastCalledWith([]);
+    expect(recordAgentTraceSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: "agent-1",
+        name: "client.agui.event.received",
+        attributes: expect.objectContaining({
+          eventType: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: "agent-1",
+        }),
+      }),
+    );
   });
 
   it("invalidates status events before sidecar projection can filter them", () => {

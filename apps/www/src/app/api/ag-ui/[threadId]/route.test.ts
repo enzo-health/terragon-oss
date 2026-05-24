@@ -1079,6 +1079,42 @@ describe("ag-ui SSE route", () => {
     expect(runStartedCount).toBe(1);
   });
 
+  it("streams native AG-UI events without trace sideband protocol frames", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-native-only",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "msg-native-only",
+        role: "assistant",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-native-only",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    const received = await readReplayBurst(response, runEvents.length);
+    expect(received).toEqual(runEvents);
+    expect(
+      received.some(
+        (event) =>
+          event.type === EventType.CUSTOM &&
+          Reflect.get(event, "name") === "terragon.trace.daemon_event.received",
+      ),
+    ).toBe(false);
+  });
+
   it("drops leading MESSAGES_SNAPSHOT rows before full replay RUN_STARTED", async () => {
     const runEvents: BaseEvent[] = [
       {

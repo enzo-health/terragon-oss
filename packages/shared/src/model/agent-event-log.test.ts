@@ -1251,6 +1251,51 @@ describe("agent-event-log", () => {
         runId: fixture.runId,
       });
     });
+
+    it("persists envelope payload without injecting replay-only metadata", async () => {
+      const fixture = await createRunFixture();
+      const eventId = newId("event");
+      const payload = {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 1_700_000_000_001,
+        messageId: newId("message"),
+        delta: "hello",
+      };
+
+      const result = await appendAgUiEventRow({
+        tx: db,
+        row: {
+          eventId,
+          threadId: fixture.threadId,
+          eventType: String(payload.type),
+          category: String(payload.type),
+          idempotencyKey: `${fixture.runId}:${eventId}`,
+          timestamp: new Date(),
+          envelope: {
+            seq: 4,
+            runId: fixture.runId,
+            threadChatId: fixture.threadChatId,
+            payload,
+          },
+        },
+      });
+
+      expect(result).toEqual({ inserted: true });
+      const inserted = await db.query.agentEventLog.findFirst({
+        where: and(
+          eq(schema.agentEventLog.runId, fixture.runId),
+          eq(schema.agentEventLog.eventId, eventId),
+        ),
+      });
+      expect(inserted).toBeDefined();
+      if (!inserted) {
+        throw new Error("expected inserted AG-UI row");
+      }
+
+      const envelope = readAgUiEnvelope(inserted);
+      expect(envelope?.payload).toEqual(payload);
+      expect(inserted.payloadJson).not.toHaveProperty("__terragonTrace");
+    });
   });
 
   describe("appendAgUiEventRows", () => {

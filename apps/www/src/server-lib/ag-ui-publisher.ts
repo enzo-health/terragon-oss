@@ -20,7 +20,6 @@ import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import {
   agUiStreamKey,
-  type AgUiTraceMetadata,
   type AgUiEventEnvelope,
   appendAgUiEventRows,
   peekNextThreadChatSeqLocked,
@@ -44,7 +43,6 @@ export type AgUiPublishRow = {
   eventId: string;
   timestamp: Date;
   threadChatMessageSeq?: number;
-  trace?: AgUiTraceMetadata;
 };
 
 export type PersistAndPublishResult = {
@@ -89,7 +87,6 @@ function buildTransportEnvelope(params: {
   threadChatId: string;
   seq: number;
   timestamp: Date;
-  trace?: AgUiTraceMetadata;
 }): TerragonAgUiTransportEnvelope {
   return {
     eventId: params.eventId,
@@ -99,7 +96,6 @@ function buildTransportEnvelope(params: {
     threadChatId: params.threadChatId,
     timestamp: params.timestamp.toISOString(),
     idempotencyKey: `${params.runId}:${params.eventId}`,
-    ...(params.trace ? { trace: params.trace } : {}),
     payload: params.event,
   };
 }
@@ -159,7 +155,6 @@ export async function persistAgUiEvents(params: {
           threadChatId,
           seq,
           timestamp: row.timestamp,
-          trace: row.trace,
         }),
       };
     });
@@ -222,13 +217,11 @@ export async function persistAgUiEvents(params: {
 /**
  * Publish already-persisted AG-UI events to `agui:thread:{threadChatId}`.
  *
- * ## XADD failure policy (see C2 in Task 2C code review)
- * The DB is the source of truth; Redis is a live-tail optimization. On the
- * first XADD failure we log at error severity and STOP publishing remaining
- * events in the batch — out-of-order stream arrival is worse than a gap,
- * because the SSE reader's `XREAD $` cursor would advance past missing
- * entries. Clients recover the gap via replay-from-seq on reconnect using
- * the DB as source of truth.
+ * ## XADD failure policy
+ * The DB is the source of truth; Redis is a live-tail optimization. Durable
+ * batches publish through one Redis pipeline so the hot streaming path pays
+ * one round trip per persisted batch while preserving command order. If the
+ * pipeline fails, clients recover the gap via replay-from-seq on reconnect.
  */
 export async function publishPersistedAgUiEvents(
   params: PublishPersistedAgUiEventsParams,
@@ -267,19 +260,12 @@ export async function publishPersistedAgUiEvents(
             envelope: serializeAgUiTransportEnvelope(envelope),
           },
   }));
-  const publishedCount = isLocalRedisHttpMode()
-    ? await publishAgUiEventsIndividually({
-        threadChatId,
-        streamKey,
-        publishPayloads,
-        insertedEventIds,
-      })
-    : await publishAgUiEventsWithPipeline({
-        threadChatId,
-        streamKey,
-        publishPayloads,
-        insertedEventIds,
-      });
+  const publishedCount = await publishAgUiEventsBatch({
+    threadChatId,
+    streamKey,
+    publishPayloads,
+    insertedEventIds,
+  });
   const runId = publishEntries[0]?.envelope?.runId ?? null;
   recordAgentTraceSpan({
     traceId: runId,
@@ -292,7 +278,7 @@ export async function publishPersistedAgUiEvents(
       published: publishedCount,
       eventIdFirst: insertedEventIds[0] ?? null,
       eventIdLast: insertedEventIds[insertedEventIds.length - 1] ?? null,
-      mode: isLocalRedisHttpMode() ? "individual" : "pipeline",
+      mode: "pipeline",
     },
   });
 }
@@ -304,6 +290,62 @@ type AgUiRedisPublishPayload = {
     envelope?: string;
   };
 };
+
+async function publishAgUiEventsBatch({
+  threadChatId,
+  streamKey,
+  publishPayloads,
+  insertedEventIds,
+}: {
+  threadChatId: string;
+  streamKey: string;
+  publishPayloads: AgUiRedisPublishPayload[];
+  insertedEventIds: readonly string[];
+}): Promise<number> {
+  if (isLocalRedisHttpMode()) {
+    return publishAgUiEventsIndividually({
+      threadChatId,
+      streamKey,
+      publishPayloads,
+      insertedEventIds,
+    });
+  }
+
+  const pipeline = redis.pipeline();
+  for (const { data } of publishPayloads) {
+    pipeline.xadd(streamKey, "*", data);
+  }
+  try {
+    const results = await pipeline.exec({ keepErrors: true });
+    const failedResultIndex = findPipelineErrorIndex(results);
+    if (failedResultIndex !== null) {
+      logAgUiRedisPublishFailure({
+        threadChatId,
+        streamKey,
+        eventType: String(
+          publishPayloads[failedResultIndex]?.event.type ?? "unknown",
+        ),
+        publishedCount: failedResultIndex,
+        remainingCount: publishPayloads.length - failedResultIndex,
+        insertedEventIds,
+        error: pipelineResultError(results[failedResultIndex]),
+      });
+      return failedResultIndex;
+    }
+    return publishPayloads.length;
+  } catch (err) {
+    logAgUiRedisPublishFailure({
+      threadChatId,
+      streamKey,
+      eventType: String(publishPayloads[0]?.event.type ?? "unknown"),
+      publishedCount: 0,
+      remainingCount: publishPayloads.length,
+      insertedEventIds,
+      error: err,
+    });
+    return 0;
+  }
+}
 
 async function publishAgUiEventsIndividually({
   threadChatId,
@@ -338,76 +380,31 @@ async function publishAgUiEventsIndividually({
   return publishedCount;
 }
 
-async function publishAgUiEventsWithPipeline({
-  threadChatId,
-  streamKey,
-  publishPayloads,
-  insertedEventIds,
-}: {
-  threadChatId: string;
-  streamKey: string;
-  publishPayloads: AgUiRedisPublishPayload[];
-  insertedEventIds: readonly string[];
-}): Promise<number> {
-  const pipeline = redis.pipeline();
-  for (const { data } of publishPayloads) {
-    pipeline.xadd(streamKey, "*", data);
-  }
-  try {
-    const results = await pipeline.exec();
-    const failedIndex = findFirstPipelineFailureIndex(results);
-    if (failedIndex === null) {
-      return publishPayloads.length;
-    }
-    logAgUiRedisPublishFailure({
-      threadChatId,
-      streamKey,
-      eventType: String(publishPayloads[failedIndex]!.event.type),
-      publishedCount: failedIndex,
-      remainingCount: publishPayloads.length - failedIndex,
-      insertedEventIds,
-      error: readPipelineFailure(results, failedIndex),
-    });
-    return failedIndex;
-  } catch (err) {
-    logAgUiRedisPublishFailure({
-      threadChatId,
-      streamKey,
-      eventType:
-        publishPayloads.length > 0
-          ? String(publishPayloads[0]!.event.type)
-          : null,
-      publishedCount: 0,
-      remainingCount: publishPayloads.length,
-      insertedEventIds,
-      error: err,
-    });
-    return 0;
-  }
-}
-
-function findFirstPipelineFailureIndex(results: unknown): number | null {
+function findPipelineErrorIndex(results: unknown): number | null {
   if (!Array.isArray(results)) {
     return null;
   }
-  for (let index = 0; index < results.length; index++) {
-    const result = results[index];
-    if (result instanceof Error) {
-      return index;
-    }
-    if (Array.isArray(result) && result[0] instanceof Error) {
-      return index;
-    }
-  }
-  return null;
+  const index = results.findIndex((result) => pipelineResultError(result));
+  return index === -1 ? null : index;
 }
 
-function readPipelineFailure(results: unknown, index: number): unknown {
-  if (!Array.isArray(results)) {
-    return results;
+function pipelineResultError(result: unknown): Error | null {
+  if (result instanceof Error) {
+    return result;
   }
-  const result = results[index];
-  return Array.isArray(result) ? (result[0] ?? result) : result;
+  if (Array.isArray(result) && result[0] instanceof Error) {
+    return result[0];
+  }
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "error" in result &&
+    typeof result.error === "string" &&
+    result.error.length > 0
+  ) {
+    return new Error(result.error);
+  }
+  return null;
 }
 
 function logAgUiRedisPublishFailure({

@@ -526,7 +526,7 @@ describe("ag-ui-side-effect-messages", () => {
           },
         },
       ],
-      lastSeqOffset: 7,
+      lastSeqOffset: 8,
     });
   });
 
@@ -586,6 +586,112 @@ describe("ag-ui-side-effect-messages", () => {
 
     expect(history).toEqual({
       items: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeqOffset: 0,
+    });
+  });
+
+  it("does not advance durable history cursor through an empty second run", () => {
+    const history = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Prompt" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 3,
+        messageId: "assistant-1",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 4,
+        messageId: "assistant-1",
+        delta: "Visible first run",
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 5,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 6,
+        threadId: "thread-1",
+        runId: "run-2",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 7,
+        messageId: "assistant-empty",
+        role: "assistant",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 8,
+        messageId: "assistant-empty",
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 9,
+        threadId: "thread-1",
+        runId: "run-2",
+      },
+    ] satisfies BaseEvent[]);
+
+    expect(history).toEqual({
+      items: [
+        { id: "user-1", role: "user", content: "Prompt" },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Visible first run",
+        },
+      ],
+      lastSeqOffset: 4,
+    });
+  });
+
+  it("does not advance durable history cursor for trace-sideband custom noise", () => {
+    const history = getDurableAgUiHistoryItemsFromEvents([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [{ id: "user-1", role: "user", content: "Prompt" }],
+      },
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 2,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+      {
+        type: EventType.CUSTOM,
+        timestamp: 3,
+        name: "terragon.trace.daemon_event.received",
+        value: {
+          kind: "terragon.trace.daemon_event.received",
+          runId: "run-1",
+          eventId: "trace-event-1",
+        },
+      },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-1",
+      },
+    ] satisfies BaseEvent[]);
+
+    expect(history).toEqual({
+      items: [{ id: "user-1", role: "user", content: "Prompt" }],
       lastSeqOffset: 0,
     });
   });

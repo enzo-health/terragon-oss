@@ -1,30 +1,40 @@
 import type { DBUserMessage } from "@terragon/shared";
 
+export type QueuedUserMessage = {
+  clientSubmissionId: string;
+  message: DBUserMessage;
+};
+
+const clientSubmissionIds = new WeakMap<DBUserMessage, string>();
+
 export function appendUniqueQueuedMessages(
   baseMessages: DBUserMessage[],
-  nextMessages: readonly DBUserMessage[],
+  nextMessages: readonly QueuedUserMessage[],
 ): DBUserMessage[] {
   let didAppend = false;
   const out = [...baseMessages];
-  for (const message of nextMessages) {
-    if (out.some((existing) => isSameQueuedMessage(existing, message))) {
+  for (const incomingMessage of nextMessages) {
+    if (
+      out.some((existing) => isSameQueuedMessage(existing, incomingMessage))
+    ) {
       continue;
     }
-    out.push(message);
+    clientSubmissionIds.set(
+      incomingMessage.message,
+      incomingMessage.clientSubmissionId,
+    );
+    out.push(incomingMessage.message);
     didAppend = true;
   }
   return didAppend ? out : baseMessages;
 }
 
-export function isSameQueuedMessage(
+function isSameQueuedMessage(
   left: DBUserMessage,
-  right: DBUserMessage,
+  right: QueuedUserMessage,
 ): boolean {
-  return (
-    left.parts.length === right.parts.length &&
-    left.parts.every(
-      (part, index) =>
-        JSON.stringify(part) === JSON.stringify(right.parts[index]),
-    )
-  );
+  if (left === right.message) {
+    return true;
+  }
+  return clientSubmissionIds.get(left) === right.clientSubmissionId;
 }

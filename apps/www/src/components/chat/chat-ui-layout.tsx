@@ -36,6 +36,19 @@ import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
 
+type ChatRuntimeQueueParams = {
+  forceScrollToBottom: () => void;
+  isAgentCurrentlyWorking: boolean;
+  onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
+  queueWriteRef: React.MutableRefObject<Promise<void>>;
+  queuedMessagesRef: React.MutableRefObject<DBUserMessage[] | null>;
+  reconcileActiveChatFromServer: () => Promise<unknown>;
+  setError: (error: string | null) => void;
+  threadChatId: string;
+  threadId: string;
+  queueFollowUpAction?: typeof queueFollowUp;
+};
+
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
   { ssr: false },
@@ -112,6 +125,80 @@ function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
     parts: [{ type: "rich-text", nodes: richTextNodes }, ...attachmentParts],
     timestamp: new Date().toISOString(),
     permissionMode: config.permissionMode,
+  };
+}
+
+export function createChatRuntimeQueue({
+  forceScrollToBottom,
+  isAgentCurrentlyWorking,
+  onOptimisticQueuedMessagesUpdate,
+  queueFollowUpAction = queueFollowUp,
+  queueWriteRef,
+  queuedMessagesRef,
+  reconcileActiveChatFromServer,
+  setError,
+  threadChatId,
+  threadId,
+}: ChatRuntimeQueueParams): {
+  shouldQueue: (message: AppendMessage) => boolean;
+  enqueue: (message: AppendMessage) => Promise<void>;
+} {
+  const clientSubmissionIds = new WeakMap<AppendMessage, string>();
+  const clientSubmissionIdFor = (message: AppendMessage): string => {
+    if (typeof message.sourceId === "string" && message.sourceId.length > 0) {
+      return message.sourceId;
+    }
+    const existing = clientSubmissionIds.get(message);
+    if (existing) {
+      return existing;
+    }
+    const next = crypto.randomUUID();
+    clientSubmissionIds.set(message, next);
+    return next;
+  };
+
+  return {
+    shouldQueue: (message: AppendMessage) =>
+      message.role === "user" && isAgentCurrentlyWorking,
+    enqueue: async (message: AppendMessage) => {
+      const userMessage = appendMessageToDbUserMessage(message);
+      const plainText = convertToPlainText({ message: userMessage });
+      if (plainText.length === 0) {
+        return;
+      }
+      const queuedUserMessage = {
+        clientSubmissionId: clientSubmissionIdFor(message),
+        message: userMessage,
+      };
+      forceScrollToBottom();
+      setError(null);
+      const write = queueWriteRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const baseQueuedMessages = queuedMessagesRef.current ?? [];
+          const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
+            queuedUserMessage,
+          ]);
+          if (nextMessages === baseQueuedMessages) {
+            return;
+          }
+          queuedMessagesRef.current = nextMessages;
+          onOptimisticQueuedMessagesUpdate(nextMessages);
+          const result = await queueFollowUpAction({
+            threadId,
+            threadChatId,
+            messages: nextMessages,
+          });
+          if (!result.success) {
+            setError(result.errorMessage);
+            await reconcileActiveChatFromServer();
+            return;
+          }
+          await reconcileActiveChatFromServer();
+        });
+      queueWriteRef.current = write.catch(() => undefined);
+      await write;
+    },
   };
 }
 
@@ -206,46 +293,18 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   }, [thread.id, threadChat.id]);
 
   const runtimeQueue = React.useMemo(
-    () => ({
-      shouldQueue: (message: AppendMessage) =>
-        message.role === "user" && isAgentCurrentlyWorking,
-      enqueue: async (message: AppendMessage) => {
-        const userMessage = appendMessageToDbUserMessage(message);
-        const plainText = convertToPlainText({ message: userMessage });
-        if (plainText.length === 0) {
-          return;
-        }
-        forceScrollToBottom();
-        setError(null);
-        const write = queueWriteRef.current
-          .catch(() => undefined)
-          .then(async () => {
-            const baseQueuedMessages = queuedMessagesRef.current ?? [];
-            const nextMessages = appendUniqueQueuedMessages(
-              baseQueuedMessages,
-              [userMessage],
-            );
-            if (nextMessages === baseQueuedMessages) {
-              return;
-            }
-            queuedMessagesRef.current = nextMessages;
-            onOptimisticQueuedMessagesUpdate(nextMessages);
-            const result = await queueFollowUp({
-              threadId: thread.id,
-              threadChatId: threadChat.id,
-              messages: nextMessages,
-            });
-            if (!result.success) {
-              setError(result.errorMessage);
-              await reconcileActiveChatFromServer();
-              return;
-            }
-            await reconcileActiveChatFromServer();
-          });
-        queueWriteRef.current = write.catch(() => undefined);
-        await write;
-      },
-    }),
+    () =>
+      createChatRuntimeQueue({
+        forceScrollToBottom,
+        isAgentCurrentlyWorking,
+        onOptimisticQueuedMessagesUpdate,
+        queueWriteRef,
+        queuedMessagesRef,
+        reconcileActiveChatFromServer,
+        setError,
+        threadId: thread.id,
+        threadChatId: threadChat.id,
+      }),
     [
       forceScrollToBottom,
       isAgentCurrentlyWorking,

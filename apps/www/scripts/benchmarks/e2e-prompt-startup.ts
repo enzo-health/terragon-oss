@@ -4,6 +4,13 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { chromium, type Browser, type Page } from "playwright";
+import {
+  browserBenchmarkMetricHelpersSource,
+  createBrowserBenchmarkMetricHelpers,
+  type AgUiEventToVisibleBatch,
+  type BenchmarkTraceSpan,
+  type LongTaskSample,
+} from "./e2e-prompt-startup-metrics";
 
 type Status = "pass" | "fail";
 
@@ -15,7 +22,7 @@ type Thresholds = {
   maxSilentGapMs: number;
   scopedMaxSilentGapMs: number;
   activeStreamGapMs: number;
-  daemonEventToVisibleUpdateMs: number;
+  agUiEventToVisibleUpdateMs: number;
   minAssistantTextChunks: number;
   minVisibleUpdates: number;
   maxLongTaskMs: number;
@@ -78,7 +85,7 @@ type RunMetrics = {
   visibleUpdateCount: number;
   activeStreamGapCount: number;
   activeStreamGapP95Ms: number | null;
-  daemonEventToVisibleUpdateMsP95: number | null;
+  agUiEventToVisibleUpdateMsP95: number | null;
   longTaskCount: number;
   maxLongTaskMs: number;
   totalLongTaskMs: number;
@@ -98,21 +105,6 @@ type RunResult = {
   diagnostics?: BrowserStreamMetricDiagnostics;
 };
 
-type DaemonEventToVisibleSample = {
-  messageId: string;
-  visibleAtMs: number;
-  visibleEpochMs: number;
-  daemonReceivedAtMs: number;
-  newestDaemonReceivedAtMs: number;
-  daemonEventToVisibleUpdateMs: number;
-  newestDaemonEventToVisibleUpdateMs: number;
-  traceKey: string;
-  traceKeys: string[];
-  consumedTraceCount: number;
-  textLength: number;
-  textDeltaBytes: number;
-};
-
 type VisibleUpdateSample = {
   messageId: string;
   sourceIds: string[];
@@ -122,22 +114,23 @@ type VisibleUpdateSample = {
   textDeltaBytes: number;
   gapMs: number | null;
   uiOwnedGapMs: number | null;
-  daemonReceivedAtMs: number | null;
+  agUiEventTimestampMs: number | null;
+  agUiEventToVisibleUpdateMs: number | null;
 };
 
-type TextTraceSpanSample = {
+type AgUiEventToVisibleSample = {
+  messageId: string;
+  visibleAtMs: number;
+  visibleEpochMs: number;
+  oldestEventTimestampMs: number;
+  newestEventTimestampMs: number;
+  agUiEventToVisibleUpdateMs: number;
+  newestAgUiEventToVisibleUpdateMs: number;
   traceKey: string;
-  messageId: string | null;
-  agUiEventType: string | null;
-  receivedAtMs: number | null;
-  endedAtMs: number | null;
-  consumed: boolean;
-};
-
-export type LongTaskSample = {
-  startTimeMs: number;
-  durationMs: number;
-  attributionNames: string[];
+  traceKeys: string[];
+  consumedTraceCount: number;
+  textLength: number;
+  textDeltaBytes: number;
 };
 
 type LayoutShiftSample = {
@@ -147,142 +140,23 @@ type LayoutShiftSample = {
 };
 
 type BrowserStreamMetricDiagnostics = {
-  daemonEventToVisibleSamples: DaemonEventToVisibleSample[];
   visibleUpdates: VisibleUpdateSample[];
-  textTraceSpans: TextTraceSpanSample[];
+  agUiEventToVisibleSamples: AgUiEventToVisibleSample[];
   longTaskEntries: LongTaskSample[];
   layoutShiftEntries: LayoutShiftSample[];
 };
 
-export type BenchmarkTraceSpan = {
-  name?: string;
-  endedAtMs?: number;
-  attributes?: Record<string, unknown>;
+const { consumeAgUiReceiptBatchForVisibleUpdate, summarizeLongTaskSamples } =
+  createBrowserBenchmarkMetricHelpers();
+
+export {
+  consumeAgUiReceiptBatchForVisibleUpdate,
+  summarizeLongTaskSamples,
+  browserBenchmarkMetricHelpersSource,
+  type AgUiEventToVisibleBatch,
+  type BenchmarkTraceSpan,
+  type LongTaskSample,
 };
-
-export type BenchmarkDaemonTraceBatch = {
-  oldestReceivedAtMs: number;
-  newestReceivedAtMs: number;
-  oldestTraceKey: string;
-  traceKeys: string[];
-  consumedTraceCount: number;
-};
-
-export function summarizeLongTaskSamples(samples: LongTaskSample[]): {
-  longTaskCount: number;
-  maxLongTaskMs: number;
-  totalLongTaskMs: number;
-  topLongTaskEntries: LongTaskSample[];
-} {
-  return {
-    longTaskCount: samples.length,
-    maxLongTaskMs: samples.length
-      ? Math.max(...samples.map((sample) => sample.durationMs))
-      : 0,
-    totalLongTaskMs: samples.reduce(
-      (total, sample) => total + sample.durationMs,
-      0,
-    ),
-    topLongTaskEntries: [...samples]
-      .sort((left, right) => right.durationMs - left.durationMs)
-      .slice(0, 10),
-  };
-}
-
-export function consumeDaemonTraceBatchForVisibleUpdate({
-  spans,
-  consumedTraceKeys,
-  visibleEpochMs,
-  messageIds,
-}: {
-  spans: BenchmarkTraceSpan[];
-  consumedTraceKeys: Set<string>;
-  visibleEpochMs: number;
-  messageIds: string[];
-}): BenchmarkDaemonTraceBatch | null {
-  const traceAttributeNumber = (
-    span: BenchmarkTraceSpan,
-    key: string,
-  ): number | null => {
-    const value = span.attributes?.[key];
-    return typeof value === "number" && Number.isFinite(value) ? value : null;
-  };
-
-  const isVisibleTextTraceSpan = (span: BenchmarkTraceSpan): boolean => {
-    if (
-      span.attributes?.["traceKind"] !== "terragon.trace.daemon_event.received"
-    ) {
-      return false;
-    }
-    if (!messageIds.includes(String(span.attributes["messageId"]))) {
-      return false;
-    }
-    return (
-      span.attributes["agUiEventType"] === "TEXT_MESSAGE_CONTENT" ||
-      span.attributes["agUiEventType"] === "REASONING_MESSAGE_CONTENT"
-    );
-  };
-
-  const traceConsumptionKey = (span: BenchmarkTraceSpan): string =>
-    [
-      span.attributes?.["daemonEventId"] ?? "",
-      span.attributes?.["eventId"] ?? "",
-      span.attributes?.["seq"] ?? "",
-      span.attributes?.["projectionIndex"] ?? "",
-      span.attributes?.["messageId"] ?? "",
-      span.attributes?.["agUiEventType"] ?? "",
-    ].join(":");
-
-  const traceReceivedAtMs = (span: BenchmarkTraceSpan): number | null => {
-    const direct =
-      traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
-      traceAttributeNumber(span, "daemonReceivedAtMs") ??
-      traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
-    if (direct !== null) {
-      return direct;
-    }
-    if (
-      span.name === "server.daemon_event.received" &&
-      typeof span.endedAtMs === "number"
-    ) {
-      return span.endedAtMs;
-    }
-    return null;
-  };
-
-  const traces: { receivedAtMs: number; traceKey: string }[] = [];
-  for (let index = spans.length - 1; index >= 0; index--) {
-    const span = spans[index];
-    if (!span || !isVisibleTextTraceSpan(span)) {
-      continue;
-    }
-    if (typeof span.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
-      continue;
-    }
-    const consumptionKey = traceConsumptionKey(span);
-    if (consumedTraceKeys.has(consumptionKey)) {
-      continue;
-    }
-    const receivedAtMs = traceReceivedAtMs(span);
-    if (receivedAtMs !== null && receivedAtMs <= visibleEpochMs) {
-      traces.push({ receivedAtMs, traceKey: consumptionKey });
-    }
-  }
-  if (traces.length === 0) {
-    return null;
-  }
-  traces.sort((left, right) => left.receivedAtMs - right.receivedAtMs);
-  for (const trace of traces) {
-    consumedTraceKeys.add(trace.traceKey);
-  }
-  return {
-    oldestReceivedAtMs: traces[0]!.receivedAtMs,
-    newestReceivedAtMs: traces[traces.length - 1]!.receivedAtMs,
-    oldestTraceKey: traces[0]!.traceKey,
-    traceKeys: traces.map((trace) => trace.traceKey),
-    consumedTraceCount: traces.length,
-  };
-}
 
 type BrowserStreamMetricSnapshot = {
   assistantTextChunkCount: number;
@@ -293,7 +167,7 @@ type BrowserStreamMetricSnapshot = {
   visibleUpdateCount: number;
   activeStreamGapCount: number;
   activeStreamGapP95Ms: number | null;
-  daemonEventToVisibleUpdateMsP95: number | null;
+  agUiEventToVisibleUpdateMsP95: number | null;
   longTaskCount: number;
   maxLongTaskMs: number;
   totalLongTaskMs: number;
@@ -344,7 +218,7 @@ const DEFAULT_THRESHOLDS: Thresholds = {
   maxSilentGapMs: 45_000,
   scopedMaxSilentGapMs: 1_500,
   activeStreamGapMs: 750,
-  daemonEventToVisibleUpdateMs: 250,
+  agUiEventToVisibleUpdateMs: 250,
   minAssistantTextChunks: 1,
   minVisibleUpdates: 2,
   maxLongTaskMs: 100,
@@ -515,9 +389,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       chunkTimes: [],
       visibleUpdates: [],
       activeStreamGaps: [],
-      daemonEventToVisibleUpdateSamples: [],
-      daemonEventToVisibleSamples: [],
-      consumedDaemonTraceKeys: new Set(),
+      agUiEventToVisibleUpdateSamples: [],
+      agUiEventToVisibleSamples: [],
+      consumedAgUiReceiptTraceKeys: new Set(),
       agentTraceSpans: [],
       streamedTextBytes: 0,
       longTasks: [],
@@ -559,6 +433,11 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       return sortedValues[index] ?? null;
     };
 
+    const {
+      consumeAgUiReceiptBatchForVisibleUpdate,
+      summarizeLongTaskSamples,
+    } = ${browserBenchmarkMetricHelpersSource};
+
     const lastAgentMessage = () => {
       const rows = document.querySelectorAll('[data-message-role="agent"]');
       const last = rows.item(rows.length - 1);
@@ -576,118 +455,6 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           }
         : null;
     };
-
-    const consumeDaemonTraceBatchForVisibleUpdate = ({
-      spans,
-      consumedTraceKeys,
-      visibleEpochMs,
-      messageIds,
-    }) => {
-      const traceAttributeNumber = (span, key) => {
-        const value = span?.attributes?.[key];
-        return typeof value === "number" && Number.isFinite(value)
-          ? value
-          : null;
-      };
-      const isVisibleTextTraceSpan = (span) => {
-        if (span?.attributes?.traceKind !== "terragon.trace.daemon_event.received") {
-          return false;
-        }
-        if (!messageIds.includes(String(span.attributes.messageId))) {
-          return false;
-        }
-        return (
-          span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
-          span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT"
-        );
-      };
-      const traceConsumptionKey = (span) =>
-        [
-          span?.attributes?.daemonEventId ?? "",
-          span?.attributes?.eventId ?? "",
-          span?.attributes?.seq ?? "",
-          span?.attributes?.projectionIndex ?? "",
-          span?.attributes?.messageId ?? "",
-          span?.attributes?.agUiEventType ?? "",
-        ].join(":");
-      const traceReceivedAtMs = (span) => {
-        const direct =
-          traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
-          traceAttributeNumber(span, "daemonReceivedAtMs") ??
-          traceAttributeNumber(span, "serverDaemonEventReceivedAtMs");
-        if (direct !== null) {
-          return direct;
-        }
-        if (
-          span?.name === "server.daemon_event.received" &&
-          typeof span.endedAtMs === "number"
-        ) {
-          return span.endedAtMs;
-        }
-        return null;
-      };
-      const traces = [];
-      for (let index = spans.length - 1; index >= 0; index--) {
-        const span = spans[index];
-        if (!span || !isVisibleTextTraceSpan(span)) {
-          continue;
-        }
-        if (typeof span.endedAtMs === "number" && span.endedAtMs > visibleEpochMs) {
-          continue;
-        }
-        const consumptionKey = traceConsumptionKey(span);
-        if (consumedTraceKeys.has(consumptionKey)) {
-          continue;
-        }
-        const receivedAtMs = traceReceivedAtMs(span);
-        if (receivedAtMs !== null && receivedAtMs <= visibleEpochMs) {
-          traces.push({ receivedAtMs, traceKey: consumptionKey });
-        }
-      }
-      if (traces.length === 0) {
-        return null;
-      }
-      traces.sort((left, right) => left.receivedAtMs - right.receivedAtMs);
-      for (const trace of traces) {
-        consumedTraceKeys.add(trace.traceKey);
-      }
-      return {
-        oldestReceivedAtMs: traces[0].receivedAtMs,
-        newestReceivedAtMs: traces[traces.length - 1].receivedAtMs,
-        oldestTraceKey: traces[0].traceKey,
-        traceKeys: traces.map((trace) => trace.traceKey),
-        consumedTraceCount: traces.length,
-      };
-    };
-
-    const traceAttributeNumber = (span, key) => {
-      const value = span?.attributes?.[key];
-      return typeof value === "number" && Number.isFinite(value) ? value : null;
-    };
-
-    const traceConsumptionKey = (span) =>
-      [
-        span?.attributes?.daemonEventId ?? "",
-        span?.attributes?.eventId ?? "",
-        span?.attributes?.seq ?? "",
-        span?.attributes?.projectionIndex ?? "",
-        span?.attributes?.messageId ?? "",
-        span?.attributes?.agUiEventType ?? "",
-      ].join(":");
-
-    const isTextTraceSpan = (span) =>
-      span?.attributes?.traceKind === "terragon.trace.daemon_event.received" &&
-      (span.attributes.agUiEventType === "TEXT_MESSAGE_CONTENT" ||
-        span.attributes.agUiEventType === "REASONING_MESSAGE_CONTENT");
-
-    const traceReceivedAtMs = (span) =>
-      traceAttributeNumber(span, "daemonEventReceivedAtMs") ??
-      traceAttributeNumber(span, "daemonReceivedAtMs") ??
-      traceAttributeNumber(span, "serverDaemonEventReceivedAtMs") ??
-      (span?.name === "server.daemon_event.received" &&
-      typeof span.endedAtMs === "number"
-        ? span.endedAtMs
-        : null);
 
     const recordBenchmarkTraceSpan = (name, attributes) => {
       const endedAtMs = epochNow();
@@ -740,66 +507,54 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         previousVisibleUpdate === undefined
           ? null
           : visibleAtMs - previousVisibleUpdate.visibleAtMs;
-      const daemonTrace = consumeDaemonTraceBatchForVisibleUpdate({
+      const agUiReceiptBatch = consumeAgUiReceiptBatchForVisibleUpdate({
         spans: state.agentTraceSpans,
-        consumedTraceKeys: state.consumedDaemonTraceKeys,
+        consumedTraceKeys: state.consumedAgUiReceiptTraceKeys,
         visibleEpochMs,
         messageIds:
           message.sourceIds.length > 0 ? message.sourceIds : [message.id],
       });
-      const daemonReceivedAtMs = daemonTrace?.oldestReceivedAtMs ?? null;
-      const previousTraceBackedUpdate = state.visibleUpdates
-        .slice()
-        .reverse()
-        .find((update) => update.daemonReceivedAtMs !== null);
-      let uiOwnedGapMs = null;
-      if (daemonReceivedAtMs !== null) {
-        if (
-          gapMs !== null &&
-          previousTraceBackedUpdate?.daemonReceivedAtMs !== undefined &&
-          previousTraceBackedUpdate.daemonReceivedAtMs !== null
-        ) {
-          const daemonCadenceMs = Math.max(
-            0,
-            daemonReceivedAtMs - previousTraceBackedUpdate.daemonReceivedAtMs,
-          );
-          uiOwnedGapMs = Math.max(0, gapMs - daemonCadenceMs);
-          state.activeStreamGaps.push(uiOwnedGapMs);
-          recordBenchmarkTraceSpan("browser.agent_text.chunk_gap", {
-            messageId: message.id,
-            gapMs,
-            uiOwnedGapMs,
-            daemonCadenceMs,
-          });
-        }
-        const daemonEventToVisibleUpdateMs = Math.max(
+      const agUiEventTimestampMs =
+        agUiReceiptBatch?.oldestEventTimestampMs ?? null;
+      let agUiEventToVisibleUpdateMs = null;
+      if (agUiReceiptBatch !== null) {
+        agUiEventToVisibleUpdateMs = Math.max(
           0,
-          Math.round(visibleEpochMs - daemonReceivedAtMs),
+          Math.round(visibleEpochMs - agUiReceiptBatch.oldestEventTimestampMs),
         );
-        const newestDaemonEventToVisibleUpdateMs = Math.max(
+        const newestAgUiEventToVisibleUpdateMs = Math.max(
           0,
-          Math.round(visibleEpochMs - daemonTrace.newestReceivedAtMs),
+          Math.round(visibleEpochMs - agUiReceiptBatch.newestEventTimestampMs),
         );
-        state.daemonEventToVisibleUpdateSamples.push(
-          daemonEventToVisibleUpdateMs,
+        state.agUiEventToVisibleUpdateSamples.push(
+          agUiEventToVisibleUpdateMs,
         );
-        state.daemonEventToVisibleSamples.push({
+        state.agUiEventToVisibleSamples.push({
           messageId: message.id,
           visibleAtMs,
           visibleEpochMs: Math.round(visibleEpochMs),
-          daemonReceivedAtMs,
-          newestDaemonReceivedAtMs: daemonTrace.newestReceivedAtMs,
-          daemonEventToVisibleUpdateMs,
-          newestDaemonEventToVisibleUpdateMs,
-          traceKey: daemonTrace.oldestTraceKey,
-          traceKeys: daemonTrace.traceKeys,
-          consumedTraceCount: daemonTrace.consumedTraceCount,
+          oldestEventTimestampMs: agUiReceiptBatch.oldestEventTimestampMs,
+          newestEventTimestampMs: agUiReceiptBatch.newestEventTimestampMs,
+          agUiEventToVisibleUpdateMs,
+          newestAgUiEventToVisibleUpdateMs,
+          traceKey: agUiReceiptBatch.oldestTraceKey,
+          traceKeys: agUiReceiptBatch.traceKeys,
+          consumedTraceCount: agUiReceiptBatch.consumedTraceCount,
           textLength: message.text.length,
           textDeltaBytes,
         });
-        state.chunkTimes.push(visibleAtMs);
-        state.streamedTextBytes += textDeltaBytes;
       }
+      const uiOwnedGapMs = gapMs;
+      if (uiOwnedGapMs !== null) {
+        state.activeStreamGaps.push(uiOwnedGapMs);
+        recordBenchmarkTraceSpan("browser.agent_text.chunk_gap", {
+          messageId: message.id,
+          gapMs,
+          uiOwnedGapMs,
+        });
+      }
+      state.chunkTimes.push(visibleAtMs);
+      state.streamedTextBytes += textDeltaBytes;
       state.visibleUpdates.push({
         messageId: message.id,
         sourceIds: message.sourceIds,
@@ -809,7 +564,8 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         textDeltaBytes,
         gapMs,
         uiOwnedGapMs,
-        daemonReceivedAtMs,
+        agUiEventTimestampMs,
+        agUiEventToVisibleUpdateMs,
       });
       state.previousAgentTextByMessageId[message.id] = message.text;
       recordBenchmarkTraceSpan("browser.agent_text.visible", {
@@ -817,10 +573,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         visibleAtMs,
         textLength: message.text.length,
         textDeltaBytes,
-        daemonEventToVisibleUpdateMs:
-          daemonReceivedAtMs === null
-            ? null
-            : Math.max(0, Math.round(visibleEpochMs - daemonReceivedAtMs)),
+        agUiEventToVisibleUpdateMs,
       });
     };
 
@@ -943,9 +696,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
         state.chunkTimes = [];
         state.visibleUpdates = [];
         state.activeStreamGaps = [];
-        state.daemonEventToVisibleUpdateSamples = [];
-        state.daemonEventToVisibleSamples = [];
-        state.consumedDaemonTraceKeys = new Set();
+        state.agUiEventToVisibleUpdateSamples = [];
+        state.agUiEventToVisibleSamples = [];
+        state.consumedAgUiReceiptTraceKeys = new Set();
         state.agentTraceSpans = [];
         state.streamedTextBytes = 0;
         state.longTasks = [];
@@ -960,19 +713,7 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
       },
       snapshot: () => {
         const gaps = state.activeStreamGaps;
-        const longTaskSummary = {
-          longTaskCount: state.longTasks.length,
-          maxLongTaskMs: state.longTasks.length
-            ? Math.max(...state.longTasks.map((task) => task.durationMs))
-            : 0,
-          totalLongTaskMs: state.longTasks.reduce(
-            (total, task) => total + task.durationMs,
-            0,
-          ),
-          topLongTaskEntries: Array.from(state.longTasks)
-            .sort((left, right) => right.durationMs - left.durationMs)
-            .slice(0, 10),
-        };
+        const longTaskSummary = summarizeLongTaskSamples(state.longTasks);
         const cumulativeLayoutShift = state.layoutShiftEntries.reduce(
           (total, entry) =>
             entry.startTime >= state.layoutShiftResetAtMs
@@ -988,11 +729,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           maxSilentGapMs: gaps.length ? Math.max(...gaps) : 0,
           visibleUpdateCount: state.visibleUpdates.length,
           activeStreamGapCount: state.activeStreamGaps.length,
-          activeStreamGapP95Ms: state.daemonEventToVisibleUpdateSamples.length
-            ? (pickPercentile(state.activeStreamGaps, 95) ?? 0)
-            : null,
-          daemonEventToVisibleUpdateMsP95: pickPercentile(
-            state.daemonEventToVisibleUpdateSamples,
+          activeStreamGapP95Ms: pickPercentile(state.activeStreamGaps, 95),
+          agUiEventToVisibleUpdateMsP95: pickPercentile(
+            state.agUiEventToVisibleUpdateSamples,
             95,
           ),
           longTaskCount: longTaskSummary.longTaskCount,
@@ -1001,29 +740,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
           rafFrameGapP95Ms: pickPercentile(state.rafFrameGaps, 95),
           cumulativeLayoutShift: Number(cumulativeLayoutShift.toFixed(4)),
           diagnostics: {
-            daemonEventToVisibleSamples: state.daemonEventToVisibleSamples,
             visibleUpdates: state.visibleUpdates.slice(-40),
-            textTraceSpans: state.agentTraceSpans
-              .filter(isTextTraceSpan)
-              .slice(-80)
-              .map((span) => {
-                const traceKey = traceConsumptionKey(span);
-                return {
-                  traceKey,
-                  messageId:
-                    typeof span?.attributes?.messageId === "string"
-                      ? span.attributes.messageId
-                      : null,
-                  agUiEventType:
-                    typeof span?.attributes?.agUiEventType === "string"
-                      ? span.attributes.agUiEventType
-                      : null,
-                  receivedAtMs: traceReceivedAtMs(span),
-                  endedAtMs:
-                    typeof span?.endedAtMs === "number" ? span.endedAtMs : null,
-                  consumed: state.consumedDaemonTraceKeys.has(traceKey),
-                };
-              }),
+            agUiEventToVisibleSamples:
+              state.agUiEventToVisibleSamples.slice(-40),
             longTaskEntries: longTaskSummary.topLongTaskEntries,
             layoutShiftEntries: state.layoutShiftEntries,
           },
@@ -1090,16 +809,15 @@ async function readBrowserStreamMetrics(
         visibleUpdateCount: 0,
         activeStreamGapCount: 0,
         activeStreamGapP95Ms: null,
-        daemonEventToVisibleUpdateMsP95: null,
+        agUiEventToVisibleUpdateMsP95: null,
         longTaskCount: 0,
         maxLongTaskMs: 0,
         totalLongTaskMs: 0,
         rafFrameGapP95Ms: null,
         cumulativeLayoutShift: 0,
         diagnostics: {
-          daemonEventToVisibleSamples: [],
           visibleUpdates: [],
-          textTraceSpans: [],
+          agUiEventToVisibleSamples: [],
           longTaskEntries: [],
           layoutShiftEntries: [],
         },
@@ -1384,7 +1102,7 @@ async function runIteration(params: {
     });
     const threadCreatedMs = nowMs(startedAt);
     if (!/\/task\/[^/?#]+/.test(page.url())) {
-      await page.goto(`${config.appUrl}${taskHref}`, {
+      await page.goto(new URL(taskHref, config.appUrl).toString(), {
         waitUntil: "domcontentloaded",
         timeout: config.timeoutMs,
       });
@@ -1485,8 +1203,8 @@ async function runIteration(params: {
       visibleUpdateCount: browserMetrics.visibleUpdateCount,
       activeStreamGapCount: browserMetrics.activeStreamGapCount,
       activeStreamGapP95Ms: browserMetrics.activeStreamGapP95Ms,
-      daemonEventToVisibleUpdateMsP95:
-        browserMetrics.daemonEventToVisibleUpdateMsP95,
+      agUiEventToVisibleUpdateMsP95:
+        browserMetrics.agUiEventToVisibleUpdateMsP95,
       longTaskCount: browserMetrics.longTaskCount,
       maxLongTaskMs: browserMetrics.maxLongTaskMs,
       totalLongTaskMs: browserMetrics.totalLongTaskMs,
@@ -1542,7 +1260,7 @@ async function runIteration(params: {
       visibleUpdateCount: 0,
       activeStreamGapCount: 0,
       activeStreamGapP95Ms: null,
-      daemonEventToVisibleUpdateMsP95: null,
+      agUiEventToVisibleUpdateMsP95: null,
       longTaskCount: 0,
       maxLongTaskMs: 0,
       totalLongTaskMs: 0,
@@ -1564,7 +1282,10 @@ async function runIteration(params: {
   }
 }
 
-function buildChecks(metrics: RunMetrics, thresholds: Thresholds): Check[] {
+export function buildChecks(
+  metrics: RunMetrics,
+  thresholds: Thresholds,
+): Check[] {
   return [
     budgetCheck(
       "thread-created-budget",
@@ -1598,9 +1319,9 @@ function buildChecks(metrics: RunMetrics, thresholds: Thresholds): Check[] {
       thresholds.activeStreamGapMs,
     ),
     budgetCheck(
-      "daemon-event-to-visible-update-budget",
-      metrics.daemonEventToVisibleUpdateMsP95,
-      thresholds.daemonEventToVisibleUpdateMs,
+      "ag-ui-event-to-visible-update-budget",
+      metrics.agUiEventToVisibleUpdateMsP95,
+      thresholds.agUiEventToVisibleUpdateMs,
     ),
     {
       name: "assistant-text-chunk-count",
@@ -1717,8 +1438,8 @@ function summarize(
     scopedMaxSilentGapMsP95: percentile(metric("scopedMaxSilentGapMs"), 95),
     visibleUpdateCountP50: percentile(metric("visibleUpdateCount"), 50),
     activeStreamGapMsP95: percentile(metric("activeStreamGapP95Ms"), 95),
-    daemonEventToVisibleUpdateMsP95: percentile(
-      metric("daemonEventToVisibleUpdateMsP95"),
+    agUiEventToVisibleUpdateMsP95: percentile(
+      metric("agUiEventToVisibleUpdateMsP95"),
       95,
     ),
     maxLongTaskMsP95: percentile(metric("maxLongTaskMs"), 95),
@@ -1760,9 +1481,9 @@ function summarize(
       config.thresholds.activeStreamGapMs,
     ),
     budgetCheck(
-      "daemon-event-to-visible-update-budget-p95",
-      metrics.daemonEventToVisibleUpdateMsP95,
-      config.thresholds.daemonEventToVisibleUpdateMs,
+      "ag-ui-event-to-visible-update-budget-p95",
+      metrics.agUiEventToVisibleUpdateMsP95,
+      config.thresholds.agUiEventToVisibleUpdateMs,
     ),
     {
       name: "assistant-text-chunk-count-p50",

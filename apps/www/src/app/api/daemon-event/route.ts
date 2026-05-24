@@ -110,11 +110,6 @@ type CanonicalEventsPayload = NonNullable<
 
 type DaemonDeltasPayload = NonNullable<DaemonEventAPIBody["deltas"]>;
 
-type DaemonAgUiTraceMetadata = {
-  daemonEventId: string | null;
-  daemonEventReceivedAtMs: number;
-};
-
 function filterCanonicalEventsForDeltaCoexistence(params: {
   canonicalEvents: CanonicalEventsPayload | null;
   deltas: DaemonDeltasPayload | null | undefined;
@@ -245,7 +240,6 @@ async function persistCanonicalEventsOrResponse(params: {
   threadId: string;
   threadChatId: string;
   publishLive: boolean;
-  trace?: DaemonAgUiTraceMetadata;
 }): Promise<
   | { summary: CanonicalPersistenceSummary; response?: undefined }
   | { summary?: undefined; response: Response }
@@ -296,10 +290,7 @@ async function persistCanonicalEventsOrResponse(params: {
     };
   }
 
-  const rows = canonicalEventsToAgUiRows(canonicalEvents).map((row) => ({
-    ...row,
-    ...(params.trace ? { trace: params.trace } : {}),
-  }));
+  const rows = canonicalEventsToAgUiRows(canonicalEvents);
   try {
     if (params.publishLive) {
       const result = await persistAndPublishAgUiEvents({
@@ -865,12 +856,10 @@ export async function POST(request: Request) {
       canonicalEventCount: rawCanonicalEvents?.length ?? 0,
       deltaCount: deltas?.length ?? 0,
       metaEventCount: metaEvents?.length ?? 0,
+      daemonEventId: envelopeV2?.eventId ?? null,
+      daemonEventReceivedAtMs,
     },
   });
-  const daemonAgUiTrace: DaemonAgUiTraceMetadata = {
-    daemonEventId: envelopeV2?.eventId ?? null,
-    daemonEventReceivedAtMs,
-  };
   runContext = await getAgentRunContextByRunId({
     db,
     runId: authoritativeRunId,
@@ -1233,7 +1222,6 @@ export async function POST(request: Request) {
     threadId,
     threadChatId,
     publishLive: daemonRunStatusFromMessages === "processing",
-    trace: daemonAgUiTrace,
   });
   if (canonicalPersistence.response) {
     return canonicalPersistence.response;
@@ -1300,7 +1288,7 @@ export async function POST(request: Request) {
         rows: daemonDeltasToAgUiRows({
           runId: authoritativeRunId,
           deltas,
-        }).map((row) => ({ ...row, trace: daemonAgUiTrace })),
+        }),
       });
       recordAgentTraceSpan({
         traceId: authoritativeRunId,
@@ -1350,7 +1338,7 @@ export async function POST(request: Request) {
         const endRows = buildDeltaRunEndRows({
           runId: authoritativeRunId,
           openMessages,
-        }).map((row) => ({ ...row, trace: daemonAgUiTrace }));
+        });
         await persistAndPublishAgUiEvents({
           db,
           runId: authoritativeRunId,
@@ -1618,10 +1606,7 @@ export async function POST(request: Request) {
           runId: authoritativeRunId,
           threadId,
           threadChatId,
-          rows: dbAgentMessagePartsToAgUiRows(richPartInputs).map((row) => ({
-            ...row,
-            trace: daemonAgUiTrace,
-          })),
+          rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
         });
       } catch (error) {
         if (skipLegacyRuntimeTranscriptPersistence) {
@@ -1992,7 +1977,6 @@ export async function POST(request: Request) {
       threadId,
       threadChatId,
       publishLive: false,
-      trace: daemonAgUiTrace,
     });
     if (terminalCanonicalPersistence.response) {
       return terminalCanonicalPersistence.response;
