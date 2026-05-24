@@ -199,11 +199,7 @@ function compactArtifactFingerprintValue(value: unknown): unknown {
   if (typeof value === "string") return compactArtifactString(value);
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) {
-    return {
-      length: value.length,
-      first: compactArtifactFingerprintValue(value[0]),
-      last: compactArtifactFingerprintValue(value.at(-1)),
-    };
+    return compactArtifactSequenceFingerprint(value);
   }
   const record = value as Record<string, unknown>;
   const compact: Record<string, unknown> = {};
@@ -248,16 +244,18 @@ function compactArtifactFingerprintValue(value: unknown): unknown {
 }
 
 function compactArtifactSequenceFingerprint(value: unknown[]): unknown {
+  const itemsHash = hashString(
+    runtimeValueFingerprint(value.map(compactArtifactFingerprintValue)),
+  );
   return {
     length: value.length,
-    first: compactArtifactFingerprintValue(value[0]),
-    last: compactArtifactFingerprintValue(value.at(-1)),
+    itemsHash,
   };
 }
 
 function compactArtifactString(value: string): string {
   if (value.length <= 256) return value;
-  return `${value.slice(0, 128)}:${value.length}:${value.slice(-128)}`;
+  return `${value.slice(0, 128)}:${value.length}:${hashString(value)}:${value.slice(-128)}`;
 }
 
 function runtimeDataPartFingerprint(
@@ -290,6 +288,27 @@ function terminalPartFingerprint(part: DBTerminalPart): string {
 }
 
 function terminalChunksHash(chunks: DBTerminalPart["chunks"]): number {
+  if (chunks.length <= 8) {
+    return hashTerminalChunks(chunks);
+  }
+  const middleIndex = Math.floor(chunks.length / 2);
+  const sampledIndexes = new Set<number>([
+    0,
+    1,
+    middleIndex - 1,
+    middleIndex,
+    middleIndex + 1,
+    chunks.length - 2,
+    chunks.length - 1,
+  ]);
+  const sampledChunks = [...sampledIndexes]
+    .filter((index) => index >= 0 && index < chunks.length)
+    .sort((left, right) => left - right)
+    .map((index) => chunks[index]!);
+  return hashTerminalChunks(sampledChunks);
+}
+
+function hashTerminalChunks(chunks: DBTerminalPart["chunks"]): number {
   let hash = 0;
   for (const chunk of chunks) {
     hash = hashStringIntoHash(hash, String(chunk.streamSeq));
@@ -297,6 +316,10 @@ function terminalChunksHash(chunks: DBTerminalPart["chunks"]): number {
     hash = hashStringIntoHash(hash, chunk.text);
   }
   return hash >>> 0;
+}
+
+function hashString(value: string): number {
+  return hashStringIntoHash(0, value) >>> 0;
 }
 
 function hashStringIntoHash(initialHash: number, value: string): number {

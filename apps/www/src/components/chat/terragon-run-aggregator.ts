@@ -4,19 +4,22 @@ import { EventType, type AGUIEvent } from "@ag-ui/core";
 import type {
   ChatModelRunResult,
   ThreadAssistantMessagePart,
-  ToolCallMessagePart,
 } from "@assistant-ui/react";
 import {
   appendTerragonDataPart,
-  isReadonlyJSONObject,
   terragonDataPartFromCustomEvent,
-  type ReadonlyJSONObject,
   type TerragonDataPart,
 } from "./ag-ui-custom-parts";
+import { MAX_PROGRESS_CHUNKS } from "./tool-progress-chunks";
 import {
-  MAX_PROGRESS_CHUNKS,
-  type ToolProgressChunk,
-} from "./tool-progress-chunks";
+  createToolCallState,
+  parseToolArgs,
+  toolArgsMayBeComplete,
+  toolCallToMessagePart,
+  toolResultErrorStatus,
+  tryParseJSON,
+  type ToolCallState,
+} from "./terragon-run-aggregator-helpers";
 
 type Emit = (
   update: ChatModelRunResult,
@@ -25,33 +28,6 @@ type Emit = (
 type Logger = {
   debug?: (message: string, ...args: unknown[]) => void;
 };
-
-type ToolCallState = {
-  toolCallId: string;
-  toolCallName: string;
-  argsText: string;
-  parsedArgs: ReadonlyJSONObject | undefined;
-  parsedArgsText: string | undefined;
-  progressChunks: ToolProgressChunk[];
-  progressHiddenCount: number;
-  toolStatus: ToolLifecycleStatus | undefined;
-  result: unknown;
-  isError: boolean | undefined;
-  parentMessageId?: string;
-};
-
-type ToolLifecycleStatus = "started" | "in_progress" | "completed" | "failed";
-type RuntimeToolCallMessagePart = ToolCallMessagePart<ReadonlyJSONObject> & {
-  progressChunks?: ToolProgressChunk[];
-  progressHiddenCount?: number;
-  toolStatus?: ToolLifecycleStatus;
-};
-const EMPTY_TOOL_ARGS: ReadonlyJSONObject = Object.freeze({});
-
-function toolArgsMayBeComplete(text: string): boolean {
-  const trimmed = text.trimEnd();
-  return trimmed.endsWith("}") || trimmed.endsWith("]");
-}
 
 type RunLifecycleEvent =
   | { type: "RUN_STARTED"; runId: string }
@@ -214,7 +190,7 @@ export class TerragonRunAggregator {
         this.finishToolCall(
           event.toolCallId,
           "content" in event ? event.content : "",
-          this.toolResultErrorStatus(event),
+          toolResultErrorStatus(event),
         );
         this.emit(this.targetMessageIdForToolCall(event.toolCallId));
         break;
@@ -353,18 +329,7 @@ export class TerragonRunAggregator {
       parentTool?.parentMessageId ??
       parentMessageId ??
       this.lastTargetMessageId;
-    const state: ToolCallState = {
-      toolCallId: id,
-      toolCallName: name ?? "tool",
-      argsText: "",
-      parsedArgs: undefined,
-      parsedArgsText: undefined,
-      progressChunks: [],
-      progressHiddenCount: 0,
-      toolStatus: "started",
-      result: undefined,
-      isError: undefined,
-    };
+    const state: ToolCallState = createToolCallState(id, name ?? "tool");
     if (resolvedParentMessageId) {
       state.parentMessageId = resolvedParentMessageId;
       this.lastTargetMessageId = resolvedParentMessageId;
@@ -388,7 +353,7 @@ export class TerragonRunAggregator {
     if (!entry) return;
     entry.argsText += delta;
     if (toolArgsMayBeComplete(entry.argsText)) {
-      this.parseToolArgs(entry);
+      parseToolArgs(entry);
     }
   }
 
@@ -410,19 +375,7 @@ export class TerragonRunAggregator {
   private finalizeToolArgs(id: string | undefined): void {
     const entry = id ? this.toolCalls.get(id) : undefined;
     if (!entry) return;
-    this.parseToolArgs(entry);
-  }
-
-  private toolResultErrorStatus(
-    event: Extract<AGUIEvent, { type: EventType.TOOL_CALL_RESULT }>,
-  ): boolean | undefined {
-    if ("isError" in event && typeof event.isError === "boolean") {
-      return event.isError;
-    }
-    const status = Reflect.get(event, "status");
-    if (status === "error") return true;
-    const error = Reflect.get(event, "error");
-    return typeof error === "string" ? true : undefined;
+    parseToolArgs(entry);
   }
 
   private finishToolCall(
@@ -433,18 +386,7 @@ export class TerragonRunAggregator {
     if (!id) return;
     let entry = this.toolCalls.get(id);
     if (!entry) {
-      entry = {
-        toolCallId: id,
-        toolCallName: "tool",
-        argsText: "",
-        parsedArgs: undefined,
-        parsedArgsText: undefined,
-        progressChunks: [],
-        progressHiddenCount: 0,
-        toolStatus: "started",
-        result: undefined,
-        isError: undefined,
-      };
+      entry = createToolCallState(id);
       this.toolCalls.set(id, entry);
     }
     if (
@@ -454,8 +396,8 @@ export class TerragonRunAggregator {
     ) {
       this.partOrder.push({ kind: "tool-call", toolCallId: id });
     }
-    this.parseToolArgs(entry);
-    entry.result = this.tryParseJSON(content);
+    parseToolArgs(entry);
+    entry.result = tryParseJSON(content);
     entry.isError = isError;
     entry.toolStatus = isError ? "failed" : "completed";
   }
@@ -466,33 +408,6 @@ export class TerragonRunAggregator {
       entry.result = content;
       entry.isError = true;
       entry.toolStatus = "failed";
-    }
-  }
-
-  private tryParseJSON(value: unknown): unknown {
-    if (typeof value !== "string") return value;
-    if (!value) return value;
-    try {
-      return JSON.parse(value);
-    } catch {
-      return value;
-    }
-  }
-
-  private parseToolArgs(entry: ToolCallState): void {
-    if (entry.parsedArgsText === entry.argsText) {
-      return;
-    }
-    entry.parsedArgsText = entry.argsText;
-    if (!entry.argsText) {
-      entry.parsedArgs = undefined;
-      return;
-    }
-    try {
-      const parsed: unknown = JSON.parse(entry.argsText);
-      entry.parsedArgs = isReadonlyJSONObject(parsed) ? parsed : undefined;
-    } catch {
-      entry.parsedArgs = undefined;
     }
   }
 
@@ -531,26 +446,7 @@ export class TerragonRunAggregator {
 
       const entry = this.toolCalls.get(part.toolCallId);
       if (!entry) continue;
-      const toolPart: RuntimeToolCallMessagePart = {
-        type: "tool-call",
-        toolCallId: entry.toolCallId,
-        toolName: entry.toolCallName,
-        args: entry.parsedArgs ?? EMPTY_TOOL_ARGS,
-        argsText: entry.argsText,
-        ...(entry.progressChunks.length > 0
-          ? { progressChunks: entry.progressChunks.slice() }
-          : {}),
-        ...(entry.progressHiddenCount > 0
-          ? { progressHiddenCount: entry.progressHiddenCount }
-          : {}),
-        ...(entry.progressChunks.length > 0 && entry.toolStatus
-          ? { toolStatus: entry.toolStatus }
-          : {}),
-        ...(entry.result !== undefined ? { result: entry.result } : {}),
-        ...(entry.isError !== undefined ? { isError: entry.isError } : {}),
-        ...(entry.parentMessageId ? { parentId: entry.parentMessageId } : {}),
-      };
-      snapshot.push(toolPart);
+      snapshot.push(toolCallToMessagePart(entry));
     }
 
     const result: ChatModelRunResult = {

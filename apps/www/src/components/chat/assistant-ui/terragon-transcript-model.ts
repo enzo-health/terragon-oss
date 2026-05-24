@@ -2,9 +2,14 @@
 
 import type { UIMessage, UIUserMessage, UIPart } from "@terragon/shared";
 import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
+import {
+  tryBuildAppendedRuntimeModel,
+  tryBuildSteadyCoalescedRuntimeModel,
+  tryBuildSteadyRuntimeModel,
+} from "./terragon-transcript-incremental";
 
 const EMPTY_PLAN_OCCURRENCES = new Map<UIPart, number>();
-type AgentUIMessage = Extract<UIMessage, { role: "agent" }>;
+export type AgentUIMessage = Extract<UIMessage, { role: "agent" }>;
 
 export type TerragonTranscriptModel = {
   messages: UIMessage[];
@@ -93,7 +98,7 @@ function coalesceContiguousAgentMessages(messages: UIMessage[]): UIMessage[] {
   return didCoalesce ? coalesced : messages;
 }
 
-function canCoalesceAgentMessages(
+export function canCoalesceAgentMessages(
   previous: AgentUIMessage,
   message: AgentUIMessage,
 ): boolean {
@@ -104,7 +109,7 @@ function canCoalesceAgentMessages(
   );
 }
 
-function coalesceAgentMessages(
+export function coalesceAgentMessages(
   previous: AgentUIMessage,
   message: AgentUIMessage,
 ): AgentUIMessage {
@@ -119,7 +124,7 @@ function coalesceAgentMessages(
   };
 }
 
-function deriveTranscriptFacts(
+export function deriveTranscriptFacts(
   messages: UIMessage[],
 ): Pick<
   TerragonTranscriptModel,
@@ -147,299 +152,11 @@ function deriveTranscriptFacts(
   };
 }
 
-type SteadyFastPathContext = {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput;
-  previousModel: TerragonTranscriptModel;
-};
-
-function resolveSteadyFastPathContext({
-  input,
-  previousInput,
-  previousModel,
-}: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): SteadyFastPathContext | null {
-  if (
-    !previousInput ||
-    !previousModel ||
-    input.optimisticUserMessages.length > 0 ||
-    input.optimisticUserMessages !== previousInput.optimisticUserMessages
-  ) {
-    return null;
-  }
-  return { input, previousInput, previousModel };
-}
-
-function runtimePrefixUnchanged(
-  input: BuildTerragonTranscriptModelInput,
-  previousInput: BuildTerragonTranscriptModelInput,
-  prefixLength: number,
-): boolean {
-  for (let index = 0; index < prefixLength; index += 1) {
-    if (input.runtimeMessages[index] !== previousInput.runtimeMessages[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function tryBuildSteadyRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
-  const context = resolveSteadyFastPathContext(args);
-  if (!context) {
-    return null;
-  }
-  const { input, previousInput, previousModel } = context;
-  if (
-    input.runtimeMessages.length === 0 ||
-    input.runtimeMessages.length !== previousInput.runtimeMessages.length ||
-    input.runtimeMessages.length !== previousModel.messages.length
-  ) {
-    return null;
-  }
-
-  const tailIndex = input.runtimeMessages.length - 1;
-  if (!runtimePrefixUnchanged(input, previousInput, tailIndex)) {
-    return null;
-  }
-
-  const previousTail = previousInput.runtimeMessages[tailIndex];
-  const nextTail = input.runtimeMessages[tailIndex];
-  if (
-    !previousTail ||
-    !nextTail ||
-    previousTail.id !== nextTail.id ||
-    previousTail.role !== nextTail.role ||
-    messageMayContainProposedPlan(nextTail)
-  ) {
-    return null;
-  }
-  if (previousTail === nextTail) {
-    return previousModel;
-  }
-
-  const messages = previousModel.messages.slice();
-  messages[tailIndex] = nextTail;
-  const facts = deriveSteadyTailTranscriptFacts({
-    previousModel,
-    previousTail,
-    nextTail,
-    tailIndex,
-    messages,
-  });
-  return {
-    messages,
-    ...facts,
-    planOccurrencesRaw: previousModel.planOccurrencesRaw,
-  };
-}
-
-function tryBuildAppendedRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
-  const context = resolveSteadyFastPathContext(args);
-  if (!context) {
-    return null;
-  }
-  const { input, previousInput, previousModel } = context;
-  if (
-    input.runtimeMessages.length <= previousInput.runtimeMessages.length ||
-    !runtimePrefixUnchanged(
-      input,
-      previousInput,
-      previousInput.runtimeMessages.length,
-    )
-  ) {
-    return null;
-  }
-
-  const appendedMessages = input.runtimeMessages.slice(
-    previousInput.runtimeMessages.length,
-  );
-  if (appendedMessages.some(messageMayContainProposedPlan)) {
-    return null;
-  }
-
-  const messages = previousModel.messages.slice();
-  let latestAgentMessageIndex = previousModel.latestAgentMessageIndex;
-  let hasRenderableAgentParts = previousModel.hasRenderableAgentParts;
-  let hasPendingToolCall = previousModel.hasPendingToolCall;
-
-  for (const message of appendedMessages) {
-    const changedIndex = appendRuntimeMessageToTranscript(messages, message);
-    const transcriptMessage = messages[changedIndex]!;
-    if (transcriptMessage.role === "agent") {
-      latestAgentMessageIndex = changedIndex;
-      hasRenderableAgentParts =
-        hasRenderableAgentParts ||
-        messageHasRenderableAgentParts(transcriptMessage);
-      hasPendingToolCall =
-        hasPendingToolCall || messageHasPendingToolCall(transcriptMessage);
-    }
-  }
-
-  return {
-    messages,
-    latestAgentMessageIndex,
-    hasRenderableAgentParts,
-    hasPendingToolCall,
-    planOccurrencesRaw: previousModel.planOccurrencesRaw,
-  };
-}
-
-function tryBuildSteadyCoalescedRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
-  const context = resolveSteadyFastPathContext(args);
-  if (!context) {
-    return null;
-  }
-  const { input, previousInput, previousModel } = context;
-  if (
-    input.runtimeMessages.length === 0 ||
-    input.runtimeMessages.length !== previousInput.runtimeMessages.length ||
-    input.runtimeMessages.length <= previousModel.messages.length
-  ) {
-    return null;
-  }
-
-  const tailRuntimeIndex = input.runtimeMessages.length - 1;
-  if (!runtimePrefixUnchanged(input, previousInput, tailRuntimeIndex)) {
-    return null;
-  }
-
-  const previousTail = previousInput.runtimeMessages[tailRuntimeIndex];
-  const nextTail = input.runtimeMessages[tailRuntimeIndex];
-  const previousCoalescedTail = previousModel.messages.at(-1);
-  if (
-    !previousTail ||
-    !nextTail ||
-    !previousCoalescedTail ||
-    previousTail === nextTail ||
-    previousTail.id !== nextTail.id ||
-    previousTail.role !== "agent" ||
-    nextTail.role !== "agent" ||
-    previousTail.agent !== nextTail.agent ||
-    previousCoalescedTail.role !== "agent" ||
-    previousCoalescedTail.agent !== nextTail.agent ||
-    messageMayContainProposedPlan(nextTail) ||
-    !coalescedMessageContainsSource(previousCoalescedTail, previousTail.id) ||
-    previousCoalescedTail.parts.length < previousTail.parts.length
-  ) {
-    return null;
-  }
-
-  const stablePrefixPartCount =
-    previousCoalescedTail.parts.length - previousTail.parts.length;
-  const nextCoalescedTail: AgentUIMessage = {
-    ...previousCoalescedTail,
-    parts: [
-      ...previousCoalescedTail.parts.slice(0, stablePrefixPartCount),
-      ...nextTail.parts,
-    ],
-    sourceMessageIds:
-      previousCoalescedTail.sourceMessageIds ??
-      input.runtimeMessages
-        .filter((message) => message.role === "agent")
-        .map((message) => message.id),
-    meta: nextTail.meta ?? previousCoalescedTail.meta,
-  };
-
-  const messages = previousModel.messages.slice(0, -1);
-  messages.push(nextCoalescedTail);
-  return {
-    messages,
-    ...deriveSteadyTailTranscriptFacts({
-      previousModel,
-      previousTail,
-      nextTail: nextCoalescedTail,
-      tailIndex: messages.length - 1,
-      messages,
-    }),
-    planOccurrencesRaw: previousModel.planOccurrencesRaw,
-  };
-}
-
-function coalescedMessageContainsSource(
-  message: AgentUIMessage,
-  sourceId: string,
-): boolean {
-  return (message.sourceMessageIds ?? [message.id]).includes(sourceId);
-}
-
-function appendRuntimeMessageToTranscript(
-  messages: UIMessage[],
-  message: UIMessage,
-): number {
-  const previous = messages.at(-1);
-  if (
-    previous?.role === "agent" &&
-    message.role === "agent" &&
-    canCoalesceAgentMessages(previous, message)
-  ) {
-    const index = messages.length - 1;
-    messages[index] = coalesceAgentMessages(previous, message);
-    return index;
-  }
-
-  messages.push(message);
-  return messages.length - 1;
-}
-
-function deriveSteadyTailTranscriptFacts({
-  previousModel,
-  previousTail,
-  nextTail,
-  tailIndex,
-  messages,
-}: {
-  previousModel: TerragonTranscriptModel;
-  previousTail: UIMessage;
-  nextTail: UIMessage;
-  tailIndex: number;
-  messages: UIMessage[];
-}): Pick<
-  TerragonTranscriptModel,
-  "latestAgentMessageIndex" | "hasRenderableAgentParts" | "hasPendingToolCall"
-> {
-  const previousTailRenderable = messageHasRenderableAgentParts(previousTail);
-  const nextTailRenderable = messageHasRenderableAgentParts(nextTail);
-  const previousTailPendingTool = messageHasPendingToolCall(previousTail);
-  const nextTailPendingTool = messageHasPendingToolCall(nextTail);
-
-  if (
-    previousTailRenderable !== nextTailRenderable ||
-    (previousTailPendingTool && !nextTailPendingTool)
-  ) {
-    return deriveTranscriptFacts(messages);
-  }
-
-  return {
-    latestAgentMessageIndex:
-      nextTail.role === "agent"
-        ? tailIndex
-        : previousModel.latestAgentMessageIndex,
-    hasRenderableAgentParts:
-      previousModel.hasRenderableAgentParts || nextTailRenderable,
-    hasPendingToolCall: previousModel.hasPendingToolCall || nextTailPendingTool,
-  };
-}
-
-function messageHasRenderableAgentParts(message: UIMessage): boolean {
+export function messageHasRenderableAgentParts(message: UIMessage): boolean {
   return message.role === "agent" && message.parts.length > 0;
 }
 
-function messageHasPendingToolCall(message: UIMessage): boolean {
+export function messageHasPendingToolCall(message: UIMessage): boolean {
   return (
     message.role === "agent" &&
     message.parts.some(
@@ -455,7 +172,7 @@ function messagesMayContainProposedPlan(messages: UIMessage[]): boolean {
   );
 }
 
-function messageMayContainProposedPlan(message: UIMessage): boolean {
+export function messageMayContainProposedPlan(message: UIMessage): boolean {
   return message.role === "agent" && partsMayContainProposedPlan(message.parts);
 }
 

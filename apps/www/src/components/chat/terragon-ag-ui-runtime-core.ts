@@ -11,8 +11,6 @@ import type {
   ThreadAssistantMessage,
   ThreadHistoryAdapter,
   ThreadMessage,
-  ThreadSystemMessage,
-  ThreadUserMessage,
 } from "@assistant-ui/react";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { agUiMessagesToThreadMessages } from "./ag-ui-history-adapter";
@@ -28,6 +26,15 @@ import {
 } from "./terragon-run-aggregator";
 import { createTerragonAgUiSubscriber } from "./terragon-ag-ui-subscriber";
 import { toAgUiMessages, toAgUiTools } from "./terragon-ag-ui-conversions";
+import {
+  generateId,
+  isAssistantAppendMessage,
+  isRecord,
+  isSystemAppendMessage,
+  isTerminalStatus,
+  isUserAppendMessage,
+} from "./terragon-runtime-helpers";
+import { RuntimeMessageStore } from "./terragon-runtime-message-store";
 
 type Logger = {
   debug?: (message: string, ...args: unknown[]) => void;
@@ -45,13 +52,6 @@ type TerragonRunIntent = "append" | "resume";
 type ScheduledNotifyHandle =
   | { kind: "animation-frame"; id: number }
   | { kind: "timeout"; id: ReturnType<typeof globalThis.setTimeout> };
-type AppendFields = Pick<
-  AppendMessage,
-  "parentId" | "sourceId" | "runConfig" | "startRun"
->;
-type AssistantAppendMessage = Omit<ThreadAssistantMessage, "id"> & AppendFields;
-type UserAppendMessage = Omit<ThreadUserMessage, "id"> & AppendFields;
-type SystemAppendMessage = Omit<ThreadSystemMessage, "id"> & AppendFields;
 
 export type TerragonAgUiRuntimeCoreOptions = {
   agent: HttpAgent;
@@ -65,34 +65,6 @@ export type TerragonAgUiRuntimeCoreOptions = {
 
 const FALLBACK_USER_STATUS = { type: "complete", reason: "unknown" } as const;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function generateId(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
-  );
-}
-
-function isAssistantAppendMessage(
-  message: AppendMessage,
-): message is AssistantAppendMessage {
-  return message.role === "assistant";
-}
-
-function isUserAppendMessage(
-  message: AppendMessage,
-): message is UserAppendMessage {
-  return message.role === "user";
-}
-
-function isSystemAppendMessage(
-  message: AppendMessage,
-): message is SystemAppendMessage {
-  return message.role === "system";
-}
-
 export class TerragonAgUiThreadRuntimeCore {
   private agent: HttpAgent;
   private logger: Logger;
@@ -102,8 +74,7 @@ export class TerragonAgUiThreadRuntimeCore {
   private readonly notifyUpdate: () => void;
 
   private runtime: AssistantRuntime | undefined;
-  private messages: ThreadMessage[] = [];
-  private readonly messageIndexById = new Map<string, number>();
+  private readonly messageStore = new RuntimeMessageStore();
   private isRunningFlag = false;
   private abortController: AbortController | null = null;
   private stateSnapshot: ReadonlyJSONValue | undefined;
@@ -154,7 +125,7 @@ export class TerragonAgUiThreadRuntimeCore {
   }
 
   getMessages(): readonly ThreadMessage[] {
-    return this.messages;
+    return this.messageStore.getAll();
   }
 
   getState(): ReadonlyJSONValue | undefined {
@@ -190,7 +161,7 @@ export class TerragonAgUiThreadRuntimeCore {
         if (!repo) return;
 
         const messages = repo.messages.map((item) => item.message);
-        if (this.messages.length === 0 || !this.hasLocalRuntimeMutations) {
+        if (this.messageStore.length === 0 || !this.hasLocalRuntimeMutations) {
           this.applyExternalMessages(messages);
         } else {
           this.mergeExternalMessages(messages);
@@ -201,7 +172,7 @@ export class TerragonAgUiThreadRuntimeCore {
             return;
           }
           const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
-          await this.startRun(parentId, this.lastRunConfig, "resume");
+          await this.startRun(parentId, this.lastRunConfig, "resume", false);
         }
       })
       .catch((error: unknown) => {
@@ -231,17 +202,20 @@ export class TerragonAgUiThreadRuntimeCore {
   }
 
   async append(message: AppendMessage): Promise<void> {
+    await this.waitForInitialLoad();
+
     const startRun = message.startRun ?? message.role === "user";
+    const parentId = this.getAppendParentId(message.parentId);
     if (message.sourceId) {
       this.removeMessageById(message.sourceId);
     }
-    this.resetHead(message.parentId);
+    this.resetHead(parentId);
 
     const threadMessage = this.toThreadMessage(message);
     this.appendRuntimeMessage(threadMessage);
     this.hasLocalRuntimeMutations = true;
     this.notifyUpdate();
-    this.recordHistoryEntry(message.parentId ?? null, threadMessage);
+    this.recordHistoryEntry(parentId ?? null, threadMessage);
 
     if (!startRun) return;
     await this.startRun(threadMessage.id, message.runConfig, "append");
@@ -279,9 +253,10 @@ export class TerragonAgUiThreadRuntimeCore {
   }
 
   findMessageIdForToolCall(toolCallId: string): string | undefined {
+    const messages = this.messageStore.getAll();
     let fallbackMessageId: string | undefined;
-    for (let index = this.messages.length - 1; index >= 0; index--) {
-      const message = this.messages[index];
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
       if (!message || message.role !== "assistant") continue;
       for (const part of message.content) {
         if (part.type !== "tool-call" || part.toolCallId !== toolCallId)
@@ -300,7 +275,9 @@ export class TerragonAgUiThreadRuntimeCore {
     let shouldResume = false;
     const changedIndex = this.getMessageIndex(options.messageId);
     const message =
-      changedIndex !== undefined ? this.messages[changedIndex] : undefined;
+      changedIndex !== undefined
+        ? this.messageStore.at(changedIndex)
+        : undefined;
     if (changedIndex !== undefined && message?.role === "assistant") {
       let matchedToolCall = false;
       const content = message.content.map((part) => {
@@ -368,7 +345,7 @@ export class TerragonAgUiThreadRuntimeCore {
     this.replaceAllMessages(messages);
     this.recordedHistoryIds.clear();
     this.hasLocalRuntimeMutations = false;
-    for (const message of this.messages) {
+    for (const message of this.messageStore.getAll()) {
       this.recordedHistoryIds.add(message.id);
     }
     this.notifyUpdate();
@@ -383,11 +360,16 @@ export class TerragonAgUiThreadRuntimeCore {
     parentId: string | null,
     runConfig?: RunConfig,
     intent: TerragonRunIntent = "append",
+    waitForLoad = true,
   ): Promise<void> {
+    if (waitForLoad) {
+      await this.waitForInitialLoad();
+    }
+
     const normalizedRunConfig = runConfig ?? {};
     this.lastRunConfig = normalizedRunConfig;
     this.resetHead(parentId);
-    const historicalMessages = [...this.messages];
+    const historicalMessages = [...this.messageStore.getAll()];
 
     const runId = generateId();
     this.pendingError = null;
@@ -407,7 +389,7 @@ export class TerragonAgUiThreadRuntimeCore {
         messageCount: input.messages.length,
       },
     });
-    const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
+    const assistantParentId = parentId ?? this.messageStore.last()?.id ?? null;
     let assistantMessageId: string | undefined;
     const ensureAssistant = (targetMessageId: string | undefined) => {
       if (targetMessageId) {
@@ -493,7 +475,9 @@ export class TerragonAgUiThreadRuntimeCore {
     intent: TerragonRunIntent,
   ) {
     const threadId = this.agent.threadId || "main";
-    const messages = toAgUiMessages(historyMessages ?? this.messages);
+    const messages = toAgUiMessages(
+      historyMessages ?? this.messageStore.getAll(),
+    );
     const context = this.runtime?.thread.getModelContext();
     const forwardedProps: Record<string, unknown> = {
       ...(context?.callSettings ?? {}),
@@ -617,7 +601,9 @@ export class TerragonAgUiThreadRuntimeCore {
     let latestStatus: MessageStatus | undefined;
     const changedIndex = this.getMessageIndex(messageId);
     const message =
-      changedIndex !== undefined ? this.messages[changedIndex] : undefined;
+      changedIndex !== undefined
+        ? this.messageStore.at(changedIndex)
+        : undefined;
     if (changedIndex !== undefined && message?.role === "assistant") {
       touched = true;
       const metadata = update.metadata
@@ -636,7 +622,7 @@ export class TerragonAgUiThreadRuntimeCore {
     }
     if (touched) {
       this.hasLocalRuntimeMutations = true;
-      if (this.isTerminalStatus(latestStatus)) {
+      if (isTerminalStatus(latestStatus)) {
         this.flushScheduledNotifyUpdate();
         this.notifyUpdate();
         this.persistAssistantHistory(messageId);
@@ -780,15 +766,15 @@ export class TerragonAgUiThreadRuntimeCore {
 
   private resetHead(parentId: string | null | undefined) {
     if (!parentId) {
-      if (this.messages.length) {
+      if (this.messageStore.length) {
         this.replaceAllMessages([]);
       }
       return;
     }
     const idx = this.getMessageIndex(parentId);
     if (idx === undefined) return;
-    if (idx < this.messages.length - 1) {
-      this.replaceAllMessages(this.messages.slice(0, idx + 1));
+    if (idx < this.messageStore.length - 1) {
+      this.replaceAllMessages(this.messageStore.getAll().slice(0, idx + 1));
     }
   }
 
@@ -798,10 +784,10 @@ export class TerragonAgUiThreadRuntimeCore {
       this.appendRuntimeMessage(
         this.createAssistantMessage(dataPart.data.messageId),
       );
-      messageIndex = this.messages.length - 1;
+      messageIndex = this.messageStore.length - 1;
     }
 
-    const message = this.messages[messageIndex];
+    const message = this.messageStore.at(messageIndex);
     if (!message || message.role !== "assistant") {
       return false;
     }
@@ -856,10 +842,6 @@ export class TerragonAgUiThreadRuntimeCore {
     }
   }
 
-  private isTerminalStatus(status?: MessageStatus): boolean {
-    return status?.type === "complete" || status?.type === "incomplete";
-  }
-
   private recordHistoryEntry(parentId: string | null, message: ThreadMessage) {
     this.appendHistoryItem(parentId, message);
   }
@@ -878,7 +860,7 @@ export class TerragonAgUiThreadRuntimeCore {
     if (parentId === undefined) return;
     const message = this.getMessageById(messageId);
     if (!message || message.role !== "assistant") return;
-    if (!this.isTerminalStatus(message.status)) return;
+    if (!isTerminalStatus(message.status)) return;
     this.assistantHistoryParents.delete(messageId);
     this.appendHistoryItem(parentId, message);
   }
@@ -893,63 +875,45 @@ export class TerragonAgUiThreadRuntimeCore {
   }
 
   private getMessageIndex(messageId: string): number | undefined {
-    const index = this.messageIndexById.get(messageId);
-    if (index === undefined || this.messages[index]?.id !== messageId) {
-      return undefined;
-    }
-    return index;
+    return this.messageStore.getIndex(messageId);
   }
 
   private getMessageById(messageId: string): ThreadMessage | undefined {
-    const index = this.getMessageIndex(messageId);
-    return index === undefined ? undefined : this.messages[index];
+    return this.messageStore.getById(messageId);
   }
 
   private appendRuntimeMessage(message: ThreadMessage): void {
-    this.messages = [...this.messages, message];
-    this.messageIndexById.set(message.id, this.messages.length - 1);
+    this.messageStore.append(message);
   }
 
   private replaceMessageAt(index: number, message: ThreadMessage): void {
-    const previous = this.messages[index];
-    this.messages = this.messages.slice();
-    this.messages[index] = message;
-    if (previous?.id !== message.id) {
-      this.rebuildMessageIndex();
-    }
+    this.messageStore.replaceAt(index, message);
   }
 
   private removeMessageById(messageId: string): void {
-    const index = this.getMessageIndex(messageId);
-    if (index === undefined) return;
-    this.messages = [
-      ...this.messages.slice(0, index),
-      ...this.messages.slice(index + 1),
-    ];
-    this.rebuildMessageIndex();
+    this.messageStore.removeById(messageId);
   }
 
   private replaceAllMessages(messages: readonly ThreadMessage[]): void {
-    this.messages = [...messages];
-    this.rebuildMessageIndex();
+    this.messageStore.replaceAll(messages);
   }
 
   private mergeExternalMessages(messages: readonly ThreadMessage[]): void {
     let changed = false;
     for (const message of messages) {
-      const existingIndex = this.getMessageIndex(message.id);
+      const existingIndex = this.messageStore.getIndex(message.id);
       if (existingIndex === undefined) {
-        this.appendRuntimeMessage(message);
+        this.messageStore.append(message);
         this.recordedHistoryIds.add(message.id);
         changed = true;
         continue;
       }
 
-      const existing = this.messages[existingIndex];
+      const existing = this.messageStore.at(existingIndex);
       if (!existing) continue;
-      const merged = this.mergeExternalMessage(existing, message);
+      const merged = this.messageStore.mergeExternalMessage(existing, message);
       if (merged !== existing) {
-        this.replaceMessageAt(existingIndex, merged);
+        this.messageStore.replaceAt(existingIndex, merged);
         changed = true;
       }
     }
@@ -958,29 +922,13 @@ export class TerragonAgUiThreadRuntimeCore {
     this.notifyUpdate();
   }
 
-  private mergeExternalMessage(
-    existing: ThreadMessage,
-    incoming: ThreadMessage,
-  ): ThreadMessage {
-    if (existing.role !== "assistant" || incoming.role !== "assistant") {
-      return existing;
-    }
-
-    if (existing.content.length > 0) {
-      return existing;
-    }
-
-    if (incoming.content.length === 0) {
-      return existing;
-    }
-
-    return incoming;
+  private async waitForInitialLoad(): Promise<void> {
+    if (!this._isLoading || !this._loadPromise) return;
+    await this._loadPromise;
   }
 
-  private rebuildMessageIndex(): void {
-    this.messageIndexById.clear();
-    this.messages.forEach((message, index) => {
-      this.messageIndexById.set(message.id, index);
-    });
+  private getAppendParentId(parentId: string | null | undefined) {
+    if (parentId !== null) return parentId;
+    return this.messageStore.last()?.id ?? null;
   }
 }

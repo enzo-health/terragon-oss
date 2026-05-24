@@ -1,16 +1,9 @@
 import type { BaseEvent } from "@ag-ui/core";
-import { EventType } from "@ag-ui/core";
-import type {
-  DBSystemMessage,
-  DBUserMessage,
-  UIMessage,
-  UISystemMessage,
-} from "@terragon/shared";
+import type { UIMessage } from "@terragon/shared";
 import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
 } from "../ag-ui-messages-reducer";
-import { terragonDataPartFromCustomEvent } from "../ag-ui-custom-parts";
 import {
   getAgUiEventDedupeKey,
   isCanonicalEventMessageId,
@@ -24,24 +17,20 @@ import {
   preserveArtifactReferenceDescriptors,
   upsertArtifactReferenceDescriptor,
 } from "./artifact-descriptors";
-import { applyJsonPatchOperations } from "./json-patch";
+import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
-  getArrayField,
-  getBooleanField,
-  getNumberField,
-  getObjectField,
-  getStringField,
-  isRenderablePartShape,
-  isThreadStatus,
-  stableSerialize,
-} from "./renderable-part-shape";
+  applyLifecycleEvent,
+  applyMetaEvent,
+  extractThreadLifecycleMessages,
+  getQuarantineEntry,
+  mergeMetaSnapshot,
+  splitThreadLifecycleMessages,
+} from "./thread-view-model-lifecycle-events";
+import { applyNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type {
   ThreadViewEvent,
   ThreadViewModel,
   ThreadViewModelState,
-  ThreadViewQuarantineEntry,
-  ThreadViewRuntimeActivities,
-  ThreadViewRuntimeState,
   ThreadViewSnapshot,
 } from "./types";
 
@@ -153,59 +142,6 @@ export function projectThreadViewModel(
     lifecycle: state.lifecycle,
     quarantine: state.quarantine,
   };
-}
-
-const THREAD_LIFECYCLE_MESSAGE_TYPES = new Set<DBSystemMessage["message_type"]>(
-  [
-    "retry-git-commit-and-push",
-    "fix-github-checks",
-    "generic-retry",
-    "invalid-token-retry",
-    "cancel-schedule",
-    "agent-error-retry",
-    "follow-up-retry-failed",
-  ],
-);
-
-function isThreadLifecycleMessage(
-  message: UIMessage,
-): message is UISystemMessage {
-  return (
-    message.role === "system" &&
-    message.message_type !== "stop" &&
-    message.message_type !== "git-diff" &&
-    THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
-  );
-}
-
-function splitThreadLifecycleMessages(messages: UIMessage[]): {
-  transcriptMessages: UIMessage[];
-  lifecycleMessages: UISystemMessage[];
-} {
-  const transcriptMessages: UIMessage[] = [];
-  const lifecycleMessages: UISystemMessage[] = [];
-
-  for (const message of messages) {
-    if (isThreadLifecycleMessage(message)) {
-      lifecycleMessages.push(message);
-      continue;
-    }
-    transcriptMessages.push(message);
-  }
-
-  return { transcriptMessages, lifecycleMessages };
-}
-
-function extractThreadLifecycleMessages(
-  messages: UIMessage[],
-): UISystemMessage[] {
-  const lifecycleMessages: UISystemMessage[] = [];
-  for (const message of messages) {
-    if (isThreadLifecycleMessage(message)) {
-      lifecycleMessages.push(message);
-    }
-  }
-  return lifecycleMessages;
 }
 
 export function collapseHydrationReplayTextDuplicates(
@@ -458,59 +394,6 @@ function applyAgUiEvent(
   };
 }
 
-function applyOptimisticUserSubmit(
-  state: ThreadViewModelState,
-  event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
-): ThreadViewModelState {
-  const uiMessage = dbUserMessageToUiMessage({
-    message: event.message,
-    id: `user-optimistic-${state.threadChatId}-${state.dbMessages.length}`,
-  });
-
-  const duplicate = state.transcript.messages.some((message) =>
-    isSameUserMessage(message, uiMessage),
-  );
-  const transcript = duplicate
-    ? state.transcript
-    : {
-        ...state.transcript,
-        messages: [...state.transcript.messages, uiMessage],
-      };
-
-  return {
-    ...state,
-    transcript,
-    dbMessages: [...state.dbMessages, event.message],
-    sidePanel: {
-      ...state.sidePanel,
-      messages: [...state.sidePanel.messages, event.message],
-    },
-    threadStatus: event.optimisticStatus,
-    lifecycle: {
-      ...state.lifecycle,
-      threadStatus: event.optimisticStatus,
-      runStarted: event.optimisticStatus !== "complete",
-    },
-    hasOptimisticTranscriptEvents: true,
-  };
-}
-
-function dbUserMessageToUiMessage({
-  message,
-  id,
-}: {
-  message: DBUserMessage;
-  id: string;
-}): Extract<UIMessage, { role: "user" }> {
-  return {
-    id,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
-}
-
 function getArtifactsForStateMessages(
   state: ThreadViewModelState,
   artifactThread = state.artifactThread,
@@ -520,293 +403,6 @@ function getArtifactsForStateMessages(
     messages: collapseHydrationReplayTextDuplicates(state.transcript.messages),
     artifactThread,
   });
-}
-
-function applyLifecycleEvent(
-  lifecycle: ThreadViewModelState["lifecycle"],
-  event: BaseEvent,
-): ThreadViewModelState["lifecycle"] {
-  switch (event.type) {
-    case EventType.RUN_STARTED: {
-      const runId = getStringField(event, "runId") ?? lifecycle.runId;
-      return {
-        ...lifecycle,
-        runId,
-        runStarted: true,
-        threadStatus: "working",
-      };
-    }
-    case EventType.RUN_FINISHED:
-      return {
-        ...lifecycle,
-        runStarted: false,
-        threadStatus: "complete",
-      };
-    case EventType.RUN_ERROR:
-      return {
-        ...lifecycle,
-        runStarted: false,
-        threadStatus: "error",
-      };
-    case EventType.CUSTOM:
-      return applyLifecycleCustomEvent(lifecycle, event);
-    default:
-      return lifecycle;
-  }
-}
-
-function applyLifecycleCustomEvent(
-  lifecycle: ThreadViewModelState["lifecycle"],
-  event: BaseEvent,
-): ThreadViewModelState["lifecycle"] {
-  const name = getStringField(event, "name");
-  if (name !== "thread.status_changed") {
-    return lifecycle;
-  }
-  const value = getObjectField(event, "value");
-  const status = getStringField(value, "status") ?? getStringField(value, "to");
-  if (!isThreadStatus(status)) {
-    return lifecycle;
-  }
-  return {
-    ...lifecycle,
-    threadStatus: status,
-    runStarted: status === "working" || status === "booting",
-  };
-}
-
-function applyMetaEvent(
-  meta: ThreadViewModelState["meta"],
-  event: BaseEvent,
-): ThreadViewModelState["meta"] {
-  if (event.type !== EventType.CUSTOM) {
-    return meta;
-  }
-  const value = getObjectField(event, "value");
-  const kind = getStringField(value, "kind");
-  switch (kind) {
-    case "thread.token_usage_updated": {
-      const usage = getObjectField(value, "usage");
-      const inputTokens = getNumberField(usage, "inputTokens");
-      const cachedInputTokens = getNumberField(usage, "cachedInputTokens");
-      const outputTokens = getNumberField(usage, "outputTokens");
-      if (
-        inputTokens === null ||
-        cachedInputTokens === null ||
-        outputTokens === null
-      ) {
-        return meta;
-      }
-      return {
-        ...meta,
-        tokenUsage: { inputTokens, cachedInputTokens, outputTokens },
-      };
-    }
-    case "account.rate_limits_updated": {
-      const rateLimits = getObjectField(value, "rateLimits");
-      return rateLimits ? { ...meta, rateLimits } : meta;
-    }
-    case "model.rerouted": {
-      const originalModel = getStringField(value, "originalModel");
-      const reroutedModel = getStringField(value, "reroutedModel");
-      const reason = getStringField(value, "reason");
-      if (!originalModel || !reroutedModel || !reason) {
-        return meta;
-      }
-      return {
-        ...meta,
-        modelReroute: { originalModel, reroutedModel, reason },
-      };
-    }
-    case "mcp_server.startup_status_updated": {
-      const serverName = getStringField(value, "serverName");
-      const status = getStringField(value, "status");
-      if (
-        !serverName ||
-        (status !== "loading" && status !== "ready" && status !== "error")
-      ) {
-        return meta;
-      }
-      return {
-        ...meta,
-        mcpServerStatus: {
-          ...meta.mcpServerStatus,
-          [serverName]: status,
-        },
-      };
-    }
-    default:
-      return meta;
-  }
-}
-
-function mergeMetaSnapshot(
-  current: ThreadViewModelState["meta"],
-  snapshot: ThreadViewModelState["meta"],
-): ThreadViewModelState["meta"] {
-  return {
-    tokenUsage: current.tokenUsage ?? snapshot.tokenUsage,
-    rateLimits: current.rateLimits ?? snapshot.rateLimits,
-    modelReroute: current.modelReroute ?? snapshot.modelReroute,
-    mcpServerStatus:
-      Object.keys(current.mcpServerStatus).length > 0
-        ? current.mcpServerStatus
-        : snapshot.mcpServerStatus,
-    bootSteps:
-      current.bootSteps.length > 0 ? current.bootSteps : snapshot.bootSteps,
-    installProgress: current.installProgress ?? snapshot.installProgress,
-  };
-}
-
-function getQuarantineEntry(
-  event: BaseEvent,
-): ThreadViewQuarantineEntry | null {
-  if (isUnsupportedNativeRuntimeEvent(event)) {
-    return {
-      reason: "unsupported-ag-ui-event",
-      eventType: String(event.type),
-    };
-  }
-
-  if (event.type !== EventType.CUSTOM) {
-    return null;
-  }
-  const name = getStringField(event, "name");
-  if (name !== "terragon.data-part") {
-    return null;
-  }
-  const value = getObjectField(event, "value");
-  const messageId = getStringField(value, "messageId") ?? undefined;
-  const dataPart = terragonDataPartFromCustomEvent(event);
-  const part = dataPart ? dataPart.data.data : getObjectField(value, "data");
-  const partType = part
-    ? (getStringField(part, "type") ?? undefined)
-    : undefined;
-  if (dataPart && part && isRenderablePartShape(part)) {
-    return null;
-  }
-  return {
-    reason: "malformed-rich-part",
-    eventType: String(event.type),
-    messageId,
-    partType,
-  };
-}
-
-function isUnsupportedNativeRuntimeEvent(event: BaseEvent): boolean {
-  switch (event.type) {
-    case EventType.RAW:
-      return true;
-    default:
-      return false;
-  }
-}
-
-function applyNativeRuntimeEvent(
-  state: ThreadViewModelState,
-  event: BaseEvent,
-):
-  | {
-      runtimeState: ThreadViewRuntimeState;
-      runtimeActivities: ThreadViewRuntimeActivities;
-      quarantineEntry?: undefined;
-    }
-  | {
-      quarantineEntry: ThreadViewQuarantineEntry;
-    }
-  | null {
-  switch (event.type) {
-    case EventType.STATE_SNAPSHOT: {
-      const snapshot = getObjectField(event, "snapshot");
-      if (!snapshot) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState: { ...snapshot },
-        runtimeActivities: state.runtimeActivities,
-      };
-    }
-    case EventType.STATE_DELTA: {
-      const delta = getArrayField(event, "delta");
-      if (!delta) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      const runtimeState = applyJsonPatchOperations(state.runtimeState, delta);
-      if (!runtimeState) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState,
-        runtimeActivities: state.runtimeActivities,
-      };
-    }
-    case EventType.ACTIVITY_SNAPSHOT: {
-      const messageId = getStringField(event, "messageId");
-      const activityType = getStringField(event, "activityType");
-      const content = getObjectField(event, "content");
-      if (!messageId || !activityType || !content) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      const key = getRuntimeActivityKey(messageId, activityType);
-      const replace = getBooleanField(event, "replace") ?? true;
-      const previousContent = state.runtimeActivities[key]?.content;
-      return {
-        runtimeState: state.runtimeState,
-        runtimeActivities: {
-          ...state.runtimeActivities,
-          [key]: {
-            messageId,
-            activityType,
-            content:
-              replace || !previousContent
-                ? { ...content }
-                : { ...previousContent, ...content },
-          },
-        },
-      };
-    }
-    case EventType.ACTIVITY_DELTA: {
-      const messageId = getStringField(event, "messageId");
-      const activityType = getStringField(event, "activityType");
-      const patch = getArrayField(event, "patch");
-      if (!messageId || !activityType || !patch) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      const key = getRuntimeActivityKey(messageId, activityType);
-      const previous = state.runtimeActivities[key];
-      const content = applyJsonPatchOperations(previous?.content ?? {}, patch);
-      if (!content) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState: state.runtimeState,
-        runtimeActivities: {
-          ...state.runtimeActivities,
-          [key]: { messageId, activityType, content },
-        },
-      };
-    }
-    default:
-      return null;
-  }
-}
-
-function malformedNativeRuntimeEvent(event: BaseEvent): {
-  quarantineEntry: ThreadViewQuarantineEntry;
-} {
-  return {
-    quarantineEntry: {
-      reason: "malformed-native-runtime-event",
-      eventType: String(event.type),
-    },
-  };
-}
-
-function getRuntimeActivityKey(
-  messageId: string,
-  activityType: string,
-): string {
-  return `${encodeURIComponent(messageId)}:${encodeURIComponent(activityType)}`;
 }
 
 function getAgentMessageTextContent(message: UIMessage): string | null {
@@ -849,14 +445,4 @@ function shouldPreferHydrationReplayMessage({
 
 function countRenderableAgentParts(message: UIMessage & { role: "agent" }) {
   return message.parts.filter((part) => part.type !== "text").length;
-}
-
-function isSameUserMessage(left: UIMessage, right: UIMessage): boolean {
-  if (left.role !== "user" || right.role !== "user") {
-    return false;
-  }
-  if (left.timestamp && right.timestamp && left.timestamp === right.timestamp) {
-    return true;
-  }
-  return stableSerialize(left.parts) === stableSerialize(right.parts);
 }
