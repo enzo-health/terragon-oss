@@ -57,7 +57,7 @@ function SidebarHeaderContent() {
           variant="ghost"
           size="icon"
           onClick={toggleSidebar}
-          className="size-9 rounded-xl border border-border/70 bg-background/90 text-foreground shadow-[var(--shadow-outline-ring)] hover:bg-accent/80"
+          className="size-8 rounded-md border border-border/70 bg-background/90 text-foreground shadow-[var(--shadow-outline-ring)] hover:bg-accent/80"
         >
           <WordmarkLogo size="md" />
         </Button>
@@ -111,13 +111,13 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" variant="inset" className="bg-app-background">
       <SidebarHeader
         className={cn(
-          "justify-center p-2 group-data-[collapsible=icon]:px-2",
+          "justify-center p-1.5 group-data-[collapsible=icon]:px-1.5",
           headerClassName,
         )}
       >
         <SidebarHeaderContent />
       </SidebarHeader>
-      <SidebarContent className="px-2 pb-4 pt-0 group-data-[collapsible=icon]:px-1.5">
+      <SidebarContent className="px-1.5 pb-3 pt-0 group-data-[collapsible=icon]:px-1.5">
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -139,8 +139,10 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-1">
-          <SidebarGroupLabel className="mb-1 px-3">Configure</SidebarGroupLabel>
+        <SidebarGroup className="mt-0.5">
+          <SidebarGroupLabel className="mb-0.5 px-2.5">
+            Configure
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <Item
@@ -157,8 +159,10 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         {isAdmin && (
-          <SidebarGroup className="mt-2">
-            <SidebarGroupLabel className="mb-1 px-3">Admin</SidebarGroupLabel>
+          <SidebarGroup className="mt-1.5">
+            <SidebarGroupLabel className="mb-0.5 px-2.5">
+              Admin
+            </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <Item
@@ -172,7 +176,9 @@ export function AppSidebar() {
         )}
 
         <SidebarGroup className="mt-auto pt-0.5">
-          <SidebarGroupLabel className="mb-1 px-3">Support</SidebarGroupLabel>
+          <SidebarGroupLabel className="mb-0.5 px-2.5">
+            Support
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <Item
@@ -185,7 +191,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-3 pb-3 pt-3 group-data-[collapsible=icon]:px-1.5">
+      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-2 pb-2 pt-2 group-data-[collapsible=icon]:px-1.5">
         <SidebarMenu>
           <AppMenuItem>
             <DropdownMenu>
@@ -195,9 +201,9 @@ export function AppSidebar() {
                   tooltip={user?.name ?? "Account"}
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
-                  <Avatar className="h-8 w-8 rounded-lg">
+                  <Avatar className="size-7 rounded-md">
                     <AvatarImage src={user?.image ?? undefined} />
-                    <AvatarFallback className="rounded-lg bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
+                    <AvatarFallback className="rounded-md bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
                       {user?.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>

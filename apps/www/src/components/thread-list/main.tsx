@@ -65,12 +65,12 @@ export const ThreadListHeader = memo(function ThreadListHeader({
   return (
     <div
       className={cn(
-        "px-3 flex items-center justify-between min-h-9",
+        "px-2.5 flex items-center justify-between min-h-8",
         "animate-in fade-in duration-300",
         className,
       )}
     >
-      <h2 className="font-semibold text-sm uppercase tracking-[0.06em] text-muted-foreground">
+      <h2 className="font-semibold text-xs uppercase tracking-[0.06em] text-muted-foreground">
         Tasks
       </h2>
       <div className="flex items-center gap-1">
@@ -80,7 +80,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-fit px-2 hover:bg-accent rounded-full group flex items-center gap-1.5 transition-colors duration-200"
+                className="h-7 w-fit px-2 hover:bg-accent rounded-md group flex items-center gap-1.5 transition-colors duration-200"
                 title="Filter tasks"
               >
                 {viewFilter === "active" ? (
@@ -88,7 +88,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
                 ) : (
                   <Archive className="h-3.5 w-3.5 text-muted-foreground" />
                 )}
-                <span className="text-sm font-sans font-medium text-muted-foreground">
+                <span className="text-xs font-sans font-medium text-muted-foreground">
                   {viewFilter === "active" ? "Inbox" : "Archived"}
                 </span>
                 <ChevronDown className="size-3 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -126,7 +126,7 @@ export const ThreadListHeader = memo(function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 hover:bg-accent rounded-full group flex items-center justify-center transition-colors duration-200"
+                className="size-7 hover:bg-accent rounded-md group flex items-center justify-center transition-colors duration-200"
                 title="Group tasks by"
               >
                 <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
@@ -187,7 +187,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
   return (
     <h3
       className={cn(
-        "group py-2 md:py-1 text-micro uppercase tracking-[0.06em] font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-2.5 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
+        "group py-1.5 md:py-1 text-micro uppercase tracking-[0.06em] font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-2 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
         "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
@@ -248,7 +248,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
   }
   return (
     <div
-      className="mb-3"
+      className="mb-2.5"
       style={{ contentVisibility: "auto", containIntrinsicSize: "320px" }}
     >
       <ThreadListSectionHeader
@@ -261,7 +261,7 @@ const CollapsableThreadSection = memo(function CollapsableThreadSection({
       {!isCollapsed && (
         <div
           className={cn(
-            "space-y-1 md:space-y-0.5",
+            "flex flex-col gap-0.5",
             isSidebar ? "px-1" : undefined,
           )}
           style={{

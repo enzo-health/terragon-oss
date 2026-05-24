@@ -140,7 +140,7 @@ export function SimplePromptBox({
           // Compact composer chrome. Outer has no padding so the editor
           // and toolbar pin directly to the border; each inner region
           // owns its own padding. Coral ring lights up on focus.
-          "relative flex flex-col rounded-2xl border border-hairline bg-card shadow-[var(--shadow-warm-lift)] transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
+          "relative flex flex-col rounded-xl border border-hairline bg-card shadow-xs transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
           isSubmitting && [
             "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
             "animate-pulse-subtle",
@@ -149,7 +149,7 @@ export function SimplePromptBox({
         )}
       >
         {isSubmitting && (
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-2xl">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-xl">
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
@@ -164,14 +164,14 @@ export function SimplePromptBox({
           <EditorContent
             editor={editor}
             aria-label="Describe a task for the AI"
-            className={cn("min-h-10 px-2 py-1.5", className)}
+            className={cn("min-h-9 px-2 py-1.5", className)}
           />
         </ScrollArea>
         <AttachedFiles
           attachedFiles={attachedFiles}
           onRemoveFile={removeFile}
         />
-        <div className="mx-2 mb-1 flex flex-row items-center gap-2">
+        <div className="mx-2 mb-1 flex flex-row items-center gap-1.5">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
             {!hideModelSelector && (
               <ModelSelector
