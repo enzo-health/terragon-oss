@@ -341,6 +341,10 @@ describe("architecture-lint", () => {
     expect(findings).toEqual([
       expect.objectContaining({
         rule: "require-exhaustive-switch",
+        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
+      }),
+      expect.objectContaining({
+        rule: "require-exhaustive-switch",
         file: "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
       }),
       expect.objectContaining({
