@@ -12,7 +12,6 @@ import {
   useTerragonAgUiRuntime,
   type UseTerragonAgUiRuntimeOptions,
 } from "./use-terragon-ag-ui-runtime";
-import type { TerragonRuntimeProjectionHintRef } from "./terragon-ag-ui-runtime-core";
 
 const EMPTY_HISTORY_MESSAGES: readonly AgUiMessage[] = [];
 
@@ -37,7 +36,6 @@ export function useTerragonRuntime({
   historyLoadKey,
   threadId,
   threadChatId,
-  projectionHintRef,
   queue,
 }: {
   agent: HttpAgent;
@@ -56,7 +54,6 @@ export function useTerragonRuntime({
   /** Thread IDs forwarded to useTerragonAgUiRuntime for the cancel POST. */
   threadId?: string;
   threadChatId?: string;
-  projectionHintRef?: TerragonRuntimeProjectionHintRef;
   queue?: UseTerragonAgUiRuntimeOptions["queue"];
 }): AssistantRuntime {
   const history = useMemo(
@@ -111,7 +108,6 @@ export function useTerragonRuntime({
       historyLoadKey,
       ...(threadId ? { threadId } : {}),
       ...(threadChatId ? { threadChatId } : {}),
-      ...(projectionHintRef ? { projectionHintRef } : {}),
       ...(queue ? { queue } : {}),
     }),
     [
@@ -123,7 +119,6 @@ export function useTerragonRuntime({
       showThinking,
       threadId,
       threadChatId,
-      projectionHintRef,
       queue,
     ],
   );

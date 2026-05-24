@@ -5,23 +5,19 @@ import type {
 import type { AIAgent } from "@terragon/agent/types";
 import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { describe, expect, it } from "vitest";
-import type { TerragonRuntimeProjectionHint } from "../terragon-ag-ui-runtime-core";
 import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
 
 const createdAt = new Date(0);
 const projectRuntimeTranscriptMessages = ({
   runtimeMessages,
   agent,
-  projectionHint,
 }: {
   runtimeMessages: readonly ThreadMessage[];
   agent: AIAgent;
-  projectionHint?: TerragonRuntimeProjectionHint;
 }) =>
   createRuntimeTranscriptProjector()({
     runtimeMessages,
     agent,
-    projectionHint,
   });
 
 describe("projectRuntimeTranscriptMessages", () => {
@@ -571,59 +567,6 @@ describe("projectRuntimeTranscriptMessages", () => {
     });
   });
 
-  it("detects in-place tool argument mutations", () => {
-    const projector = createRuntimeTranscriptProjector();
-    const args = { command: "pwd" };
-    const assistantMessage: ThreadMessage = {
-      id: "assistant-1",
-      role: "assistant",
-      createdAt,
-      content: [
-        {
-          type: "tool-call",
-          toolCallId: "tool-1",
-          toolName: "Bash",
-          args,
-          argsText: '{"command":"pwd"}',
-        },
-      ],
-      status: { type: "running" },
-      metadata: {
-        unstable_state: null,
-        unstable_annotations: [],
-        unstable_data: [],
-        steps: [],
-        custom: {},
-      },
-    };
-
-    const first = projector({
-      runtimeMessages: [assistantMessage],
-      agent: "codex",
-    });
-
-    args.command = "ls";
-    const second = projector({
-      runtimeMessages: [assistantMessage],
-      agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 0,
-      },
-    });
-
-    expect(second.messages[0]).not.toBe(first.messages[0]);
-    expect(second.messages[0]).toMatchObject({
-      parts: [
-        {
-          type: "tool",
-          id: "tool-1",
-          parameters: { command: "ls" },
-        },
-      ],
-    });
-  });
-
   it("does not project diffs through the DataMessagePart path", () => {
     const runtimeMessages: ThreadMessage[] = [
       {
@@ -900,10 +843,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const second = projector({
       runtimeMessages: [userMessage, nextAssistantMessage, tailMessage],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 1,
-      },
     });
 
     expect(second.messages[0]).toBe(first.messages[0]);
@@ -914,160 +853,6 @@ describe("createRuntimeTranscriptProjector", () => {
         {
           type: "terminal",
           chunks: [{ text: "done\n" }],
-        },
-      ],
-    });
-  });
-
-  it("detects in-place terminal data mutations", () => {
-    const projector = createRuntimeTranscriptProjector();
-    const terminalChunks: Array<{
-      streamSeq: number;
-      kind: "stdout";
-      text: string;
-    }> = [];
-    const terminalData = {
-      name: "terragon.terminal",
-      messageId: "assistant-1",
-      partIndex: 0,
-      data: {
-        type: "terminal" as const,
-        sandboxId: "sandbox-1",
-        terminalId: "terminal-1",
-        chunks: terminalChunks,
-      },
-    };
-    const assistantMessage: ThreadMessage = {
-      id: "assistant-1",
-      role: "assistant",
-      createdAt,
-      content: [
-        {
-          type: "data",
-          name: "terragon.terminal",
-          data: terminalData,
-        },
-      ],
-      status: { type: "running" },
-      metadata: {
-        unstable_state: null,
-        unstable_annotations: [],
-        unstable_data: [],
-        steps: [],
-        custom: {},
-      },
-    };
-    const tailMessage: ThreadMessage = {
-      id: "assistant-2",
-      role: "assistant",
-      createdAt,
-      content: [{ type: "text", text: "tail" }],
-      status: { type: "running" },
-      metadata: {
-        unstable_state: null,
-        unstable_annotations: [],
-        unstable_data: [],
-        steps: [],
-        custom: {},
-      },
-    };
-    const first = projector({
-      runtimeMessages: [assistantMessage, tailMessage],
-      agent: "codex",
-    });
-
-    terminalChunks.push({
-      streamSeq: 1,
-      kind: "stdout",
-      text: "done\n",
-    });
-    const second = projector({
-      runtimeMessages: [assistantMessage, tailMessage],
-      agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 0,
-      },
-    });
-
-    expect(second.messages[0]).not.toBe(first.messages[0]);
-    expect(second.messages[0]).toMatchObject({
-      parts: [
-        {
-          type: "terminal",
-          chunks: [{ text: "done\n" }],
-        },
-      ],
-    });
-    expect(second.messages[1]).toBe(first.messages[1]);
-  });
-
-  it("detects in-place non-tail terminal chunk corrections", () => {
-    const projector = createRuntimeTranscriptProjector();
-    const terminalChunks: Array<{
-      streamSeq: number;
-      kind: "stdout";
-      text: string;
-    }> = [
-      { streamSeq: 1, kind: "stdout", text: "before\n" },
-      { streamSeq: 2, kind: "stdout", text: "tail\n" },
-    ];
-    const assistantMessage: ThreadMessage = {
-      id: "assistant-1",
-      role: "assistant",
-      createdAt,
-      content: [
-        {
-          type: "data",
-          name: "terragon.terminal",
-          data: {
-            name: "terragon.terminal",
-            messageId: "assistant-1",
-            partIndex: 0,
-            data: {
-              type: "terminal",
-              sandboxId: "sandbox-1",
-              terminalId: "terminal-1",
-              chunks: terminalChunks,
-            },
-          },
-        },
-      ],
-      status: { type: "running" },
-      metadata: {
-        unstable_state: null,
-        unstable_annotations: [],
-        unstable_data: [],
-        steps: [],
-        custom: {},
-      },
-    };
-
-    const first = projector({
-      runtimeMessages: [assistantMessage],
-      agent: "codex",
-    });
-
-    terminalChunks[0] = {
-      streamSeq: 1,
-      kind: "stdout",
-      text: "corrected\n",
-    };
-    const second = projector({
-      runtimeMessages: [assistantMessage],
-      agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 0,
-      },
-    });
-
-    expect(second.messages[0]).not.toBe(first.messages[0]);
-    expect(second.messages[0]).toMatchObject({
-      parts: [
-        {
-          type: "terminal",
-          chunks: [{ text: "corrected\n" }, { text: "tail\n" }],
         },
       ],
     });
@@ -1126,10 +911,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const second = projector({
       runtimeMessages: [...history, nextTailMessage],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: history.length,
-      },
     });
 
     expect(second.messages).toHaveLength(first.messages.length);
@@ -1202,10 +983,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const second = projector({
       runtimeMessages: [changedUserMessage, suffixMessage],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 0,
-      },
     });
 
     expect(second.messages[0]).not.toBe(first.messages[0]);
@@ -1216,7 +993,7 @@ describe("createRuntimeTranscriptProjector", () => {
     expect(argsReadCount).toBe(firstArgsReadCount);
   });
 
-  it("clamps fresh projection hints to earlier runtime reference changes", () => {
+  it("re-projects only the runtime message that changed by reference", () => {
     const projector = createRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
@@ -1266,10 +1043,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const second = projector({
       runtimeMessages: [userMessage, changedMiddleMessage, tailMessage],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 2,
-      },
     });
 
     expect(second.messages[0]).toBe(first.messages[0]);
@@ -1356,10 +1129,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const second = projector({
       runtimeMessages: [secondMessage],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 0,
-      },
     });
 
     const firstAgent = first.messages[0];
@@ -1374,7 +1143,7 @@ describe("createRuntimeTranscriptProjector", () => {
     expect(secondAgent.parts[2]).toBe(firstAgent.parts[2]);
   });
 
-  it("falls back to structural comparison when the projection hint is stale", () => {
+  it("re-projects a non-tail message changed after a tail update", () => {
     const projector = createRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
@@ -1410,10 +1179,6 @@ describe("createRuntimeTranscriptProjector", () => {
     projector({
       runtimeMessages: [userMessage, tailUpdate],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 1,
-      },
     });
 
     const nonTailUpdate: ThreadMessage = {
@@ -1423,10 +1188,6 @@ describe("createRuntimeTranscriptProjector", () => {
     const third = projector({
       runtimeMessages: [nonTailUpdate, tailUpdate],
       agent: "codex",
-      projectionHint: {
-        version: 1,
-        firstChangedRuntimeMessageIndex: 1,
-      },
     });
 
     expect(third.messages[0]).not.toBe(first.messages[0]);

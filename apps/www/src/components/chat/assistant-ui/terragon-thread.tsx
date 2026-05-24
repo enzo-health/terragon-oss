@@ -2,10 +2,9 @@
 
 import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { useTerragonRuntime } from "../assistant-runtime";
-import type { TerragonRuntimeProjectionHintRef } from "../terragon-ag-ui-runtime-core";
 import type { UseTerragonAgUiRuntimeOptions } from "../use-terragon-ag-ui-runtime";
 import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {
@@ -53,7 +52,6 @@ type TerragonThreadRuntimeFrameProps = {
     errorType?: string;
     handleRetry?: () => Promise<void>;
     isRetrying?: boolean;
-    projectionHintRef: TerragonRuntimeProjectionHintRef;
   }) => React.ReactNode;
 };
 
@@ -145,12 +143,6 @@ export function TerragonThreadRuntimeFrame({
     message: string;
   } | null>(null);
   const [runtimeRecoveryNonce, setRuntimeRecoveryNonce] = useState(0);
-  const projectionHintRef = useRef<TerragonRuntimeProjectionHintRef["current"]>(
-    {
-      version: 0,
-      firstChangedRuntimeMessageIndex: null,
-    },
-  );
   const historyLoadError =
     historyLoadErrorState?.agent === agent &&
     historyLoadErrorState.loadAgUiHistoryMessages === loadAgUiHistoryMessages
@@ -216,7 +208,6 @@ export function TerragonThreadRuntimeFrame({
       historyLoadKey: runtimeLoadConfig.historyLoadKey,
       threadId,
       threadChatId,
-      projectionHintRef,
       queue: runtimeQueue,
     }),
     [
@@ -250,7 +241,6 @@ export function TerragonThreadRuntimeFrame({
             ? handleLocalRuntimeRetry
             : undefined,
         isRetrying: historyLoadError || runtimeError ? false : undefined,
-        projectionHintRef,
       })}
     </AssistantRuntimeProvider>
   );
@@ -287,7 +277,6 @@ export function TerragonThread({
           errorType={runtimeProps.errorType}
           handleRetry={runtimeProps.handleRetry ?? contentProps.handleRetry}
           isRetrying={runtimeProps.isRetrying ?? contentProps.isRetrying}
-          projectionHintRef={runtimeProps.projectionHintRef}
         />
       )}
     </TerragonThreadRuntimeFrame>

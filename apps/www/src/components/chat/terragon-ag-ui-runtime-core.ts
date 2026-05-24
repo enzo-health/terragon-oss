@@ -60,17 +60,7 @@ export type TerragonAgUiRuntimeCoreOptions = {
   onError?: (error: Error) => void;
   onCancel?: () => void;
   history?: ThreadHistoryAdapter;
-  projectionHintRef?: TerragonRuntimeProjectionHintRef;
   notifyUpdate: () => void;
-};
-
-export type TerragonRuntimeProjectionHint = {
-  version: number;
-  firstChangedRuntimeMessageIndex: number | null;
-};
-
-export type TerragonRuntimeProjectionHintRef = {
-  current: TerragonRuntimeProjectionHint;
 };
 
 const FALLBACK_USER_STATUS = { type: "complete", reason: "unknown" } as const;
@@ -119,8 +109,6 @@ export class TerragonAgUiThreadRuntimeCore {
   private stateSnapshot: ReadonlyJSONValue | undefined;
   private pendingError: Error | null = null;
   private history: ThreadHistoryAdapter | undefined;
-  private projectionHintRef: TerragonRuntimeProjectionHintRef | undefined;
-  private projectionHintVersion = 0;
   private lastRunConfig: RunConfig | undefined;
   private readonly assistantHistoryParents = new Map<string, string | null>();
   private readonly recordedHistoryIds = new Set<string>();
@@ -138,7 +126,6 @@ export class TerragonAgUiThreadRuntimeCore {
     this.onError = options.onError;
     this.onCancel = options.onCancel;
     this.history = options.history;
-    this.projectionHintRef = options.projectionHintRef;
     this.notifyUpdate = options.notifyUpdate;
   }
 
@@ -150,7 +137,6 @@ export class TerragonAgUiThreadRuntimeCore {
     this.onError = options.onError;
     this.onCancel = options.onCancel;
     this.history = options.history;
-    this.projectionHintRef = options.projectionHintRef;
     if (loadSourceChanged) {
       this.loadGeneration += 1;
       this._loadPromise = undefined;
@@ -254,7 +240,6 @@ export class TerragonAgUiThreadRuntimeCore {
     const threadMessage = this.toThreadMessage(message);
     this.appendRuntimeMessage(threadMessage);
     this.hasLocalRuntimeMutations = true;
-    this.markProjectionChange(this.messages.length - 1);
     this.notifyUpdate();
     this.recordHistoryEntry(message.parentId ?? null, threadMessage);
 
@@ -358,7 +343,6 @@ export class TerragonAgUiThreadRuntimeCore {
 
     if (updated) {
       this.hasLocalRuntimeMutations = true;
-      this.markProjectionChange(changedIndex ?? null);
       this.notifyUpdate();
 
       if (shouldResume) {
@@ -382,7 +366,6 @@ export class TerragonAgUiThreadRuntimeCore {
   applyExternalMessages(messages: readonly ThreadMessage[]): void {
     this.assistantHistoryParents.clear();
     this.replaceAllMessages(messages);
-    this.markUnknownProjectionChange();
     this.recordedHistoryIds.clear();
     this.hasLocalRuntimeMutations = false;
     for (const message of this.messages) {
@@ -589,7 +572,6 @@ export class TerragonAgUiThreadRuntimeCore {
   private insertAssistantPlaceholder(): string {
     const id = generateId();
     this.appendRuntimeMessage(this.createAssistantMessage(id));
-    this.markProjectionChange(this.messages.length - 1);
     this.notifyUpdate();
     return id;
   }
@@ -654,7 +636,6 @@ export class TerragonAgUiThreadRuntimeCore {
     }
     if (touched) {
       this.hasLocalRuntimeMutations = true;
-      this.markProjectionChange(changedIndex ?? null);
       if (this.isTerminalStatus(latestStatus)) {
         this.flushScheduledNotifyUpdate();
         this.notifyUpdate();
@@ -801,7 +782,6 @@ export class TerragonAgUiThreadRuntimeCore {
     if (!parentId) {
       if (this.messages.length) {
         this.replaceAllMessages([]);
-        this.markUnknownProjectionChange();
       }
       return;
     }
@@ -809,21 +789,7 @@ export class TerragonAgUiThreadRuntimeCore {
     if (idx === undefined) return;
     if (idx < this.messages.length - 1) {
       this.replaceAllMessages(this.messages.slice(0, idx + 1));
-      this.markUnknownProjectionChange();
     }
-  }
-
-  private markProjectionChange(firstChangedRuntimeMessageIndex: number | null) {
-    if (!this.projectionHintRef) return;
-    this.projectionHintVersion += 1;
-    this.projectionHintRef.current = {
-      version: this.projectionHintVersion,
-      firstChangedRuntimeMessageIndex,
-    };
-  }
-
-  private markUnknownProjectionChange() {
-    this.markProjectionChange(null);
   }
 
   private applyTerragonDataPart(dataPart: TerragonDataPart): boolean {
@@ -850,7 +816,6 @@ export class TerragonAgUiThreadRuntimeCore {
       ...message,
       content,
     });
-    this.markProjectionChange(messageIndex);
     return true;
   }
 
@@ -962,7 +927,6 @@ export class TerragonAgUiThreadRuntimeCore {
       ...this.messages.slice(index + 1),
     ];
     this.rebuildMessageIndex();
-    this.markUnknownProjectionChange();
   }
 
   private replaceAllMessages(messages: readonly ThreadMessage[]): void {
@@ -991,7 +955,6 @@ export class TerragonAgUiThreadRuntimeCore {
     }
 
     if (!changed) return;
-    this.markUnknownProjectionChange();
     this.notifyUpdate();
   }
 

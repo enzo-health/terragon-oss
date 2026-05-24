@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isSandboxErrorType } from "../chat-error";
 import { useScrollToHashMessageOnce } from "../use-chat-effects";
-import type { TerragonRuntimeProjectionHintRef } from "../terragon-ag-ui-runtime-core";
 import type {
   ForkDialogData,
   MessagePartRenderProps,
@@ -65,7 +64,6 @@ export type TerragonThreadRuntimeContentProps = {
   scheduleAt?: Date | null;
   threadChatStatus?: ThreadStatus;
   optimisticUserMessages?: UIUserMessage[];
-  projectionHintRef?: TerragonRuntimeProjectionHintRef;
   children?: React.ReactNode;
 };
 
@@ -96,7 +94,6 @@ export function TerragonThreadRuntimeContent({
   scheduleAt,
   threadChatStatus,
   optimisticUserMessages = [],
-  projectionHintRef,
   children,
 }: TerragonThreadRuntimeContentProps) {
   const runtimeMessages = useAuiState((state) => state.thread.messages);
@@ -110,14 +107,8 @@ export function TerragonThreadRuntimeContent({
       runtimeTranscriptProjector({
         runtimeMessages,
         agent: chatAgent,
-        projectionHint: projectionHintRef?.current,
       }),
-    [
-      chatAgent,
-      projectionHintRef?.current,
-      runtimeMessages,
-      runtimeTranscriptProjector,
-    ],
+    [chatAgent, runtimeMessages, runtimeTranscriptProjector],
   );
   const transcriptModelBuilder = useMemo(
     () => createTerragonTranscriptModelBuilder(),
