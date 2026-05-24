@@ -3,7 +3,6 @@ import type {
   Message as AgUiMessage,
   RunAgentInput,
 } from "@ag-ui/core";
-import type { AIModel } from "@terragon/agent/types";
 import type {
   DBUserMessage,
   DBRichTextPart,
@@ -14,6 +13,7 @@ import { getLatestRunIdForThreadChat } from "@terragon/shared/model/agent-event-
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { followUpInternal } from "@/server-lib/follow-up";
+import { decodeTerragonAgUiRunConfig } from "@/lib/terragon-ag-ui-run-config";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -132,50 +132,8 @@ function extractUserMessage(body: RunAgentInput): AgUiUserMessage | null {
   return userMessages[userMessages.length - 1] ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Metadata extraction
-// ---------------------------------------------------------------------------
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function extractTerragonForwardedProps(body: RunAgentInput): {
-  selectedModel: AIModel | null;
-  permissionMode: DBUserMessage["permissionMode"];
-} {
-  // Two valid layouts:
-  //   1. forwardedProps.runConfig.terragon.*  -- produced by useThreadRuntime().append()
-  //      because @assistant-ui/react wraps runConfig.custom inside forwardedProps.runConfig.
-  //   2. forwardedProps.terragon.*            -- direct API callers that don't go through
-  //      the assistant-ui runtime (e.g., a future CLI, integration test fixtures).
-  // Prefer the runtime layout when present; fall back to the direct one.
-  const forwardedProps = body.forwardedProps;
-  const runConfig = isRecord(forwardedProps)
-    ? (forwardedProps["runConfig"] ?? null)
-    : null;
-  const terragon = isRecord(runConfig)
-    ? (runConfig["terragon"] ?? null)
-    : isRecord(forwardedProps)
-      ? (forwardedProps["terragon"] ?? null)
-      : null;
-
-  const selectedModel = isRecord(terragon)
-    ? (terragon["selectedModel"] ?? null)
-    : null;
-
-  const permissionMode = isRecord(terragon)
-    ? (terragon["permissionMode"] ?? null)
-    : null;
-
-  return {
-    selectedModel:
-      typeof selectedModel === "string" ? (selectedModel as AIModel) : null,
-    permissionMode:
-      permissionMode === "plan" || permissionMode === "allowAll"
-        ? permissionMode
-        : undefined,
-  };
 }
 
 function extractStateMetadata(body: RunAgentInput): void {
@@ -274,8 +232,9 @@ export async function runFollowUpFromAgUiInput(args: {
     }
 
     // 6. Extract metadata
-    const { selectedModel, permissionMode } =
-      extractTerragonForwardedProps(body);
+    const { selectedModel, permissionMode } = decodeTerragonAgUiRunConfig(
+      body.forwardedProps,
+    );
     extractStateMetadata(body); // logs TODO for unsupported fields
 
     const message: DBUserMessage = {

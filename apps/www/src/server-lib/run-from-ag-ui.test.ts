@@ -243,10 +243,10 @@ describe("runFollowUpFromAgUiInput", () => {
   // -------------------------------------------------------------------------
 
   describe("metadata extraction", () => {
-    it("forwards selectedModel from forwardedProps.terragon", async () => {
+    it("forwards selectedModel from compatibility forwardedProps.terragon", async () => {
       const body = makeBody({
         forwardedProps: {
-          terragon: { selectedModel: "claude-3-5-sonnet-20241022" },
+          terragon: { selectedModel: "sonnet" },
         },
       });
 
@@ -255,8 +255,26 @@ describe("runFollowUpFromAgUiInput", () => {
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({
-            model: "claude-3-5-sonnet-20241022",
+            model: "sonnet",
           }),
+        }),
+      );
+    });
+
+    it("sets model to null when selectedModel is not a canonical AIModel", async () => {
+      const body = makeBody({
+        forwardedProps: {
+          runConfig: {
+            terragon: { selectedModel: "not-a-real-model" },
+          },
+        },
+      });
+
+      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ model: null }),
         }),
       );
     });
@@ -311,7 +329,7 @@ describe("runFollowUpFromAgUiInput", () => {
         forwardedProps: {
           runConfig: {
             terragon: {
-              selectedModel: "claude-3-5-sonnet-20241022",
+              selectedModel: "sonnet",
               permissionMode: "plan",
             },
           },
@@ -323,7 +341,7 @@ describe("runFollowUpFromAgUiInput", () => {
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({
-            model: "claude-3-5-sonnet-20241022",
+            model: "sonnet",
             permissionMode: "plan",
           }),
         }),
@@ -334,9 +352,9 @@ describe("runFollowUpFromAgUiInput", () => {
       const body = makeBody({
         forwardedProps: {
           runConfig: {
-            terragon: { selectedModel: "claude-3-5-sonnet-20241022" },
+            terragon: { selectedModel: "sonnet" },
           },
-          terragon: { selectedModel: "claude-3-opus-20240229" },
+          terragon: { selectedModel: "opus" },
         },
       });
 
@@ -345,7 +363,7 @@ describe("runFollowUpFromAgUiInput", () => {
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({
-            model: "claude-3-5-sonnet-20241022",
+            model: "sonnet",
           }),
         }),
       );

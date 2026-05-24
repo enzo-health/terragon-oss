@@ -1,6 +1,7 @@
 import type { SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 import type { ThreadUserMessagePart } from "@assistant-ui/react";
+import { encodeTerragonAgUiRunConfig } from "@/lib/terragon-ag-ui-run-config";
 import type { TSubmitForm } from "./send-button";
 
 export type ComposerSubmissionOutcome =
@@ -13,14 +14,7 @@ export type ComposerSubmissionRuntime = {
   append: (message: {
     role: "user";
     content: ThreadUserMessagePart[];
-    runConfig: {
-      custom: {
-        terragon: {
-          selectedModel: DBUserMessage["model"];
-          permissionMode: DBUserMessage["permissionMode"];
-        };
-      };
-    };
+    runConfig: { custom: ReturnType<typeof encodeTerragonAgUiRunConfig> };
   }) => Promise<void> | void;
 };
 
@@ -85,12 +79,10 @@ export async function submitComposerMessage({
       role: "user",
       content: routing.content,
       runConfig: {
-        custom: {
-          terragon: {
-            selectedModel: userMessage.model,
-            permissionMode: userMessage.permissionMode,
-          },
-        },
+        custom: encodeTerragonAgUiRunConfig({
+          selectedModel: userMessage.model,
+          permissionMode: userMessage.permissionMode,
+        }),
       },
     });
     return { type: "runtime-append-started" };
