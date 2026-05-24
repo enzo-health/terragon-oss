@@ -3250,6 +3250,29 @@ describe("ag-ui SSE route", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
+  it("POST with Last-Event-ID opens SSE stream without dispatching a duplicate follow-up", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-resume",
+      messages: [{ id: "msg-1", role: "user", content: "already running" }],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequestWithHeaders(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+        { "Last-Event-ID": "42" },
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
   it("POST with adapter returning lock-held returns 409", async () => {
     adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
       error: { kind: "lock-held" },

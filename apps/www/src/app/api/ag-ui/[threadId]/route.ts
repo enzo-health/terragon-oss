@@ -21,7 +21,13 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
-  getTerragonProps,
+  type AgUiReplayCursor,
+  classifyAgUiPostIntent,
+  replayQueryAfterSeq,
+  resolveAgUiReplayCursor,
+  shouldReplayEnvelope,
+} from "@/lib/ag-ui-replay-cursor";
+import {
   getTraceIdFromAgUiForwardedProps,
   recordAgentTraceSpan,
 } from "@/lib/agent-trace";
@@ -88,18 +94,7 @@ type ReplayIdentity = {
   projectionCount?: number;
 };
 
-type ReplayCursor = {
-  seq: number;
-  projectionIndex: number | null;
-};
-
 type AgUiUserMessage = Extract<Message, { role: "user" }>;
-type TerragonPostIntent = "append" | "resume";
-
-function readTerragonPostIntent(forwardedProps: unknown): TerragonPostIntent {
-  const terragon = getTerragonProps(forwardedProps);
-  return terragon?.["intent"] === "resume" ? "resume" : "append";
-}
 
 function isAgUiUserMessage(
   item: DurableAgUiHistoryItem,
@@ -553,62 +548,9 @@ function encodeSseComment(comment: string): Uint8Array {
   return ENCODER.encode(`: ${comment}\n\n`);
 }
 
-function parseReplayCursor(value: string | null): ReplayCursor | null {
-  if (value === null || value.trim().length === 0) {
-    return null;
-  }
-  const trimmed = value.trim();
-  const normalized = trimmed.startsWith("seq:")
-    ? trimmed.slice("seq:".length)
-    : trimmed;
-  const [seqValue, projectionIndexValue] = normalized.split(":");
-  const seq = Number(seqValue);
-  if (!Number.isSafeInteger(seq) || seq < -1) {
-    return null;
-  }
-  if (projectionIndexValue === undefined) {
-    return { seq, projectionIndex: null };
-  }
-  const projectionIndex = Number(projectionIndexValue);
-  return Number.isSafeInteger(projectionIndex) && projectionIndex >= 0
-    ? { seq, projectionIndex }
-    : null;
-}
-
-function resolveReplayCursor(request: NextRequest): ReplayCursor | null {
-  const lastEventId = parseReplayCursor(request.headers.get("last-event-id"));
-  if (lastEventId !== null) {
-    return lastEventId;
-  }
-  return parseReplayCursor(request.nextUrl.searchParams.get("fromSeq"));
-}
-
-function replayQueryAfterSeq(cursor: ReplayCursor | null): number | undefined {
-  if (cursor === null) {
-    return undefined;
-  }
-  return cursor.projectionIndex === null ? cursor.seq : cursor.seq - 1;
-}
-
-function shouldReplayEnvelope(
-  entry: Pick<AgUiEventEnvelope, "seq" | "projectionIndex">,
-  cursor: ReplayCursor | null,
-): boolean {
-  if (cursor === null) {
-    return true;
-  }
-  if (entry.seq > cursor.seq) {
-    return true;
-  }
-  if (entry.seq < cursor.seq || cursor.projectionIndex === null) {
-    return false;
-  }
-  return (entry.projectionIndex ?? 0) > cursor.projectionIndex;
-}
-
 function toReplayEntries(
   envelopes: AgUiEventEnvelope[],
-  cursor: ReplayCursor | null,
+  cursor: AgUiReplayCursor | null,
 ): ReplayEntry[] {
   return dropEventsAfterTerminalUntilNextRun(
     repairDelayedRunStartedOrdering(
@@ -709,7 +651,7 @@ function dropDuplicateRunStarted(entries: ReplayEntry[]): ReplayEntry[] {
 
 function toReplayEntriesWithoutTerminalFilter(
   envelopes: AgUiEventEnvelope[],
-  cursor: ReplayCursor | null,
+  cursor: AgUiReplayCursor | null,
 ): ReplayEntry[] {
   return repairDelayedRunStartedOrdering(
     envelopes
@@ -856,7 +798,10 @@ export async function GET(
   const { threadId } = await context.params;
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const runIdParam = request.nextUrl.searchParams.get("runId");
-  const replayCursor = resolveReplayCursor(request);
+  const replayCursor = resolveAgUiReplayCursor({
+    lastEventId: request.headers.get("last-event-id"),
+    fromSeq: request.nextUrl.searchParams.get("fromSeq"),
+  });
   const replayCursorSeq = replayCursor?.seq ?? null;
   const shouldFrameRunAgentResume = request.method === "POST";
 
@@ -1886,9 +1831,11 @@ export async function POST(
           runId: parsed.data.runId,
         },
       });
-      const intent = request.nextUrl.searchParams.has("fromSeq")
-        ? "resume"
-        : readTerragonPostIntent(parsed.data.forwardedProps);
+      const intent = classifyAgUiPostIntent({
+        lastEventId: request.headers.get("last-event-id"),
+        fromSeq: request.nextUrl.searchParams.get("fromSeq"),
+        body: parsed.data,
+      });
       if (intent === "append") {
         const followUpStartedAtMs = Date.now();
         const result = await runFollowUpFromAgUiInput({
