@@ -2,10 +2,10 @@
 
 import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import type { UseAgUiRuntimeOptions } from "@assistant-ui/react-ag-ui";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { useTerragonRuntime } from "../assistant-runtime";
-import type { UseTerragonAgUiRuntimeOptions } from "../use-terragon-ag-ui-runtime";
 import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {
   TerragonThreadRuntimeContent,
@@ -32,7 +32,7 @@ class TerragonHistoryLoadError extends Error {
 type TerragonThreadProps = TerragonThreadRuntimeContentProps & {
   agent: HttpAgent;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
-  runtimeQueue?: UseTerragonAgUiRuntimeOptions["queue"];
+  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
 };
 
 type TerragonThreadRuntimeFrameProps = {
@@ -46,7 +46,7 @@ type TerragonThreadRuntimeFrameProps = {
   callerError?: string | null;
   callerErrorType?: string;
   callerErrorInfo?: string;
-  runtimeQueue?: UseTerragonAgUiRuntimeOptions["queue"];
+  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
   children: (props: {
     errorInfo?: string;
     errorType?: string;

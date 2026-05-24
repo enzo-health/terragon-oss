@@ -1,6 +1,10 @@
 "use client";
 
 import type { Message as AgUiMessage } from "@ag-ui/core";
+import {
+  useAgUiRuntime,
+  type UseAgUiRuntimeOptions,
+} from "@assistant-ui/react-ag-ui";
 import type { AssistantRuntime } from "@assistant-ui/react";
 import type { HttpAgent } from "@ag-ui/client";
 import { useMemo } from "react";
@@ -8,12 +12,41 @@ import {
   type AgUiHistoryLoader,
   createAgUiHistoryAdapter,
 } from "./ag-ui-history-adapter";
-import {
-  useTerragonAgUiRuntime,
-  type UseTerragonAgUiRuntimeOptions,
-} from "./use-terragon-ag-ui-runtime";
 
 const EMPTY_HISTORY_MESSAGES: readonly AgUiMessage[] = [];
+
+async function postTerragonCancel({
+  threadId,
+  threadChatId,
+  onCancel,
+  onError,
+}: {
+  threadId?: string;
+  threadChatId?: string;
+  onCancel?: () => void | Promise<void>;
+  onError?: (error: Error) => void;
+}): Promise<void> {
+  try {
+    await onCancel?.();
+    if (!threadId || !threadChatId) {
+      return;
+    }
+    await fetch(
+      `/api/ag-ui/${encodeURIComponent(threadId)}/cancel?threadChatId=${encodeURIComponent(threadChatId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      },
+    );
+  } catch (error) {
+    const normalizedError =
+      error instanceof Error
+        ? error
+        : new Error(`Cancel failed: ${String(error)}`);
+    onError?.(normalizedError);
+  }
+}
 
 /**
  * Terragon chat runtime backed by the AG-UI HttpAgent transport.
@@ -51,10 +84,10 @@ export function useTerragonRuntime({
   showThinking?: boolean;
   resumeOnLoad?: boolean;
   historyLoadKey?: string;
-  /** Thread IDs forwarded to useTerragonAgUiRuntime for the cancel POST. */
+  /** Thread IDs forwarded to the native AG-UI runtime cancel callback. */
   threadId?: string;
   threadChatId?: string;
-  queue?: UseTerragonAgUiRuntimeOptions["queue"];
+  queue?: UseAgUiRuntimeOptions["queue"];
 }): AssistantRuntime {
   const history = useMemo(
     () =>
@@ -76,19 +109,18 @@ export function useTerragonRuntime({
     [historyMessages, loadHistoryMessages, onError, resumeOnLoad],
   );
 
-  const runtimeOptions = useMemo<UseTerragonAgUiRuntimeOptions>(
+  const runtimeOptions = useMemo<UseAgUiRuntimeOptions>(
     () => ({
       agent,
       showThinking,
       ...(onError && { onError }),
-      ...(onCancel && {
+      ...((onCancel || threadId || threadChatId) && {
         onCancel: () => {
-          void Promise.resolve(onCancel()).catch((error: unknown) => {
-            const normalizedError =
-              error instanceof Error
-                ? error
-                : new Error(`Cancel failed: ${String(error)}`);
-            onError?.(normalizedError);
+          void postTerragonCancel({
+            threadId,
+            threadChatId,
+            onCancel,
+            onError,
           });
         },
       }),
@@ -106,8 +138,7 @@ export function useTerragonRuntime({
         history,
       },
       historyLoadKey,
-      ...(threadId ? { threadId } : {}),
-      ...(threadChatId ? { threadChatId } : {}),
+      externalMessagesStrategy: "merge-after-local-mutations",
       ...(queue ? { queue } : {}),
     }),
     [
@@ -123,5 +154,5 @@ export function useTerragonRuntime({
     ],
   );
 
-  return useTerragonAgUiRuntime(runtimeOptions);
+  return useAgUiRuntime(runtimeOptions);
 }
