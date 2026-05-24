@@ -801,5 +801,23 @@
     "provider": "daytona",
     "size": "small",
     "createdAt": "2026-05-04T16:14:46.000Z"
+  },
+  {
+    "name": "terry-vCPU-4-RAM-8GB-2026-05-24-06-44-39-qab9zm",
+    "dockerfileHash": "eedda44cb93f38b658966a27beeea58e3b85678f734b3fc80833f911cdc1865f",
+    "cpuCount": 4,
+    "memoryGB": 8,
+    "provider": "daytona",
+    "size": "large",
+    "createdAt": "2026-05-24T06:44:40.120Z"
+  },
+  {
+    "name": "terry-vCPU-2-RAM-4GB-2026-05-24-06-54-00-codex1",
+    "dockerfileHash": "eedda44cb93f38b658966a27beeea58e3b85678f734b3fc80833f911cdc1865f",
+    "cpuCount": 2,
+    "memoryGB": 4,
+    "provider": "daytona",
+    "size": "small",
+    "createdAt": "2026-05-24T06:53:32.667Z"
   }
 ]
