@@ -88,7 +88,7 @@ describe("agUiMessagesToThreadMessages", () => {
     expect(assistant?.content).toHaveLength(2);
   });
 
-  it("marks unresolved idle-history tool calls as errored", async () => {
+  it("marks unresolved idle-finalized tool calls as errored", async () => {
     const adapter = createAgUiHistoryAdapter(
       () => [
         {
@@ -107,7 +107,7 @@ describe("agUiMessagesToThreadMessages", () => {
           ],
         },
       ],
-      { resumeOnLoad: false },
+      { mode: "idle-finalized" },
     );
 
     const repository = await adapter.load();
@@ -120,6 +120,40 @@ describe("agUiMessagesToThreadMessages", () => {
       result: "Tool call ended without a result.",
       isError: true,
     });
+  });
+
+  it("keeps unresolved active-resume tool calls pending", async () => {
+    const adapter = createAgUiHistoryAdapter(
+      () => [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool-1",
+              type: "function",
+              function: {
+                name: "Task",
+                arguments: "{}",
+              },
+            },
+          ],
+        },
+      ],
+      { mode: "active-resume" },
+    );
+
+    const repository = await adapter.load();
+    const message = repository.messages[0]?.message;
+    expect(message?.role).toBe("assistant");
+    const part = message?.role === "assistant" ? message.content[0] : null;
+    expect(part).toMatchObject({
+      type: "tool-call",
+      toolCallId: "tool-1",
+    });
+    expect(part).not.toHaveProperty("result");
+    expect(repository.unstable_resume).toBe(true);
   });
 
   it("hydrates raw data-part events with role fields as assistant-ui data parts", () => {

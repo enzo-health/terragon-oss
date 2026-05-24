@@ -398,7 +398,12 @@ describe("TerragonRuntimeSession", () => {
 
   it("applies the replay cursor before active runtime resume", async () => {
     const agent = makeAgent();
-    const setReplayCursor = vi.fn();
+    const setReplayCursor = vi.fn((cursor: { fromSeq: number } | null) => {
+      agent.url =
+        cursor === null
+          ? "/api/ag-ui/thread-abc?threadChatId=chat-xyz"
+          : `/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=${cursor.fromSeq}`;
+    });
     const loadAgUiHistoryMessages = vi.fn(async () => ({
       messages: [
         { id: "user-1", role: "user", content: "Resume" },
@@ -420,6 +425,9 @@ describe("TerragonRuntimeSession", () => {
 
     expect(loadAgUiHistoryMessages).toHaveBeenCalledOnce();
     expect(setReplayCursor).toHaveBeenCalledWith({ fromSeq: 42 });
+    expect(agent.url).toBe(
+      "/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=42",
+    );
     expect(repo?.unstable_resume).toBe(true);
   });
 

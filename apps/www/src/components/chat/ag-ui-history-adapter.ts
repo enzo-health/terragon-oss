@@ -30,6 +30,7 @@ type AgUiHistoryItem = AgUiMessage | TerragonCustomPartEvent;
 export type AgUiHistoryLoader = () =>
   | readonly AgUiHistoryItem[]
   | Promise<readonly AgUiHistoryItem[]>;
+export type AgUiHistoryMode = "active-resume" | "idle-finalized";
 
 const HISTORY_CREATED_AT = new Date(0);
 const COMPLETE_STATUS = {
@@ -442,14 +443,15 @@ export function agUiMessagesToThreadMessages(
 
 export function createAgUiHistoryAdapter(
   loadAgUiMessages: AgUiHistoryLoader,
-  options: { resumeOnLoad?: boolean } = {},
+  options: { mode?: AgUiHistoryMode } = {},
 ): ThreadHistoryAdapter {
   return {
     load: async () => {
       const agUiMessages = await loadAgUiMessages();
       const importedMessages = agUiMessagesToThreadMessages(agUiMessages);
+      const mode = options.mode ?? "active-resume";
       const messages =
-        options.resumeOnLoad === false
+        mode === "idle-finalized"
           ? finishUnresolvedToolCalls(importedMessages)
           : importedMessages;
       return {
@@ -458,7 +460,7 @@ export function createAgUiHistoryAdapter(
           message,
         })),
         headId: messages.at(-1)?.id ?? null,
-        unstable_resume: options.resumeOnLoad ?? true,
+        unstable_resume: mode === "active-resume",
       };
     },
     append: async () => {},
