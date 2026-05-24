@@ -868,6 +868,39 @@ describe("ThreadViewModel reducer", () => {
       parts: [{ type: "text", text: "hello world" }],
     });
   });
+
+  it("keeps transcript state stable when product sidecars receive transcript events", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    const initialTranscript = state.transcript;
+    const transcriptEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "token",
+      } as BaseEvent,
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "agent-1:reasoning",
+        delta: "thought",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+      } as BaseEvent,
+    ];
+
+    for (const event of transcriptEvents) {
+      state = threadViewModelReducer(state, {
+        type: "ag-ui.event",
+        projectTranscript: false,
+        event,
+      });
+    }
+
+    expect(state.transcript).toBe(initialTranscript);
+    expect(projectThreadViewModel(state).messages).toEqual([]);
+  });
 });
 
 function applyAgUiEvent(
