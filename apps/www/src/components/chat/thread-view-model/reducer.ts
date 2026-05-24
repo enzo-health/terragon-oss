@@ -153,6 +153,17 @@ const THREAD_LIFECYCLE_MESSAGE_TYPES = new Set<DBSystemMessage["message_type"]>(
   ],
 );
 
+function isThreadLifecycleMessage(
+  message: UIMessage,
+): message is UISystemMessage {
+  return (
+    message.role === "system" &&
+    message.message_type !== "stop" &&
+    message.message_type !== "git-diff" &&
+    THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
+  );
+}
+
 function splitThreadLifecycleMessages(messages: UIMessage[]): {
   transcriptMessages: UIMessage[];
   lifecycleMessages: UISystemMessage[];
@@ -161,12 +172,7 @@ function splitThreadLifecycleMessages(messages: UIMessage[]): {
   const lifecycleMessages: UISystemMessage[] = [];
 
   for (const message of messages) {
-    if (
-      message.role === "system" &&
-      message.message_type !== "stop" &&
-      message.message_type !== "git-diff" &&
-      THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
-    ) {
+    if (isThreadLifecycleMessage(message)) {
       lifecycleMessages.push(message);
       continue;
     }
@@ -181,12 +187,7 @@ function extractThreadLifecycleMessages(
 ): UISystemMessage[] {
   const lifecycleMessages: UISystemMessage[] = [];
   for (const message of messages) {
-    if (
-      message.role === "system" &&
-      message.message_type !== "stop" &&
-      message.message_type !== "git-diff" &&
-      THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
-    ) {
+    if (isThreadLifecycleMessage(message)) {
       lifecycleMessages.push(message);
     }
   }
