@@ -103,6 +103,7 @@ interface UsePromptBoxProps {
   handleStop: HandleStop;
   onUpdate?: HandleUpdate;
   handleSubmit: HandleSubmit;
+  handleQueueMessage?: HandleSubmit;
   typeahead: Typeahead;
   clearContentOnSubmit?: boolean;
   clearContentBeforeSubmit?: boolean;
@@ -131,6 +132,7 @@ export function usePromptBox({
   onUpdate,
   handleStop,
   handleSubmit,
+  handleQueueMessage,
   typeahead,
   clearContentOnSubmit = true,
   clearContentBeforeSubmit = false,
@@ -741,7 +743,21 @@ export function usePromptBox({
         // creation mutation the caller wires in. Thread creation and
         // appending to an existing thread are different operations — they
         // intentionally take different paths.
-        if (threadRuntime != null) {
+        if (
+          threadRuntime != null &&
+          isAgentWorking &&
+          isQueueingEnabled &&
+          handleQueueMessage
+        ) {
+          await handleQueueMessage({
+            userMessage,
+            selectedModels,
+            repoFullName: repoFullName ?? "",
+            branchName: branchName ?? "",
+            saveAsDraft,
+            scheduleAt,
+          });
+        } else if (threadRuntime != null) {
           const content = dbPartsToAssistantUiContent(userMessage.parts);
           if (content.length > 0) {
             await threadRuntime.append({
@@ -795,6 +811,9 @@ export function usePromptBox({
       getOnSubmitError,
       clearContent,
       isMultiAgentMode,
+      isAgentWorking,
+      isQueueingEnabled,
+      handleQueueMessage,
       threadRuntime,
     ],
   );

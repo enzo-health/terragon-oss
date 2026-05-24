@@ -2,7 +2,47 @@
 
 import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+export type AgUiReplayCursor = {
+  fromSeq: number;
+};
+
+export type AgUiTransport = {
+  agent: HttpAgent | null;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
+};
+
+function syncAgentUrl({
+  agent,
+  threadId,
+  threadChatId,
+  runId,
+  replayCursor,
+}: {
+  agent: HttpAgent;
+  threadId: string;
+  threadChatId: string;
+  runId?: string | null;
+  replayCursor: AgUiReplayCursor | null;
+}): void {
+  const query = new URLSearchParams({ threadChatId });
+  if (replayCursor) {
+    query.set("fromSeq", String(replayCursor.fromSeq));
+  }
+  if (runId) {
+    query.set("runId", runId);
+    agent.headers = {
+      ...agent.headers,
+      "x-terragon-trace-id": runId,
+    };
+  } else {
+    const headers = { ...agent.headers };
+    delete headers["x-terragon-trace-id"];
+    agent.headers = headers;
+  }
+  agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
+}
 
 /**
  * Browser-side AG-UI transport hook.
@@ -52,8 +92,10 @@ export function useAgUiTransport(args: {
   initialMessages?: Message[];
   /** Initial state snapshot (optional). */
   initialState?: State;
-}): HttpAgent | null {
+}): AgUiTransport {
   const { threadId, threadChatId, runId, initialMessages, initialState } = args;
+  const [replayCursor, setReplayCursorState] =
+    useState<AgUiReplayCursor | null>(null);
 
   const agent = useMemo(() => {
     if (!threadChatId) return null;
@@ -68,27 +110,25 @@ export function useAgUiTransport(args: {
     });
   }, [initialMessages, initialState, threadChatId, threadId]);
 
+  const setReplayCursor = useCallback(
+    (cursor: AgUiReplayCursor | null) => {
+      setReplayCursorState(cursor);
+      if (!agent || !threadChatId) return;
+      syncAgentUrl({
+        agent,
+        threadId,
+        threadChatId,
+        runId,
+        replayCursor: cursor,
+      });
+    },
+    [agent, threadChatId, threadId, runId],
+  );
+
   useEffect(() => {
     if (!agent || !threadChatId) return;
-    const query = new URLSearchParams({ threadChatId });
-    const currentUrl = new URL(agent.url, "http://terragon.local");
-    const fromSeq = currentUrl.searchParams.get("fromSeq");
-    if (fromSeq) {
-      query.set("fromSeq", fromSeq);
-    }
-    if (runId) {
-      query.set("runId", runId);
-      agent.headers = {
-        ...agent.headers,
-        "x-terragon-trace-id": runId,
-      };
-    } else {
-      const headers = { ...agent.headers };
-      delete headers["x-terragon-trace-id"];
-      agent.headers = headers;
-    }
-    agent.url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
-  }, [agent, threadId, threadChatId, runId]);
+    syncAgentUrl({ agent, threadId, threadChatId, runId, replayCursor });
+  }, [agent, threadId, threadChatId, runId, replayCursor]);
 
-  return agent;
+  return { agent, setReplayCursor };
 }

@@ -44,10 +44,6 @@ vi.mock("./system-message", async () => {
   };
 });
 
-import {
-  resolveTerragonRuntimeLoadConfig,
-  resolveTerragonThreadErrorProps,
-} from "./terragon-runtime-session";
 import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {
   getWorkingMessageSlotClassName,
@@ -331,72 +327,5 @@ describe("TerragonTranscriptSurface", () => {
 
     expect(container!.textContent).toContain("Waiting for review");
     expect(container!.querySelector(".min-h-11")).not.toBeNull();
-  });
-});
-
-describe("resolveTerragonThreadErrorProps", () => {
-  it("keeps caller error props paired ahead of history-load failures", () => {
-    expect(
-      resolveTerragonThreadErrorProps({
-        callerError: "Sandbox failed",
-        callerErrorType: "sandbox",
-        historyLoadError: "History failed",
-        runtimeError: "Runtime failed",
-      }),
-    ).toEqual({ errorType: "sandbox" });
-  });
-
-  it("uses history-load error type and info only without a caller error", () => {
-    expect(
-      resolveTerragonThreadErrorProps({
-        callerError: null,
-        historyLoadError: "History failed",
-        runtimeError: "Runtime failed",
-      }),
-    ).toEqual({
-      errorType: "history-load",
-      errorInfo: "History failed",
-    });
-  });
-
-  it("uses a generic runtime error type for non-history runtime failures", () => {
-    expect(
-      resolveTerragonThreadErrorProps({
-        callerError: null,
-        historyLoadError: null,
-        runtimeError: "Cancel failed",
-      }),
-    ).toEqual({
-      errorType: "runtime",
-      errorInfo: "Cancel failed",
-    });
-  });
-});
-
-describe("resolveTerragonRuntimeLoadConfig", () => {
-  it("loads completed task history without resuming the AG-UI stream", () => {
-    expect(
-      resolveTerragonRuntimeLoadConfig({
-        isAgentWorking: false,
-        threadChatId: "chat-1",
-      }),
-    ).toEqual({
-      resumeOnLoad: false,
-      historyLoadKey: "chat-1:idle",
-      shouldApplyReplayCursor: false,
-    });
-  });
-
-  it("resumes active task history with a stable active load key", () => {
-    expect(
-      resolveTerragonRuntimeLoadConfig({
-        isAgentWorking: true,
-        threadChatId: "chat-1",
-      }),
-    ).toEqual({
-      resumeOnLoad: true,
-      historyLoadKey: "chat-1:active",
-      shouldApplyReplayCursor: true,
-    });
   });
 });

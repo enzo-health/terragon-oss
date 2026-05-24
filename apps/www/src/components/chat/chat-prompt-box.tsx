@@ -174,7 +174,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       if (nextMessages === baseQueuedMessages) {
         return;
       }
-      updateQueuedMessages(nextMessages);
+      await updateQueuedMessages(nextMessages);
     },
     [forceScrollToBottom, queuedMessages, setError, updateQueuedMessages],
   );

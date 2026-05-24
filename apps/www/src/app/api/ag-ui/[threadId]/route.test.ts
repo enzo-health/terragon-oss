@@ -3228,14 +3228,13 @@ describe("ag-ui SSE route", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
-  it("POST resume intent opens SSE stream without dispatching a duplicate follow-up", async () => {
+  it("POST with fromSeq opens SSE stream without dispatching a duplicate follow-up", async () => {
     const validBody = {
       threadId: "thread-1",
       runId: "run-resume",
       messages: [{ id: "msg-1", role: "user", content: "already running" }],
       tools: [],
       context: [],
-      forwardedProps: { runConfig: { terragon: { intent: "resume" } } },
     };
 
     const response = await POST(

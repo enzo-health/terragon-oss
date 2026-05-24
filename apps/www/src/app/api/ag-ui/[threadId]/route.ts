@@ -1886,7 +1886,9 @@ export async function POST(
           runId: parsed.data.runId,
         },
       });
-      const intent = readTerragonPostIntent(parsed.data.forwardedProps);
+      const intent = request.nextUrl.searchParams.has("fromSeq")
+        ? "resume"
+        : readTerragonPostIntent(parsed.data.forwardedProps);
       if (intent === "append") {
         const followUpStartedAtMs = Date.now();
         const result = await runFollowUpFromAgUiInput({

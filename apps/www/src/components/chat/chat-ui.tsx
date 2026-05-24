@@ -252,11 +252,12 @@ function ChatUIContent() {
     seedTranscript({ threadId, threadChatId, result: fresh });
     return fresh;
   }, [threadChatId, threadId]);
-  const agent = useAgUiTransport({
+  const agUiTransport = useAgUiTransport({
     threadId,
     threadChatId,
     runId: capturedRunId,
   });
+  const agent = agUiTransport.agent;
   const observedRunId = useCurrentRunId(agent);
   useEffect(() => {
     // Pin the captured runId to the latest RUN_STARTED on the current
@@ -469,6 +470,7 @@ function ChatUIContent() {
             threadChat,
             thread,
             threadWithViewModelStatus,
+            setReplayCursor: agUiTransport.setReplayCursor,
           }
         : null,
     [
@@ -480,6 +482,7 @@ function ChatUIContent() {
       threadChatId,
       threadId,
       threadWithViewModelStatus,
+      agUiTransport.setReplayCursor,
     ],
   );
 

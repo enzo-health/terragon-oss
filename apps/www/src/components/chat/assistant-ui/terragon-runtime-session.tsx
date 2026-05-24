@@ -9,13 +9,8 @@ import {
 import type { AIAgent } from "@terragon/agent/types";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { createAgUiHistoryAdapter } from "../ag-ui-history-adapter";
-
-function applyReplayCursorToAgent(agent: HttpAgent, lastSeq: number): void {
-  const url = new URL(agent.url, "http://terragon.local");
-  url.searchParams.set("fromSeq", String(lastSeq));
-  agent.url = `${url.pathname}?${url.searchParams.toString()}`;
-}
 
 class TerragonHistoryLoadError extends Error {
   constructor(message: string) {
@@ -59,7 +54,7 @@ async function postTerragonCancel({
   }
 }
 
-export function resolveTerragonRuntimeLoadConfig({
+function resolveTerragonRuntimeLoadConfig({
   isAgentWorking,
   threadChatId,
   retryNonce = 0,
@@ -84,7 +79,7 @@ export function resolveTerragonRuntimeLoadConfig({
   };
 }
 
-export function resolveTerragonThreadErrorProps({
+function resolveTerragonThreadErrorProps({
   callerError,
   callerErrorType,
   callerErrorInfo,
@@ -129,10 +124,10 @@ export type TerragonRuntimeSessionProps = {
   isAgentWorking: boolean;
   threadId: string;
   threadChatId?: string;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
   callerError?: string | null;
   callerErrorType?: string;
   callerErrorInfo?: string;
-  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
   children: (props: {
     errorInfo?: string;
     errorType?: string;
@@ -148,10 +143,10 @@ export function TerragonRuntimeSession({
   isAgentWorking,
   threadId,
   threadChatId,
+  setReplayCursor,
   callerError,
   callerErrorType,
   callerErrorInfo,
-  runtimeQueue,
   children,
 }: TerragonRuntimeSessionProps) {
   const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
@@ -195,7 +190,9 @@ export function TerragonRuntimeSession({
     try {
       const history = await loadAgUiHistoryMessages();
       if (shouldApplyReplayCursor) {
-        applyReplayCursorToAgent(agent, history.lastSeq);
+        setReplayCursor({ fromSeq: history.lastSeq });
+      } else {
+        setReplayCursor(null);
       }
       setHistoryLoadErrorState(null);
       setRuntimeErrorState(null);
@@ -212,7 +209,12 @@ export function TerragonRuntimeSession({
       });
       throw new TerragonHistoryLoadError(message);
     }
-  }, [agent, loadAgUiHistoryMessages, shouldApplyReplayCursor]);
+  }, [
+    agent,
+    loadAgUiHistoryMessages,
+    setReplayCursor,
+    shouldApplyReplayCursor,
+  ]);
 
   const handleRuntimeError = useCallback(
     (error: Error) => {
@@ -268,7 +270,6 @@ export function TerragonRuntimeSession({
       },
       historyLoadKey,
       externalMessagesStrategy: "merge-after-local-mutations",
-      ...(runtimeQueue ? { queue: runtimeQueue } : {}),
     }),
     [
       agent,
@@ -278,7 +279,6 @@ export function TerragonRuntimeSession({
       historyLoadKey,
       threadId,
       threadChatId,
-      runtimeQueue,
     ],
   );
 
