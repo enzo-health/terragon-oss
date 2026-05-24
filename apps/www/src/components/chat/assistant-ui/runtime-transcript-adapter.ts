@@ -156,10 +156,10 @@ export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
   return ({ runtimeMessages, agent }) => {
     const canReusePrefix = previousAgent === agent;
     const firstChangedIndex = canReusePrefix
-      ? resolveFirstChangedRuntimeMessageIndex({
+      ? getFirstChangedRuntimeMessageIndex(
           previousRuntimeMessages,
           runtimeMessages,
-        })
+        )
       : 0;
     if (
       canUseTailProjectionFastPath({
@@ -338,19 +338,6 @@ function canUseTailProjectionFastPath({
   return (
     firstChangedIndex >= tailIndex &&
     previousRuntimeMessages[tailIndex]?.id === runtimeMessages[tailIndex]?.id
-  );
-}
-
-function resolveFirstChangedRuntimeMessageIndex({
-  previousRuntimeMessages,
-  runtimeMessages,
-}: {
-  previousRuntimeMessages: readonly ThreadMessage[];
-  runtimeMessages: readonly ThreadMessage[];
-}): number {
-  return getFirstChangedRuntimeMessageIndex(
-    previousRuntimeMessages,
-    runtimeMessages,
   );
 }
 
