@@ -258,7 +258,9 @@ export class DockerProvider implements ISandboxProvider {
       } else if (containerInfo.State.Status === "exited") {
         execSync(`docker start ${sandboxId}`, { stdio: "ignore" });
       }
-      return new DockerSession(sandboxId);
+      const session = new DockerSession(sandboxId);
+      await ensureDevelopmentCodexCli(session);
+      return session;
     } catch (error) {
       console.warn(`Failed to resume container ${sandboxId}:`, error);
     }
@@ -301,6 +303,7 @@ export class DockerProvider implements ISandboxProvider {
       const createCommand = `docker run -d --name ${containerName} --memory=${memoryLimit} --cpus=${cpuLimit} ${envFlags} -w ${DEFAULT_DIR} --entrypoint "" ${BASE_IMAGE} tail -f /dev/null`;
       const containerId = execSync(createCommand, { encoding: "utf8" }).trim();
       const dockerSession = new DockerSession(containerId);
+      await ensureDevelopmentCodexCli(dockerSession);
       return dockerSession;
     } catch (error) {
       console.error("Failed to create Docker sandbox:", error);
@@ -363,4 +366,21 @@ export class DockerProvider implements ISandboxProvider {
       console.warn("Failed to cleanup Terragon containers:", error);
     }
   }
+}
+
+async function ensureDevelopmentCodexCli(
+  session: DockerSession,
+): Promise<void> {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  await session.runCommand(
+    [
+      "command -v codex >/dev/null 2>&1",
+      "|| npm install -g @openai/codex >/tmp/terragon-codex-install.log 2>&1",
+      "|| (cat /tmp/terragon-codex-install.log && exit 1)",
+    ].join(" "),
+    { cwd: "/" },
+  );
 }

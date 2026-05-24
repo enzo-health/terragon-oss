@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 import { useCallback } from "react";
 import { applyChatPatchToCollection } from "@/collections/thread-chat-collection";
@@ -32,6 +32,11 @@ export function useThreadPageRealtimeSync({
 
   const onThreadChange = useCallback(
     (patches: BroadcastThreadPatch[]): void => {
+      const invalidations = new Map<string, QueryKey>();
+      const enqueueInvalidation = (queryKey: QueryKey): void => {
+        invalidations.set(JSON.stringify(queryKey), queryKey);
+      };
+
       for (const patch of patches) {
         applyShellPatchToCollection(patch);
 
@@ -40,29 +45,26 @@ export function useThreadPageRealtimeSync({
           : { shouldInvalidate: false };
 
         if (chatResult.shouldInvalidate && patch.threadChatId) {
-          queryClient.invalidateQueries({
-            queryKey: threadQueryKeys.chat(patch.threadId, patch.threadChatId),
-          });
+          enqueueInvalidation(
+            threadQueryKeys.chat(patch.threadId, patch.threadChatId),
+          );
         }
 
         for (const target of patch.refetch ?? []) {
           if (target === "shell") {
-            queryClient.invalidateQueries({
-              queryKey: threadQueryKeys.shell(patch.threadId),
-            });
+            enqueueInvalidation(threadQueryKeys.shell(patch.threadId));
           } else if (target === "chat" && patch.threadChatId) {
-            queryClient.invalidateQueries({
-              queryKey: threadQueryKeys.chat(
-                patch.threadId,
-                patch.threadChatId,
-              ),
-            });
+            enqueueInvalidation(
+              threadQueryKeys.chat(patch.threadId, patch.threadChatId),
+            );
           } else if (target === "diff") {
-            queryClient.invalidateQueries({
-              queryKey: threadQueryKeys.diff(patch.threadId),
-            });
+            enqueueInvalidation(threadQueryKeys.diff(patch.threadId));
           }
         }
+      }
+
+      for (const queryKey of invalidations.values()) {
+        queryClient.invalidateQueries({ queryKey });
       }
     },
     [queryClient],

@@ -1,9 +1,5 @@
 /**
- * Typed map of tool name → { args, result } for `makeAssistantToolUI` registrations.
- *
- * Phase 3a (refactor/chat-layer-consolidated-plan, 2026-04-27): a single source of
- * truth so `makeAssistantToolUI<ToolArgs<T>, ToolResult>` calls in Phase 3b are
- * real generics, not `<any, any>`.
+ * Typed map of tool name to `{ args, result }` for the assistant-ui tool layer.
  *
  * Typing sources:
  *
@@ -20,8 +16,8 @@
  *   Keep structured results scoped to individual entries — do not widen the
  *   whole map.
  *
- * Tools tracked here mirror the `switch (toolPart.name)` in
- * `apps/www/src/components/chat/tool-part.tsx`. Two non-obvious branches:
+ * Tools tracked here mirror `TOOL_DISPATCH` in
+ * `apps/www/src/components/chat/tool-part.tsx`. Two non-obvious entries:
  *
  *   - `MCPTool`: Codex emits `{ name: "MCPTool", parameters: { server, tool, ... } }`.
  *     The renderer rewrites the name to `mcp__server__tool` before falling through

@@ -1,5 +1,14 @@
 import { ExternalLink } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import { Button } from "@/components/ui/button";
@@ -24,6 +33,7 @@ function convertCitationsToGitHubLinks(
   hasCheckpoint?: boolean,
 ): string {
   if (!githubRepoFullName) return text;
+  if (!text.includes("【F:")) return text;
 
   // Pattern to match citations like 【F:filename†L1-L6】or 【F:filename†L1】
   const citationPattern = /【F:([^†]+)†L(\d+)(?:-L?(\d+))?】/g;
@@ -51,18 +61,44 @@ function convertCitationsToGitHubLinks(
  * by the response body with no newline, which renders as one cramped paragraph.
  */
 function normalizeBoldHeaders(text: string): string {
+  if (!text.includes("**")) return text;
   return text.replace(/^(\*\*[^*]+\*\*)([A-Za-z])/gm, "$1\n\n$2");
 }
 
 const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
+const PROPOSED_PLAN_BODY_RE = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/g;
+const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
+const MARKDOWN_SYNTAX_RE =
+  /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+const STREAMING_MARKDOWN_SYNTAX_RE =
+  /```|~~~|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+const MARKDOWN_CONTROLS = { code: true } satisfies NonNullable<
+  ComponentProps<typeof MarkdownRenderer>["controls"]
+>;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
 const LINE_HEIGHT_PX = 22;
+const PROPOSED_PLAN_START = "<proposed_plan";
 
 interface BlockInfo {
   totalLines: number;
   expanded: boolean;
+}
+
+function getFirstProposedPlanBody(text: string): string {
+  PROPOSED_PLAN_BODY_RE.lastIndex = 0;
+  return PROPOSED_PLAN_BODY_RE.exec(text)?.[1]?.trim() ?? "";
+}
+
+export function shouldScanCodeBlocks({
+  hasPossibleCodeBlock,
+  streaming,
+}: {
+  hasPossibleCodeBlock: boolean;
+  streaming: boolean;
+}): boolean {
+  return hasPossibleCodeBlock && !streaming;
 }
 
 function CollapsibleCodeBlockOverlay({
@@ -134,6 +170,14 @@ const TextPart = memo(function TextPart({
     PROPOSED_PLAN_RE.lastIndex = 0;
     return PROPOSED_PLAN_RE.test(text);
   }, [text]);
+  const hasPossibleCodeBlock = useMemo(
+    () => POSSIBLE_CODE_BLOCK_RE.test(text),
+    [text],
+  );
+  const canScanCodeBlocks = shouldScanCodeBlocks({
+    hasPossibleCodeBlock,
+    streaming,
+  });
 
   const processedText = useMemo(() => {
     let t = normalizeBoldHeaders(
@@ -147,7 +191,8 @@ const TextPart = memo(function TextPart({
     );
     if (hasCompleteProposedPlan && onOpenInArtifactWorkspace) {
       PROPOSED_PLAN_RE.lastIndex = 0;
-      t = t.replace(PROPOSED_PLAN_RE, "").trim();
+      const withoutPlan = t.replace(PROPOSED_PLAN_RE, "").trim();
+      t = withoutPlan.length > 0 ? withoutPlan : getFirstProposedPlanBody(t);
     }
     return t;
   }, [
@@ -165,6 +210,12 @@ const TextPart = memo(function TextPart({
   // observer fires hundreds of times per second. We debounce to 150ms which
   // is well below human-perceptible latency for "show more" affordances.
   useEffect(() => {
+    if (!canScanCodeBlocks) {
+      lastScanRef.current = "";
+      setBlocks((prev) => (prev.size > 0 ? new Map() : prev));
+      return;
+    }
+
     const container = containerRef.current;
     if (!container) return;
 
@@ -206,7 +257,7 @@ const TextPart = memo(function TextPart({
       observer.disconnect();
       if (timer !== null) clearTimeout(timer);
     };
-  }, []);
+  }, [canScanCodeBlocks]);
 
   // Apply collapse styles imperatively to code-block-body elements
   useEffect(() => {
@@ -264,7 +315,7 @@ const TextPart = memo(function TextPart({
       '[data-streamdown="code-block-body"]',
     );
 
-    const portals: React.ReactNode[] = [];
+    const portals: ReactNode[] = [];
     bodies.forEach((body, index) => {
       const entry = blocks.get(index);
       if (!entry) return;
@@ -285,6 +336,21 @@ const TextPart = memo(function TextPart({
   }, [blocks, toggleBlock]);
 
   const showStreamdown = processedText.length > 0;
+  const hasMarkdownSyntax = useMemo(
+    () =>
+      (streaming ? STREAMING_MARKDOWN_SYNTAX_RE : MARKDOWN_SYNTAX_RE).test(
+        processedText,
+      ),
+    [processedText, streaming],
+  );
+  const renderImage = useCallback(
+    (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,
+    [],
+  );
+  const streamingSegmentation =
+    hasCompleteProposedPlan || processedText.includes(PROPOSED_PLAN_START)
+      ? "off"
+      : "auto";
 
   return (
     <div>
@@ -300,7 +366,17 @@ const TextPart = memo(function TextPart({
           Open plan artifact
         </Button>
       ) : null}
-      {showStreamdown && (
+      {showStreamdown && !hasMarkdownSyntax ? (
+        <div
+          className={cn(
+            "whitespace-pre-wrap break-words text-sm leading-relaxed",
+            streaming && "streaming-cursor",
+          )}
+        >
+          {processedText}
+        </div>
+      ) : null}
+      {showStreamdown && hasMarkdownSyntax ? (
         <div
           className={cn(
             "prose prose-sm max-w-none",
@@ -310,13 +386,14 @@ const TextPart = memo(function TextPart({
         >
           <MarkdownRenderer
             content={processedText}
-            controls={{ code: true }}
+            controls={MARKDOWN_CONTROLS}
             streaming={streaming}
-            renderImage={(src, alt) => <ImagePart imageUrl={src} alt={alt} />}
+            renderImage={renderImage}
+            streamingSegmentation={streamingSegmentation}
           />
           {overlays}
         </div>
-      )}
+      ) : null}
     </div>
   );
 });

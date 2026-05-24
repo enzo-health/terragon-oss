@@ -317,6 +317,104 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
     expect(core.getMessages()[0]?.id).toBe("user-1");
   });
 
+  it("marks history-load resumes so the server opens SSE without dispatching a follow-up", async () => {
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(async () => ({ result: undefined, newMessages: [] })),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => [
+        { id: "user-1", role: "user", content: "Loaded active run" },
+      ]),
+      notifyUpdate: vi.fn(),
+    });
+
+    await core.__internal_load("chat-1:active");
+
+    expect(agent.runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forwardedProps: expect.objectContaining({
+          terragon: expect.objectContaining({ intent: "resume" }),
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("marks requires-action tool continuations as resumes", async () => {
+    const runAgent = vi.fn(async () => ({
+      result: undefined,
+      newMessages: [],
+    }));
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent,
+    } as unknown as HttpAgent;
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: vi.fn(),
+    });
+    core.applyExternalMessages([
+      {
+        id: "user-1",
+        role: "user",
+        createdAt: new Date(0),
+        content: [{ type: "text", text: "Use the tool" }],
+        attachments: [],
+        metadata: { custom: {} },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "Bash",
+            args: { command: "pwd" },
+            argsText: '{"command":"pwd"}',
+          },
+        ],
+        status: { type: "requires-action", reason: "tool-calls" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ]);
+
+    core.addToolResult({
+      messageId: "assistant-1",
+      toolCallId: "tool-1",
+      toolName: "Bash",
+      result: "/repo",
+      isError: false,
+    });
+    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forwardedProps: expect.objectContaining({
+          terragon: expect.objectContaining({ intent: "resume" }),
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("reloads history when the explicit load key changes", async () => {
     const notifyUpdate = vi.fn();
     const historyLoads: AgUiMessage[][] = [
@@ -346,6 +444,47 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
     await core.__internal_load("chat-1:active");
     expect(loadHistory).toHaveBeenCalledTimes(2);
     expect(core.getMessages()[0]?.id).toBe("user-2");
+  });
+
+  it("ignores stale history loads after the explicit load key changes", async () => {
+    const notifyUpdate = vi.fn();
+    let resolveIdle: (messages: AgUiMessage[]) => void = () => {};
+    let resolveActive: (messages: AgUiMessage[]) => void = () => {};
+    const idlePromise = new Promise<AgUiMessage[]>((resolve) => {
+      resolveIdle = resolve;
+    });
+    const activePromise = new Promise<AgUiMessage[]>((resolve) => {
+      resolveActive = resolve;
+    });
+    const loadHistory = vi
+      .fn<() => Promise<AgUiMessage[]>>()
+      .mockReturnValueOnce(idlePromise)
+      .mockReturnValueOnce(activePromise);
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(async () => ({ result: undefined, newMessages: [] })),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(loadHistory, { resumeOnLoad: false }),
+      notifyUpdate,
+    });
+
+    const idleLoad = core.__internal_load("chat-1:idle");
+    const activeLoad = core.__internal_load("chat-1:active");
+    resolveActive([{ id: "user-active", role: "user", content: "Active" }]);
+    await activeLoad;
+    expect(core.getMessages()[0]?.id).toBe("user-active");
+
+    resolveIdle([{ id: "user-idle", role: "user", content: "Idle" }]);
+    await idleLoad;
+
+    expect(core.getMessages()[0]?.id).toBe("user-active");
+    expect(loadHistory).toHaveBeenCalledTimes(2);
   });
 
   it("retries history for the same load key after a failed load", async () => {
@@ -513,6 +652,329 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
         .flatMap((message) => message.content)
         .some((part) => part.type === "data" || part.type === "text"),
     ).toBe(false);
+  });
+
+  it("does not let a live messages snapshot erase streamed assistant text", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageContentEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "assistant-live",
+              delta: "Streaming text",
+            },
+            textMessageBuffer: "",
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onMessagesSnapshotEvent?.({
+            event: {
+              type: EventType.MESSAGES_SNAPSHOT,
+              messages: [{ id: "user-1", role: "user", content: "Prompt" }],
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load();
+
+    const assistant = core
+      .getMessages()
+      .find((message) => message.id === "assistant-live");
+
+    expect(
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "text")
+        : [],
+    ).toEqual([{ type: "text", text: "Streaming text" }]);
+  });
+
+  it("does not let stale idle history reload erase streamed assistant text", async () => {
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const initialHistory = [
+      { id: "user-1", role: "user", content: "Prompt" },
+    ] satisfies AgUiMessage[];
+    const staleIdleHistory = [
+      { id: "user-1", role: "user", content: "Prompt" },
+    ] satisfies AgUiMessage[];
+
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onTextMessageContentEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "assistant-live",
+              delta: "Streaming text",
+            },
+            textMessageBuffer: "",
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          await subscriber?.onRunFinalized?.({
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => initialHistory),
+      notifyUpdate: () => {},
+    });
+
+    await core.__internal_load("chat-1:active");
+    core.updateOptions({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => staleIdleHistory, {
+        resumeOnLoad: false,
+      }),
+    });
+    await core.__internal_load("chat-1:idle");
+
+    const assistant = core
+      .getMessages()
+      .find((message) => message.id === "assistant-live");
+
+    expect(agent.runAgent).toHaveBeenCalledTimes(1);
+    expect(
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "text")
+        : [],
+    ).toEqual([{ type: "text", text: "Streaming text" }]);
+  });
+
+  it("batches live CUSTOM terragon data-part notifications", async () => {
+    vi.useFakeTimers();
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const notifyUpdate = vi.fn();
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          for (let index = 0; index < 5; index += 1) {
+            await subscriber?.onCustomEvent?.({
+              event: {
+                type: EventType.CUSTOM,
+                name: "terragon.data-part",
+                value: {
+                  messageId: "assistant-live",
+                  partIndex: index,
+                  name: "terragon.terminal",
+                  data: {
+                    type: "terminal",
+                    sandboxId: "sandbox-1",
+                    terminalId: "terminal-1",
+                    chunks: [
+                      {
+                        streamSeq: index,
+                        kind: "stdout",
+                        text: `line ${index}`,
+                      },
+                    ],
+                  },
+                },
+              },
+              messages: [],
+              state: {},
+              agent: agent as HttpAgent,
+              input,
+            });
+          }
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate,
+    });
+
+    await core.__internal_load();
+    const callsBeforeFrame = notifyUpdate.mock.calls.length;
+    vi.runOnlyPendingTimers();
+    const assistant = core
+      .getMessages()
+      .find((message) => message.id === "assistant-live");
+
+    expect(assistant?.role).toBe("assistant");
+    expect(
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "data")
+        : [],
+    ).toHaveLength(5);
+
+    vi.runOnlyPendingTimers();
+
+    expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 1);
+    vi.useRealTimers();
+  });
+
+  it("batches live assistant text notifications until the next frame", async () => {
+    vi.useFakeTimers();
+    const input = {
+      threadId: "thread-1",
+      runId: "run-1",
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } satisfies RunAgentInput;
+    const notifyUpdate = vi.fn();
+    const agent = {
+      threadId: "thread-1",
+      messages: [] as AgUiMessage[],
+      runAgent: vi.fn(
+        async (_params: unknown, subscriber?: AgentSubscriber) => {
+          await subscriber?.onTextMessageStartEvent?.({
+            event: {
+              type: EventType.TEXT_MESSAGE_START,
+              messageId: "assistant-live",
+              role: "assistant",
+            },
+            messages: [],
+            state: {},
+            agent: agent as HttpAgent,
+            input,
+          });
+          for (const delta of ["one", " two", " three"]) {
+            await subscriber?.onTextMessageContentEvent?.({
+              event: {
+                type: EventType.TEXT_MESSAGE_CONTENT,
+                messageId: "assistant-live",
+                delta,
+              },
+              textMessageBuffer: "",
+              messages: [],
+              state: {},
+              agent: agent as HttpAgent,
+              input,
+            });
+          }
+          return { result: undefined, newMessages: [] };
+        },
+      ),
+    } as unknown as HttpAgent;
+
+    const core = new TerragonAgUiThreadRuntimeCore({
+      agent,
+      logger: {},
+      showThinking: true,
+      history: createAgUiHistoryAdapter(() => []),
+      notifyUpdate,
+    });
+
+    await core.__internal_load();
+    const callsBeforeFrame = notifyUpdate.mock.calls.length;
+    vi.runOnlyPendingTimers();
+    const assistant = core
+      .getMessages()
+      .find((message) => message.id === "assistant-live");
+
+    expect(
+      assistant?.role === "assistant"
+        ? assistant.content.filter((part) => part.type === "text")
+        : [],
+    ).toEqual([{ type: "text", text: "one two three" }]);
+
+    vi.runOnlyPendingTimers();
+
+    // The aggregator now applies text to the runtime message immediately and
+    // leaves a single frame boundary to the runtime store notification.
+    expect(notifyUpdate).toHaveBeenCalledTimes(callsBeforeFrame + 1);
+    vi.useRealTimers();
   });
 
   it("keeps nested tool-call parent ids on the current assistant message", async () => {
@@ -783,6 +1245,7 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
               toolCallId: "tool-1",
               content: "permission denied",
               role: "tool",
+              isError: true,
             },
             messages: [],
             state: {},
@@ -879,6 +1342,7 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
               toolCallId: "tool-err",
               content: "permission denied",
               role: "tool",
+              isError: true,
             },
             messages: [],
             state: {},

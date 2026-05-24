@@ -7,6 +7,7 @@ import {
 import { ThreadListMain } from "./thread-list/main";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 import { convertToPlainText } from "@/lib/db-message-helpers";
@@ -16,7 +17,57 @@ import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
 import { useCreateThreadMutation } from "@/queries/thread-mutations";
-import { Rocket } from "lucide-react";
+import { Check, Loader2, Rocket } from "lucide-react";
+import { Button } from "./ui/button";
+
+type LaunchState =
+  | { kind: "idle" }
+  | {
+      kind: "creating" | "opening";
+      title: string;
+      detail: string;
+      taskHref?: string;
+    };
+
+function DashboardLaunchStatus({
+  state,
+}: {
+  state: Exclude<LaunchState, { kind: "idle" }>;
+}) {
+  const isOpening = state.kind === "opening";
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-xl border border-hairline bg-card/80 px-4 py-3 shadow-[var(--shadow-warm-lift)] animate-in fade-in slide-in-from-bottom-1 duration-200"
+    >
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
+          {isOpening ? (
+            <Check className="size-3.5" aria-hidden />
+          ) : (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-foreground">{state.title}</p>
+            <span className="h-1.5 w-1.5 rounded-full bg-coral/70 animate-pulse" />
+          </div>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            {state.detail}
+          </p>
+        </div>
+        {state.taskHref ? (
+          <Button asChild variant="outline" size="xs" className="shrink-0">
+            <a href={state.taskHref}>Open</a>
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 export function Dashboard({
   showArchived = false,
@@ -26,6 +77,10 @@ export function Dashboard({
   const [typewriterEffectEnabled, setTypewriterEffectEnabled] = useState(true);
   const placeholder = useTypewriterEffect(typewriterEffectEnabled);
   const createThreadMutation = useCreateThreadMutation();
+  const router = useRouter();
+  const [launchState, setLaunchState] = useState<LaunchState>({
+    kind: "idle",
+  });
   const handleSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
     async ({
       userMessage,
@@ -38,7 +93,19 @@ export function Dashboard({
       skipSetup,
       createNewBranch,
     }) => {
-      await createThreadMutation.mutateAsync({
+      setLaunchState({
+        kind: "creating",
+        title: saveAsDraft
+          ? "Saving draft"
+          : scheduleAt
+            ? "Scheduling task"
+            : "Creating task",
+        detail:
+          saveAsDraft || scheduleAt
+            ? "Keeping your workspace ready without starting the agent."
+            : "Creating the task and preparing the workspace. You will move there automatically.",
+      });
+      const result = await createThreadMutation.mutateAsync({
         message: userMessage,
         githubRepoFullName: repoFullName,
         branchName,
@@ -50,15 +117,41 @@ export function Dashboard({
         selectedModels,
       });
       if (saveAsDraft) {
+        setLaunchState({ kind: "idle" });
         toast.success("Task saved as draft successfully.");
       } else {
-        toast.success("Task created! Getting to work...", {
-          icon: <Rocket className="size-4" />,
-          duration: 3000,
+        const taskHref = `/task/${result.threadId}`;
+        setLaunchState({
+          kind: "opening",
+          title: scheduleAt ? "Task scheduled" : "Opening task",
+          detail: scheduleAt
+            ? "The task is ready and will run at the scheduled time."
+            : "Task created. Opening the live agent workspace now.",
+          taskHref,
         });
+        toast.success(
+          scheduleAt ? "Task scheduled." : "Task created! Opening task...",
+          {
+            icon: <Rocket className="size-4" />,
+            duration: 2000,
+          },
+        );
+        router.push(taskHref);
       }
     },
-    [createThreadMutation],
+    [createThreadMutation, router],
+  );
+
+  const handlePromptSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
+    async (args) => {
+      try {
+        await handleSubmit(args);
+      } catch (error) {
+        setLaunchState({ kind: "idle" });
+        throw error;
+      }
+    },
+    [handleSubmit],
   );
 
   const handleStop = useCallback(async () => {
@@ -95,18 +188,21 @@ export function Dashboard({
         </p>
       </div>
 
-      <div>
+      <div className="space-y-3">
         <DashboardPromptBox
           placeholder={placeholder}
           status={null}
           threadId={null}
           onUpdate={onUpdate}
           handleStop={handleStop}
-          handleSubmit={handleSubmit}
+          handleSubmit={handlePromptSubmit}
           promptText={promptText ?? undefined}
         />
+        {launchState.kind !== "idle" ? (
+          <DashboardLaunchStatus state={launchState} />
+        ) : null}
       </div>
-      {showRecommendedTasks && (
+      {showRecommendedTasks && launchState.kind === "idle" && (
         <div className="space-y-3 hidden md:block">
           <h2 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground">
             Suggested tasks
@@ -122,7 +218,9 @@ export function Dashboard({
           queryFilters={{ archived: showArchived }}
           viewFilter={showArchived ? "archived" : "active"}
           allowGroupBy={true}
-          showSuggestedTasks={showRecommendedTasks}
+          showSuggestedTasks={
+            showRecommendedTasks && launchState.kind === "idle"
+          }
           setPromptText={setPromptText}
         />
       </div>

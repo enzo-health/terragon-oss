@@ -744,7 +744,7 @@ export function usePromptBox({
         if (threadRuntime != null) {
           const content = dbPartsToAssistantUiContent(userMessage.parts);
           if (content.length > 0) {
-            threadRuntime.append({
+            await threadRuntime.append({
               role: "user",
               content,
               runConfig: {

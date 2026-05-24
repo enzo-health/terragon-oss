@@ -193,9 +193,9 @@ function isIncomingShellSeedFresh(
     return incomingMessageSeq > existingMessageSeq;
   }
   if (incoming.version !== null && existing.version !== null) {
-    return incoming.version >= existing.version;
+    return incoming.version > existing.version;
   }
-  return getTime(incoming.updatedAt) >= getTime(existing.updatedAt);
+  return getTime(incoming.updatedAt) > getTime(existing.updatedAt);
 }
 
 function getTime(value: Date | string | null | undefined): number {

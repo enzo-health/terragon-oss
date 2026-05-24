@@ -48,6 +48,7 @@ output.txt
 
 # claude code
 .claude/settings.local.json
+.claude/plans/
 .claude/mind.*
 .claude/.mind.*
 .claude/session-reads.txt
@@ -66,6 +67,12 @@ task_plan.md
 
 # compound-engineering local scratchpad
 .context/
+
+# local Codex/browser benchmark artifacts
+.codex-artifacts/
+.pnpm-store/
+apps/www/.codex-artifacts/
+apps/www/apps/
 
 # vscode-extension local workspace settings
 apps/vscode-extension/.vscode/

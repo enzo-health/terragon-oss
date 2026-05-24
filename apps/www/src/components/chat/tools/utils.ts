@@ -2,6 +2,12 @@ import { AllToolParts } from "@terragon/shared";
 import Convert from "ansi-to-html";
 import { getAnsiColors } from "@/lib/ansi-colors";
 
+export type TextLinePreview = {
+  lineCount: number;
+  previewLines: string[];
+  remainingLines: number;
+};
+
 /**
  * Converts ANSI escape codes to HTML
  */
@@ -100,6 +106,56 @@ export function summarizeToolResult(result: string): string {
   return firstLine.slice(0, 100) + "…";
 }
 
+export function createTextLinePreview(
+  text: string,
+  maxPreviewLines: number,
+): TextLinePreview {
+  if (text.length === 0) {
+    return { lineCount: 0, previewLines: [], remainingLines: 0 };
+  }
+
+  let lineCount = 1;
+  let lineStart = 0;
+  const previewLines: string[] = [];
+
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 10) continue;
+    if (previewLines.length < maxPreviewLines) {
+      previewLines.push(text.slice(lineStart, index));
+    }
+    lineCount += 1;
+    lineStart = index + 1;
+  }
+
+  if (previewLines.length < maxPreviewLines) {
+    previewLines.push(text.slice(lineStart));
+  }
+
+  return {
+    lineCount,
+    previewLines,
+    remainingLines: Math.max(0, lineCount - previewLines.length),
+  };
+}
+
+export function countTextLines(text: string): number {
+  return createTextLinePreview(text, 0).lineCount;
+}
+
+export function splitFirstLine(text: string): {
+  firstLine: string;
+  rest: string;
+} {
+  const newlineIndex = text.indexOf("\n");
+  if (newlineIndex === -1) {
+    return { firstLine: text, rest: "" };
+  }
+  return {
+    firstLine: text.slice(0, newlineIndex),
+    rest: text.slice(newlineIndex + 1),
+  };
+}
+
 export function formatToolParameters(
   parameters: AllToolParts["parameters"],
   options: {
@@ -135,6 +191,7 @@ export function formatToolParameters(
         return -1;
       }
       if (bIndex !== -1) {
+        return 1;
       }
       return 0;
     })

@@ -3,10 +3,10 @@
 /**
  * Performance-behavior test: proves that during AG-UI text streaming, only
  * the row for the message currently being streamed re-renders. Historical
- * rows must NOT re-render when the `TerragonThreadContext` reference is
+ * rows must NOT re-render when render context and historical message refs are
  * stable.
  *
- * Measurement: we spy on `useTerragonThread`. Every row calls it at the top
+ * Measurement: we spy on `useTerragonMessageRender`. Every rendered row calls it at the top
  * of its function body, so the spy's call count equals the number of row
  * bodies that ran. `React.memo` short-circuits the body when props are
  * referentially equal, so bailed rows do not increment the counter while
@@ -29,11 +29,13 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
 import type { MessagePartRenderProps } from "../chat-message.types";
 import * as threadContextModule from "./thread-context";
 import {
+  TerragonMessageRenderProvider,
+  type TerragonMessageRenderContext,
   TerragonThreadProvider,
   type TerragonThreadContext,
 } from "./thread-context";
 import { TerragonUserMessage } from "./user-message";
-import { TerragonAssistantMessage } from "./assistant-message";
+import { RuntimeTerragonMessage } from "./runtime-terragon-message";
 
 const msgU1: UIMessage = {
   id: "msg-u1",
@@ -98,42 +100,64 @@ function makeCtx(
   };
 }
 
+function makeRenderCtx(
+  overrides: Partial<TerragonMessageRenderContext> = {},
+): TerragonMessageRenderContext {
+  return {
+    isAgentWorking: true,
+    artifactDescriptors: [],
+    onOpenArtifact: vi.fn(),
+    planOccurrences: new Map(),
+    redoDialogData: undefined,
+    forkDialogData: undefined,
+    messagePartProps: baseMessagePartProps,
+    ...overrides,
+  };
+}
+
 function TestThread({
   messages,
   ctx,
+  renderCtx,
 }: {
   messages: UIMessage[];
   ctx: TerragonThreadContext;
+  renderCtx: TerragonMessageRenderContext;
 }) {
   const lastIndex = messages.length - 1;
   return createElement(
     TerragonThreadProvider,
     { value: ctx },
     createElement(
-      "div",
-      null,
-      messages.map((message, index) => {
-        const isLatestMessage = index === lastIndex;
-        if (message.role === "user") {
-          return createElement(TerragonUserMessage, {
-            key: message.id,
-            message,
-            messageIndex: index,
-            isLatestMessage,
-            isFirstUserMessage: index === 0,
-          });
-        }
-        if (message.role === "agent") {
-          return createElement(TerragonAssistantMessage, {
-            key: message.id,
-            message,
-            messageIndex: index,
-            isLatestMessage,
-            isLatestAgentMessage: index === lastIndex,
-          });
-        }
-        return null;
-      }),
+      TerragonMessageRenderProvider,
+      { value: renderCtx },
+      createElement(
+        "div",
+        null,
+        messages.map((message, index) => {
+          const isLatestMessage = index === lastIndex;
+          if (message.role === "user") {
+            return createElement(TerragonUserMessage, {
+              key: message.id,
+              message,
+              messageIndex: index,
+              isLatestMessage,
+              isFirstUserMessage: index === 0,
+            });
+          }
+          if (message.role === "agent") {
+            return createElement(RuntimeTerragonMessage, {
+              key: message.id,
+              message,
+              messageIndex: index,
+              isLatestMessage,
+              isFirstUserMessage: false,
+              isLatestAgentMessage: index === lastIndex,
+            });
+          }
+          return null;
+        }),
+      ),
     ),
   );
 }
@@ -169,23 +193,25 @@ afterEach(() => {
 });
 
 /**
- * Every row calls `useTerragonThread` once per body execution, so the spy's
+ * Every row calls `useTerragonMessageRender` once per body execution, so the spy's
  * call delta across renders is the row-body-execution count.
  */
 function spyOnThreadHook() {
-  return vi.spyOn(threadContextModule, "useTerragonThread");
+  return vi.spyOn(threadContextModule, "useTerragonMessageRender");
 }
 
 describe("chat row memoization during streaming", () => {
   it("historical rows do not rerender on streaming delta when ctx stays stable", () => {
     const spy = spyOnThreadHook();
     const ctx = makeCtx();
+    const renderCtx = makeRenderCtx();
     const msgA2Initial = makeStreamingAgent("streaming");
 
     mount(
       createElement(TestThread, {
         messages: [msgU1, msgA1, msgA2Initial],
         ctx,
+        renderCtx,
       }),
     );
 
@@ -196,7 +222,11 @@ describe("chat row memoization during streaming", () => {
     // Streaming delta: only msg-a2 gets a new reference; ctx is unchanged.
     const msgA2Next = makeStreamingAgent("streaming world");
     update(
-      createElement(TestThread, { messages: [msgU1, msgA1, msgA2Next], ctx }),
+      createElement(TestThread, {
+        messages: [msgU1, msgA1, msgA2Next],
+        ctx,
+        renderCtx,
+      }),
     );
 
     // Only the streaming row re-ran its body. msg-u1 and msg-a1 stayed
@@ -204,32 +234,31 @@ describe("chat row memoization during streaming", () => {
     expect(spy.mock.calls.length - afterMount).toBe(1);
   });
 
-  it("all rows rerender when ctx reference changes", () => {
-    // Proves the memo path is truly gated on ctx stability. If a careless
-    // refactor drops `useMemo` around the ctx object, this test fails.
+  it("historical rows do not rerender when only broad thread context changes", () => {
     const spy = spyOnThreadHook();
     const msgA2 = makeStreamingAgent("streaming");
     const messages = [msgU1, msgA1, msgA2];
+    const renderCtx = makeRenderCtx();
 
-    mount(createElement(TestThread, { messages, ctx: makeCtx() }));
+    mount(createElement(TestThread, { messages, ctx: makeCtx(), renderCtx }));
     const afterMount = spy.mock.calls.length;
     expect(afterMount).toBe(3);
 
-    // Same messages (identical refs), brand-new ctx with same content.
-    update(createElement(TestThread, { messages, ctx: makeCtx() }));
+    update(createElement(TestThread, { messages, ctx: makeCtx(), renderCtx }));
 
-    // New context value → every consumer's body re-runs.
-    expect(spy.mock.calls.length - afterMount).toBe(3);
+    expect(spy.mock.calls.length - afterMount).toBe(0);
   });
 
   it("multiple text deltas accumulate proportionally for streaming row only", () => {
     const spy = spyOnThreadHook();
     const ctx = makeCtx();
+    const renderCtx = makeRenderCtx();
 
     mount(
       createElement(TestThread, {
         messages: [msgU1, msgA1, makeStreamingAgent("s")],
         ctx,
+        renderCtx,
       }),
     );
     const afterMount = spy.mock.calls.length;
@@ -241,6 +270,7 @@ describe("chat row memoization during streaming", () => {
         createElement(TestThread, {
           messages: [msgU1, msgA1, makeStreamingAgent(text)],
           ctx,
+          renderCtx,
         }),
       );
     }

@@ -1,24 +1,30 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { AllToolParts } from "@terragon/shared";
 import {
   GenericToolPart,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
   GenericToolPartContentResultWithPreview,
 } from "./generic-ui";
-import { formatToolParameters } from "./utils";
+import { countTextLines, formatToolParameters, splitFirstLine } from "./utils";
 
 export function SearchTool({
   toolPart,
 }: {
   toolPart: Extract<AllToolParts, { name: "Grep" | "Glob" }>;
 }) {
+  const toolArg = useMemo(
+    () =>
+      formatToolParameters(toolPart.parameters, {
+        keyOrder: ["pattern", "path", "include"],
+      }),
+    [toolPart.parameters],
+  );
+
   return (
     <GenericToolPart
       toolName="Search"
-      toolArg={formatToolParameters(toolPart.parameters, {
-        keyOrder: ["pattern", "path", "include"],
-      })}
+      toolArg={toolArg}
       toolStatus={toolPart.status}
     >
       {toolPart.name === "Grep" ? (
@@ -44,18 +50,17 @@ function ToolPartGrepContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );
   }
-  const lines = toolPart.result.split("\n");
-  if (lines.length === 0) {
+  if (toolPart.result.length === 0) {
     return null;
   }
   // Try to match Found X files
-  const firstLine = lines[0]!;
+  const { firstLine, rest } = splitFirstLine(toolPart.result);
   const foundFiles = firstLine.match(/Found (\d+) files/);
   if (foundFiles) {
     return (
@@ -68,13 +73,13 @@ function ToolPartGrepContent({
             Found <span className="font-semibold">{foundFiles[1]}</span> files
           </>
         }
-        content={lines.slice(1).join("\n")}
+        content={rest}
       />
     );
   }
   return (
-    <GenericToolPartContentResultWithLines
-      lines={lines}
+    <GenericToolPartContentResultWithText
+      content={toolPart.result}
       toolStatus={toolPart.status}
     />
   );
@@ -94,17 +99,16 @@ function ToolPartGlobContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );
   }
-  const lines = toolPart.result.split("\n");
-  if (lines.length === 0) {
+  if (toolPart.result.length === 0) {
     return null;
   }
-  const numFiles = lines.length;
+  const numFiles = countTextLines(toolPart.result);
   return (
     <GenericToolPartContentResultWithPreview
       toolStatus={toolPart.status}

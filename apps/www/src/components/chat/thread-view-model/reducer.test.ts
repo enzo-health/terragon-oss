@@ -747,6 +747,45 @@ describe("ThreadViewModel reducer", () => {
     expect(state.artifacts).toBe(artifactsAfterPlan);
   });
 
+  it("updates artifact descriptors when artifact content changes under a stable id", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = applyAgUiEvent(state, {
+      type: EventType.CUSTOM,
+      name: "artifact-reference",
+      value: {
+        artifactId: "artifact-plan-1",
+        artifactType: "plan",
+        title: "Runtime Plan",
+        uri: "r2://plans/first.md",
+        status: "ready",
+      },
+    });
+    const firstArtifacts = state.artifacts;
+
+    state = applyAgUiEvent(state, {
+      type: EventType.CUSTOM,
+      name: "artifact-reference",
+      value: {
+        artifactId: "artifact-plan-1",
+        artifactType: "plan",
+        title: "Runtime Plan",
+        uri: "r2://plans/second.md",
+        status: "ready",
+      },
+    });
+
+    expect(state.artifacts).not.toBe(firstArtifacts);
+    expect(
+      projectThreadViewModel(state).artifacts.descriptors[0],
+    ).toMatchObject({
+      id: "artifact:reference:artifact-plan-1",
+      summary: "r2://plans/second.md",
+      part: {
+        planText: "Runtime Plan\n\nr2://plans/second.md",
+      },
+    });
+  });
+
   it("preserves replayed artifact references across server refetch reconciliation", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
     state = applyAgUiEvent(state, {

@@ -6,11 +6,11 @@ import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
   ThreadInfoFull,
   ThreadStatus,
-  UIMessage,
   UIUserMessage,
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { createArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { useEffect, useMemo, useState } from "react";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isSandboxErrorType } from "../chat-error";
@@ -22,11 +22,12 @@ import type {
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
-import { buildThreadPlanOccurrenceMap } from "./plan-occurrences";
-import { projectRuntimeOwnedRows } from "./runtime-row-projection";
 import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
+import { createTerragonTranscriptModelBuilder } from "./terragon-transcript-model";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
+  type TerragonMessageRenderContext,
+  TerragonMessageRenderProvider,
   type TerragonThreadContext,
   TerragonThreadProvider,
 } from "./thread-context";
@@ -109,86 +110,42 @@ export function TerragonThreadRuntimeContent({
       }),
     [chatAgent, runtimeMessages, runtimeTranscriptProjector],
   );
-  const transcriptProjection = useMemo(
-    () =>
-      projectRuntimeOwnedRows({
-        runtimeMessages,
-        projectedTranscript,
-        agent: chatAgent,
-      }),
-    [chatAgent, projectedTranscript, runtimeMessages],
+  const transcriptModelBuilder = useMemo(
+    () => createTerragonTranscriptModelBuilder(),
+    [],
   );
-  const messages = useMemo(
+  const transcriptModel = useMemo(
     () =>
-      appendOptimisticUserMessages(
-        transcriptProjection.messages,
+      transcriptModelBuilder({
+        runtimeMessages: projectedTranscript.messages,
         optimisticUserMessages,
-      ),
-    [optimisticUserMessages, transcriptProjection.messages],
+      }),
+    [
+      optimisticUserMessages,
+      projectedTranscript.messages,
+      transcriptModelBuilder,
+    ],
   );
+  const messages = transcriptModel.messages;
   toolProps.messagesRef.current = messages;
-  const isRuntimeHydrating = runtimeIsLoading && runtimeMessages.length === 0;
+  const isRuntimeHydrating =
+    runtimeIsLoading && runtimeMessages.length === 0 && messages.length === 0;
   useScrollToHashMessageOnce({
     messages: isRuntimeHydrating ? [] : messages,
     resetKey: thread.id,
   });
-  const runtimeMessageProjectionById = useMemo(() => {
-    const lookup = new Map<string, { message: UIMessage; index: number }>();
-    const runtimeMessageIds = new Set(
-      runtimeMessages.map((message) => message.id),
-    );
-    messages.forEach((message, index) => {
-      if (message.id && runtimeMessageIds.has(message.id)) {
-        lookup.set(message.id, { message, index });
-      }
-    });
-    return lookup;
-  }, [messages, runtimeMessages]);
-  const localTranscriptMessages = useMemo(() => {
-    const runtimeMessageIds = new Set(
-      runtimeMessages.map((message) => message.id),
-    );
-    return messages.filter((message) => !runtimeMessageIds.has(message.id));
-  }, [messages, runtimeMessages]);
-
-  const planOccurrencesRaw = useMemo(
-    () => buildThreadPlanOccurrenceMap(messages),
-    [messages],
+  const planOccurrences = useStableRef(
+    transcriptModel.planOccurrencesRaw,
+    isEqualPlanMap,
   );
-  const planOccurrences = useStableRef(planOccurrencesRaw, isEqualPlanMap);
   const stableArtifactDescriptors = useStableRef(
     artifactDescriptors,
     isEqualArtifactList,
   );
-
-  const latestAgentMessageIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]?.role === "agent") return i;
-    }
-    return -1;
-  }, [messages]);
-
-  const hasRenderableAgentParts = messages.some(
-    (message) => message.role === "agent" && message.parts.length > 0,
+  const artifactDescriptorLookup = useMemo(
+    () => createArtifactDescriptorLookup(stableArtifactDescriptors),
+    [stableArtifactDescriptors],
   );
-
-  const hasPendingToolCall = useMemo(() => {
-    const latestRuntimeAgentMessage = [...runtimeMessages]
-      .reverse()
-      .find((message) => message.role === "assistant");
-    if (latestRuntimeAgentMessage) {
-      return latestRuntimeAgentMessage.content.some(
-        (part) => part.type === "tool-call" && part.result === undefined,
-      );
-    }
-    if (latestAgentMessageIndex < 0) return false;
-    const msg = messages[latestAgentMessageIndex];
-    if (!msg || msg.role !== "agent") return false;
-    for (const part of msg.parts) {
-      if (part.type === "tool" && part.status === "pending") return true;
-    }
-    return false;
-  }, [messages, latestAgentMessageIndex, runtimeMessages]);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -198,24 +155,30 @@ export function TerragonThreadRuntimeContent({
   }, [isAgentWorking]);
 
   const hasSandboxError = isSandboxErrorType(errorType ?? null);
+  const suppressPreStartLifecycleFooter = shouldSuppressPreStartLifecycleFooter(
+    {
+      threadStatus,
+      hasAgentMessages: transcriptModel.hasRenderableAgentParts,
+    },
+  );
   const baseShowWorking =
     isAgentWorking &&
-    (!hasPendingToolCall || !hasRenderableAgentParts) &&
+    (!transcriptModel.hasPendingToolCall ||
+      !transcriptModel.hasRenderableAgentParts) &&
     !hasSandboxError &&
-    !shouldSuppressPreStartLifecycleFooter({
-      threadStatus,
-      hasAgentMessages: hasRenderableAgentParts,
-    });
+    !suppressPreStartLifecycleFooter;
+  const shouldCheckWorkingFooterFreshness =
+    isAgentWorking && !hasSandboxError && !suppressPreStartLifecycleFooter;
 
   const footerFreshness = useMemo(
     () =>
       getWorkingFooterFreshness({
         now: new Date(nowMs),
-        isWorkingCandidate: baseShowWorking,
+        isWorkingCandidate: shouldCheckWorkingFooterFreshness,
         threadChatUpdatedAt: threadChatUpdatedAt ?? null,
         uncertainMessage: "Waiting for updates",
       }),
-    [baseShowWorking, nowMs, threadChatUpdatedAt],
+    [nowMs, shouldCheckWorkingFooterFreshness, threadChatUpdatedAt],
   );
 
   const passiveWaitProp =
@@ -246,6 +209,7 @@ export function TerragonThreadRuntimeContent({
       latestGitDiffTimestamp,
       isAgentWorking,
       artifactDescriptors: stableArtifactDescriptors,
+      artifactDescriptorLookup,
       onOpenArtifact,
       planOccurrences,
       redoDialogData,
@@ -262,6 +226,7 @@ export function TerragonThreadRuntimeContent({
       latestGitDiffTimestamp,
       isAgentWorking,
       stableArtifactDescriptors,
+      artifactDescriptorLookup,
       onOpenArtifact,
       planOccurrences,
       redoDialogData,
@@ -272,81 +237,58 @@ export function TerragonThreadRuntimeContent({
     ],
   );
 
+  const messageRenderCtx = useMemo<TerragonMessageRenderContext>(
+    () => ({
+      isAgentWorking,
+      artifactDescriptors: stableArtifactDescriptors,
+      artifactDescriptorLookup,
+      onOpenArtifact,
+      planOccurrences,
+      redoDialogData,
+      forkDialogData,
+      messagePartProps,
+    }),
+    [
+      isAgentWorking,
+      stableArtifactDescriptors,
+      artifactDescriptorLookup,
+      onOpenArtifact,
+      planOccurrences,
+      redoDialogData,
+      forkDialogData,
+      messagePartProps,
+    ],
+  );
+
   return (
     <TerragonThreadProvider value={ctx}>
-      <TerragonTranscriptSurface
-        lifecycleMessages={lifecycleMessages}
-        isRuntimeHydrating={isRuntimeHydrating}
-        messages={messages}
-        localMessages={localTranscriptMessages}
-        runtimeMessageProjectionById={runtimeMessageProjectionById}
-        latestAgentMessageIndex={latestAgentMessageIndex}
-        chatAgent={chatAgent}
-        error={error}
-        errorType={errorType}
-        errorInfo={errorInfo}
-        handleRetry={handleRetry}
-        isRetrying={isRetrying}
-        isReadOnly={isReadOnly}
-        showWorkingMessage={baseShowWorking}
-        threadStatus={threadStatus}
-        bootingSubstatus={bootingSubstatus}
-        reattemptQueueAt={reattemptQueueAt}
-        metaSnapshot={metaSnapshot}
-        passiveWait={passiveWaitProp}
-        threadId={thread.id}
-        threadChatId={threadChatId}
-        scheduleAt={scheduleAt}
-        threadChatStatus={threadChatStatus}
-      />
+      <TerragonMessageRenderProvider value={messageRenderCtx}>
+        <TerragonTranscriptSurface
+          lifecycleMessages={lifecycleMessages}
+          isRuntimeHydrating={isRuntimeHydrating}
+          messages={messages}
+          latestAgentMessageIndex={transcriptModel.latestAgentMessageIndex}
+          chatAgent={chatAgent}
+          error={error}
+          errorType={errorType}
+          errorInfo={errorInfo}
+          handleRetry={handleRetry}
+          isRetrying={isRetrying}
+          isReadOnly={isReadOnly}
+          reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
+          showWorkingMessage={baseShowWorking}
+          threadStatus={threadStatus}
+          bootingSubstatus={bootingSubstatus}
+          reattemptQueueAt={reattemptQueueAt}
+          metaSnapshot={metaSnapshot}
+          passiveWait={passiveWaitProp}
+          threadId={thread.id}
+          threadChatId={threadChatId}
+          scheduleAt={scheduleAt}
+          threadChatStatus={threadChatStatus}
+        />
+      </TerragonMessageRenderProvider>
       {children}
     </TerragonThreadProvider>
-  );
-}
-
-function appendOptimisticUserMessages(
-  messages: UIMessage[],
-  optimisticUserMessages: UIUserMessage[],
-): UIMessage[] {
-  if (optimisticUserMessages.length === 0) {
-    return messages;
-  }
-
-  let nextMessages: UIMessage[] | null = null;
-  for (const optimisticMessage of optimisticUserMessages) {
-    const existingMessages: UIMessage[] = nextMessages ?? messages;
-    const duplicate = existingMessages.some((message) =>
-      isSameUserMessage(message, optimisticMessage),
-    );
-    if (duplicate) {
-      continue;
-    }
-    nextMessages = [...existingMessages, optimisticMessage];
-  }
-
-  return nextMessages ?? messages;
-}
-
-function isSameUserMessage(
-  message: UIMessage,
-  optimisticMessage: UIUserMessage,
-): boolean {
-  return (
-    message.role === "user" &&
-    message.parts.length === optimisticMessage.parts.length &&
-    message.parts.every((part, index) =>
-      isSameUserMessagePart(part, optimisticMessage.parts[index]),
-    )
-  );
-}
-
-function isSameUserMessagePart(
-  part: UIUserMessage["parts"][number],
-  optimisticPart: UIUserMessage["parts"][number] | undefined,
-): boolean {
-  return (
-    optimisticPart !== undefined &&
-    part.type === optimisticPart.type &&
-    JSON.stringify(part) === JSON.stringify(optimisticPart)
   );
 }

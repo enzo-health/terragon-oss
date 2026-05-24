@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import { NoChangesDiffView } from "@/components/shared/diff-view";
 import {
@@ -7,9 +7,9 @@ import {
   GenericToolPartContentRow,
   GenericToolPartClickToExpand,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
 } from "./generic-ui";
-import { formatToolParameters } from "./utils";
+import { countTextLines, formatToolParameters } from "./utils";
 
 export function ReadTool({
   toolPart,
@@ -65,6 +65,18 @@ function ReadToolContent({
   toolPart: Extract<AllToolParts, { name: "Read" }>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const strippedResult = useMemo(
+    () =>
+      stripSystemReminder(toolPart.status === "pending" ? "" : toolPart.result),
+    [toolPart],
+  );
+  const formattedResult = expanded
+    ? formatReadResult(toolPart.status === "pending" ? "" : toolPart.result)
+    : strippedResult;
+  const lineCount = useMemo(
+    () => countTextLines(strippedResult),
+    [strippedResult],
+  );
   if (toolPart.status === "pending") {
     return (
       <GenericToolPartContentOneLine toolStatus="pending">
@@ -74,22 +86,17 @@ function ReadToolContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={stripSystemReminder(toolPart.result).split("\n")}
+      <GenericToolPartContentResultWithText
+        content={strippedResult}
         toolStatus="error"
       />
     );
   }
-  const formattedResult = formatReadResult(toolPart.result);
   return (
     <GenericToolPartContent toolStatus={toolPart.status}>
       <GenericToolPartContentRow index={0}>
         <span>
-          Read{" "}
-          <span className="font-semibold">
-            {formattedResult.split("\n").length}
-          </span>{" "}
-          lines
+          Read <span className="font-semibold">{lineCount}</span> lines
         </span>{" "}
         <GenericToolPartClickToExpand
           label={expanded ? "Hide lines" : "Show lines"}

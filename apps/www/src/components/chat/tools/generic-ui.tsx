@@ -1,9 +1,9 @@
 import { AllToolParts } from "@terragon/shared";
 import { useTheme } from "next-themes";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getAgentColorClass } from "./agent-colors";
-import { ansiToHtml } from "./utils";
+import { ansiToHtml, createTextLinePreview, getToolVerb } from "./utils";
 
 // Threshold above which a tool prompt/arg is considered "long" and gets
 // clamp-to-2-lines + "Show more" treatment. Picked empirically: a short
@@ -19,26 +19,11 @@ const LONG_TOOL_ARG_CHARS = 160;
  * pattern from research/cline-subagent-deep.md.
  */
 function LongToolArg({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement | null>(null);
   const [expanded, setExpanded] = useState(false);
-  // Prompts routed here are known to exceed the "long" threshold, so the
-  // toggle is always shown. We still observe the DOM with ResizeObserver
-  // so that if the container widens enough that the text fits on one line
-  // the toggle visually hides nothing — but we never drop the button, as
-  // that caused jsdom-based tests to miss the affordance entirely and is
-  // cheap to always render.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {});
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   return (
     <span className="inline">
       <span
-        ref={ref}
         className={cn(
           "!text-foreground font-medium align-top whitespace-pre-wrap",
           !expanded &&
@@ -76,6 +61,15 @@ export function GenericToolPart({
 }) {
   const colorClass = getAgentColorClass(toolColor);
   const isLongArg = !!toolArg && toolArg.length > LONG_TOOL_ARG_CHARS;
+  const statusText =
+    typeof toolName === "string"
+      ? getToolVerb(toolName, toolStatus)
+      : toolStatus === "pending"
+        ? "Running..."
+        : toolStatus === "error"
+          ? "Failed"
+          : "Done";
+  const statusAriaLive = toolStatus === "pending" ? "polite" : undefined;
   return (
     <div className="flex gap-2 items-start min-w-0">
       <span className="h-5 flex items-center">
@@ -100,6 +94,12 @@ export function GenericToolPart({
               {toolName}
             </span>
             {toolArgSuffix}
+            <span
+              className="ml-1 text-xs text-muted-foreground font-sans"
+              aria-live={statusAriaLive}
+            >
+              {statusText}
+            </span>
           </div>
         ) : (
           <div className={cn("break-words", !isLongArg && "line-clamp-3")}>
@@ -119,6 +119,12 @@ export function GenericToolPart({
             )}
             <span className="!text-foreground font-semibold">)</span>
             {toolArgSuffix}
+            <span
+              className="ml-1 text-xs text-muted-foreground font-sans"
+              aria-live={statusAriaLive}
+            >
+              {statusText}
+            </span>
           </div>
         )}
         {children}
@@ -381,6 +387,115 @@ export function GenericToolPartContentResultWithLines({
   );
 }
 
+export function GenericToolPartContentResultWithText({
+  content,
+  lineClamp = 3,
+  toolStatus,
+  singleColumn = false,
+  renderAnsi,
+}: {
+  content: string;
+  lineClamp?: number;
+  toolStatus: AllToolParts["status"];
+  singleColumn?: boolean;
+  renderAnsi?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = useMemo(
+    () => createTextLinePreview(content, lineClamp),
+    [content, lineClamp],
+  );
+  const isExpandable = lineClamp > 0 && preview.remainingLines > 0;
+
+  if (preview.lineCount === 0) {
+    return (
+      <GenericToolPartContent
+        toolStatus={toolStatus}
+        singleColumn={singleColumn}
+      >
+        <GenericToolPartContentRow index={0} singleColumn={singleColumn}>
+          <span className="text-muted-foreground">(no output)</span>
+        </GenericToolPartContentRow>
+      </GenericToolPartContent>
+    );
+  }
+
+  if (!isExpandable) {
+    return (
+      <GenericToolPartContent
+        toolStatus={toolStatus}
+        singleColumn={singleColumn}
+      >
+        {preview.previewLines.map((line, index) => (
+          <GenericToolPartContentRow
+            key={index}
+            index={index}
+            singleColumn={singleColumn}
+          >
+            {renderAnsi ? <AnsiText text={line} /> : <span>{line}</span>}
+          </GenericToolPartContentRow>
+        ))}
+      </GenericToolPartContent>
+    );
+  }
+
+  if (!expanded) {
+    return (
+      <GenericToolPartContent
+        toolStatus={toolStatus}
+        singleColumn={singleColumn}
+      >
+        {preview.previewLines.map((line, index) => (
+          <GenericToolPartContentRow
+            key={index}
+            index={index}
+            singleColumn={singleColumn}
+          >
+            <span className="truncate block">
+              {renderAnsi ? <AnsiText text={line} /> : line}
+            </span>
+          </GenericToolPartContentRow>
+        ))}
+        <GenericToolPartContentRow index={-1} singleColumn={singleColumn}>
+          <span>... +{preview.remainingLines} more lines</span>{" "}
+          <GenericToolPartClickToExpand
+            label="Show all"
+            onClick={() => setExpanded(true)}
+            isExpanded={false}
+          />
+        </GenericToolPartContentRow>
+      </GenericToolPartContent>
+    );
+  }
+
+  return (
+    <GenericToolPartContent toolStatus={toolStatus} singleColumn={singleColumn}>
+      <GenericToolPartContentRow index={0} singleColumn={singleColumn}>
+        <span>
+          <GenericToolPartClickToExpand
+            label="Show less"
+            onClick={() => setExpanded(false)}
+            isExpanded={true}
+          />
+        </span>
+      </GenericToolPartContentRow>
+      <GenericToolPartContentRow
+        index={-1}
+        className="max-h-[150px] overflow-auto border border-border rounded-md p-1 mr-2"
+        singleColumn={singleColumn}
+      >
+        {renderAnsi ? (
+          <pre>
+            <AnsiText text={content} />
+          </pre>
+        ) : (
+          <pre>{content}</pre>
+        )}
+      </GenericToolPartContentRow>
+    </GenericToolPartContent>
+  );
+}
+
 export function GenericToolPartContentResultWithPreview({
   preview,
   content,
@@ -436,6 +551,6 @@ export function GenericToolPartContentResultWithPreview({
 export function AnsiText({ text }: { text: string }) {
   const { resolvedTheme } = useTheme();
   const theme = resolvedTheme === "light" ? "light" : "dark";
-  const html = ansiToHtml(text, theme);
+  const html = useMemo(() => ansiToHtml(text, theme), [text, theme]);
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }

@@ -9,6 +9,7 @@ const COLLAPSED_LIMIT = 3;
 
 export interface ProgressChunksProps {
   chunks: ProgressChunk[];
+  hiddenCount?: number;
 }
 
 /**
@@ -16,17 +17,25 @@ export interface ProgressChunksProps {
  * Collapsed by default when there are more than COLLAPSED_LIMIT chunks.
  * Does NOT auto-scroll — user must expand manually.
  */
-export function ProgressChunks({ chunks }: ProgressChunksProps) {
+export function ProgressChunks({
+  chunks,
+  hiddenCount = 0,
+}: ProgressChunksProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (chunks.length === 0) return null;
 
   const isCollapsible = chunks.length > COLLAPSED_LIMIT;
-  const visible = expanded ? chunks : chunks.slice(0, COLLAPSED_LIMIT);
-  const hiddenCount = chunks.length - COLLAPSED_LIMIT;
+  const visible = expanded ? chunks : chunks.slice(-COLLAPSED_LIMIT);
+  const localHiddenCount = isCollapsible ? chunks.length - COLLAPSED_LIMIT : 0;
 
   return (
     <div className="flex flex-col gap-0.5 mt-1 pl-4 border-l border-border/50">
+      {hiddenCount > 0 && (
+        <div className="text-xs text-muted-foreground/50">
+          {hiddenCount} older update{hiddenCount === 1 ? "" : "s"} omitted
+        </div>
+      )}
       {visible.map((chunk) => (
         <div
           key={chunk.seq}
@@ -42,7 +51,8 @@ export function ProgressChunks({ chunks }: ProgressChunksProps) {
           className="text-xs text-muted-foreground/60 hover:text-muted-foreground text-left cursor-pointer"
           onClick={() => setExpanded(true)}
         >
-          +{hiddenCount} more chunk{hiddenCount !== 1 ? "s" : ""}
+          Show {localHiddenCount} earlier retained update
+          {localHiddenCount !== 1 ? "s" : ""}
         </button>
       )}
     </div>

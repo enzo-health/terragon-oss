@@ -22,6 +22,7 @@ import { stopThread } from "@/server-actions/stop-thread";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
+import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 
 export type ChatPromptBoxProps = {
   threadId: string;
@@ -163,7 +164,17 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       }
       forceScrollToBottom();
       setError(null);
-      updateQueuedMessages([...(queuedMessages ?? []), userMessage]);
+      const baseQueuedMessages = queuedMessages ?? [];
+      const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
+        {
+          clientSubmissionId: crypto.randomUUID(),
+          message: userMessage,
+        },
+      ]);
+      if (nextMessages === baseQueuedMessages) {
+        return;
+      }
+      updateQueuedMessages(nextMessages);
     },
     [forceScrollToBottom, queuedMessages, setError, updateQueuedMessages],
   );

@@ -14,26 +14,26 @@ import { useResizablePanel } from "@/hooks/use-resizable-panel";
 import { cn } from "@/lib/utils";
 import { useSecondaryPanel } from "./hooks";
 import {
+  ARTIFACT_WORKSPACE_PANEL_ID,
   type ArtifactWorkspaceItem,
   getArtifactWorkspaceItemSummary,
 } from "./secondary-panel-helpers";
 import { MobileArtifactDrawer } from "./secondary-panel-mobile-drawer";
-import {
-  ARTIFACT_WORKSPACE_PANEL_ID,
-  SecondaryPanelContent,
-} from "./secondary-panel-shell";
+import { SecondaryPanelContent } from "./secondary-panel-shell";
 import type { PromptBoxRef } from "./thread-context";
 
 // Re-exports preserved for external importers and tests.
 export {
+  createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
+  ARTIFACT_WORKSPACE_PANEL_ID,
+  type ArtifactDescriptorLookup,
   type ArtifactWorkspaceItemSummary,
   type ArtifactWorkspaceStatus,
 } from "./secondary-panel-helpers";
-export { ARTIFACT_WORKSPACE_PANEL_ID } from "./secondary-panel-shell";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
 const SECONDARY_PANEL_MAX_WIDTH_PERCENTAGE = 0.7;

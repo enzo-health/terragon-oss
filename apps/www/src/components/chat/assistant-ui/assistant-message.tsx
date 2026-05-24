@@ -44,12 +44,14 @@ export const TerragonAssistantMessage = memo(function TerragonAssistantMessage({
           message.role === "system" ? ctx.latestGitDiffTimestamp : null
         }
         artifactDescriptors={ctx.artifactDescriptors}
+        artifactDescriptorLookup={ctx.artifactDescriptorLookup}
         onOpenArtifact={ctx.onOpenArtifact}
         planOccurrences={ctx.planOccurrences}
       />
       <MessageToolbar
         message={message}
         messageIndex={messageIndex}
+        taskId={ctx.toolProps.threadId}
         isFirstUserMessage={false}
         isLatestAgentMessage={isLatestAgentMessage}
         isAgentWorking={ctx.isAgentWorking}

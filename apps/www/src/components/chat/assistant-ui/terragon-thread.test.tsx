@@ -25,12 +25,34 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
   transcribeAudio: vi.fn(),
 }));
 
+vi.mock("./system-message", async () => {
+  const { createElement: createReactElement } = await import("react");
+
+  type MockPart = { text?: string };
+  type MockMessage = { parts?: MockPart[] };
+
+  return {
+    TerragonSystemMessage: ({ message }: { message: MockMessage }) =>
+      createReactElement(
+        "div",
+        { "data-testid": "system-message" },
+        message.parts
+          ?.map((part) => part.text)
+          .filter((text) => typeof text === "string" && text.length > 0)
+          .join(" ") ?? "",
+      ),
+  };
+});
+
 import {
   resolveTerragonRuntimeLoadConfig,
   resolveTerragonThreadErrorProps,
   TerragonThreadErrorBoundary,
 } from "./terragon-thread";
-import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
+import {
+  getWorkingMessageSlotClassName,
+  TerragonTranscriptSurface,
+} from "./terragon-transcript-surface";
 import { createInitialThreadMetaSnapshot } from "../thread-view-model/snapshot-adapter";
 
 function Boom(): never {
@@ -39,6 +61,25 @@ function Boom(): never {
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+
+beforeEach(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: vi.fn().mockImplementation(
+      (query: string): MediaQueryList => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    ),
+  });
+});
 
 function mount(element: React.ReactElement) {
   container = document.createElement("div");
@@ -134,9 +175,9 @@ describe("TerragonTranscriptSurface", () => {
             parts: [{ type: "text", text: "DB fallback should not render" }],
           },
         ],
-        runtimeMessageProjectionById: new Map(),
         latestAgentMessageIndex: -1,
         chatAgent: "codex",
+        reserveWorkingMessageSlot: false,
         showWorkingMessage: false,
         threadStatus: null,
         reattemptQueueAt: null,
@@ -146,7 +187,7 @@ describe("TerragonTranscriptSurface", () => {
       }),
     );
 
-    expect(container!.textContent).toContain("Loading task history");
+    expect(container!.textContent).toContain("Connecting to live task");
     expect(container!.textContent).not.toContain(
       "DB fallback should not render",
     );
@@ -158,9 +199,9 @@ describe("TerragonTranscriptSurface", () => {
         lifecycleMessages: [],
         isRuntimeHydrating: false,
         messages: [],
-        runtimeMessageProjectionById: new Map(),
         latestAgentMessageIndex: -1,
         chatAgent: "codex",
+        reserveWorkingMessageSlot: false,
         showWorkingMessage: false,
         threadStatus: null,
         reattemptQueueAt: null,
@@ -173,6 +214,123 @@ describe("TerragonTranscriptSurface", () => {
     );
 
     expect(container!.textContent).toContain("Failed to load task history");
+  });
+
+  it("reserves checklist height for the booting footer", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "booting",
+        bootingSubstatus: "provisioning",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.querySelector(".min-h-\\[168px\\]")).not.toBeNull();
+  });
+
+  it("uses expanded working-lane height for the booting checklist", () => {
+    expect(
+      getWorkingMessageSlotClassName({
+        hasTranscriptMessages: false,
+        threadStatus: "booting",
+      }),
+    ).toBe("min-h-[168px]");
+  });
+
+  it("uses compact working-lane height after transcript messages render", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "system",
+            parts: [{ type: "text", text: "Prompt already in transcript" }],
+          },
+        ],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: true,
+        threadStatus: "working",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Prompt already in transcript");
+    expect(container!.querySelector(".min-h-\\[168px\\]")).toBeNull();
+    expect(container!.querySelector(".min-h-11")).not.toBeNull();
+  });
+
+  it("keeps the compact working lane reserved while a tool row suppresses status text", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "system",
+            parts: [{ type: "text", text: "Tool row owns the live tail" }],
+          },
+        ],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "working",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: null,
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Tool row owns the live tail");
+    expect(container!.querySelector(".min-h-11")).not.toBeNull();
+    expect(container!.textContent).not.toContain("Codex is working");
+  });
+
+  it("renders passive-wait text in the reserved lane even when animated status is suppressed", () => {
+    mount(
+      createElement(TerragonTranscriptSurface, {
+        lifecycleMessages: [],
+        isRuntimeHydrating: false,
+        messages: [
+          {
+            id: "db-row-1",
+            role: "system",
+            parts: [{ type: "text", text: "Prompt already in transcript" }],
+          },
+        ],
+        latestAgentMessageIndex: -1,
+        chatAgent: "codex",
+        reserveWorkingMessageSlot: true,
+        showWorkingMessage: false,
+        threadStatus: "working",
+        reattemptQueueAt: null,
+        metaSnapshot: createInitialThreadMetaSnapshot(),
+        passiveWait: { message: "Waiting for review", reason: null },
+        threadId: "thread-1",
+      }),
+    );
+
+    expect(container!.textContent).toContain("Waiting for review");
+    expect(container!.querySelector(".min-h-11")).not.toBeNull();
   });
 });
 

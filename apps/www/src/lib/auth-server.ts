@@ -1,4 +1,4 @@
-import { auth } from "./auth";
+import { DEV_LOGIN_PROVIDER_ID, auth, isDevLoginEnabled } from "./auth";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import {
@@ -16,7 +16,7 @@ import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { UserCookies } from "@/lib/cookies";
 import { getUserCookies } from "./cookies-server";
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   ServerActionOptions,
   wrapServerActionInternal,
@@ -47,6 +47,12 @@ export const getSessionOrNull = cache(
     const user = await ensureAdminBootstrap(session.user);
     const requiredOrg = env.GITHUB_REQUIRED_ORG.trim().toLowerCase();
     if (requiredOrg) {
+      if (await isDevLoginUser(user.id)) {
+        return {
+          ...session,
+          user,
+        };
+      }
       const isMember = await isGitHubOrgMember({
         userId: user.id,
         org: requiredOrg,
@@ -61,6 +67,20 @@ export const getSessionOrNull = cache(
     };
   },
 );
+
+async function isDevLoginUser(userId: User["id"]): Promise<boolean> {
+  if (!isDevLoginEnabled()) {
+    return false;
+  }
+
+  const devLoginAccount = await db.query.account.findFirst({
+    where: and(
+      eq(schema.account.userId, userId),
+      eq(schema.account.providerId, DEV_LOGIN_PROVIDER_ID),
+    ),
+  });
+  return Boolean(devLoginAccount);
+}
 
 async function ensureAdminBootstrap(user: User): Promise<User> {
   if (!user.email || user.role === "admin") {

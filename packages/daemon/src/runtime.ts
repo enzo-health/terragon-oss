@@ -76,6 +76,37 @@ function parseDaemonEventEnvelopeAck(
   return { acknowledgedEventId, acknowledgedSeq };
 }
 
+function buildDaemonPostLogArgs(
+  url: string,
+  body: DaemonEventAPIBody,
+): Record<string, unknown> {
+  const summary = {
+    payloadVersion: body.payloadVersion ?? 1,
+    eventId:
+      body.payloadVersion === 2 && typeof body.eventId === "string"
+        ? body.eventId
+        : null,
+    runId:
+      body.payloadVersion === 2 && typeof body.runId === "string"
+        ? body.runId
+        : null,
+    seq:
+      body.payloadVersion === 2 && typeof body.seq === "number"
+        ? body.seq
+        : null,
+    messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+    canonicalEventCount: Array.isArray(body.canonicalEvents)
+      ? body.canonicalEvents.length
+      : 0,
+    deltaCount: Array.isArray(body.deltas) ? body.deltas.length : 0,
+    metaEventCount: Array.isArray(body.metaEvents) ? body.metaEvents.length : 0,
+  };
+  if (process.env["TERRAGON_DAEMON_POST_DEBUG_BODY"] === "1") {
+    return { url, ...summary, body: JSON.stringify(body) };
+  }
+  return { url, ...summary };
+}
+
 export class DaemonServerPostError extends Error {
   readonly status: number;
   readonly errorCode: string | null;
@@ -381,9 +412,40 @@ export class DaemonRuntime implements IDaemonRuntime {
 
   async serverPost(body: DaemonEventAPIBody, token: string): Promise<void> {
     const url = `${this.url}/api/daemon-event`;
-    const logArgs = { url, body: JSON.stringify(body) };
+    const logArgs = buildDaemonPostLogArgs(url, body);
+    const traceStartedAtMs = Date.now();
+    const traceAttrs = {
+      traceId:
+        body.payloadVersion === 2 && typeof body.runId === "string"
+          ? body.runId
+          : null,
+      runId:
+        body.payloadVersion === 2 && typeof body.runId === "string"
+          ? body.runId
+          : null,
+      eventId:
+        body.payloadVersion === 2 && typeof body.eventId === "string"
+          ? body.eventId
+          : null,
+      seq:
+        body.payloadVersion === 2 && typeof body.seq === "number"
+          ? body.seq
+          : null,
+      canonicalEventCount: Array.isArray(body.canonicalEvents)
+        ? body.canonicalEvents.length
+        : 0,
+      deltaCount: Array.isArray(body.deltas) ? body.deltas.length : 0,
+      metaEventCount: Array.isArray(body.metaEvents)
+        ? body.metaEvents.length
+        : 0,
+    };
     if (this.skipReportingDaemonEvents) {
       this.logger.info(`[SKIPPED] POST to ${url}`, logArgs);
+      this.logger.info("[agent-trace]", {
+        name: "daemon.server_post.skipped",
+        ...traceAttrs,
+        durationMs: Date.now() - traceStartedAtMs,
+      });
       return;
     }
     this.logger.info(`POST to ${url}`, logArgs);
@@ -410,6 +472,12 @@ export class DaemonRuntime implements IDaemonRuntime {
     };
 
     const response = await fetch(url, requestInit);
+    this.logger.info("[agent-trace]", {
+      name: "daemon.server_post.completed",
+      ...traceAttrs,
+      status: response.status,
+      durationMs: Date.now() - traceStartedAtMs,
+    });
     if (!response.ok) {
       let responseBody: unknown = null;
       try {

@@ -46,56 +46,36 @@
 
 import { type BaseEvent, EventType } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
-import type {
-  DBSystemMessage,
-  UIAgentMessage,
-  UIMessage,
-  UIPart,
-} from "@terragon/shared";
+import type { UIMessage } from "@terragon/shared";
+import {
+  addPendingToolPart,
+  appendReasoningDelta,
+  appendSnapshotMessages,
+  appendToolProgressChunk,
+  applyTextDelta,
+  completeToolPart,
+  ensureAssistantMessage,
+  ensureReasoningPart,
+  failPendingToolParts,
+  insertRichPart,
+  removeToolArgsBuffer,
+  updateToolPartParameters,
+} from "./ag-ui-message-mutations";
+import {
+  isRenderablePart,
+  normalizeRenderablePart,
+} from "./ag-ui-part-validation";
+import {
+  type AgUiMessagesState,
+  getField,
+  safeStringify,
+} from "./ag-ui-reducer-utils";
+import { agUiSnapshotMessageToUiMessage } from "./ag-ui-snapshot-projection";
 import { terragonDataPartFromCustomEvent } from "./ag-ui-custom-parts";
-import type { UIPartExtended } from "./ui-parts-extended";
 
-export type AgUiMessagesState = {
-  /** Projected message list, rendered by TerragonThread. */
-  messages: UIMessage[];
-  /**
-   * The agent kind to stamp on newly-created assistant messages. Derived
-   * from the active thread chat; fixed for the lifetime of the reducer.
-   */
-  agent: AIAgent;
-  /**
-   * Accumulated JSON fragments per active tool call. Resolved on
-   * `TOOL_CALL_END` and attached to the matching `UIToolPart.parameters`.
-   */
-  toolArgsBuffers: Record<string, string>;
-  /**
-   * The messageId of the most recent `TEXT_MESSAGE_START`. Subsequent tool
-   * calls that lack an explicit `parentMessageId` attach to this assistant
-   * message. Null before the first assistant message is seen.
-   */
-  activeAssistantMessageId: string | null;
-  /**
-   * Position of an active reasoning (thinking) part in the
-   * `UIAgentMessage.parts` array. Keyed by reasoning messageId
-   * (`<parentId>:thinking:<partIndex>`). Allows subsequent CONTENT deltas
-   * to find and mutate the right thinking part without adding marker
-   * fields to the rendered UIPart shape.
-   */
-  reasoningPartPositions: Record<
-    string,
-    { parentMessageId: string; partsIndex: number }
-  >;
-};
+export type { AgUiMessagesState };
 
 const REASONING_MARKER = ":thinking:";
-type ToolProgressChunk = { seq: number; text: string };
-type ToolStatus = "started" | "in_progress" | "completed" | "failed";
-type ToolPartWithProgress = UIPart & {
-  type: "tool";
-  id: string;
-  progressChunks?: ToolProgressChunk[];
-  toolStatus?: ToolStatus;
-};
 
 export function createInitialAgUiMessagesState(
   agent: AIAgent,
@@ -203,7 +183,10 @@ export function agUiMessagesReducer(
       const nextMessages =
         messageChanged || toolChanged ? withTool : state.messages;
       const nextActive = state.activeAssistantMessageId ?? targetMessageId;
-      const buffers = { ...state.toolArgsBuffers, [toolCallId]: "" };
+      const buffers =
+        toolCallId in state.toolArgsBuffers
+          ? state.toolArgsBuffers
+          : { ...state.toolArgsBuffers, [toolCallId]: "" };
 
       if (
         !messageChanged &&
@@ -259,20 +242,30 @@ export function agUiMessagesReducer(
         toolCallId,
         parsed,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers = removeToolArgsBuffer(
+        state.toolArgsBuffers,
+        toolCallId,
+      );
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.TOOL_CALL_RESULT: {
       const toolCallId = getField<string>(event, "toolCallId");
       const content = getField<unknown>(event, "content");
       if (!toolCallId || content === undefined) return state;
-      // AG-UI's TOOL_CALL_RESULT doesn't carry an explicit error flag in
-      // the current schema; the mapper encodes errors by setting `role`
-      // to "tool" alongside the payload. Treat an `isError` field OR a
-      // `role === "tool"` hint as error.
-      const role = getField<string>(event, "role");
+      // AG-UI uses `role: "tool"` for normal tool-result messages. Treat
+      // only explicit error fields/status as failure.
+      const error = getField<unknown>(event, "error");
+      const status = getField<string>(event, "status");
       const isError =
-        Boolean(getField<boolean>(event, "isError")) || role === "tool";
+        getField<boolean>(event, "isError") === true ||
+        status === "error" ||
+        typeof error === "string";
       const resultText =
         typeof content === "string" ? content : safeStringify(content);
       const { messages, changed } = completeToolPart(
@@ -281,7 +274,16 @@ export function agUiMessagesReducer(
         resultText,
         isError,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers = removeToolArgsBuffer(
+        state.toolArgsBuffers,
+        toolCallId,
+      );
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.CUSTOM: {
@@ -319,7 +321,16 @@ export function agUiMessagesReducer(
         state.messages,
         "Tool call ended without a result.",
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers =
+        Object.keys(state.toolArgsBuffers).length > 0
+          ? {}
+          : state.toolArgsBuffers;
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.RUN_ERROR: {
@@ -330,7 +341,16 @@ export function agUiMessagesReducer(
         state.messages,
         errorMessage,
       );
-      return changed ? { ...state, messages } : state;
+      const toolArgsBuffers =
+        Object.keys(state.toolArgsBuffers).length > 0
+          ? {}
+          : state.toolArgsBuffers;
+      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      return {
+        ...state,
+        messages: changed ? messages : state.messages,
+        toolArgsBuffers,
+      };
     }
 
     case EventType.TEXT_MESSAGE_CHUNK:
@@ -360,393 +380,6 @@ export function agUiMessagesReducer(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Immutable helpers on UIMessage[]
-// ---------------------------------------------------------------------------
-
-function ensureAssistantMessage(
-  messages: UIMessage[],
-  messageId: string,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  const idx = messages.findIndex(
-    (m) => m.role === "agent" && m.id === messageId,
-  );
-  if (idx >= 0) {
-    return { messages, changed: false };
-  }
-  const newMessage: UIAgentMessage = {
-    id: messageId,
-    role: "agent",
-    agent,
-    parts: [],
-  };
-  return { messages: [...messages, newMessage], changed: true };
-}
-
-function applyTextDelta(
-  state: AgUiMessagesState,
-  messageId: string,
-  delta: string,
-): AgUiMessagesState {
-  const { messages: withMessage } = ensureAssistantMessage(
-    state.messages,
-    messageId,
-    state.agent,
-  );
-  const nextMessages = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    const parts = m.parts.slice();
-    const lastIdx = findLastIndex(parts, (p) => p.type === "text");
-    if (lastIdx >= 0) {
-      const last = parts[lastIdx]!;
-      if (last.type === "text") {
-        parts[lastIdx] = { ...last, text: last.text + delta };
-      }
-    } else {
-      parts.push({ type: "text", text: delta });
-    }
-    return { ...m, parts };
-  });
-  return {
-    ...state,
-    messages: nextMessages,
-    activeAssistantMessageId: messageId,
-  };
-}
-
-function ensureReasoningPart(
-  state: AgUiMessagesState,
-  reasoningId: string,
-  parentMessageId: string,
-): AgUiMessagesState {
-  if (state.reasoningPartPositions[reasoningId]) {
-    // Already tracked; only make sure the assistant message still exists
-    // (it should — reasoningPartPositions is only set after the message
-    // is added, and the reducer never removes messages).
-    return state;
-  }
-  const { messages: withMessage } = ensureAssistantMessage(
-    state.messages,
-    parentMessageId,
-    state.agent,
-  );
-  let partsIndex = -1;
-  const next = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== parentMessageId) return m;
-    partsIndex = m.parts.length;
-    return {
-      ...m,
-      parts: [...m.parts, { type: "thinking", thinking: "" } as UIPart],
-    };
-  });
-  if (partsIndex < 0) return state;
-  return {
-    ...state,
-    messages: next,
-    reasoningPartPositions: {
-      ...state.reasoningPartPositions,
-      [reasoningId]: { parentMessageId, partsIndex },
-    },
-  };
-}
-
-function appendReasoningDelta(
-  state: AgUiMessagesState,
-  reasoningId: string,
-  delta: string,
-): AgUiMessagesState {
-  const pos = state.reasoningPartPositions[reasoningId];
-  if (!pos) return state;
-  const next = state.messages.map((m) => {
-    if (m.role !== "agent" || m.id !== pos.parentMessageId) return m;
-    const part = m.parts[pos.partsIndex];
-    if (!part || part.type !== "thinking") return m;
-    const parts = m.parts.slice();
-    parts[pos.partsIndex] = {
-      ...part,
-      thinking: part.thinking + delta,
-    } as UIPart;
-    return { ...m, parts };
-  });
-  return { ...state, messages: next };
-}
-
-function addPendingToolPart(
-  messages: UIMessage[],
-  messageId: string,
-  toolCallId: string,
-  toolName: string,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    const existing = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (existing >= 0) return m;
-    changed = true;
-    return {
-      ...m,
-      parts: [
-        ...m.parts,
-        {
-          type: "tool",
-          id: toolCallId,
-          agent,
-          name: toolName,
-          parameters: {} as Record<string, unknown>,
-          status: "pending",
-          parts: [],
-        } as unknown as UIPart,
-      ],
-    };
-  });
-  return { messages: next, changed };
-}
-
-function updateToolPartParameters(
-  messages: UIMessage[],
-  toolCallId: string,
-  parameters: Record<string, unknown>,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
-    const nextParts = m.parts.slice();
-    nextParts[idx] = { ...part, parameters } as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
-  });
-  return { messages: next, changed };
-}
-
-function appendToolProgressChunk(
-  messages: UIMessage[],
-  toolCallId: string,
-  text: string,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
-    const progressPart = part as ToolPartWithProgress;
-    const existing = progressPart.progressChunks ?? [];
-    const previousSeq = existing.at(-1)?.seq ?? -1;
-    const nextParts = m.parts.slice();
-    nextParts[idx] = {
-      ...progressPart,
-      progressChunks: [...existing, { seq: previousSeq + 1, text }],
-      toolStatus: "in_progress",
-    } as unknown as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
-  });
-  return { messages: next, changed };
-}
-
-function completeToolPart(
-  messages: UIMessage[],
-  toolCallId: string,
-  result: string,
-  isError: boolean,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
-    const progressPart = part as ToolPartWithProgress;
-    const shouldCarryToolStatus =
-      Boolean(progressPart.toolStatus) ||
-      Boolean(progressPart.progressChunks?.length);
-    const nextParts = m.parts.slice();
-    nextParts[idx] = {
-      ...part,
-      status: isError ? "error" : "completed",
-      ...(shouldCarryToolStatus
-        ? { toolStatus: isError ? "failed" : "completed" }
-        : {}),
-      result,
-    } as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
-  });
-  return { messages: next, changed };
-}
-
-function failPendingToolParts(
-  messages: UIMessage[],
-  result: string,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((message) => {
-    if (message.role !== "agent") return message;
-    let changedMessage = false;
-    const parts = message.parts.map((part) => {
-      if (part.type !== "tool" || part.status !== "pending") {
-        return part;
-      }
-      changed = true;
-      changedMessage = true;
-      return {
-        ...part,
-        status: "error",
-        result,
-      } as UIPart;
-    });
-    return changedMessage ? { ...message, parts } : message;
-  });
-  return { messages: next, changed };
-}
-
-function insertRichPart(
-  messages: UIMessage[],
-  messageId: string,
-  part: UIPartExtended,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  const { messages: withMessage, changed: created } = ensureAssistantMessage(
-    messages,
-    messageId,
-    agent,
-  );
-  let changed = created;
-  const next = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    // Dedupe by id-like identity when present. Rich parts without an id
-    // (terminal / diff / image) are appended each time; the backend's
-    // `(runId, eventId)` dedupe at the SSE layer prevents real
-    // duplicates in practice.
-    const partIdentity = getPartIdentity(part);
-    if (partIdentity.id) {
-      const dup = m.parts.some((p) => {
-        const existingIdentity = getPartIdentity(p);
-        return (
-          existingIdentity.type === partIdentity.type &&
-          existingIdentity.id === partIdentity.id
-        );
-      });
-      if (dup) return m;
-    }
-    changed = true;
-    return {
-      ...m,
-      parts: [...m.parts, part as UIPart],
-    };
-  });
-  return { messages: next, changed };
-}
-
-function appendSnapshotMessages(
-  current: UIMessage[],
-  incoming: UIMessage[],
-): { messages: UIMessage[]; changed: boolean } {
-  const existingIds = new Set(current.map((message) => message.id));
-  const missing = incoming.filter((message) => !existingIds.has(message.id));
-  if (missing.length === 0) {
-    return { messages: current, changed: false };
-  }
-  return { messages: [...current, ...missing], changed: true };
-}
-
-function agUiSnapshotMessageToUiMessage(
-  value: unknown,
-  agent: AIAgent,
-): UIMessage | null {
-  const id = getField<string>(value, "id");
-  const role = getField<string>(value, "role");
-  if (!id || !role) {
-    return null;
-  }
-  const text = snapshotContentToText(getField<unknown>(value, "content"));
-  switch (role) {
-    case "user":
-      return {
-        id,
-        role: "user",
-        parts: [{ type: "text", text }],
-        model: null,
-      };
-    case "assistant":
-      return {
-        id,
-        role: "agent",
-        agent,
-        parts: text ? [{ type: "text", text }] : [],
-      };
-    case "system": {
-      const messageType = sideEffectSystemMessageTypeFromId(id);
-      if (!messageType) {
-        return null;
-      }
-      return {
-        id,
-        role: "system",
-        message_type: messageType,
-        parts: [{ type: "text", text }],
-      };
-    }
-    default:
-      return null;
-  }
-}
-
-function snapshotContentToText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (content === undefined || content === null) {
-    return "";
-  }
-  return safeStringify(content);
-}
-
-const SIDE_EFFECT_SYSTEM_MESSAGE_TYPES = new Set<
-  DBSystemMessage["message_type"]
->(["invalid-token-retry", "compact-result"]);
-
-function sideEffectSystemMessageTypeFromId(
-  id: string,
-): DBSystemMessage["message_type"] | null {
-  const match = /^side-effect-system:(.+)-\d+-[a-f0-9]{12}$/.exec(id);
-  const messageType = match?.[1];
-  if (
-    messageType &&
-    SIDE_EFFECT_SYSTEM_MESSAGE_TYPES.has(
-      messageType as DBSystemMessage["message_type"],
-    )
-  ) {
-    return messageType as DBSystemMessage["message_type"];
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Misc
-// ---------------------------------------------------------------------------
-
-function getField<T>(value: unknown, key: string): T | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  return (value as Record<string, T>)[key];
-}
-
 function parseReasoningMessageId(
   id: string,
 ): { parentMessageId: string; partIndex: number } | null {
@@ -762,16 +395,6 @@ function parseReasoningMessageId(
   return { parentMessageId, partIndex };
 }
 
-function findLastIndex<T>(
-  arr: readonly T[],
-  predicate: (item: T) => boolean,
-): number {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (predicate(arr[i]!)) return i;
-  }
-  return -1;
-}
-
 function safeParseJson(raw: string): Record<string, unknown> {
   if (raw.length === 0) return {};
   try {
@@ -783,107 +406,4 @@ function safeParseJson(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function isRenderablePart(value: unknown): value is UIPartExtended {
-  if (!value || typeof value !== "object") return false;
-  const type = getField<string>(value, "type");
-  switch (type) {
-    case "text":
-      return typeof getField<unknown>(value, "text") === "string";
-    case "thinking":
-      return typeof getField<unknown>(value, "thinking") === "string";
-    case "image":
-      return typeof getField<unknown>(value, "image_url") === "string";
-    case "rich-text":
-      return Array.isArray(getField<unknown>(value, "nodes"));
-    case "pdf":
-      return typeof getField<unknown>(value, "pdf_url") === "string";
-    case "text-file":
-      return typeof getField<unknown>(value, "file_url") === "string";
-    case "plan":
-      return (
-        typeof getField<unknown>(value, "planText") === "string" ||
-        (Array.isArray(getField<unknown>(value, "entries")) &&
-          (getField<unknown>(value, "entries") as unknown[]).every(
-            isValidPlanEntryShape,
-          ))
-      );
-    case "tool":
-      return (
-        typeof getField<unknown>(value, "id") === "string" &&
-        typeof getField<unknown>(value, "name") === "string" &&
-        Array.isArray(getField<unknown>(value, "parts"))
-      );
-    case "delegation":
-      return (
-        typeof getField<unknown>(value, "id") === "string" &&
-        typeof getField<unknown>(value, "agentName") === "string" &&
-        typeof getField<unknown>(value, "message") === "string" &&
-        typeof getField<unknown>(value, "status") === "string"
-      );
-    case "audio":
-    case "resource-link":
-    case "terminal":
-    case "diff":
-    case "auto-approval-review":
-    case "plan-structured":
-    case "server-tool-use":
-    case "web-search-result":
-      return true;
-    default:
-      const _exhaustiveCheck = type satisfies string | undefined;
-      void _exhaustiveCheck;
-      return false;
-  }
-}
-
-function isValidPlanEntryShape(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const content = getField<unknown>(value, "content");
-  const priority = getField<unknown>(value, "priority");
-  const status = getField<unknown>(value, "status");
-  return (
-    typeof content === "string" &&
-    (priority === "high" || priority === "medium" || priority === "low") &&
-    (status === "pending" ||
-      status === "in_progress" ||
-      status === "completed" ||
-      status === "failed")
-  );
-}
-
-function normalizeRenderablePart(part: UIPartExtended): UIPartExtended {
-  if (
-    part.type === "plan" &&
-    "entries" in part &&
-    Array.isArray(part.entries)
-  ) {
-    return {
-      type: "plan-structured",
-      entries: part.entries,
-    };
-  }
-  return part;
-}
-
-function getPartIdentity(part: UIPartExtended): {
-  type: string;
-  id: string | null;
-} {
-  const id = getField<unknown>(part, "id");
-  return {
-    type: part.type,
-    id: typeof id === "string" ? id : null,
-  };
 }

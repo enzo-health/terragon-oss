@@ -4,7 +4,7 @@
  * AG-UI replayer integration test — Phase 7.
  *
  * Feeds a representative AG-UI BaseEvent sequence through
- * `useAgUiMessages` (via a fake HttpAgent) and asserts that the
+ * AG-UI thread view model (via `useThreadViewModel`) and asserts that the
  * resulting `UIMessage[]` has the expected shape. This is the
  * end-to-end event→UIMessage verification at the integration layer,
  * complementing the pure-reducer unit tests in

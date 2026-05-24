@@ -256,6 +256,79 @@ describe("usePromptBox runtime routing", () => {
     container.remove();
   });
 
+  it("keeps the submit lock while runtime append is still in flight", async () => {
+    mocks.appendFn.mockReset();
+    let resolveAppend: (() => void) | null = null;
+    mocks.appendFn.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveAppend = resolve;
+        }),
+    );
+    mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
+
+    const handleSubmit = vi.fn<HandleSubmit>(async () => {});
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let capturedController: PromptBoxController | null = null;
+    function RuntimeInFlightHarness(): null {
+      const promptBox = usePromptBox({
+        threadId: "thread-1",
+        placeholderText: "Message",
+        repoFullName: "terragon/oss",
+        branchName: "main",
+        forcedAgent: "claudeCode",
+        forcedAgentVersion: 1,
+        initialSelectedModel: selectedModel,
+        handleStop: async () => {},
+        handleSubmit,
+        typeahead,
+        clearContentOnSubmit: false,
+        clearContentBeforeSubmit: false,
+        initialPermissionMode: "allowAll",
+        supportsMultiAgentPromptSubmission: false,
+        disableLocalStorage: true,
+      });
+      capturedController = {
+        submitForm: promptBox.submitForm,
+        setPermissionMode: promptBox.setPermissionMode,
+      };
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(RuntimeInFlightHarness));
+    });
+
+    await act(async () => {
+      void capturedController?.submitForm({
+        saveAsDraft: false,
+        scheduleAt: null,
+      });
+      void capturedController?.submitForm({
+        saveAsDraft: false,
+        scheduleAt: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(mocks.appendFn).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveAppend?.();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    mocks.useThreadRuntimeReturn = null;
+  });
+
   it("falls back to handleSubmit when no runtime is in context (dashboard / generic composer)", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = null;

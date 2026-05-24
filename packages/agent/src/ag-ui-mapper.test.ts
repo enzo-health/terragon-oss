@@ -196,7 +196,7 @@ describe("mapCanonicalEventToAgui", () => {
       });
     });
 
-    it("preserves error result string (client decides rendering)", () => {
+    it("marks error results explicitly", () => {
       const event: CanonicalToolCallResultEvent = {
         ...baseEnvelope,
         category: "tool_lifecycle",
@@ -212,6 +212,7 @@ describe("mapCanonicalEventToAgui", () => {
       expect(result[0]).toMatchObject({
         type: EventType.TOOL_CALL_RESULT,
         content: "permission denied",
+        isError: true,
       });
     });
   });

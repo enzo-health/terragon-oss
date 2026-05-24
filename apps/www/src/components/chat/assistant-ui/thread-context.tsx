@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import type { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import type { PromptBoxRef } from "../thread-context";
 import type {
   RedoDialogData,
@@ -25,6 +26,7 @@ export type TerragonThreadContext = {
   latestGitDiffTimestamp: string | null;
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;
@@ -54,11 +56,38 @@ const Context = createContext<TerragonThreadContext | null>(null);
 
 export const TerragonThreadProvider = Context.Provider;
 
+export type TerragonMessageRenderContext = {
+  isAgentWorking: boolean;
+  artifactDescriptors: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
+  onOpenArtifact: (artifactId: string) => void;
+  planOccurrences: Map<UIPart, number>;
+  redoDialogData?: RedoDialogData;
+  forkDialogData?: ForkDialogData;
+  messagePartProps: MessagePartRenderProps;
+};
+
+const MessageRenderContext = createContext<TerragonMessageRenderContext | null>(
+  null,
+);
+
+export const TerragonMessageRenderProvider = MessageRenderContext.Provider;
+
 export function useTerragonThread(): TerragonThreadContext {
   const ctx = useContext(Context);
   if (!ctx) {
     throw new Error(
       "useTerragonThread must be used within a TerragonThreadProvider",
+    );
+  }
+  return ctx;
+}
+
+export function useTerragonMessageRender(): TerragonMessageRenderContext {
+  const ctx = useContext(MessageRenderContext);
+  if (!ctx) {
+    throw new Error(
+      "useTerragonMessageRender must be used within a TerragonMessageRenderProvider",
     );
   }
   return ctx;

@@ -16,7 +16,6 @@ import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import React, { useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAgUiQueryInvalidator } from "@/hooks/use-ag-ui-query-invalidator";
 import {
   convertToPlainText,
   getLastUserMessageModel,
@@ -33,8 +32,22 @@ import {
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
+import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
+
+type ChatRuntimeQueueParams = {
+  forceScrollToBottom: () => void;
+  isAgentCurrentlyWorking: boolean;
+  onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
+  queueWriteRef: React.MutableRefObject<Promise<void>>;
+  queuedMessagesRef: React.MutableRefObject<DBUserMessage[] | null>;
+  reconcileActiveChatFromServer: () => Promise<unknown>;
+  setError: (error: string | null) => void;
+  threadChatId: string;
+  threadId: string;
+  queueFollowUpAction?: typeof queueFollowUp;
+};
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -115,6 +128,80 @@ function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
   };
 }
 
+export function createChatRuntimeQueue({
+  forceScrollToBottom,
+  isAgentCurrentlyWorking,
+  onOptimisticQueuedMessagesUpdate,
+  queueFollowUpAction = queueFollowUp,
+  queueWriteRef,
+  queuedMessagesRef,
+  reconcileActiveChatFromServer,
+  setError,
+  threadChatId,
+  threadId,
+}: ChatRuntimeQueueParams): {
+  shouldQueue: (message: AppendMessage) => boolean;
+  enqueue: (message: AppendMessage) => Promise<void>;
+} {
+  const clientSubmissionIds = new WeakMap<AppendMessage, string>();
+  const clientSubmissionIdFor = (message: AppendMessage): string => {
+    if (typeof message.sourceId === "string" && message.sourceId.length > 0) {
+      return message.sourceId;
+    }
+    const existing = clientSubmissionIds.get(message);
+    if (existing) {
+      return existing;
+    }
+    const next = crypto.randomUUID();
+    clientSubmissionIds.set(message, next);
+    return next;
+  };
+
+  return {
+    shouldQueue: (message: AppendMessage) =>
+      message.role === "user" && isAgentCurrentlyWorking,
+    enqueue: async (message: AppendMessage) => {
+      const userMessage = appendMessageToDbUserMessage(message);
+      const plainText = convertToPlainText({ message: userMessage });
+      if (plainText.length === 0) {
+        return;
+      }
+      const queuedUserMessage = {
+        clientSubmissionId: clientSubmissionIdFor(message),
+        message: userMessage,
+      };
+      forceScrollToBottom();
+      setError(null);
+      const write = queueWriteRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const baseQueuedMessages = queuedMessagesRef.current ?? [];
+          const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
+            queuedUserMessage,
+          ]);
+          if (nextMessages === baseQueuedMessages) {
+            return;
+          }
+          queuedMessagesRef.current = nextMessages;
+          onOptimisticQueuedMessagesUpdate(nextMessages);
+          const result = await queueFollowUpAction({
+            threadId,
+            threadChatId,
+            messages: nextMessages,
+          });
+          if (!result.success) {
+            setError(result.errorMessage);
+            await reconcileActiveChatFromServer();
+            return;
+          }
+          await reconcileActiveChatFromServer();
+        });
+      queueWriteRef.current = write.catch(() => undefined);
+      await write;
+    },
+  };
+}
+
 /**
  * Pure presentation: composes the chat header, scroll-area transcript, prompt
  * box, secondary panel, and terminal-panel overlay. All data and dispatchers
@@ -126,9 +213,6 @@ function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
  * widen the relevant group rather than the whole signature. Each group is
  * `useMemo`-stabilized in `ChatUIContent` to keep referential identity stable
  * across parent re-renders.
- *
- * The `<AgUiQueryInvalidatorMount/>` lives inside the `<AgUiAgentProvider/>`
- * so it can read the agent from context.
  */
 export function ChatUILayout(props: ChatUILayoutProps) {
   const {
@@ -145,8 +229,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     agent,
     chatAgent,
     isReadOnly,
-    threadId,
-    threadChatId,
     threadChat,
     thread,
     threadWithViewModelStatus,
@@ -196,6 +278,12 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = optimisticHandlers;
 
   const { error, setError, isRetrying, handleRetry } = errorState;
+  const queuedMessagesRef = React.useRef(queuedMessages);
+  const queueWriteRef = React.useRef<Promise<void>>(Promise.resolve());
+
+  React.useEffect(() => {
+    queuedMessagesRef.current = queuedMessages;
+  }, [queuedMessages]);
 
   const handleCancel = useCallback(async () => {
     await stopThread({
@@ -205,37 +293,22 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   }, [thread.id, threadChat.id]);
 
   const runtimeQueue = React.useMemo(
-    () => ({
-      shouldQueue: (message: AppendMessage) =>
-        message.role === "user" && isAgentCurrentlyWorking,
-      enqueue: async (message: AppendMessage) => {
-        const userMessage = appendMessageToDbUserMessage(message);
-        const plainText = convertToPlainText({ message: userMessage });
-        if (plainText.length === 0) {
-          return;
-        }
-        forceScrollToBottom();
-        setError(null);
-        const nextMessages = [...(queuedMessages ?? []), userMessage];
-        onOptimisticQueuedMessagesUpdate(nextMessages);
-        const result = await queueFollowUp({
-          threadId: thread.id,
-          threadChatId: threadChat.id,
-          messages: nextMessages,
-        });
-        if (!result.success) {
-          setError(result.errorMessage);
-          await reconcileActiveChatFromServer();
-          return;
-        }
-        await reconcileActiveChatFromServer();
-      },
-    }),
+    () =>
+      createChatRuntimeQueue({
+        forceScrollToBottom,
+        isAgentCurrentlyWorking,
+        onOptimisticQueuedMessagesUpdate,
+        queueWriteRef,
+        queuedMessagesRef,
+        reconcileActiveChatFromServer,
+        setError,
+        threadId: thread.id,
+        threadChatId: threadChat.id,
+      }),
     [
       forceScrollToBottom,
       isAgentCurrentlyWorking,
       onOptimisticQueuedMessagesUpdate,
-      queuedMessages,
       reconcileActiveChatFromServer,
       setError,
       thread.id,
@@ -245,10 +318,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
 
   return (
     <AgUiAgentProvider agent={agent}>
-      <AgUiQueryInvalidatorMount
-        threadId={threadId}
-        threadChatId={threadChatId}
-      />
       <div className="flex flex-col h-full w-full">
         <ChatHeader
           thread={threadWithViewModelStatus}
@@ -280,10 +349,11 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                   <ScrollArea
                     ref={scrollAreaRef}
                     className="w-full h-full overflow-auto"
+                    viewportClassName="[scrollbar-gutter:stable] [overflow-anchor:none]"
                   >
                     <div
                       ref={transcriptRef}
-                      className="min-h-full flex flex-col"
+                      className="min-h-full flex flex-col [overflow-anchor:none]"
                     >
                       <TerragonThreadErrorBoundary
                         threadStatus={effectiveThreadStatus}
@@ -328,7 +398,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                     </div>
                     <div
                       ref={messagesEndRef}
-                      className="shrink-0 min-w-[24px] min-h-[24px]"
+                      className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
                     />
                   </ScrollArea>
                   {/* Scroll-to-bottom button floating above scroll area */}
@@ -414,19 +484,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
       )}
     </AgUiAgentProvider>
   );
-}
-
-function AgUiQueryInvalidatorMount({
-  threadId,
-  threadChatId,
-}: {
-  threadId: string;
-  threadChatId: string | null;
-}): null {
-  // Must be rendered INSIDE `AgUiAgentProvider` so the hook can read the
-  // current `HttpAgent` from context.
-  useAgUiQueryInvalidator({ threadId, threadChatId });
-  return null;
 }
 
 /**

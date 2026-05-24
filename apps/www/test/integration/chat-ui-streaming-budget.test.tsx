@@ -623,18 +623,18 @@ describe("ChatUI streaming render budget", () => {
       deltaTotalCommits,
     });
 
-    // Bound: the harness intentionally feeds both the Terragon view-model
-    // subscriber and the assistant-ui runtime subscriber. That is roughly
-    // two row hook calls per streamed event, plus a few historical rows when
-    // the new streaming message first appears.
+    // Bound: the rendered transcript is owned by assistant-ui. The legacy
+    // Terragon view-model intentionally ignores high-frequency text deltas,
+    // so steady text streaming should be roughly one row hook call per event,
+    // plus a few historical rows when the streaming message first appears.
     expect(deltaHookCalls).toBeLessThanOrEqual(
-      2 * 100 + initialMessages.length + 10,
+      100 + initialMessages.length + 20,
     );
     // All-subtree commit ceiling. Observed baseline: ~3 commits/delta
     // (~299 for 100 events). Bound is set well above baseline so the test
     // catches an order-of-magnitude regression (e.g. effect loop adding
     // 5+ commits/delta) without flaking on incidental scheduling.
-    expect(deltaTotalCommits).toBeLessThanOrEqual(500);
+    expect(deltaTotalCommits).toBeLessThanOrEqual(350);
   });
 
   it("historical rows do not rerender on steady streaming (Test 2)", async () => {
@@ -705,20 +705,20 @@ describe("ChatUI streaming render budget", () => {
       steadyDeltaCommits,
     });
 
-    // Streaming row is 1 UIMessage, but the test harness drives both the
-    // Terragon view model and the assistant-ui runtime bridge. If historical
-    // rows correctly bail out, every delta produces roughly 2 hook calls
-    // against the streaming row. We give slack for global wrappers.
+    // Streaming row is 1 UIMessage. The sidecar Terragon view-model ignores
+    // high-frequency text deltas, so every delta should produce roughly one
+    // row hook call against the streaming row. We give slack for global
+    // wrappers.
     //
     // If this exceeds `50 * (history.length + 1)` it strongly suggests a
     // memo bail-out regression — every row rerendering per delta.
     expect(steadyDeltaHookCalls).toBeLessThanOrEqual(
-      2 * 50 + historical.length + 10,
+      50 + historical.length + 20,
     );
     // Steady-state commit budget. Observed: ~152 commits for 50 deltas
     // (~3/delta, same as Test 1). Set ceiling above baseline to catch
     // regressions.
-    expect(steadyDeltaCommits).toBeLessThanOrEqual(300);
+    expect(steadyDeltaCommits).toBeLessThanOrEqual(200);
   });
 
   it("no effect loops during single delta (Test 3)", async () => {

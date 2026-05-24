@@ -1,6 +1,19 @@
 import type { UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 
+function stableValue(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return JSON.stringify(value) ?? "";
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableValue(entry)).join(",")}]`;
+  }
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableValue(entry)}`)
+    .join(",")}}`;
+}
+
 export function isEqualPlanMap(
   a: Map<UIPart, number>,
   b: Map<UIPart, number>,
@@ -27,7 +40,10 @@ export function isEqualArtifactList(
       prev.kind !== next.kind ||
       prev.status !== next.status ||
       prev.title !== next.title ||
-      prev.updatedAt !== next.updatedAt
+      prev.updatedAt !== next.updatedAt ||
+      prev.summary !== next.summary ||
+      stableValue(prev.origin) !== stableValue(next.origin) ||
+      stableValue(prev.part) !== stableValue(next.part)
     ) {
       return false;
     }

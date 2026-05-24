@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
+  createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
@@ -113,6 +114,37 @@ describe("secondary-panel artifact shell helpers", () => {
         part: { ...originalPart },
       }),
     ).toBe(descriptor);
+  });
+
+  it("keeps duplicate content matches ambiguous", () => {
+    const firstPart = {
+      type: "text-file" as const,
+      file_url: "https://example.com/output.txt",
+      filename: "one.txt",
+      mime_type: "text/plain",
+    };
+    const secondPart = {
+      ...firstPart,
+      filename: "two.txt",
+    };
+    const first = { id: "artifact:file:1", part: firstPart };
+    const second = { id: "artifact:file:2", part: secondPart };
+    const lookup = createArtifactDescriptorLookup([first, second]);
+
+    expect(
+      findArtifactDescriptorForPart({
+        artifacts: [first, second],
+        lookup,
+        part: { ...firstPart },
+      }),
+    ).toBeNull();
+    expect(
+      findArtifactDescriptorForPart({
+        artifacts: [first, second],
+        lookup,
+        part: firstPart,
+      }),
+    ).toBe(first);
   });
 
   it("creates a plan artifact summary with correct labels for ExitPlanMode origin", () => {

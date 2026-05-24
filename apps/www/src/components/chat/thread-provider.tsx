@@ -10,6 +10,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
 } from "react";
 import {
   seedChat,
@@ -33,9 +34,8 @@ import { useThreadPageRealtimeSync } from "./use-thread-page-realtime-sync";
  * The provider gates rendering: children only mount once shell + threadChat
  * are loaded AND `threadChat.id === shell.primaryThreadChatId`. Consumers can
  * therefore treat every field as guaranteed non-null. This invariant is
- * load-bearing — the downstream `useAgUiMessages` reducer uses a lazy
- * initializer that snapshots seed state ONCE, so mounting with an incomplete
- * seed would leave the transcript empty forever.
+ * load-bearing — downstream chat state assumes it never observes a partial
+ * shell/chat pair on first mount.
  */
 export type ThreadContextValue = {
   threadId: string;
@@ -50,6 +50,38 @@ export type ThreadContextValue = {
 };
 
 const ThreadContext = createContext<ThreadContextValue | null>(null);
+
+export function createProvisionalThreadPageChat(
+  shell: ThreadPageShell,
+): ThreadPageChat {
+  return {
+    id: shell.primaryThreadChat.id,
+    userId: shell.userId,
+    threadId: shell.id,
+    title: null,
+    createdAt: shell.createdAt,
+    updatedAt: shell.primaryThreadChat.updatedAt,
+    agent: shell.primaryThreadChat.agent,
+    agentVersion: shell.primaryThreadChat.agentVersion,
+    status: shell.primaryThreadChat.status,
+    projectedMessages: [],
+    queuedMessages: null,
+    sessionId: null,
+    errorMessage: shell.primaryThreadChat.errorMessage,
+    errorMessageInfo: shell.primaryThreadChat.errorMessageInfo,
+    scheduleAt: shell.primaryThreadChat.scheduleAt,
+    reattemptQueueAt: shell.primaryThreadChat.reattemptQueueAt,
+    contextLength: shell.primaryThreadChat.contextLength,
+    permissionMode: shell.primaryThreadChat.permissionMode,
+    codexPreviousResponseId: null,
+    messageSeq: shell.primaryThreadChat.messageSeq,
+    isUnread: shell.primaryThreadChat.isUnread,
+    messageCount: 0,
+    chatSequence: null,
+    patchVersion: null,
+    isCanonicalProjection: false,
+  };
+}
 
 export function useThreadContext(): ThreadContextValue {
   const ctx = useContext(ThreadContext);
@@ -104,7 +136,6 @@ export function ThreadProvider({
   const threadChatId = shell?.primaryThreadChatId;
   const {
     data: chatFromQuery,
-    isLoading: isChatFetching,
     isError: isChatError,
     error: chatError,
     refetch: refetchChat,
@@ -118,8 +149,32 @@ export function ThreadProvider({
   }, [chatFromQuery]);
 
   const chatFromCollection = useChatFromCollection(threadId, threadChatId);
-  const threadChat = chatFromCollection ?? chatFromQuery ?? null;
-  const isThreadChatLoading = !threadChat && isChatFetching;
+  const provisionalThreadChat = useMemo(
+    () => (shell ? createProvisionalThreadPageChat(shell) : null),
+    [shell],
+  );
+  const threadChat =
+    chatFromCollection ?? chatFromQuery ?? provisionalThreadChat ?? null;
+  const threadChatSource = chatFromCollection ? "collection" : "react-query";
+  const contextValue = useMemo<ThreadContextValue | null>(() => {
+    if (
+      !shell ||
+      !threadChat ||
+      !threadChatId ||
+      threadChat.id !== threadChatId
+    ) {
+      return null;
+    }
+
+    return {
+      threadId,
+      threadChatId,
+      isReadOnly,
+      shell,
+      threadChat,
+      threadChatSource,
+    };
+  }, [threadId, threadChatId, isReadOnly, shell, threadChat, threadChatSource]);
 
   useThreadPageRealtimeSync({ threadId });
 
@@ -153,7 +208,6 @@ export function ThreadProvider({
 
   if (
     isShellLoading ||
-    isThreadChatLoading ||
     !shell ||
     !threadChat ||
     !threadChatId ||
@@ -166,20 +220,11 @@ export function ThreadProvider({
     );
   }
 
-  const value: ThreadContextValue = {
-    threadId,
-    threadChatId,
-    isReadOnly,
-    shell,
-    threadChat,
-    threadChatSource: chatFromCollection ? "collection" : "react-query",
-  };
-
   // The keyed Fragment preserves the previous `<ChatUIContent key={...}/>`
   // semantics: when (threadId, threadChatId) changes, React unmounts the
   // children so their lazy state initializers re-run with the fresh seed.
   return (
-    <ThreadContext.Provider value={value}>
+    <ThreadContext.Provider value={contextValue}>
       <React.Fragment key={`${threadId}:${threadChatId}`}>
         {children}
       </React.Fragment>

@@ -1001,6 +1001,51 @@ describe("toUIMessages", () => {
     ]);
   });
 
+  test("deduplicates repeated tool-call IDs with updated lifecycle metadata", () => {
+    const dbMessages: DBMessage[] = [
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "retry tool call" }],
+      },
+      {
+        type: "tool-call",
+        id: "tool-dupe-1",
+        name: "Read",
+        parameters: { file_path: "first.txt" },
+        parent_tool_use_id: null,
+        status: "started",
+      },
+      {
+        type: "tool-call",
+        id: "tool-dupe-1",
+        name: "Read",
+        parameters: { file_path: "second.txt" },
+        parent_tool_use_id: null,
+        status: "in_progress",
+        progressChunks: [{ seq: 1, text: "reading second.txt" }],
+        mcpMetadata: { server: "files", tool: "read" },
+      },
+    ];
+
+    const result = toUIMessages({ dbMessages, agent: "claudeCode" });
+
+    expect(result[1]).toMatchObject({
+      role: "agent",
+      parts: [
+        {
+          type: "tool",
+          id: "tool-dupe-1",
+          parameters: { file_path: "second.txt" },
+          status: "pending",
+          toolStatus: "in_progress",
+          progressChunks: [{ seq: 1, text: "reading second.txt" }],
+          mcpMetadata: { server: "files", tool: "read" },
+        },
+      ],
+    });
+  });
+
   test("deduplicates consecutive TodoWrite tool calls", () => {
     const dbMessages: DBMessage[] = [
       {
@@ -2230,6 +2275,33 @@ describe("toUIMessages", () => {
         id: "tool-1",
         status: "completed",
         result: "[Tool execution was interrupted]",
+      }),
+    );
+
+    const resultWithLifecycleStatus = toUIMessages({
+      dbMessages: [
+        {
+          type: "user",
+          model: null,
+          parts: [{ type: "text", text: "Do something" }],
+        },
+        {
+          type: "tool-call",
+          id: "tool-1",
+          name: "Read",
+          parameters: { file_path: "test.txt" },
+          parent_tool_use_id: null,
+          status: "in_progress",
+        },
+      ],
+      agent: "claudeCode",
+      threadStatus: "complete",
+    });
+    expect(resultWithLifecycleStatus[1]?.parts).toContainEqual(
+      expect.objectContaining({
+        id: "tool-1",
+        status: "completed",
+        toolStatus: "completed",
       }),
     );
 

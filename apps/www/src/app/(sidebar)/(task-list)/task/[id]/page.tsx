@@ -8,10 +8,7 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
-import {
-  threadChatQueryOptions,
-  threadShellQueryOptions,
-} from "@/queries/thread-queries";
+import { threadShellQueryOptions } from "@/queries/thread-queries";
 import { ThreadPageShell } from "@terragon/shared";
 import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 import { unwrapResult } from "@/lib/server-actions";
@@ -66,12 +63,6 @@ export default async function TaskPage({
   if (!thread) {
     return notFound();
   }
-  await queryClient.prefetchQuery(
-    threadChatQueryOptions({
-      threadId: id,
-      threadChatId: thread.primaryThreadChatId,
-    }),
-  );
   if (thread.draftMessage) {
     return redirect(`/dashboard`);
   }

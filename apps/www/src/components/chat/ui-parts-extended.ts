@@ -9,7 +9,6 @@
  * packages/shared/src/db/ui-messages.ts and the local aliases removed.
  */
 import type {
-  AllToolParts,
   DBAudioPart,
   DBResourceLinkPart,
   DBTerminalPart,
@@ -67,19 +66,6 @@ export type UIDelegationStubPart = {
   agentName: string;
   message: string;
   status: "initiated" | "running" | "completed" | "failed" | string;
-};
-
-/**
- * UI tool part with daemon-side lifecycle fields that aren't on the shared
- * `AllToolParts` union. The fields are carried from `DBToolCall` through
- * `InternalToolPart` into the renderer; widening `AllToolParts` itself is a
- * separate refactor. Centralized here so consumers (e.g. `tool-part.tsx`)
- * can reference one type instead of redeclaring the intersection.
- */
-export type UIToolPartWithLifecycle = AllToolParts & {
-  progressChunks?: Array<{ seq: number; text: string }>;
-  mcpMetadata?: { server: string; tool: string };
-  toolStatus?: string;
 };
 
 /**

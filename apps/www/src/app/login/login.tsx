@@ -7,16 +7,51 @@ import { Button } from "@/components/ui/button";
 import { signInWithGithub } from "@/components/auth";
 import { Wordmark } from "@/components/shared/wordmark";
 
-export default function Login({ returnUrl }: { returnUrl: string }) {
-  const [isLoading, setIsLoading] = useState(false);
+type DevLoginResponse = {
+  redirectTo?: string;
+};
+
+export default function Login({
+  returnUrl,
+  devLoginEnabled,
+}: {
+  returnUrl: string;
+  devLoginEnabled: boolean;
+}) {
+  const [isGithubLoading, setIsGithubLoading] = useState(false);
+  const [isDevLoginLoading, setIsDevLoginLoading] = useState(false);
+  const [devLoginError, setDevLoginError] = useState<string | null>(null);
 
   const handleGithubSignIn = async () => {
     await signInWithGithub({
-      setLoading: setIsLoading,
+      setLoading: setIsGithubLoading,
       returnUrl,
       location: "login_page",
     });
   };
+
+  const handleDevLogin = async () => {
+    setDevLoginError(null);
+    setIsDevLoginLoading(true);
+    try {
+      const response = await fetch("/api/auth/sign-in/dev-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ returnUrl }),
+      });
+      if (!response.ok) {
+        throw new Error("Dev login failed");
+      }
+      const result = (await response.json()) as DevLoginResponse;
+      window.location.href = result.redirectTo ?? returnUrl;
+    } catch {
+      setDevLoginError("Dev login failed");
+    } finally {
+      setIsDevLoginLoading(false);
+    }
+  };
+
+  const isLoading = isGithubLoading || isDevLoginLoading;
 
   return (
     <div className="min-h-[100dvh] w-full bg-canvas flex items-center justify-center">
@@ -42,7 +77,7 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
               onClick={handleGithubSignIn}
               disabled={isLoading}
             >
-              {isLoading ? (
+              {isGithubLoading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
                   Signing in
@@ -67,6 +102,29 @@ export default function Login({ returnUrl }: { returnUrl: string }) {
                 </>
               )}
             </Button>
+            {devLoginEnabled ? (
+              <Button
+                variant="outline"
+                size="lg"
+                className="w-full h-12 rounded-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
+                onClick={handleDevLogin}
+                disabled={isLoading}
+              >
+                {isDevLoginLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Signing in
+                  </>
+                ) : (
+                  "Dev Login"
+                )}
+              </Button>
+            ) : null}
+            {devLoginError ? (
+              <p className="text-sm text-center text-destructive font-sans">
+                {devLoginError}
+              </p>
+            ) : null}
             <p className="text-micro text-center text-mid font-sans tracking-[0.06em] uppercase">
               Secure authentication via GitHub
             </p>

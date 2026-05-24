@@ -3,7 +3,7 @@ import { fetchRepositoryFiles } from "@/server-actions/github-tree-search";
 import { unwrapResult } from "@/lib/server-actions";
 import { searchFilesLocally } from "@/lib/file-search";
 import { Typeahead } from "./typeahead";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export class RepositoryCache implements Typeahead {
   private cache = new Map<string, { files: TreeFile[]; timestamp: number }>();
@@ -147,6 +147,8 @@ export function useRepositoryCache({
   branchName: string;
 }) {
   const [repositoryCache] = useState(() => new RepositoryCache());
-  repositoryCache.setSelectedRepo(repoFullName, branchName);
+  useEffect(() => {
+    repositoryCache.setSelectedRepo(repoFullName, branchName);
+  }, [repositoryCache, repoFullName, branchName]);
   return repositoryCache;
 }

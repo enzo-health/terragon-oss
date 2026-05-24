@@ -41,12 +41,14 @@ type ComboboxActionItem = {
   icon?: React.ReactNode;
 };
 
+const EMPTY_ACTION_ITEMS: ComboboxActionItem[] = [];
+
 export function ResponsiveCombobox<T extends ComboboxItem>({
   icon,
   className,
   contentsClassName,
   items,
-  actionItems = [],
+  actionItems = EMPTY_ACTION_ITEMS,
   value,
   disabled,
   setValue,
@@ -83,15 +85,23 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
   disableSearch?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
+  const contentId = React.useId();
   const hasLoadedRef = React.useRef(false);
+  const onLoadItemsRef = React.useRef(onLoadItems);
+  onLoadItemsRef.current = onLoadItems;
 
   // Load items when opening for the first time
   React.useEffect(() => {
-    if (open && !hasLoadedRef.current && onLoadItems) {
+    const loadItems = onLoadItemsRef.current;
+    if (open && !hasLoadedRef.current && loadItems) {
       hasLoadedRef.current = true;
-      onLoadItems();
+      loadItems();
     }
-  }, [open, onLoadItems]);
+  }, [open]);
+
+  const handleBreakpointCross = React.useCallback(() => {
+    setOpen(false);
+  }, []);
 
   // Use debounced media query to prevent rapid component swaps during orientation changes
   const isDesktop = useMediaQuery("(min-width: 768px)", {
@@ -100,11 +110,7 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
   });
 
   // Force close when crossing the breakpoint to prevent crashes
-  useBreakpointCross("(min-width: 768px)", () => {
-    if (open) {
-      setOpen(false);
-    }
-  });
+  useBreakpointCross("(min-width: 768px)", handleBreakpointCross);
 
   const triggerButton = (
     <Button
@@ -112,6 +118,7 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
       size="sm"
       role="combobox"
       aria-expanded={open}
+      aria-controls={contentId}
       className={cn(
         "w-fit min-w-0 max-w-[350px] !px-2 justify-between font-normal",
         variant === "ghost" &&
@@ -141,6 +148,7 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
         <PopoverContent
           className={cn("min-w-[200px] p-0", contentsClassName)}
           align="start"
+          id={contentId}
         >
           <ComboboxContent
             items={items}
@@ -162,7 +170,7 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
   return (
     <Drawer open={open} onOpenChange={setOpen} dismissible={true} modal={true}>
       <DrawerTrigger asChild>{triggerButton}</DrawerTrigger>
-      <DrawerContent>
+      <DrawerContent id={contentId}>
         <DrawerHeader className="text-left">
           <DrawerTitle>{placeholder}</DrawerTitle>
         </DrawerHeader>
@@ -187,7 +195,7 @@ export function ResponsiveCombobox<T extends ComboboxItem>({
 
 function ComboboxContent<T extends ComboboxItem>({
   items,
-  actionItems = [],
+  actionItems = EMPTY_ACTION_ITEMS,
   value,
   setValue,
   searchPlaceholder,
@@ -270,7 +278,7 @@ function ComboboxContent<T extends ComboboxItem>({
           {mainList}
           {isLoading && (
             <div className="flex items-center justify-center text-center text-sm py-6 md:py-4 gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
               {loadingText}
             </div>
           )}

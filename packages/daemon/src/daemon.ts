@@ -460,6 +460,7 @@ export class TerragonDaemon {
   private messageHandleDelay: number = 0;
   private messageFlushDelay: number = 0;
   private messageFlushTimer: NodeJS.Timeout | null = null;
+  private messageFlushTimerDueAtMs: number | null = null;
   private uptimeReportingInterval: number = 0;
   private uptimeReportingTimer: NodeJS.Timeout | null = null;
   private isFlushInProgress: boolean = false;
@@ -1800,15 +1801,11 @@ export class TerragonDaemon {
             });
           }
 
-          // Intermediate flush for codex: coalesce rapid-fire completions
-          // at 250ms instead of the default 33ms messageFlushDelay
+          // Intermediate flush for Codex completions without pushing back an
+          // earlier visible-message flush. Streaming throttling belongs to the
+          // leading-edge flush timer and delta path, not a trailing debounce.
           if (threadEvent.type === "item.completed") {
-            if (this.messageFlushTimer) {
-              clearTimeout(this.messageFlushTimer);
-            }
-            this.messageFlushTimer = setTimeout(() => {
-              this.flushMessageBuffer();
-            }, 250);
+            this.scheduleMessageFlush(250);
           }
 
           if (threadEvent.type === "turn.failed") {
@@ -4420,12 +4417,12 @@ export class TerragonDaemon {
     token: string;
   }): void {
     this.metaEventBuffer.push(entry);
-    // Fast-path: flush meta events immediately at 16ms (60fps) for smooth streaming
-    if (!this.isFlushInProgress && !this.messageFlushTimer) {
-      this.messageFlushTimer = setTimeout(() => {
-        this.flushMessageBuffer();
-      }, 16);
+    if (this.isFlushInProgress) {
+      this.pendingFlushRequired = true;
+      return;
     }
+    // Fast-path: flush meta events immediately at 16ms (60fps) for smooth streaming
+    this.scheduleMessageFlush(16);
   }
 
   private enqueueDelta(entry: {
@@ -4444,13 +4441,13 @@ export class TerragonDaemon {
       ...entry,
       deltaSeq,
     });
+    if (this.isFlushInProgress) {
+      this.pendingFlushRequired = true;
+      return;
+    }
     // Fast-path: flush deltas immediately at 16ms (60fps) for smooth streaming
     // This is independent of message buffer flush timing
-    if (!this.isFlushInProgress && !this.messageFlushTimer) {
-      this.messageFlushTimer = setTimeout(() => {
-        this.flushMessageBuffer();
-      }, 16);
-    }
+    this.scheduleMessageFlush(16);
   }
 
   /**
@@ -4469,13 +4466,31 @@ export class TerragonDaemon {
       return;
     }
 
-    // Clear existing timer and set a new one
+    this.scheduleMessageFlush(this.messageFlushDelay);
+  }
+
+  private scheduleMessageFlush(
+    delayMs: number,
+    options: { replaceExisting?: boolean } = {},
+  ): void {
+    const dueAtMs = Date.now() + delayMs;
+    if (
+      this.messageFlushTimer &&
+      !options.replaceExisting &&
+      this.messageFlushTimerDueAtMs !== null &&
+      this.messageFlushTimerDueAtMs <= dueAtMs
+    ) {
+      return;
+    }
     if (this.messageFlushTimer) {
       clearTimeout(this.messageFlushTimer);
     }
+    this.messageFlushTimerDueAtMs = dueAtMs;
     this.messageFlushTimer = setTimeout(() => {
+      this.messageFlushTimer = null;
+      this.messageFlushTimerDueAtMs = null;
       this.flushMessageBuffer();
-    }, this.messageFlushDelay);
+    }, delayMs);
   }
 
   /**
@@ -4505,6 +4520,7 @@ export class TerragonDaemon {
       if (this.messageFlushTimer) {
         clearTimeout(this.messageFlushTimer);
         this.messageFlushTimer = null;
+        this.messageFlushTimerDueAtMs = null;
       }
 
       const messageBufferCopy = [...this.messageBuffer];
@@ -4878,7 +4894,9 @@ export class TerragonDaemon {
     // If new messages arrived while we were flushing, or if we need to retry
     if (
       this.pendingFlushRequired &&
-      (this.messageBuffer.length > 0 || this.deltaBuffer.length > 0)
+      (this.messageBuffer.length > 0 ||
+        this.deltaBuffer.length > 0 ||
+        this.metaEventBuffer.length > 0)
     ) {
       // Compute minimum retry delay across all threads that have pending retries
       let minRetryDelay: number | null = null;
@@ -4893,9 +4911,7 @@ export class TerragonDaemon {
       }
       const delay =
         retryDelayOverrideMs ?? minRetryDelay ?? this.messageFlushDelay;
-      this.messageFlushTimer = setTimeout(() => {
-        this.flushMessageBuffer();
-      }, delay);
+      this.scheduleMessageFlush(delay, { replaceExisting: true });
     }
     this.maybeCleanupAllDaemonEventRunStates();
   }
@@ -5145,6 +5161,8 @@ export class TerragonDaemon {
     }
     if (this.messageFlushTimer) {
       clearTimeout(this.messageFlushTimer);
+      this.messageFlushTimer = null;
+      this.messageFlushTimerDueAtMs = null;
     }
   }
 }

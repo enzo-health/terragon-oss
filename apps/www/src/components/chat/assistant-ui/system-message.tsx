@@ -35,6 +35,7 @@ export const TerragonSystemMessage = memo(function TerragonSystemMessage({
         thread={ctx.thread}
         latestGitDiffTimestamp={ctx.latestGitDiffTimestamp}
         artifactDescriptors={ctx.artifactDescriptors}
+        artifactDescriptorLookup={ctx.artifactDescriptorLookup}
         onOpenArtifact={ctx.onOpenArtifact}
         planOccurrences={ctx.planOccurrences}
       />

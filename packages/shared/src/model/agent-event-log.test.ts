@@ -17,6 +17,7 @@ import * as schema from "../db/schema";
 import type { AgentEventLog as AgentEventLogRow } from "../db/types";
 import {
   appendAgUiEventRow,
+  appendAgUiEventRows,
   appendCanonicalEvent,
   appendCanonicalEventsBatch,
   assignThreadChatMessageSeqToCanonicalEvents,
@@ -1249,6 +1250,116 @@ describe("agent-event-log", () => {
         type: EventType.RUN_STARTED,
         runId: fixture.runId,
       });
+    });
+
+    it("persists envelope payload without injecting replay-only metadata", async () => {
+      const fixture = await createRunFixture();
+      const eventId = newId("event");
+      const payload = {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 1_700_000_000_001,
+        messageId: newId("message"),
+        delta: "hello",
+      };
+
+      const result = await appendAgUiEventRow({
+        tx: db,
+        row: {
+          eventId,
+          threadId: fixture.threadId,
+          eventType: String(payload.type),
+          category: String(payload.type),
+          idempotencyKey: `${fixture.runId}:${eventId}`,
+          timestamp: new Date(),
+          envelope: {
+            seq: 4,
+            runId: fixture.runId,
+            threadChatId: fixture.threadChatId,
+            payload,
+          },
+        },
+      });
+
+      expect(result).toEqual({ inserted: true });
+      const inserted = await db.query.agentEventLog.findFirst({
+        where: and(
+          eq(schema.agentEventLog.runId, fixture.runId),
+          eq(schema.agentEventLog.eventId, eventId),
+        ),
+      });
+      expect(inserted).toBeDefined();
+      if (!inserted) {
+        throw new Error("expected inserted AG-UI row");
+      }
+
+      const envelope = readAgUiEnvelope(inserted);
+      expect(envelope?.payload).toEqual(payload);
+      expect(inserted.payloadJson).not.toHaveProperty("__terragonTrace");
+    });
+  });
+
+  describe("appendAgUiEventRows", () => {
+    it("bulk inserts fresh rows and skips duplicate run/event pairs", async () => {
+      const fixture = await createRunFixture();
+      const firstEventId = newId("event");
+      const secondEventId = newId("event");
+      const payload = {
+        type: EventType.RUN_STARTED,
+        timestamp: 1_700_000_000_002,
+        threadId: fixture.threadId,
+        runId: fixture.runId,
+      };
+
+      const first = await appendAgUiEventRows({
+        tx: db,
+        rows: [
+          {
+            eventId: firstEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 0,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${firstEventId}`,
+            timestamp: new Date(),
+          },
+          {
+            eventId: secondEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 1,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${secondEventId}`,
+            timestamp: new Date(),
+          },
+        ],
+      });
+      expect(first.insertedEventIds).toEqual([firstEventId, secondEventId]);
+
+      const second = await appendAgUiEventRows({
+        tx: db,
+        rows: [
+          {
+            eventId: firstEventId,
+            runId: fixture.runId,
+            threadId: fixture.threadId,
+            threadChatId: fixture.threadChatId,
+            seq: 2,
+            eventType: String(payload.type),
+            category: String(payload.type),
+            payload,
+            idempotencyKey: `${fixture.runId}:${firstEventId}`,
+            timestamp: new Date(),
+          },
+        ],
+      });
+
+      expect(second.insertedEventIds).toEqual([]);
     });
   });
 

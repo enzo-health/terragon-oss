@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import { WriteDiffView } from "@/components/shared/diff-view";
 import {
@@ -7,9 +7,9 @@ import {
   GenericToolPartContentRow,
   GenericToolPartClickToExpand,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
 } from "./generic-ui";
-import { formatToolParameters } from "./utils";
+import { countTextLines, formatToolParameters } from "./utils";
 
 export function WriteTool({
   toolPart,
@@ -36,6 +36,10 @@ function WriteToolContent({
   toolPart: Extract<AllToolParts, { name: "Write" }>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const contentLineCount = useMemo(
+    () => countTextLines(toolPart.parameters.content),
+    [toolPart.parameters.content],
+  );
   if (toolPart.status === "pending") {
     return (
       <GenericToolPartContentOneLine toolStatus="pending">
@@ -45,8 +49,8 @@ function WriteToolContent({
   }
   if (toolPart.status === "error") {
     return (
-      <GenericToolPartContentResultWithLines
-        lines={toolPart.result.split("\n")}
+      <GenericToolPartContentResultWithText
+        content={toolPart.result}
         toolStatus="error"
       />
     );
@@ -55,11 +59,7 @@ function WriteToolContent({
     <GenericToolPartContent toolStatus={toolPart.status}>
       <GenericToolPartContentRow index={0}>
         <span>
-          Wrote{" "}
-          <span className="font-semibold">
-            {toolPart.parameters.content.split("\n").length}
-          </span>{" "}
-          lines{" "}
+          Wrote <span className="font-semibold">{contentLineCount}</span> lines{" "}
           <GenericToolPartClickToExpand
             label={expanded ? "Hide lines" : "Show lines"}
             onClick={() => setExpanded((x) => !x)}

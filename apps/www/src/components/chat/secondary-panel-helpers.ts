@@ -1,18 +1,15 @@
 import {
   type UIGitDiffPart,
-  type UIImagePart,
   type UIPart,
-  type UIPdfPart,
-  type UIPlanPart,
-  type UIRichTextPart,
   type UIStructuredPlanPart,
-  type UITextFilePart,
 } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
   type ArtifactDescriptorOrigin,
   getArtifactDescriptors,
 } from "@terragon/shared/db/artifact-descriptors";
+
+export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
 
 export type ArtifactWorkspaceStatus = "ready" | "loading" | "error";
 
@@ -35,6 +32,36 @@ export type ArtifactWorkspaceComparablePart =
   | UIPart
   | UIGitDiffPart
   | UIStructuredPlanPart;
+
+type ArtifactDescriptorMatch = Pick<ArtifactDescriptor, "id" | "part">;
+
+export type ArtifactDescriptorLookup = {
+  byReference: WeakMap<object, ArtifactDescriptorMatch>;
+  byContentKey: Map<string, ArtifactDescriptorMatch | null>;
+};
+
+export function createArtifactDescriptorLookup(
+  artifacts: ArtifactDescriptorMatch[],
+): ArtifactDescriptorLookup {
+  const byReference = new WeakMap<object, ArtifactDescriptorMatch>();
+  const byContentKey = new Map<string, ArtifactDescriptorMatch | null>();
+
+  for (const artifact of artifacts) {
+    if (!byReference.has(artifact.part)) {
+      byReference.set(artifact.part, artifact);
+    }
+    const contentKey = getPartContentKey(artifact.part);
+    if (!contentKey) continue;
+
+    if (byContentKey.has(contentKey)) {
+      byContentKey.set(contentKey, null);
+      continue;
+    }
+    byContentKey.set(contentKey, artifact);
+  }
+
+  return { byReference, byContentKey };
+}
 
 /**
  * Resolves which artifact should be the active one in the workspace.
@@ -83,59 +110,56 @@ export function resolveActiveArtifactId({
  */
 export function findArtifactDescriptorForPart({
   artifacts,
+  lookup,
   part,
 }: {
-  artifacts: Pick<ArtifactDescriptor, "id" | "part">[];
+  artifacts: ArtifactDescriptorMatch[];
+  lookup?: ArtifactDescriptorLookup;
   part: ArtifactWorkspaceComparablePart;
-}): Pick<ArtifactDescriptor, "id" | "part"> | null {
+}): ArtifactDescriptorMatch | null {
+  const artifactLookup = lookup ?? createArtifactDescriptorLookup(artifacts);
+
   // Fast path: reference equality (same object instance).
-  const refMatch = artifacts.find((artifact) => artifact.part === part);
+  const refMatch = artifactLookup.byReference.get(part);
   if (refMatch) return refMatch;
 
   // Fallback: match by key content fields. Normalization (e.g. normalizeToolCall)
   // may shallow-clone parts, breaking reference equality.
   // Only return a match when exactly one artifact has the same content key,
   // to avoid resolving the wrong artifact when duplicates share a URL/content.
-  const contentMatches = artifacts.filter((artifact) =>
-    partsContentEqual(artifact.part, part),
-  );
-  return contentMatches.length === 1 ? contentMatches[0]! : null;
+  const contentKey = getPartContentKey(part);
+  if (!contentKey) return null;
+  return artifactLookup.byContentKey.get(contentKey) ?? null;
 }
 
-/** Lightweight structural comparison using the identifying field(s) per part type. */
-function partsContentEqual(
-  a: ArtifactWorkspaceComparablePart,
-  b: ArtifactWorkspaceComparablePart,
-): boolean {
-  if (a.type !== b.type) return false;
-  switch (a.type) {
+function getPartContentKey(
+  part: ArtifactWorkspaceComparablePart,
+): string | null {
+  switch (part.type) {
     case "image":
-      return a.image_url === (b as UIImagePart).image_url;
+      return `image:${part.image_url}`;
     case "pdf":
-      return a.pdf_url === (b as UIPdfPart).pdf_url;
+      return `pdf:${part.pdf_url}`;
     case "text-file":
-      return a.file_url === (b as UITextFilePart).file_url;
+      return `text-file:${part.file_url}`;
     case "rich-text":
-      // nodes is an array — compare by reference first, then by serialized content
-      return (
-        a.nodes === (b as UIRichTextPart).nodes ||
-        JSON.stringify(a.nodes) === JSON.stringify((b as UIRichTextPart).nodes)
-      );
+      return `rich-text:${safeStableStringify(part.nodes)}`;
     case "plan":
-      return (
-        "planText" in a &&
-        "planText" in b &&
-        a.planText === (b as UIPlanPart).planText
-      );
+      return "planText" in part ? `plan:${part.planText}` : null;
     case "plan-structured":
-      return (
-        JSON.stringify(a.entries) ===
-        JSON.stringify((b as UIStructuredPlanPart).entries)
-      );
+      return `plan-structured:${safeStableStringify(part.entries)}`;
     case "git-diff":
-      return a.diff === (b as UIGitDiffPart).diff;
+      return `git-diff:${part.diff}`;
     default:
-      return false;
+      return null;
+  }
+}
+
+function safeStableStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
   }
 }
 

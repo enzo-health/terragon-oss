@@ -85,7 +85,10 @@ const nextConfig: NextConfig = {
       "@ag-ui/core",
       "@anthropic-ai/sdk",
       "@aws-sdk/client-s3",
+      "@tanstack/react-table",
       "ai",
+      "date-fns",
+      "recharts",
       "zod",
     ],
     staleTimes: {

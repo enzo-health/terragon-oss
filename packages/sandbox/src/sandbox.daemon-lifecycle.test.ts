@@ -1,5 +1,4 @@
 import { describe, it, expect, afterAll, beforeAll, vi } from "vitest";
-import { DockerProvider } from "./providers/docker-provider";
 import { sendMessage } from "./daemon";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import { getOrCreateSandbox } from "./sandbox";
@@ -150,7 +149,6 @@ describe("daemon lifecycle (codex + local auth)", () => {
     try {
       await sandbox?.shutdown();
     } catch {}
-    await DockerProvider.cleanupTestContainers();
   });
 
   it("daemon should receive a codex message and POST events back to the test server", async () => {

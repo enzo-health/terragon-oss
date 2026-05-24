@@ -14,6 +14,7 @@ import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
+import { useThreadQueryInvalidationScheduler } from "@/hooks/use-ag-ui-query-invalidator";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
@@ -60,7 +61,11 @@ import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import { useThreadViewModel } from "./use-ag-ui-messages";
+import {
+  createThreadViewSidecarEventProjector,
+  useAgUiSidecarRouter,
+  useThreadViewModel,
+} from "./use-ag-ui-messages";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -107,23 +112,6 @@ function appendUniqueUiUserMessages(
     didAppend = true;
   }
   return didAppend ? out : baseMessages;
-}
-
-function getOptimisticUserMessages({
-  messages,
-  submittedMessages,
-}: {
-  messages: UIMessage[];
-  submittedMessages: UIUserMessage[];
-}): UIUserMessage[] {
-  const optimisticSubmittedMessages = messages.filter(
-    (message): message is UIUserMessage =>
-      message.role === "user" && message.id.startsWith("user-optimistic-"),
-  );
-  return appendUniqueUiUserMessages(
-    optimisticSubmittedMessages,
-    submittedMessages,
-  );
 }
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
@@ -186,11 +174,6 @@ function ChatUIContent() {
         shouldAutoOpenSecondaryPanel &&
         hasLiveDiffSignal),
   );
-  const shouldRenderSecondaryPanel =
-    isSecondaryPanelOpen ||
-    (platform === "desktop" &&
-      shouldAutoOpenSecondaryPanel &&
-      hasLiveDiffSignal);
   const { data: threadDiff } = useQuery({
     ...threadDiffQueryOptions(threadId),
     enabled: shouldLoadDiff,
@@ -220,12 +203,6 @@ function ChatUIContent() {
     threadId,
   });
 
-  useAutoOpenSecondaryPanelOnDiff({
-    hasLiveDiffSignal,
-    shouldAutoOpenSecondaryPanel,
-    isSecondaryPanelOpen,
-    setIsSecondaryPanelOpen,
-  });
   useThreadDocumentTitleAndFavicon({
     name: shell.name ?? "",
     isThreadUnread: !!shell.isUnread,
@@ -285,20 +262,65 @@ function ChatUIContent() {
     // Pin the captured runId to the latest RUN_STARTED on the current
     // HttpAgent. Reset on agent identity change (thread switch) so a stale
     // runId from a previous chat never leaks into a new reconnect URL.
-    setCapturedRun({
-      threadId,
-      threadChatId: threadChat.id,
-      runId: observedRunId,
+    setCapturedRun((current) => {
+      if (
+        current?.threadId === threadId &&
+        current.threadChatId === threadChat.id &&
+        current.runId === observedRunId
+      ) {
+        return current;
+      }
+
+      return {
+        threadId,
+        threadChatId: threadChat.id,
+        runId: observedRunId,
+      };
     });
   }, [observedRunId, threadChat.id, threadId]);
 
+  const projectThreadViewEvent = useMemo(
+    () =>
+      createThreadViewSidecarEventProjector({
+        includeTranscriptEvents: false,
+      }),
+    [],
+  );
   const threadViewModel = useThreadViewModel({
-    agent,
+    agent: null,
     snapshot: threadViewSnapshot,
+    includeTranscriptMessages: false,
+  });
+  const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
+    threadId,
+    threadChatId,
+    enabled: Boolean(agent),
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: threadViewModel.dispatchThreadViewEvent,
+    projectEvent: projectThreadViewEvent,
+    includeTranscriptMessages: false,
+    onStatusOrTerminalEvent: scheduleThreadQueryInvalidation,
   });
   const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
+  const shouldAutoRenderSecondaryPanel =
+    platform === "desktop" &&
+    shouldAutoOpenSecondaryPanel &&
+    hasLiveDiffSignal &&
+    artifactDescriptors.length > 0;
+  const shouldRenderSecondaryPanel =
+    isSecondaryPanelOpen || shouldAutoRenderSecondaryPanel;
+
+  useAutoOpenSecondaryPanelOnDiff({
+    hasArtifactDescriptors: artifactDescriptors.length > 0,
+    hasLiveDiffSignal,
+    shouldAutoOpenSecondaryPanel,
+    isSecondaryPanelOpen,
+    setIsSecondaryPanelOpen,
+  });
 
   const dispatch = threadViewModel.dispatchThreadViewEvent;
   const onOptimisticPermissionModeUpdate = useCallback(
@@ -466,10 +488,7 @@ function ChatUIContent() {
       threadViewModel,
       loadAgUiHistoryMessages,
       queuedMessages,
-      optimisticUserMessages: getOptimisticUserMessages({
-        messages: threadViewModel.messages,
-        submittedMessages: submittedOptimisticUserMessages,
-      }),
+      optimisticUserMessages: submittedOptimisticUserMessages,
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,

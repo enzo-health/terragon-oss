@@ -373,10 +373,27 @@ export function getDurableAgUiHistoryItemsFromEvents(
   events: readonly BaseEvent[],
 ): { items: DurableAgUiHistoryItem[]; lastSeqOffset: number } {
   const state = createHistoryBuilderState();
+  let representedRunActivity = false;
 
   events.forEach((event, index) => {
-    if (applyHistoryEvent(state, event)) {
+    const effect = applyHistoryEvent(state, event);
+    const shouldAdvanceCursor =
+      effect.changed ||
+      (effect.runActivity === "completed" && representedRunActivity);
+
+    if (shouldAdvanceCursor) {
       state.lastSeqOffset = index;
+    }
+    switch (effect.runActivity) {
+      case "reset":
+      case "completed":
+        representedRunActivity = false;
+        break;
+      case "represented":
+        representedRunActivity = true;
+        break;
+      case "none":
+        break;
     }
   });
 
@@ -413,60 +430,108 @@ function createHistoryBuilderState(): HistoryBuilderState {
   };
 }
 
+type HistoryRunActivity = "none" | "reset" | "represented" | "completed";
+
+type HistoryEventEffect = { changed: boolean; runActivity: HistoryRunActivity };
+
+function historyEventEffect(
+  changed: boolean,
+  runActivity: HistoryRunActivity = changed ? "represented" : "none",
+): HistoryEventEffect {
+  return { changed, runActivity };
+}
+
 function applyHistoryEvent(
   state: HistoryBuilderState,
   event: BaseEvent,
-): boolean {
+): HistoryEventEffect {
   switch (event.type) {
-    case EventType.MESSAGES_SNAPSHOT:
-      return applyMessagesSnapshot(state, event as MessagesSnapshotEvent);
+    case EventType.RUN_STARTED:
+      return historyEventEffect(false, "reset");
+    case EventType.MESSAGES_SNAPSHOT: {
+      const snapshotEffect = applyMessagesSnapshot(
+        state,
+        event as MessagesSnapshotEvent,
+      );
+      return historyEventEffect(
+        snapshotEffect.changed,
+        snapshotEffect.resetsRunActivity ? "reset" : "none",
+      );
+    }
     case EventType.TEXT_MESSAGE_START:
-      return startTextHistoryMessage(state, event as TextMessageStartEvent);
+      return historyEventEffect(
+        startTextHistoryMessage(state, event as TextMessageStartEvent),
+      );
     case EventType.TEXT_MESSAGE_CONTENT:
     case EventType.TEXT_MESSAGE_CHUNK:
-      return appendTextHistoryMessage(
-        state,
-        event as TextMessageContentEvent | TextMessageChunkEvent,
+      return historyEventEffect(
+        appendTextHistoryMessage(
+          state,
+          event as TextMessageContentEvent | TextMessageChunkEvent,
+        ),
       );
     case EventType.TEXT_MESSAGE_END:
-      return finishTextHistoryMessage(state, event as TextMessageEndEvent);
+      return historyEventEffect(
+        finishTextHistoryMessage(state, event as TextMessageEndEvent),
+      );
     case EventType.TOOL_CALL_START:
-      return startHistoryToolCall(state, event as ToolCallStartEvent);
+      return historyEventEffect(
+        startHistoryToolCall(state, event as ToolCallStartEvent),
+      );
     case EventType.TOOL_CALL_ARGS:
     case EventType.TOOL_CALL_CHUNK:
-      return appendHistoryToolArgs(state, event as ToolCallArgsEvent);
+      return historyEventEffect(
+        appendHistoryToolArgs(state, event as ToolCallArgsEvent),
+      );
     case EventType.TOOL_CALL_END:
-      return finishHistoryToolCall(state, event as ToolCallEndEvent);
+      return historyEventEffect(
+        finishHistoryToolCall(state, event as ToolCallEndEvent),
+      );
     case EventType.TOOL_CALL_RESULT:
-      return addHistoryToolResult(state, event as ToolCallResultEvent);
+      return historyEventEffect(
+        addHistoryToolResult(state, event as ToolCallResultEvent),
+      );
     case EventType.CUSTOM:
       if (isTerragonCustomPartEvent(event)) {
         state.items.push(event);
-        return true;
+        return historyEventEffect(true);
       }
-      return false;
+      return historyEventEffect(false);
     case EventType.RUN_FINISHED:
-      return finishUnresolvedHistoryToolCalls(
-        state,
-        "Tool call ended without a result.",
+      return historyEventEffect(
+        finishUnresolvedHistoryToolCalls(
+          state,
+          "Tool call ended without a result.",
+        ),
+        "completed",
       );
     case EventType.RUN_ERROR:
-      return finishUnresolvedHistoryToolCalls(
-        state,
-        historyRunErrorMessage(event),
+      return historyEventEffect(
+        finishUnresolvedHistoryToolCalls(state, historyRunErrorMessage(event)),
+        "completed",
       );
     default:
-      return false;
+      return historyEventEffect(false);
   }
 }
+
+type MessagesSnapshotHistoryEffect = {
+  changed: boolean;
+  resetsRunActivity: boolean;
+};
 
 function applyMessagesSnapshot(
   state: HistoryBuilderState,
   event: MessagesSnapshotEvent,
-): boolean {
+): MessagesSnapshotHistoryEffect {
   let changed = false;
+  let resetsRunActivity = false;
   for (const message of event.messages) {
+    if (isEmptyAssistantMessage(message)) {
+      continue;
+    }
     if (isContextResetMessage(message)) {
+      resetsRunActivity = true;
       changed =
         changed ||
         state.items.length > 0 ||
@@ -491,7 +556,7 @@ function applyMessagesSnapshot(
     indexHistoryMessage(state, message);
     changed = true;
   }
-  return changed;
+  return { changed, resetsRunActivity };
 }
 
 function indexHistoryMessage(
@@ -512,6 +577,14 @@ function indexHistoryMessage(
     state.toolParentById.set(toolCall.id, message.id);
     state.unresolvedToolCallIds.add(toolCall.id);
   }
+}
+
+function isEmptyAssistantMessage(message: Message): boolean {
+  return (
+    message.role === "assistant" &&
+    (message.content ?? "").length === 0 &&
+    (message.toolCalls?.length ?? 0) === 0
+  );
 }
 
 function ensureAssistantHistoryMessage(
@@ -545,8 +618,8 @@ function startTextHistoryMessage(
   if (state.assistantById.has(event.messageId)) {
     return false;
   }
-  ensureAssistantHistoryMessage(state, event.messageId);
-  return true;
+  state.lastAssistantId = event.messageId;
+  return false;
 }
 
 function appendTextHistoryMessage(
@@ -665,7 +738,7 @@ function finishUnresolvedHistoryToolCalls(
     changed = true;
   }
   state.unresolvedToolCallIds.clear();
-  return changed || state.items.length > 0;
+  return changed;
 }
 
 function historyRunErrorMessage(event: BaseEvent): string {
@@ -676,16 +749,10 @@ function historyRunErrorMessage(event: BaseEvent): string {
 }
 
 function isFailedToolResultEvent(event: ToolCallResultEvent): boolean {
-  const role = Reflect.get(event, "role");
   const isError = Reflect.get(event, "isError");
   const status = Reflect.get(event, "status");
   const error = Reflect.get(event, "error");
-  return (
-    role === "tool" ||
-    isError === true ||
-    status === "error" ||
-    typeof error === "string"
-  );
+  return isError === true || status === "error" || typeof error === "string";
 }
 
 function isTerragonCustomPartEvent(event: BaseEvent): event is CustomEvent {

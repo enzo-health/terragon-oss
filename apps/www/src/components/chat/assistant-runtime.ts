@@ -18,17 +18,12 @@ const EMPTY_HISTORY_MESSAGES: readonly AgUiMessage[] = [];
 /**
  * Terragon chat runtime backed by the AG-UI HttpAgent transport.
  *
- * Phase 4 swap: replaces the previous `useExternalStoreRuntime`-backed runtime
- * (which took pre-computed `UIMessage[]`) with a Terragon-aware AG-UI runtime.
  * Messages, tool calls, data parts, and thinking deltas flow through the AG-UI
- * SSE stream attached to the `HttpAgent` rather than through a parallel
- * realtime channel.
+ * SSE stream attached to the `HttpAgent`.
  *
  * This hook is the single source of `AssistantRuntime` for the chat UI. Actual
- * message rendering in Terragon continues to read from an external
- * `TerragonThreadContext` (Phase 6 migrates rendering onto the runtime as
- * well). The runtime is still required so assistant-ui primitives (e.g.
- * composer, run-state hooks) inside the provider tree behave correctly.
+ * message rendering now projects assistant-ui runtime messages into the
+ * Terragon transcript shape while assistant-ui primitives own run state.
  */
 export function useTerragonRuntime({
   agent,
@@ -105,9 +100,8 @@ export function useTerragonRuntime({
       // AgUiThreadRuntimeCore.__internal_load in @assistant-ui/react-ag-ui.
       //
       // The history adapter loads user/system history from the durable AG-UI
-      // event log. Rendering still reads from `useThreadViewModel`; `append`
-      // is a no-op because follow-ups flow through the `followUp` server
-      // action, not through the runtime.
+      // event log. Rendering projects the assistant-ui runtime transcript;
+      // append is routed through the runtime bridge.
       adapters: {
         history,
       },

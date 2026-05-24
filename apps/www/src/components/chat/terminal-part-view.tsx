@@ -1,11 +1,13 @@
-import React, { useEffect, useRef } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DBTerminalPart } from "@terragon/shared";
 
 type TerminalChunk = DBTerminalPart["chunks"][number];
+const COLLAPSED_CHUNK_LIMIT = 160;
+const STICKY_SCROLL_THRESHOLD_PX = 24;
 
-function ChunkLine({ chunk }: { chunk: TerminalChunk }) {
+const ChunkLine = memo(function ChunkLine({ chunk }: { chunk: TerminalChunk }) {
   return (
     <div
       data-kind={chunk.kind}
@@ -18,19 +20,66 @@ function ChunkLine({ chunk }: { chunk: TerminalChunk }) {
       {chunk.text}
     </div>
   );
-}
+});
 
 export interface TerminalPartViewProps {
   part: DBTerminalPart;
 }
 
-export function TerminalPartView({ part }: TerminalPartViewProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+export const TerminalPartView = memo(function TerminalPartView({
+  part,
+}: TerminalPartViewProps) {
+  const outputRef = useRef<HTMLDivElement>(null);
+  const previousChunkCountRef = useRef(0);
+  const [expanded, setExpanded] = useState(false);
   const chunkCount = part.chunks.length;
+  const isCollapsible = chunkCount > COLLAPSED_CHUNK_LIMIT;
+  const visibleChunks = useMemo(
+    () =>
+      expanded || !isCollapsible
+        ? part.chunks
+        : part.chunks.slice(-COLLAPSED_CHUNK_LIMIT),
+    [expanded, isCollapsible, part.chunks],
+  );
+  const hiddenChunkCount = chunkCount - visibleChunks.length;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: auto-scroll on append
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "nearest" });
+    const output = outputRef.current;
+    if (!output || chunkCount === previousChunkCountRef.current) {
+      previousChunkCountRef.current = chunkCount;
+      return;
+    }
+
+    const previousChunkCount = previousChunkCountRef.current;
+    previousChunkCountRef.current = chunkCount;
+
+    const distanceFromBottom =
+      output.scrollHeight - output.scrollTop - output.clientHeight;
+    const shouldStickToBottom =
+      previousChunkCount === 0 ||
+      output.scrollHeight <= output.clientHeight ||
+      distanceFromBottom <= STICKY_SCROLL_THRESHOLD_PX;
+
+    if (!shouldStickToBottom) return;
+
+    let frameId: number | undefined;
+    const scrollToBottom = () => {
+      output.scrollTop = output.scrollHeight;
+    };
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+      frameId = window.requestAnimationFrame(scrollToBottom);
+    } else {
+      scrollToBottom();
+    }
+    return () => {
+      if (
+        frameId !== undefined &&
+        typeof window !== "undefined" &&
+        window.cancelAnimationFrame
+      ) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
   }, [chunkCount]);
 
   return (
@@ -46,16 +95,31 @@ export function TerminalPartView({ part }: TerminalPartViewProps) {
       </div>
 
       {/* Chunk content on the brand-anchored dark surface. */}
-      <div className="bg-surface-dark p-3 max-h-[240px] overflow-y-auto">
+      <div
+        ref={outputRef}
+        data-testid="terminal-output"
+        className="bg-surface-dark p-3 max-h-[240px] overflow-y-auto"
+      >
         {part.chunks.length === 0 ? (
           <span className="text-muted-foreground/70 italic">No output</span>
         ) : (
-          part.chunks.map((chunk) => (
-            <ChunkLine key={chunk.streamSeq} chunk={chunk} />
-          ))
+          <>
+            {isCollapsible && !expanded ? (
+              <button
+                type="button"
+                className="mb-2 text-left text-on-dark-soft/70 hover:text-on-dark-soft"
+                onClick={() => setExpanded(true)}
+              >
+                Show {hiddenChunkCount} earlier line
+                {hiddenChunkCount === 1 ? "" : "s"}
+              </button>
+            ) : null}
+            {visibleChunks.map((chunk) => (
+              <ChunkLine key={chunk.streamSeq} chunk={chunk} />
+            ))}
+          </>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
-}
+});

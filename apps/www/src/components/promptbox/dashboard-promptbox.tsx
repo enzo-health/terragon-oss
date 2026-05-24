@@ -40,6 +40,13 @@ interface DashboardPromptBoxProps {
 }
 
 export function DashboardPromptBox(props: DashboardPromptBoxProps) {
+  const {
+    placeholder,
+    promptText,
+    handleStop,
+    handleSubmit,
+    ...promptBoxProps
+  } = props;
   const { selectedRepo, selectedBranch, setSelectedRepoAndBranch } =
     useSelectedRepoAndBranch();
   const repoFullName = selectedRepo;
@@ -69,12 +76,12 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     shouldUseCookieValues: true,
   });
   const placeholderText = useMemo(() => {
-    if (props.placeholder != null) return props.placeholder;
+    if (placeholder != null) return placeholder;
     if (!repoFullName || !branchName) {
       return "Select a repository and branch to start...";
     }
     return "Type your message here... Use @ to mention files (Enter to send)";
-  }, [props.placeholder, repoFullName, branchName]);
+  }, [placeholder, repoFullName, branchName]);
 
   const wrappedHandleSubmit: UsePromptBoxHandleSubmit = useCallback(
     async ({
@@ -85,7 +92,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
       saveAsDraft,
       scheduleAt,
     }) => {
-      return props.handleSubmit({
+      return handleSubmit({
         userMessage,
         selectedModels,
         repoFullName,
@@ -97,7 +104,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         createNewBranch,
       });
     },
-    [props, disableGitCheckpointing, skipSetup, createNewBranch],
+    [handleSubmit, disableGitCheckpointing, skipSetup, createNewBranch],
   );
 
   const {
@@ -116,7 +123,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     isMultiAgentMode,
     setIsMultiAgentMode,
   } = usePromptBox({
-    ...props,
+    ...promptBoxProps,
     placeholderText,
     repoFullName,
     branchName,
@@ -124,6 +131,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     forcedAgentVersion: null,
     initialSelectedModel: null,
     persistSelectedModelToUserFlags: true,
+    handleStop,
     typeahead: repositoryCache,
     clearContentBeforeSubmit: false,
     requireRepoAndBranch: true,
@@ -142,11 +150,11 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
 
   // Set content when promptText changes
   React.useEffect(() => {
-    if (props.promptText && editor) {
-      editor.commands.setContent(props.promptText);
+    if (promptText && editor && editor.getText() !== promptText) {
+      editor.commands.setContent(promptText);
       editor.commands.focus();
     }
-  }, [props.promptText, editor]);
+  }, [promptText, editor]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -159,7 +167,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         removeFile={removeFile}
         isSubmitting={isSubmitting}
         submitForm={submitForm}
-        handleStop={props.handleStop}
+        handleStop={handleStop}
         isSubmitDisabled={isSubmitDisabled}
         showStopButton={false}
         hideSubmitButton={false}

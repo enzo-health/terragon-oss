@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useState } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { GitBranch, Github, Settings } from "lucide-react";
 import { ResponsiveCombobox } from "@/components/ui/responsive-combobox";
 import {
@@ -9,6 +9,10 @@ import {
 } from "@/queries/user-repo-queries";
 import { getGHAppInstallUrl } from "@/lib/gh-app-url";
 import { cn } from "@/lib/utils";
+
+function openGitHubAppInstallUrl() {
+  window.open(getGHAppInstallUrl(), "_blank");
+}
 
 function RepoSelectorInner({
   selectedRepoFullName,
@@ -19,7 +23,7 @@ function RepoSelectorInner({
 }) {
   const { data: repoData, isLoading: isLoadingRepos } = useUserReposQuery();
   const repos = repoData?.repos;
-  const repoItems = React.useMemo(() => {
+  const repoItems = useMemo(() => {
     const items = [];
     if (repos) {
       items.push(
@@ -37,11 +41,38 @@ function RepoSelectorInner({
     return items;
   }, [selectedRepoFullName, repos]);
 
-  const repoByFullName = React.useMemo(() => {
+  const repoByFullName = useMemo(() => {
     return Object.fromEntries(
       repos?.map((repo) => [repo.full_name, repo]) ?? [],
     );
   }, [repos]);
+
+  const actionItems = useMemo(
+    () => [
+      {
+        value: "manage-github-apps",
+        label: "Manage repository access",
+        icon: <Settings className="size-4 shrink-0" />,
+        action: openGitHubAppInstallUrl,
+      },
+    ],
+    [],
+  );
+  const emptyRepoText = useCallback((didSearch: boolean) => {
+    if (!didSearch) {
+      return "Add a repo to get started.";
+    }
+    return "No repositories found.";
+  }, []);
+  const handleRepoChange = useCallback(
+    (newRepoFullName: string) => {
+      if (isLoadingRepos) {
+        return;
+      }
+      onChange(newRepoFullName);
+    },
+    [isLoadingRepos, onChange],
+  );
 
   const displayRepoFullName = isLoadingRepos
     ? (selectedRepoFullName ?? null)
@@ -52,31 +83,12 @@ function RepoSelectorInner({
   return (
     <ResponsiveCombobox
       items={repoItems}
-      actionItems={[
-        {
-          value: "manage-github-apps",
-          label: "Manage repository access",
-          icon: <Settings className="size-4 shrink-0" />,
-          action: () => {
-            window.open(getGHAppInstallUrl(), "_blank");
-          },
-        },
-      ]}
+      actionItems={actionItems}
       value={displayRepoFullName ?? null}
-      setValue={(newRepoFullName) => {
-        if (isLoadingRepos) {
-          return;
-        }
-        onChange(newRepoFullName);
-      }}
+      setValue={handleRepoChange}
       placeholder="Select a Repo"
       searchPlaceholder="Search repositories"
-      emptyText={(didSearch) => {
-        if (!didSearch) {
-          return "Add a repo to get started.";
-        }
-        return "No repositories found.";
-      }}
+      emptyText={emptyRepoText}
       isLoading={isLoadingRepos}
       loadingText="Loading repositories..."
       disabled={false}
@@ -113,7 +125,7 @@ function RepoBranchSelectorInner({
       enabled: loadBranches,
     });
 
-  const repoItems = React.useMemo(() => {
+  const repoItems = useMemo(() => {
     const items = [];
 
     if (repos) {
@@ -132,11 +144,72 @@ function RepoBranchSelectorInner({
     return items;
   }, [selectedRepoFullName, repos]);
 
-  const repoByFullName = React.useMemo(() => {
+  const repoByFullName = useMemo(() => {
     return Object.fromEntries(
       repos?.map((repo) => [repo.full_name, repo]) ?? [],
     );
   }, [repos]);
+
+  const actionItems = useMemo(
+    () => [
+      {
+        value: "manage-github-apps",
+        label: "Manage repository access",
+        icon: <Settings className="size-4 shrink-0" />,
+        action: openGitHubAppInstallUrl,
+      },
+    ],
+    [],
+  );
+  const emptyRepoText = useCallback((didSearch: boolean) => {
+    if (!didSearch) {
+      return "Add a repo to get started.";
+    }
+    return "No repositories found.";
+  }, []);
+  const handleRepoChange = useCallback(
+    (newRepoFullName: string) => {
+      if (isLoadingRepos) {
+        return;
+      }
+      if (newRepoFullName === "") {
+        onChange(null, null);
+        setLoadBranches(false);
+        return;
+      }
+
+      const repo = repoByFullName[newRepoFullName];
+      const newBranch = repo?.default_branch ?? "main";
+      setLoadBranches(false);
+      onChange(newRepoFullName, newBranch, repo?.default_branch === newBranch);
+    },
+    [isLoadingRepos, onChange, repoByFullName],
+  );
+  const handleLoadBranches = useCallback(() => {
+    setLoadBranches(true);
+  }, []);
+  const branchItems = useMemo(
+    () =>
+      branches?.map((branch) => ({
+        value: branch.name,
+        label: branch.name,
+      })) ??
+      (selectedBranch
+        ? [
+            {
+              value: selectedBranch,
+              label: selectedBranch,
+            },
+          ]
+        : []),
+    [branches, selectedBranch],
+  );
+  const handleBranchChange = useCallback(
+    (newBranch: string) => {
+      onChange(selectedRepoFullName, newBranch);
+    },
+    [onChange, selectedRepoFullName],
+  );
 
   const displayRepoFullName = isLoadingRepos
     ? (selectedRepoFullName ?? null)
@@ -155,43 +228,12 @@ function RepoBranchSelectorInner({
         <ResponsiveCombobox
           icon={<Github className="size-4 shrink-0 hidden sm:block" />}
           items={repoItems}
-          actionItems={[
-            {
-              value: "manage-github-apps",
-              label: "Manage repository access",
-              icon: <Settings className="size-4 shrink-0" />,
-              action: () => {
-                window.open(getGHAppInstallUrl(), "_blank");
-              },
-            },
-          ]}
+          actionItems={actionItems}
           value={displayRepoFullName ?? null}
-          setValue={(newRepoFullName) => {
-            if (isLoadingRepos) {
-              return;
-            }
-            if (newRepoFullName === null) {
-              onChange(null, null);
-              setLoadBranches(false);
-            } else {
-              const repo = repoByFullName?.[newRepoFullName];
-              const newBranch = repo?.default_branch ?? "main";
-              setLoadBranches(false);
-              onChange(
-                newRepoFullName,
-                newBranch,
-                repo?.default_branch === newBranch,
-              );
-            }
-          }}
+          setValue={handleRepoChange}
           placeholder="Select a Repo"
           searchPlaceholder="Search repositories"
-          emptyText={(didSearch) => {
-            if (!didSearch) {
-              return "Add a repo to get started.";
-            }
-            return "No repositories found.";
-          }}
+          emptyText={emptyRepoText}
           isLoading={isLoadingRepos}
           loadingText="Loading repositories..."
           disabled={false}
@@ -202,27 +244,10 @@ function RepoBranchSelectorInner({
         icon={<GitBranch className="size-4 shrink-0 hidden sm:block" />}
         className={cn(branchSelectorClassName, "shrink-1 min-w-[50px]")}
         key={selectedRepoFullName ?? "no-repo"}
-        onLoadItems={() => {
-          setLoadBranches(true);
-        }}
-        items={
-          branches?.map((branch) => ({
-            value: branch.name,
-            label: branch.name,
-          })) ??
-          (selectedBranch
-            ? [
-                {
-                  value: selectedBranch,
-                  label: selectedBranch,
-                },
-              ]
-            : [])
-        }
+        onLoadItems={handleLoadBranches}
+        items={branchItems}
         value={displaySelectedBranch ?? null}
-        setValue={(newBranch) => {
-          onChange(selectedRepoFullName, newBranch);
-        }}
+        setValue={handleBranchChange}
         placeholder="Select a Branch"
         searchPlaceholder="Search branches"
         emptyText="No branches found"

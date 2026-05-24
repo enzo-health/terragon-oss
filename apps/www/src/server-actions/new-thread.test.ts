@@ -47,7 +47,7 @@ describe("newThread", { timeout: 30_000 }, () => {
 
   beforeAll(() => {
     execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     vi.clearAllMocks();

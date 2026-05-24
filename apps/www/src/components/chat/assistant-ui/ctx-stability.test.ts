@@ -117,10 +117,7 @@ describe("isEqualArtifactList", () => {
     expect(isEqualArtifactList(a, b)).toBe(false);
   });
 
-  it("returns true when only summary differs (summary is intentionally excluded from the compare set)", () => {
-    // The compare function only inspects id/kind/status/title/updatedAt.
-    // Summary is a derived display string and is not part of the stability
-    // key — changing it alone should NOT invalidate the downstream memo.
+  it("returns false when summary differs", () => {
     const a = [
       makeArtifact({
         id: "1",
@@ -135,6 +132,6 @@ describe("isEqualArtifactList", () => {
         summary: "+10 −5",
       }),
     ];
-    expect(isEqualArtifactList(a, b)).toBe(true);
+    expect(isEqualArtifactList(a, b)).toBe(false);
   });
 });

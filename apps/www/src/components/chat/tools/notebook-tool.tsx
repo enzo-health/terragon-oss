@@ -3,7 +3,7 @@ import { AllToolParts } from "@terragon/shared";
 import {
   GenericToolPart,
   GenericToolPartContentOneLine,
-  GenericToolPartContentResultWithLines,
+  GenericToolPartContentResultWithText,
   GenericToolPartContentResultWithPreview,
 } from "./generic-ui";
 
@@ -23,8 +23,8 @@ export function NotebookEditTool({
           Editing...
         </GenericToolPartContentOneLine>
       ) : toolPart.status === "error" ? (
-        <GenericToolPartContentResultWithLines
-          lines={toolPart.result.split("\n")}
+        <GenericToolPartContentResultWithText
+          content={toolPart.result}
           toolStatus="error"
         />
       ) : (
@@ -54,8 +54,8 @@ export function NotebookReadTool({
           Reading...
         </GenericToolPartContentOneLine>
       ) : toolPart.status === "error" ? (
-        <GenericToolPartContentResultWithLines
-          lines={toolPart.result.split("\n")}
+        <GenericToolPartContentResultWithText
+          content={toolPart.result}
           toolStatus="error"
         />
       ) : (

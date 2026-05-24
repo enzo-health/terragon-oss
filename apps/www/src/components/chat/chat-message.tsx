@@ -3,6 +3,7 @@
 import React, { memo, useMemo } from "react";
 import { UIMessage, UIPart, ThreadInfoFull } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { MessagePart } from "./message-part";
 import { cn } from "@/lib/utils";
 import { MessageToolbar } from "./chat-message-toolbar";
@@ -35,6 +36,7 @@ type ChatMessageProps = {
   thread?: ThreadInfoFull | null;
   latestGitDiffTimestamp?: string | null;
   artifactDescriptors?: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   /** Thread-global plan occurrence map (from ChatMessages). */
   planOccurrences?: Map<UIPart, number>;
@@ -55,6 +57,7 @@ type ChatMessageWithToolbarProps = {
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   artifactDescriptors?: ArtifactDescriptor[];
+  artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   planOccurrences?: Map<UIPart, number>;
 };
@@ -69,6 +72,7 @@ export const ChatMessage = memo(function ChatMessage({
   thread = null,
   latestGitDiffTimestamp = null,
   artifactDescriptors = [],
+  artifactDescriptorLookup,
   onOpenArtifact = () => {},
   planOccurrences: planOccurrencesProp,
 }: ChatMessageProps) {
@@ -99,6 +103,7 @@ export const ChatMessage = memo(function ChatMessage({
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
         artifactDescriptors={artifactDescriptors}
+        artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
       />
     );
@@ -122,6 +127,7 @@ export const ChatMessage = memo(function ChatMessage({
                 isAgentWorking={isAgentWorking}
                 messagePartProps={messagePartProps}
                 artifactDescriptors={artifactDescriptors}
+                artifactDescriptorLookup={artifactDescriptorLookup}
                 onOpenArtifact={onOpenArtifact}
                 planOccurrences={planOccurrences}
               />
@@ -135,6 +141,7 @@ export const ChatMessage = memo(function ChatMessage({
                 messagePartProps={messagePartProps}
                 isLatestMessage={isLatestMessage}
                 artifactDescriptors={artifactDescriptors}
+                artifactDescriptorLookup={artifactDescriptorLookup}
                 onOpenArtifact={onOpenArtifact}
               />
             );
@@ -150,6 +157,7 @@ export const ChatMessage = memo(function ChatMessage({
                     isAgentWorking={isAgentWorking}
                     {...messagePartProps}
                     artifactDescriptors={artifactDescriptors}
+                    artifactDescriptorLookup={artifactDescriptorLookup}
                     onOpenArtifact={onOpenArtifact}
                     planOccurrenceIndex={planOccurrences.get(part)}
                   />
@@ -169,11 +177,11 @@ export const ChatMessage = memo(function ChatMessage({
     <div
       style={{ overflowAnchor: "none" }}
       className={cn(
-        "w-full break-words animate-in fade-in slide-in-from-bottom-2",
+        "w-full break-words",
         message.role === "user"
           ? // Brand: cream feature-card surface, no border ("color-block first,
             // shadow rare"). The warm-lift shadow does the elevation work.
-            "ml-auto w-fit max-w-[90%] sm:max-w-[85%] rounded-[calc(var(--radius)+0.15rem)] bg-card text-card-foreground px-4 py-3 shadow-[var(--shadow-warm-lift)] md:px-5"
+            "ml-auto w-fit max-w-[90%] sm:max-w-[85%] animate-in fade-in slide-in-from-bottom-2 rounded-[calc(var(--radius)+0.15rem)] bg-card text-card-foreground px-4 py-3 shadow-[var(--shadow-warm-lift)] md:px-5"
           : "mr-auto",
         className,
       )}
@@ -238,6 +246,7 @@ function areChatMessagePropsEqual(
 
   if (
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
     prevProps.planOccurrences !== nextProps.planOccurrences
   ) {
@@ -262,6 +271,7 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
   redoDialogData,
   forkDialogData,
   artifactDescriptors = [],
+  artifactDescriptorLookup,
   onOpenArtifact = () => {},
   planOccurrences,
 }: ChatMessageWithToolbarProps) {
@@ -269,8 +279,10 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
     <div
       // gap-0 between bubble and toolbar — toolbar carries its own mt-1
       // breathing internally, so a parent gap stacks two spacers.
-      className="flex flex-col group [scroll-margin-top:6rem]"
+      className="flex flex-col group [scroll-margin-top:6rem] [content-visibility:auto] [contain-intrinsic-size:auto_160px]"
       data-message-index={messageIndex}
+      data-message-id={message.id}
+      data-message-role={message.role}
     >
       <ChatMessage
         message={message}
@@ -282,12 +294,14 @@ export const ChatMessageWithToolbar = memo(function ChatMessageWithToolbar({
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
         artifactDescriptors={artifactDescriptors}
+        artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
         planOccurrences={planOccurrences}
       />
       <MessageToolbar
         message={message}
         messageIndex={messageIndex}
+        taskId={thread?.id}
         isFirstUserMessage={isFirstUserMessage}
         isLatestAgentMessage={isLatestAgentMessage}
         isAgentWorking={isAgentWorking}
@@ -354,6 +368,7 @@ function areChatMessageWithToolbarPropsEqual(
 
   if (
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
+    prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
     prevProps.planOccurrences !== nextProps.planOccurrences
   ) {

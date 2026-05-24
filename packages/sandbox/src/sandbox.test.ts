@@ -1,5 +1,4 @@
 import { describe, it, expect, afterAll, beforeAll, vi } from "vitest";
-import { DockerProvider } from "./providers/docker-provider";
 import {
   DAEMON_FILE_PATH,
   DAEMON_LOG_FILE_PATH,
@@ -87,9 +86,6 @@ describe(`sandbox ${providerName}`, () => {
     try {
       await sandbox.shutdown();
     } catch {}
-    // Cleanup test containers. If using the docker provider, you can comment this out.
-    // to make keep the containers around for debugging.
-    await DockerProvider.cleanupTestContainers();
   });
 
   it("should create a sandbox", async () => {

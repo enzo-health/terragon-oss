@@ -7,6 +7,10 @@ import {
   handleAppUserNotification,
   handleOAuthAppRevoked,
   handlePermissionChange,
+  type AgentSessionEventPayload,
+  type AppUserNotificationPayload,
+  type OAuthAppRevokedPayload,
+  type PermissionChangePayload,
 } from "./handlers";
 import {
   LinearWebhookClient,
@@ -130,6 +134,124 @@ function verifyLinearSignatureManual(
   return crypto.timingSafeEqual(a, b);
 }
 
+function getStringField(
+  payload: Record<string, unknown>,
+  field: string,
+): string | null {
+  const value = payload[field];
+  return typeof value === "string" ? value : null;
+}
+
+function getStringArrayField(
+  payload: Record<string, unknown>,
+  field: string,
+): string[] | null {
+  const value = payload[field];
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? value
+    : null;
+}
+
+function getBooleanField(
+  payload: Record<string, unknown>,
+  field: string,
+): boolean | null {
+  const value = payload[field];
+  return typeof value === "boolean" ? value : null;
+}
+
+function isObject(value: unknown): value is object {
+  return typeof value === "object" && value !== null;
+}
+
+function hasAgentSessionId(payload: object): boolean {
+  const agentSession = Reflect.get(payload, "agentSession");
+  return (
+    isObject(agentSession) &&
+    typeof Reflect.get(agentSession, "id") === "string"
+  );
+}
+
+function isAgentSessionEventPayload(
+  payload: unknown,
+): payload is AgentSessionEventPayload {
+  if (!isObject(payload)) {
+    return false;
+  }
+  return (
+    Reflect.get(payload, "type") === "AgentSessionEvent" &&
+    typeof Reflect.get(payload, "action") === "string" &&
+    typeof Reflect.get(payload, "organizationId") === "string" &&
+    hasAgentSessionId(payload)
+  );
+}
+
+function isAppUserNotificationPayload(
+  payload: unknown,
+): payload is AppUserNotificationPayload {
+  if (!isObject(payload)) {
+    return false;
+  }
+  return (
+    Reflect.get(payload, "type") === "AppUserNotification" &&
+    typeof Reflect.get(payload, "organizationId") === "string"
+  );
+}
+
+function parsePermissionChangePayload(
+  payload: Record<string, unknown>,
+): PermissionChangePayload | null {
+  const organizationId = getStringField(payload, "organizationId");
+  const createdAt = getStringField(payload, "createdAt");
+  const canAccessAllPublicTeams = getBooleanField(
+    payload,
+    "canAccessAllPublicTeams",
+  );
+  const addedTeamIds = getStringArrayField(payload, "addedTeamIds");
+  const removedTeamIds = getStringArrayField(payload, "removedTeamIds");
+
+  if (
+    payload.type !== "PermissionChange" ||
+    payload.action !== "teamAccessChanged" ||
+    !organizationId ||
+    !createdAt ||
+    canAccessAllPublicTeams === null ||
+    !addedTeamIds ||
+    !removedTeamIds
+  ) {
+    return null;
+  }
+
+  return {
+    type: "PermissionChange",
+    action: "teamAccessChanged",
+    createdAt,
+    organizationId,
+    canAccessAllPublicTeams,
+    addedTeamIds,
+    removedTeamIds,
+  };
+}
+
+function parseOAuthAppRevokedPayload(
+  payload: Record<string, unknown>,
+): OAuthAppRevokedPayload | null {
+  const organizationId = getStringField(payload, "organizationId");
+  if (
+    payload.type !== "OAuthApp" ||
+    payload.action !== "revoked" ||
+    !organizationId
+  ) {
+    return null;
+  }
+  return {
+    type: "OAuthApp",
+    action: "revoked",
+    organizationId,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
 
@@ -165,22 +287,27 @@ export async function POST(req: NextRequest) {
   );
 
   if (payload.type === "AgentSessionEvent") {
+    if (!isAgentSessionEventPayload(payload)) {
+      console.warn("[linear webhook] Invalid AgentSessionEvent payload");
+      return new Response("ok", { status: 200 });
+    }
+
     // Primary trigger: AgentSessionEvent
     // `created` → create thread (emits thought synchronously within 10s SLA)
     // `prompted` → route follow-up to existing thread
-    await handleAgentSessionEvent(
-      payload as unknown as Parameters<typeof handleAgentSessionEvent>[0],
-      deliveryId,
-    );
+    await handleAgentSessionEvent(payload, deliveryId);
     return new Response("ok", { status: 200 });
   }
 
   if (payload.type === "AppUserNotification") {
+    if (!isAppUserNotificationPayload(payload)) {
+      console.warn("[linear webhook] Invalid AppUserNotification payload");
+      return new Response("ok", { status: 200 });
+    }
+
     // Inbox notifications — agent was mentioned, unassigned, reacted to, etc.
     waitUntil(
-      handleAppUserNotification(
-        payload as unknown as Parameters<typeof handleAppUserNotification>[0],
-      ).catch((err) => {
+      handleAppUserNotification(payload).catch((err) => {
         console.error(
           "[linear webhook] Error handling AppUserNotification",
           err,
@@ -191,11 +318,15 @@ export async function POST(req: NextRequest) {
   }
 
   if (payload.type === "PermissionChange") {
+    const permissionChangePayload = parsePermissionChangePayload(payload);
+    if (!permissionChangePayload) {
+      console.warn("[linear webhook] Invalid PermissionChange payload");
+      return new Response("ok", { status: 200 });
+    }
+
     // Team access gained/lost for the agent
     waitUntil(
-      handlePermissionChange(
-        payload as unknown as Parameters<typeof handlePermissionChange>[0],
-      ).catch((err) => {
+      handlePermissionChange(permissionChangePayload).catch((err) => {
         console.error("[linear webhook] Error handling PermissionChange", err);
       }),
     );
@@ -203,11 +334,15 @@ export async function POST(req: NextRequest) {
   }
 
   if (payload.type === "OAuthApp" && payload.action === "revoked") {
+    const oauthAppRevokedPayload = parseOAuthAppRevokedPayload(payload);
+    if (!oauthAppRevokedPayload) {
+      console.warn("[linear webhook] Invalid OAuthApp revoked payload");
+      return new Response("ok", { status: 200 });
+    }
+
     // OAuth app was revoked — deactivate the installation
     waitUntil(
-      handleOAuthAppRevoked(
-        payload as unknown as Parameters<typeof handleOAuthAppRevoked>[0],
-      ).catch((err) => {
+      handleOAuthAppRevoked(oauthAppRevokedPayload).catch((err) => {
         console.error("[linear webhook] Error handling OAuthApp revoked", err);
       }),
     );

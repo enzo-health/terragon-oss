@@ -30,11 +30,11 @@ describe("ProgressChunks", () => {
       text: `chunk ${i}`,
     }));
     const html = renderToStaticMarkup(<ProgressChunks chunks={chunks} />);
-    expect(html).toContain("+2 more chunk");
-    // Only first COLLAPSED_LIMIT visible
-    expect(html).toContain(`chunk 0`);
+    expect(html).toContain("Show 2 earlier retained updates");
+    expect(html).not.toContain("chunk 0");
+    expect(html).not.toContain("chunk 1");
     expect(html).toContain(`chunk ${COLLAPSED_LIMIT - 1}`);
-    expect(html).not.toContain(`chunk ${COLLAPSED_LIMIT}`);
+    expect(html).toContain(`chunk ${COLLAPSED_LIMIT}`);
   });
 
   it("does not show collapse button when within limit", () => {
@@ -44,5 +44,17 @@ describe("ProgressChunks", () => {
     }));
     const html = renderToStaticMarkup(<ProgressChunks chunks={chunks} />);
     expect(html).not.toContain("more chunk");
+  });
+
+  it("distinguishes omitted progress from expandable retained progress", () => {
+    const chunks = Array.from({ length: COLLAPSED_LIMIT + 1 }, (_, i) => ({
+      seq: i,
+      text: `chunk ${i}`,
+    }));
+    const html = renderToStaticMarkup(
+      <ProgressChunks chunks={chunks} hiddenCount={50} />,
+    );
+    expect(html).toContain("50 older updates omitted");
+    expect(html).toContain("Show 1 earlier retained update");
   });
 });

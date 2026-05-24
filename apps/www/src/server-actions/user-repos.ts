@@ -6,10 +6,48 @@ import {
   getOctokitForUserOrThrow,
   parseRepoFullName,
 } from "@/lib/github";
+import { getGitHubApp } from "@terragon/shared/github-app";
 import { Endpoints } from "@octokit/types";
+import { isDevLoginEnabled } from "@/lib/auth";
 
 export type UserRepo =
   Endpoints["GET /installation/repositories"]["response"]["data"]["repositories"][number];
+
+function isDevLoginRepoFallbackEnabled(userId: string) {
+  return isDevLoginEnabled() && userId === "dev-login-user";
+}
+
+async function getDevLoginReposFromGitHubApp(): Promise<UserRepo[]> {
+  const app = getGitHubApp();
+  const { data: installations } = await app.octokit.request(
+    "GET /app/installations",
+    {
+      per_page: 100,
+    },
+  );
+  const repoArrays = await Promise.all(
+    installations.map(async (installation) => {
+      const installationOctokit = await app.getInstallationOctokit(
+        installation.id,
+      );
+      const { data } = await installationOctokit.request(
+        "GET /installation/repositories",
+        {
+          per_page: 100,
+        },
+      );
+      return data.repositories;
+    }),
+  );
+  return repoArrays
+    .flat()
+    .filter((repo) => repo)
+    .sort((a, b) => {
+      const aPushedAt = a.pushed_at ? new Date(a.pushed_at).getTime() : 0;
+      const bPushedAt = b.pushed_at ? new Date(b.pushed_at).getTime() : 0;
+      return bPushedAt - aPushedAt;
+    }) as UserRepo[];
+}
 
 export const getUserRepos = userOnlyAction(
   async function getUserRepos(userId: string) {
@@ -76,6 +114,14 @@ export const getUserRepos = userOnlyAction(
       }
     } catch (appError) {
       console.error("[getUserRepos] CAUGHT ERROR:", appError);
+    }
+    if (isDevLoginRepoFallbackEnabled(userId)) {
+      const fallbackRepos = await getDevLoginReposFromGitHubApp();
+      console.log(
+        "[getUserRepos] dev-login fallback repos:",
+        fallbackRepos.length,
+      );
+      return { repos: fallbackRepos };
     }
     console.log("[getUserRepos] returning empty repos");
     return { repos: [] };
