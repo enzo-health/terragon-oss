@@ -300,6 +300,10 @@ function upsertAssistantMessage(params: {
   };
 }
 
+function hasMessageId(messages: readonly ThreadMessage[], messageId: string) {
+  return messages.some((message) => message.id === messageId);
+}
+
 function applyToolResult(params: {
   messages: ThreadMessage[];
   message: Extract<AgUiMessage, { role: "tool" }>;
@@ -395,9 +399,15 @@ export function agUiMessagesToThreadMessages(
     const message = item;
     switch (message.role) {
       case "user":
+        if (hasMessageId(messages, message.id)) {
+          break;
+        }
         messages.push(userMessage(message));
         break;
       case "system":
+        if (hasMessageId(messages, message.id)) {
+          break;
+        }
         messages.push(systemMessage(message));
         break;
       case "assistant":

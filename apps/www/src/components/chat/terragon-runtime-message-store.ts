@@ -40,6 +40,17 @@ export class RuntimeMessageStore {
   }
 
   append(message: ThreadMessage): void {
+    const existingIndex = this.getIndex(message.id);
+    if (existingIndex !== undefined) {
+      const existing = this.messages[existingIndex];
+      if (!existing) return;
+      const merged = this.mergeDuplicateMessage(existing, message);
+      if (merged !== existing) {
+        this.replaceAt(existingIndex, merged);
+      }
+      return;
+    }
+
     this.messages = [...this.messages, message];
     this.messageIndexById.set(message.id, this.messages.length - 1);
   }
@@ -64,8 +75,42 @@ export class RuntimeMessageStore {
   }
 
   replaceAll(messages: readonly ThreadMessage[]): void {
-    this.messages = [...messages];
+    this.messages = this.dedupeMessages(messages);
     this.rebuildIndex();
+  }
+
+  private dedupeMessages(messages: readonly ThreadMessage[]): ThreadMessage[] {
+    const nextMessages: ThreadMessage[] = [];
+    const nextIndexById = new Map<string, number>();
+
+    for (const message of messages) {
+      const existingIndex = nextIndexById.get(message.id);
+      if (existingIndex === undefined) {
+        nextIndexById.set(message.id, nextMessages.length);
+        nextMessages.push(message);
+        continue;
+      }
+
+      const existing = nextMessages[existingIndex];
+      if (!existing) continue;
+      nextMessages[existingIndex] = this.mergeDuplicateMessage(
+        existing,
+        message,
+      );
+    }
+
+    return nextMessages;
+  }
+
+  private mergeDuplicateMessage(
+    existing: ThreadMessage,
+    incoming: ThreadMessage,
+  ): ThreadMessage {
+    if (existing.role === "assistant" && incoming.role === "assistant") {
+      return this.mergeExternalMessage(existing, incoming);
+    }
+
+    return existing;
   }
 
   mergeExternalMessage(

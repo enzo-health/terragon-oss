@@ -154,4 +154,30 @@ describe("TerragonAgUiThreadRuntimeCore", () => {
       reason: "unknown",
     });
   });
+
+  it("dedupes repeated external messages by id", () => {
+    const core = createCore();
+    core.applyExternalMessages([
+      createUserMessage("user-1", "prompt"),
+      createUserMessage("user-1", "prompt"),
+      createAssistantMessage("assistant-1", "hel"),
+      createAssistantMessage("assistant-1", "hello", {
+        type: "complete",
+        reason: "unknown",
+      }),
+    ]);
+
+    const messages = core.getMessages();
+    expect(messages.map((message) => message.id)).toEqual([
+      "user-1",
+      "assistant-1",
+    ]);
+    const assistant = messages[1];
+    expect(assistant?.role).toBe("assistant");
+    expect(assistant?.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(assistant?.status).toEqual({
+      type: "complete",
+      reason: "unknown",
+    });
+  });
 });

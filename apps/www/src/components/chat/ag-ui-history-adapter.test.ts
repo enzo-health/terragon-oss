@@ -45,6 +45,49 @@ describe("agUiMessagesToThreadMessages", () => {
     });
   });
 
+  it("dedupes repeated history messages before hydrating the runtime", () => {
+    const messages = agUiMessagesToThreadMessages([
+      {
+        id: "user-1",
+        role: "user",
+        content: "Prompt",
+      },
+      {
+        id: "user-1",
+        role: "user",
+        content: "Prompt",
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Hello",
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "tool-1",
+            type: "function",
+            function: {
+              name: "Bash",
+              arguments: "{}",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "user-1",
+      "assistant-1",
+    ]);
+    const assistant = messages[1];
+    expect(assistant?.role).toBe("assistant");
+    expect(assistant?.content).toHaveLength(2);
+  });
+
   it("marks unresolved idle-history tool calls as errored", async () => {
     const adapter = createAgUiHistoryAdapter(
       () => [
