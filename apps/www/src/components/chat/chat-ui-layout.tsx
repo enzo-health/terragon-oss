@@ -14,21 +14,18 @@ import {
 } from "@terragon/shared";
 import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
-import React, { useCallback } from "react";
+import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   convertToPlainText,
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
-import { stopThread } from "@/server-actions/stop-thread";
 import { queueFollowUp } from "@/server-actions/follow-up";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import {
-  TerragonThreadErrorBoundary,
-  TerragonThreadRuntimeFrame,
-} from "./assistant-ui/terragon-thread";
+import { TerragonRuntimeSession } from "./assistant-ui/terragon-runtime-session";
+import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
@@ -285,13 +282,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     queuedMessagesRef.current = queuedMessages;
   }, [queuedMessages]);
 
-  const handleCancel = useCallback(async () => {
-    await stopThread({
-      threadId: thread.id,
-      threadChatId: threadChat.id,
-    });
-  }, [thread.id, threadChat.id]);
-
   const runtimeQueue = React.useMemo(
     () =>
       createChatRuntimeQueue({
@@ -330,10 +320,9 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           githubSummary={threadViewModel.githubSummary}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
-          <TerragonThreadRuntimeFrame
+          <TerragonRuntimeSession
             agent={agent}
             loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-            onCancel={handleCancel}
             chatAgent={chatAgent}
             isAgentWorking={isAgentCurrentlyWorking}
             threadId={thread.id}
@@ -373,7 +362,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
-                          onCancel={handleCancel}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -455,7 +443,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 )}
               </div>
             )}
-          </TerragonThreadRuntimeFrame>
+          </TerragonRuntimeSession>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
               thread={threadWithViewModelStatus}

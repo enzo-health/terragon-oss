@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuiState } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
@@ -22,8 +21,6 @@ import type {
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
-import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
-import { createTerragonTranscriptModelBuilder } from "./terragon-transcript-model";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
   type TerragonMessageRenderContext,
@@ -35,6 +32,7 @@ import {
   getWorkingFooterFreshness,
   shouldSuppressPreStartLifecycleFooter,
 } from "./working-footer-freshness";
+import { useTerragonTranscript } from "./use-terragon-transcript";
 
 export type TerragonThreadRuntimeContentProps = {
   lifecycleMessages: UISystemMessage[];
@@ -44,7 +42,6 @@ export type TerragonThreadRuntimeContentProps = {
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
-  onCancel?: () => Promise<void>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   toolProps: TerragonThreadContext["toolProps"];
@@ -96,46 +93,18 @@ export function TerragonThreadRuntimeContent({
   optimisticUserMessages = [],
   children,
 }: TerragonThreadRuntimeContentProps) {
-  const runtimeMessages = useAuiState((state) => state.thread.messages);
-  const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
-  const runtimeTranscriptProjector = useMemo(
-    () => createRuntimeTranscriptProjector(),
-    [],
-  );
-  const projectedTranscript = useMemo(
-    () =>
-      runtimeTranscriptProjector({
-        runtimeMessages,
-        agent: chatAgent,
-      }),
-    [chatAgent, runtimeMessages, runtimeTranscriptProjector],
-  );
-  const transcriptModelBuilder = useMemo(
-    () => createTerragonTranscriptModelBuilder(),
-    [],
-  );
-  const transcriptModel = useMemo(
-    () =>
-      transcriptModelBuilder({
-        runtimeMessages: projectedTranscript.messages,
-        optimisticUserMessages,
-      }),
-    [
-      optimisticUserMessages,
-      projectedTranscript.messages,
-      transcriptModelBuilder,
-    ],
-  );
-  const messages = transcriptModel.messages;
+  const transcript = useTerragonTranscript({
+    chatAgent,
+    optimisticUserMessages,
+  });
+  const messages = transcript.messages;
   toolProps.messagesRef.current = messages;
-  const isRuntimeHydrating =
-    runtimeIsLoading && runtimeMessages.length === 0 && messages.length === 0;
   useScrollToHashMessageOnce({
-    messages: isRuntimeHydrating ? [] : messages,
+    messages: transcript.isRuntimeHydrating ? [] : messages,
     resetKey: thread.id,
   });
   const planOccurrences = useStableRef(
-    transcriptModel.planOccurrencesRaw,
+    transcript.planOccurrencesRaw,
     isEqualPlanMap,
   );
   const stableArtifactDescriptors = useStableRef(
@@ -158,13 +127,12 @@ export function TerragonThreadRuntimeContent({
   const suppressPreStartLifecycleFooter = shouldSuppressPreStartLifecycleFooter(
     {
       threadStatus,
-      hasAgentMessages: transcriptModel.hasRenderableAgentParts,
+      hasAgentMessages: transcript.hasRenderableAgentParts,
     },
   );
   const baseShowWorking =
     isAgentWorking &&
-    (!transcriptModel.hasPendingToolCall ||
-      !transcriptModel.hasRenderableAgentParts) &&
+    (!transcript.hasPendingToolCall || !transcript.hasRenderableAgentParts) &&
     !hasSandboxError &&
     !suppressPreStartLifecycleFooter;
   const shouldCheckWorkingFooterFreshness =
@@ -265,9 +233,9 @@ export function TerragonThreadRuntimeContent({
       <TerragonMessageRenderProvider value={messageRenderCtx}>
         <TerragonTranscriptSurface
           lifecycleMessages={lifecycleMessages}
-          isRuntimeHydrating={isRuntimeHydrating}
+          isRuntimeHydrating={transcript.isRuntimeHydrating}
           messages={messages}
-          latestAgentMessageIndex={transcriptModel.latestAgentMessageIndex}
+          latestAgentMessageIndex={transcript.latestAgentMessageIndex}
           chatAgent={chatAgent}
           error={error}
           errorType={errorType}

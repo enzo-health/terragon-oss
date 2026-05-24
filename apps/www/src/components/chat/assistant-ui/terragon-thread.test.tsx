@@ -47,8 +47,8 @@ vi.mock("./system-message", async () => {
 import {
   resolveTerragonRuntimeLoadConfig,
   resolveTerragonThreadErrorProps,
-  TerragonThreadErrorBoundary,
-} from "./terragon-thread";
+} from "./terragon-runtime-session";
+import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
 import {
   getWorkingMessageSlotClassName,
   TerragonTranscriptSurface,

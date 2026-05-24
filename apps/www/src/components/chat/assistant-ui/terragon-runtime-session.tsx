@@ -2,19 +2,14 @@
 
 import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import type { UseAgUiRuntimeOptions } from "@assistant-ui/react-ag-ui";
+import {
+  useAgUiRuntime,
+  type UseAgUiRuntimeOptions,
+} from "@assistant-ui/react-ag-ui";
+import type { AIAgent } from "@terragon/agent/types";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import { useTerragonRuntime } from "../assistant-runtime";
-import { TerragonThreadErrorBoundary } from "./terragon-thread-error-boundary";
-import {
-  TerragonThreadRuntimeContent,
-  type TerragonThreadRuntimeContentProps,
-} from "./terragon-thread-runtime-content";
-import { shouldSuppressPreStartLifecycleFooter } from "./working-footer-freshness";
-
-export { shouldSuppressPreStartLifecycleFooter };
-export { TerragonThreadErrorBoundary };
+import { createAgUiHistoryAdapter } from "../ag-ui-history-adapter";
 
 function applyReplayCursorToAgent(agent: HttpAgent, lastSeq: number): void {
   const url = new URL(agent.url, "http://terragon.local");
@@ -29,31 +24,40 @@ class TerragonHistoryLoadError extends Error {
   }
 }
 
-type TerragonThreadProps = TerragonThreadRuntimeContentProps & {
-  agent: HttpAgent;
-  loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
-  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
-};
-
-type TerragonThreadRuntimeFrameProps = {
-  agent: HttpAgent;
-  loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
-  onCancel?: () => Promise<void>;
-  chatAgent: TerragonThreadProps["chatAgent"];
-  isAgentWorking: boolean;
+async function postTerragonCancel({
+  threadId,
+  threadChatId,
+  onError,
+}: {
   threadId: string;
-  threadChatId?: string;
-  callerError?: string | null;
-  callerErrorType?: string;
-  callerErrorInfo?: string;
-  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
-  children: (props: {
-    errorInfo?: string;
-    errorType?: string;
-    handleRetry?: () => Promise<void>;
-    isRetrying?: boolean;
-  }) => React.ReactNode;
-};
+  threadChatId: string;
+  onError?: (error: Error) => void;
+}): Promise<void> {
+  try {
+    const response = await fetch(
+      `/api/ag-ui/${encodeURIComponent(threadId)}/cancel?threadChatId=${encodeURIComponent(threadChatId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        errorText
+          ? `Cancel failed: ${errorText}`
+          : `Cancel failed with status ${response.status}`,
+      );
+    }
+  } catch (error) {
+    const normalizedError =
+      error instanceof Error
+        ? error
+        : new Error(`Cancel failed: ${String(error)}`);
+    onError?.(normalizedError);
+  }
+}
 
 export function resolveTerragonRuntimeLoadConfig({
   isAgentWorking,
@@ -118,10 +122,28 @@ export function resolveTerragonThreadErrorProps({
   return {};
 }
 
-export function TerragonThreadRuntimeFrame({
+export type TerragonRuntimeSessionProps = {
+  agent: HttpAgent;
+  loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
+  chatAgent: AIAgent;
+  isAgentWorking: boolean;
+  threadId: string;
+  threadChatId?: string;
+  callerError?: string | null;
+  callerErrorType?: string;
+  callerErrorInfo?: string;
+  runtimeQueue?: UseAgUiRuntimeOptions["queue"];
+  children: (props: {
+    errorInfo?: string;
+    errorType?: string;
+    handleRetry?: () => Promise<void>;
+    isRetrying?: boolean;
+  }) => React.ReactNode;
+};
+
+export function TerragonRuntimeSession({
   agent,
   loadAgUiHistoryMessages,
-  onCancel,
   chatAgent,
   isAgentWorking,
   threadId,
@@ -131,11 +153,11 @@ export function TerragonThreadRuntimeFrame({
   callerErrorInfo,
   runtimeQueue,
   children,
-}: TerragonThreadRuntimeFrameProps) {
+}: TerragonRuntimeSessionProps) {
   const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
   const [historyLoadErrorState, setHistoryLoadErrorState] = useState<{
     agent: HttpAgent;
-    loadAgUiHistoryMessages: TerragonThreadProps["loadAgUiHistoryMessages"];
+    loadAgUiHistoryMessages: TerragonRuntimeSessionProps["loadAgUiHistoryMessages"];
     message: string;
   } | null>(null);
   const [runtimeErrorState, setRuntimeErrorState] = useState<{
@@ -159,6 +181,9 @@ export function TerragonThreadRuntimeFrame({
       }),
     [isAgentWorking, threadChatId, runtimeRecoveryNonce],
   );
+  const resumeOnLoad = runtimeLoadConfig.resumeOnLoad;
+  const historyLoadKey = runtimeLoadConfig.historyLoadKey;
+  const shouldApplyReplayCursor = runtimeLoadConfig.shouldApplyReplayCursor;
 
   const handleLocalRuntimeRetry = useCallback(async () => {
     setHistoryLoadErrorState(null);
@@ -166,63 +191,98 @@ export function TerragonThreadRuntimeFrame({
     setRuntimeRecoveryNonce((nonce) => nonce + 1);
   }, []);
 
-  const runtimeConfig = useMemo(
+  const loadHistoryMessages = useCallback(async () => {
+    try {
+      const history = await loadAgUiHistoryMessages();
+      if (shouldApplyReplayCursor) {
+        applyReplayCursorToAgent(agent, history.lastSeq);
+      }
+      setHistoryLoadErrorState(null);
+      setRuntimeErrorState(null);
+      return history.messages;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : `History load failed: ${String(error)}`;
+      setHistoryLoadErrorState({
+        agent,
+        loadAgUiHistoryMessages,
+        message,
+      });
+      throw new TerragonHistoryLoadError(message);
+    }
+  }, [agent, loadAgUiHistoryMessages, shouldApplyReplayCursor]);
+
+  const handleRuntimeError = useCallback(
+    (error: Error) => {
+      if (error instanceof TerragonHistoryLoadError) {
+        setHistoryLoadErrorState({
+          agent,
+          loadAgUiHistoryMessages,
+          message: error.message,
+        });
+        return;
+      }
+      setRuntimeErrorState({ agent, message: error.message });
+    },
+    [agent, loadAgUiHistoryMessages],
+  );
+
+  const history = useMemo(
+    () =>
+      createAgUiHistoryAdapter(
+        async () => {
+          try {
+            return await loadHistoryMessages();
+          } catch (error) {
+            const normalizedError =
+              error instanceof Error
+                ? error
+                : new Error(`History load failed: ${String(error)}`);
+            handleRuntimeError(normalizedError);
+            return [];
+          }
+        },
+        { resumeOnLoad },
+      ),
+    [handleRuntimeError, loadHistoryMessages, resumeOnLoad],
+  );
+
+  const runtimeOptions = useMemo<UseAgUiRuntimeOptions>(
     () => ({
       agent,
-      loadHistoryMessages: async () => {
-        try {
-          const history = await loadAgUiHistoryMessages();
-          if (runtimeLoadConfig.shouldApplyReplayCursor) {
-            applyReplayCursorToAgent(agent, history.lastSeq);
-          }
-          setHistoryLoadErrorState(null);
-          setRuntimeErrorState(null);
-          return history.messages;
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : `History load failed: ${String(error)}`;
-          setHistoryLoadErrorState({
-            agent,
-            loadAgUiHistoryMessages,
-            message,
-          });
-          throw new TerragonHistoryLoadError(message);
-        }
-      },
-      onError: (error: Error) => {
-        if (error instanceof TerragonHistoryLoadError) {
-          setHistoryLoadErrorState({
-            agent,
-            loadAgUiHistoryMessages,
-            message: error.message,
-          });
-          return;
-        }
-        setRuntimeErrorState({ agent, message: error.message });
-      },
       showThinking,
-      onCancel,
-      resumeOnLoad: runtimeLoadConfig.resumeOnLoad,
-      historyLoadKey: runtimeLoadConfig.historyLoadKey,
-      threadId,
-      threadChatId,
-      queue: runtimeQueue,
+      onError: handleRuntimeError,
+      ...(threadChatId && {
+        onCancel: () => {
+          void postTerragonCancel({
+            threadId,
+            threadChatId,
+            onError: handleRuntimeError,
+          });
+        },
+      }),
+      adapters: {
+        history,
+      },
+      historyLoadKey,
+      externalMessagesStrategy: "merge-after-local-mutations",
+      ...(runtimeQueue ? { queue: runtimeQueue } : {}),
     }),
     [
       agent,
-      loadAgUiHistoryMessages,
+      handleRuntimeError,
+      history,
       showThinking,
-      onCancel,
-      runtimeLoadConfig,
+      historyLoadKey,
       threadId,
       threadChatId,
       runtimeQueue,
     ],
   );
 
-  const runtime = useTerragonRuntime(runtimeConfig);
+  const runtime = useAgUiRuntime(runtimeOptions);
   const resolvedErrorProps = resolveTerragonThreadErrorProps({
     callerError,
     callerErrorType,
@@ -243,42 +303,5 @@ export function TerragonThreadRuntimeFrame({
         isRetrying: historyLoadError || runtimeError ? false : undefined,
       })}
     </AssistantRuntimeProvider>
-  );
-}
-
-export function TerragonThread({
-  agent,
-  loadAgUiHistoryMessages,
-  onCancel,
-  chatAgent,
-  runtimeQueue,
-  ...contentProps
-}: TerragonThreadProps) {
-  return (
-    <TerragonThreadRuntimeFrame
-      agent={agent}
-      loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-      onCancel={onCancel}
-      chatAgent={chatAgent}
-      isAgentWorking={contentProps.isAgentWorking}
-      threadId={contentProps.thread.id}
-      threadChatId={contentProps.threadChatId}
-      callerError={contentProps.error}
-      callerErrorType={contentProps.errorType}
-      callerErrorInfo={contentProps.errorInfo}
-      runtimeQueue={runtimeQueue}
-    >
-      {(runtimeProps) => (
-        <TerragonThreadRuntimeContent
-          {...contentProps}
-          chatAgent={chatAgent}
-          onCancel={onCancel}
-          errorInfo={runtimeProps.errorInfo}
-          errorType={runtimeProps.errorType}
-          handleRetry={runtimeProps.handleRetry ?? contentProps.handleRetry}
-          isRetrying={runtimeProps.isRetrying ?? contentProps.isRetrying}
-        />
-      )}
-    </TerragonThreadRuntimeFrame>
   );
 }
