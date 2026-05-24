@@ -53,6 +53,10 @@ import type {
   UIPart,
 } from "@terragon/shared";
 import { terragonDataPartFromCustomEvent } from "./ag-ui-custom-parts";
+import {
+  MAX_PROGRESS_CHUNKS,
+  type ToolProgressChunk,
+} from "./tool-progress-chunks";
 import type { UIPartExtended } from "./ui-parts-extended";
 
 export type AgUiMessagesState = {
@@ -88,8 +92,6 @@ export type AgUiMessagesState = {
 };
 
 const REASONING_MARKER = ":thinking:";
-type ToolProgressChunk = { seq: number; text: string };
-const MAX_PROGRESS_CHUNKS = 50;
 type ToolStatus = "started" | "in_progress" | "completed" | "failed";
 type ToolPartWithProgress = UIPart & {
   type: "tool";

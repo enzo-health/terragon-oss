@@ -13,6 +13,10 @@ import {
   type ReadonlyJSONObject,
   type TerragonDataPart,
 } from "./ag-ui-custom-parts";
+import {
+  MAX_PROGRESS_CHUNKS,
+  type ToolProgressChunk,
+} from "./tool-progress-chunks";
 
 type Emit = (
   update: ChatModelRunResult,
@@ -36,8 +40,6 @@ type ToolCallState = {
   parentMessageId?: string;
 };
 
-type ToolProgressChunk = { seq: number; text: string };
-const MAX_PROGRESS_CHUNKS = 50;
 type ToolLifecycleStatus = "started" | "in_progress" | "completed" | "failed";
 type RuntimeToolCallMessagePart = ToolCallMessagePart<ReadonlyJSONObject> & {
   progressChunks?: ToolProgressChunk[];
