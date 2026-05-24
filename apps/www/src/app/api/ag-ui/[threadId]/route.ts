@@ -22,7 +22,9 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
+  getTerragonProps,
   getTraceIdFromAgUiForwardedProps,
+  isRecord,
   recordAgentTraceSpan,
 } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
@@ -111,21 +113,9 @@ type ReplayCursor = {
 type AgUiUserMessage = Extract<Message, { role: "user" }>;
 type TerragonPostIntent = "append" | "resume";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readTerragonPostIntent(forwardedProps: unknown): TerragonPostIntent {
-  const runConfig = isRecord(forwardedProps)
-    ? (forwardedProps["runConfig"] ?? null)
-    : null;
-  const terragon = isRecord(runConfig)
-    ? (runConfig["terragon"] ?? null)
-    : isRecord(forwardedProps)
-      ? (forwardedProps["terragon"] ?? null)
-      : null;
-  if (!isRecord(terragon)) return "append";
-  return terragon["intent"] === "resume" ? "resume" : "append";
+  const terragon = getTerragonProps(forwardedProps);
+  return terragon?.["intent"] === "resume" ? "resume" : "append";
 }
 
 function isAgUiUserMessage(

@@ -84,7 +84,7 @@ export function getTraceIdFromAgUiForwardedProps(
   return typeof traceId === "string" && traceId.length > 0 ? traceId : null;
 }
 
-function getTerragonProps(
+export function getTerragonProps(
   forwardedProps: unknown,
 ): Record<string, unknown> | null {
   if (!isRecord(forwardedProps)) {
@@ -151,6 +151,6 @@ function isTraceLoggingEnabled(): boolean {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
