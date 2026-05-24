@@ -1,5 +1,561 @@
+diff --git a/dist/runtime/AgUiThreadRuntimeCore.js b/dist/runtime/AgUiThreadRuntimeCore.js
+index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171f0a2cf83 100644
+--- a/dist/runtime/AgUiThreadRuntimeCore.js
++++ b/dist/runtime/AgUiThreadRuntimeCore.js
+@@ -8,6 +8,7 @@ export class AgUiThreadRuntimeCore {
+     agent;
+     logger;
+     showThinking;
++    externalMessagesStrategy;
+     onError;
+     onCancel;
+     notifyUpdate;
+@@ -21,24 +22,36 @@ export class AgUiThreadRuntimeCore {
+     lastRunConfig;
+     assistantHistoryParents = new Map();
+     recordedHistoryIds = new Set();
++    hasLocalRuntimeMutations = false;
+     _isLoading = false;
+     _loadPromise;
++    _loadKey;
++    loadGeneration = 0;
+     constructor(options) {
+         this.agent = options.agent;
+         this.logger = options.logger;
+         this.showThinking = options.showThinking;
++        this.externalMessagesStrategy = options.externalMessagesStrategy ?? "replace";
+         this.onError = options.onError;
+         this.onCancel = options.onCancel;
+         this.history = options.history;
+         this.notifyUpdate = options.notifyUpdate;
+     }
+     updateOptions(options) {
++        const loadSourceChanged = this.agent !== options.agent;
+         this.agent = options.agent;
+         this.logger = options.logger;
+         this.showThinking = options.showThinking;
++        this.externalMessagesStrategy = options.externalMessagesStrategy ?? "replace";
+         this.onError = options.onError;
+         this.onCancel = options.onCancel;
+         this.history = options.history;
++        if (loadSourceChanged) {
++            this.loadGeneration += 1;
++            this._loadPromise = undefined;
++            this._loadKey = undefined;
++            this._isLoading = false;
++        }
+     }
+     attachRuntime(runtime) {
+         this.runtime = runtime;
+@@ -58,34 +71,56 @@ export class AgUiThreadRuntimeCore {
+     get isLoading() {
+         return this._isLoading;
+     }
+-    __internal_load() {
+-        if (this._loadPromise)
++    __internal_load(loadKey = "default") {
++        if (this._loadPromise && this._loadKey === loadKey)
+             return this._loadPromise;
++        const generation = this.loadGeneration + 1;
++        this.loadGeneration = generation;
+         const promise = this.history?.load() ?? Promise.resolve(null);
++        this._loadKey = loadKey;
+         this._isLoading = true;
++        let loadFailed = false;
+         this._loadPromise = promise
+             .then(async (repo) => {
++            if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++                return;
++            }
+             if (!repo)
+                 return;
+             const messages = repo.messages.map((item) => item.message);
+             this.applyExternalMessages(messages);
+             if (repo.unstable_resume) {
++                if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++                    return;
++                }
+                 const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
+-                await this.startRun(parentId, this.lastRunConfig);
++                await this.startRun(parentId, this.lastRunConfig, false);
+             }
+         })
+             .catch((error) => {
++            if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++                return;
++            }
++            loadFailed = true;
+             this.logger.error?.("[agui] failed to load history", error);
+             this.onError?.(error instanceof Error ? error : new Error(String(error)));
+         })
+             .finally(() => {
++            if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++                return;
++            }
+             this._isLoading = false;
++            if (loadFailed) {
++                this._loadPromise = undefined;
++                this._loadKey = undefined;
++            }
+             this.notifyUpdate();
+         });
+         this.notifyUpdate();
+         return this._loadPromise;
+     }
+     async append(message) {
++        await this.waitForInitialLoad();
+         const startRun = message.startRun ?? message.role === "user";
+         if (message.sourceId) {
+             this.messages = this.messages.filter((entry) => entry.id !== message.sourceId);
+@@ -93,6 +128,7 @@ export class AgUiThreadRuntimeCore {
+         this.resetHead(message.parentId);
+         const threadMessage = this.toThreadMessage(message);
+         this.messages = [...this.messages, threadMessage];
++        this.hasLocalRuntimeMutations = true;
+         this.notifyUpdate();
+         this.recordHistoryEntry(message.parentId ?? null, threadMessage);
+         if (!startRun)
+@@ -103,6 +139,7 @@ export class AgUiThreadRuntimeCore {
+         await this.append(message);
+     }
+     async reload(parentId, config = {}) {
++        await this.waitForInitialLoad();
+         this.resetHead(parentId);
+         this.notifyUpdate();
+         await this.startRun(parentId, config.runConfig);
+@@ -113,6 +150,7 @@ export class AgUiThreadRuntimeCore {
+         this.abortController.abort();
+     }
+     async resume(config) {
++        await this.waitForInitialLoad();
+         if (config.stream) {
+             this.logger.debug?.("[agui] resume stream is not supported, falling back to regular run");
+         }
+@@ -174,6 +212,7 @@ export class AgUiThreadRuntimeCore {
+             };
+         });
+         if (updated) {
++            this.hasLocalRuntimeMutations = true;
+             this.notifyUpdate();
+             if (shouldResume) {
+                 this.persistAssistantHistory(options.messageId);
+@@ -187,7 +226,15 @@ export class AgUiThreadRuntimeCore {
+     }
+     applyExternalMessages(messages) {
+         this.assistantHistoryParents.clear();
+-        this.messages = [...messages];
++        if (this.externalMessagesStrategy === "merge-after-local-mutations" &&
++            this.messages.length > 0 &&
++            this.hasLocalRuntimeMutations) {
++            this.mergeExternalMessages(messages);
++        }
++        else {
++            this.replaceAllMessages(messages);
++            this.hasLocalRuntimeMutations = false;
++        }
+         this.recordedHistoryIds.clear();
+         for (const message of this.messages) {
+             this.recordedHistoryIds.add(message.id);
+@@ -198,7 +245,10 @@ export class AgUiThreadRuntimeCore {
+         this.stateSnapshot = state;
+         this.notifyUpdate();
+     }
+-    async startRun(parentId, runConfig) {
++    async startRun(parentId, runConfig, waitForLoad = true) {
++        if (waitForLoad) {
++            await this.waitForInitialLoad();
++        }
+         const normalizedRunConfig = runConfig ?? {};
+         this.lastRunConfig = normalizedRunConfig;
+         this.resetHead(parentId);
+@@ -208,7 +258,20 @@ export class AgUiThreadRuntimeCore {
+         const input = this.buildRunInput(runId, normalizedRunConfig, historicalMessages);
+         const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
+         let assistantMessageId;
+-        const ensureAssistant = () => {
++        const ensureAssistant = (targetMessageId) => {
++            if (targetMessageId) {
++                const existing = this.messages.some((message) => message.id === targetMessageId);
++                if (!existing) {
++                    this.messages = [
++                        ...this.messages,
++                        this.createAssistantMessage(targetMessageId),
++                    ];
++                    this.notifyUpdate();
++                }
++                this.markPendingAssistantHistory(targetMessageId, assistantParentId);
++                this.removeEmptySyntheticAssistant(assistantMessageId);
++                return targetMessageId;
++            }
+             if (assistantMessageId)
+                 return assistantMessageId;
+             const created = this.insertAssistantPlaceholder();
+@@ -219,7 +282,7 @@ export class AgUiThreadRuntimeCore {
+         const aggregator = new RunAggregator({
+             showThinking: this.showThinking,
+             logger: this.logger,
+-            emit: (update) => this.updateAssistantMessage(ensureAssistant(), update),
++            emit: (update, targetMessageId) => this.updateAssistantMessage(ensureAssistant(targetMessageId), update),
+         });
+         const dispatch = (event) => this.handleEvent(aggregator, event);
+         const abortController = new AbortController();
+@@ -301,7 +364,13 @@ export class AgUiThreadRuntimeCore {
+     }
+     insertAssistantPlaceholder() {
+         const id = generateId();
+-        const assistant = {
++        const assistant = this.createAssistantMessage(id);
++        this.messages = [...this.messages, assistant];
++        this.notifyUpdate();
++        return id;
++    }
++    createAssistantMessage(id) {
++        return {
+             id,
+             role: "assistant",
+             createdAt: new Date(),
+@@ -315,9 +384,6 @@ export class AgUiThreadRuntimeCore {
+                 custom: {},
+             },
+         };
+-        this.messages = [...this.messages, assistant];
+-        this.notifyUpdate();
+-        return id;
+     }
+     updateAssistantMessage(messageId, update) {
+         let touched = false;
+@@ -408,6 +474,90 @@ export class AgUiThreadRuntimeCore {
+     toThreadMessage(message) {
+         return fromThreadMessageLike(message, generateId(), FALLBACK_USER_STATUS);
+     }
++    replaceAllMessages(messages) {
++        this.messages = this.dedupeMessages(messages);
++    }
++    mergeExternalMessages(messages) {
++        let changed = false;
++        for (const message of messages) {
++            const existingIndex = this.messages.findIndex((candidate) => candidate.id === message.id);
++            if (existingIndex === -1) {
++                this.messages = [...this.messages, message];
++                this.recordedHistoryIds.add(message.id);
++                changed = true;
++                continue;
++            }
++            const existing = this.messages[existingIndex];
++            if (!existing)
++                continue;
++            const merged = this.mergeDuplicateMessage(existing, message);
++            if (merged !== existing) {
++                this.messages = this.messages.slice();
++                this.messages[existingIndex] = merged;
++                changed = true;
++            }
++        }
++        if (changed) {
++            this.notifyUpdate();
++        }
++    }
++    dedupeMessages(messages) {
++        const nextMessages = [];
++        const nextIndexById = new Map();
++        for (const message of messages) {
++            const existingIndex = nextIndexById.get(message.id);
++            if (existingIndex === undefined) {
++                nextIndexById.set(message.id, nextMessages.length);
++                nextMessages.push(message);
++                continue;
++            }
++            const existing = nextMessages[existingIndex];
++            if (!existing)
++                continue;
++            nextMessages[existingIndex] = this.mergeDuplicateMessage(existing, message);
++        }
++        return nextMessages;
++    }
++    mergeDuplicateMessage(existing, incoming) {
++        if (existing.role === "assistant" && incoming.role === "assistant") {
++            return this.mergeAssistantMessage(existing, incoming);
++        }
++        return existing;
++    }
++    mergeAssistantMessage(existing, incoming) {
++        if (incoming.content.length === 0) {
++            return existing;
++        }
++        if (existing.content.length === 0) {
++            return incoming;
++        }
++        if (this.isIncomingAssistantMoreComplete(existing, incoming)) {
++            return incoming;
++        }
++        return existing;
++    }
++    isIncomingAssistantMoreComplete(existing, incoming) {
++        if (!this.isTerminalStatus(existing.status) &&
++            this.isTerminalStatus(incoming.status)) {
++            return true;
++        }
++        return (this.getAssistantContentScore(incoming.content) >
++            this.getAssistantContentScore(existing.content));
++    }
++    getAssistantContentScore(content) {
++        return content.reduce((score, part) => {
++            if (part.type === "text") {
++                return score + 1_000 + part.text.length;
++            }
++            if (part.type === "reasoning") {
++                return score + 1_000 + part.text.length;
++            }
++            if (part.type === "tool-call") {
++                return score + ("result" in part && part.result !== undefined ? 2 : 1);
++            }
++            return score + 1;
++        }, 0);
++    }
+     resetHead(parentId) {
+         if (!parentId) {
+             if (this.messages.length) {
+@@ -423,6 +573,20 @@ export class AgUiThreadRuntimeCore {
+     isTerminalStatus(status) {
+         return status?.type === "complete" || status?.type === "incomplete";
+     }
++    async waitForInitialLoad() {
++        if (!this._isLoading || !this._loadPromise)
++            return;
++        await this._loadPromise;
++    }
++    removeEmptySyntheticAssistant(messageId) {
++        if (!messageId)
++            return;
++        const message = this.messages.find((candidate) => candidate.id === messageId);
++        if (message?.role !== "assistant" || message.content.length > 0) {
++            return;
++        }
++        this.messages = this.messages.filter((candidate) => candidate.id !== messageId);
++    }
+     recordHistoryEntry(parentId, message) {
+         this.appendHistoryItem(parentId, message);
+     }
+diff --git a/dist/runtime/adapter/run-aggregator.js b/dist/runtime/adapter/run-aggregator.js
+index fae71ad368035e4521a3d1e8e2c0f0a3fc224fa3..a759b1f072feb3399cee172c6fcad05e2b4294ba 100644
+--- a/dist/runtime/adapter/run-aggregator.js
++++ b/dist/runtime/adapter/run-aggregator.js
+@@ -18,6 +18,7 @@ export class RunAggregator {
+     partOrder = [];
+     hasReasoningPart = false;
+     textPartCounter = 0;
++    lastTargetMessageId;
+     constructor(options) {
+         this.emitUpdate = options.emit;
+         this.showThinking = options.showThinking;
+@@ -34,8 +35,9 @@ export class RunAggregator {
+                 this.hasReasoningPart = false;
+                 this.textPartCounter = 0;
+                 this.activeTextMessageId = undefined;
++                this.lastTargetMessageId = undefined;
+                 this.status = { type: "running" };
+-                this.emit();
++                this.emit(undefined);
+                 break;
+             }
+             case "RUN_FINISHED": {
+@@ -43,7 +45,7 @@ export class RunAggregator {
+                 this.status = hasUnresolvedToolCalls
+                     ? { type: "requires-action", reason: "tool-calls" }
+                     : { type: "complete", reason: "unknown" };
+-                this.emit();
++                this.emit(this.lastTargetMessageId);
+                 break;
+             }
+             case "RUN_ERROR": {
+@@ -52,12 +54,12 @@ export class RunAggregator {
+                     reason: "error",
+                     ...(event.message !== undefined ? { error: event.message } : {}),
+                 };
+-                this.emit();
++                this.emit(this.lastTargetMessageId);
+                 break;
+             }
+             case "RUN_CANCELLED": {
+                 this.status = { type: "incomplete", reason: "cancelled" };
+-                this.emit();
++                this.emit(this.lastTargetMessageId);
+                 break;
+             }
+             case "TEXT_MESSAGE_START": {
+@@ -65,7 +67,7 @@ export class RunAggregator {
+                 if (id) {
+                     this.markTextPartTouched(id);
+                 }
+-                this.emit();
++                this.emit(this.targetMessageIdForText(id));
+                 break;
+             }
+             case "TEXT_MESSAGE_CONTENT":
+@@ -74,14 +76,17 @@ export class RunAggregator {
+                     break;
+                 const id = this.resolveTextMessageId("messageId" in event ? event.messageId : undefined);
+                 this.appendText(id, event.delta);
+-                this.emit();
++                this.emit(this.targetMessageIdForText(id));
+                 break;
+             }
+             case "TEXT_MESSAGE_END": {
++                const targetMessageId = event.messageId
++                    ? this.targetMessageIdForText(event.messageId)
++                    : this.lastTargetMessageId;
+                 if (event.messageId && this.activeTextMessageId === event.messageId) {
+                     this.activeTextMessageId = undefined;
+                 }
+-                this.emit();
++                this.emit(targetMessageId);
+                 break;
+             }
+             case "THINKING_START":
+@@ -102,7 +107,7 @@ export class RunAggregator {
+                 break;
+             case "TOOL_CALL_START": {
+                 this.startToolCall(event.toolCallId, event.toolCallName, event.parentMessageId);
+-                this.emit();
++                this.emit(this.lastTargetMessageId);
+                 break;
+             }
+             case "TOOL_CALL_ARGS":
+@@ -110,16 +115,16 @@ export class RunAggregator {
+                 if (!event.delta)
+                     break;
+                 this.appendToolArgs(event.toolCallId, event.delta);
+-                this.emit();
++                this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+                 break;
+             }
+             case "TOOL_CALL_END": {
+-                this.emit();
++                this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+                 break;
+             }
+             case "TOOL_CALL_RESULT": {
+                 this.finishToolCall(event.toolCallId, event.content ?? "", event.role === "tool" ? false : undefined);
+-                this.emit();
++                this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+                 break;
+             }
+             default: {
+@@ -138,12 +143,19 @@ export class RunAggregator {
+         const id = messageId ?? this.generateTextKey();
+         this.ensureTextPart(id);
+         this.activeTextMessageId = id;
++        if (messageId) {
++            this.lastTargetMessageId = messageId;
++        }
++        else {
++            this.lastTargetMessageId = undefined;
++        }
+         return id;
+     }
+     resolveTextMessageId(messageId) {
+         if (messageId) {
+             this.ensureTextPart(messageId);
+             this.activeTextMessageId = messageId;
++            this.lastTargetMessageId = messageId;
+             return messageId;
+         }
+         if (this.activeTextMessageId) {
+@@ -152,6 +164,7 @@ export class RunAggregator {
+         const generated = this.generateTextKey();
+         this.ensureTextPart(generated);
+         this.activeTextMessageId = generated;
++        this.lastTargetMessageId = undefined;
+         return generated;
+     }
+     ensureTextPart(id) {
+@@ -176,12 +189,21 @@ export class RunAggregator {
+         entry.buffer += delta;
+         entry.touched = true;
+     }
++    targetMessageIdForText(id) {
++        return id === this.activeTextMessageId ? this.lastTargetMessageId : id;
++    }
+     startToolCall(id, name, parentMessageId) {
+         if (!id)
+             return;
+         if (!this.partOrder.some((part) => part.kind === "tool-call" && part.toolCallId === id)) {
+             this.partOrder.push({ kind: "tool-call", toolCallId: id });
+         }
++        const parentTool = parentMessageId
++            ? this.toolCalls.get(parentMessageId)
++            : undefined;
++        const resolvedParentMessageId = parentTool?.parentMessageId ??
++            parentMessageId ??
++            this.lastTargetMessageId;
+         const state = {
+             toolCallId: id,
+             toolCallName: name ?? "tool",
+@@ -190,11 +212,20 @@ export class RunAggregator {
+             result: undefined,
+             isError: undefined,
+         };
+-        if (parentMessageId) {
+-            state.parentMessageId = parentMessageId;
++        if (resolvedParentMessageId) {
++            state.parentMessageId = resolvedParentMessageId;
++            this.lastTargetMessageId = resolvedParentMessageId;
+         }
+         this.toolCalls.set(id, state);
+     }
++    targetMessageIdForToolCall(id) {
++        const entry = id ? this.toolCalls.get(id) : undefined;
++        if (entry?.parentMessageId) {
++            this.lastTargetMessageId = entry.parentMessageId;
++            return entry.parentMessageId;
++        }
++        return this.lastTargetMessageId;
++    }
+     appendToolArgs(id, delta) {
+         const entry = id ? this.toolCalls.get(id) : undefined;
+         if (!entry)
+@@ -244,7 +275,7 @@ export class RunAggregator {
+             return value;
+         }
+     }
+-    emit() {
++    emit(targetMessageId) {
+         const snapshot = [];
+         for (const part of this.partOrder) {
+             if (part.kind === "reasoning") {
+@@ -283,26 +314,26 @@ export class RunAggregator {
+             content: snapshot,
+             ...(this.status ? { status: this.status } : undefined),
+         };
+-        this.emitUpdate(result);
++        this.emitUpdate(result, targetMessageId);
+     }
+     handleReasoningStart() {
+         if (!this.showThinking)
+             return;
+         this.reasoningActive = true;
+         this.ensureReasoningPart();
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+     }
+     handleReasoningContent(delta) {
+         if (!this.showThinking || !delta)
+             return;
+         this.reasoningBuffer += delta;
+         this.ensureReasoningPart();
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+     }
+     handleReasoningEnd() {
+         if (!this.showThinking)
+             return;
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+     }
+     ensureReasoningPart() {
+         if (this.hasReasoningPart)
 diff --git a/dist/runtime/types.d.ts b/dist/runtime/types.d.ts
-index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..bd127673da43bb2c6d1f3f72bed64bdefbb20212 100644
+index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..a6578a8bccf3a8e5551ffd58a27f3ca75685f21e 100644
 --- a/dist/runtime/types.d.ts
 +++ b/dist/runtime/types.d.ts
 @@ -1,4 +1,4 @@
@@ -8,10 +564,12 @@ index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..bd127673da43bb2c6d1f3f72bed64bde
  import type { HttpAgent } from "@ag-ui/client";
  import type { Logger } from "./logger.js";
  import type { ReadonlyJSONValue } from "assistant-stream/utils";
-@@ -33,6 +33,10 @@ export type UseAgUiRuntimeOptions = {
+@@ -33,6 +33,12 @@ export type UseAgUiRuntimeOptions = {
      showThinking?: boolean;
      onError?: (e: Error) => void;
      onCancel?: () => void;
++    historyLoadKey?: string;
++    externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
 +    queue?: {
 +        shouldQueue: (message: AppendMessage) => boolean;
 +        enqueue: (message: AppendMessage) => Promise<void> | void;
@@ -20,7 +578,7 @@ index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..bd127673da43bb2c6d1f3f72bed64bde
  };
  export type AgUiEvent = {
 diff --git a/dist/useAgUiRuntime.js b/dist/useAgUiRuntime.js
-index 94956a06f6087da9f47c0086819786f92b0d8214..e2268f808119031442c53eb320900a5aff51ca3a 100644
+index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834c7bee314 100644
 --- a/dist/useAgUiRuntime.js
 +++ b/dist/useAgUiRuntime.js
 @@ -9,6 +9,8 @@ export function useAgUiRuntime(options) {
@@ -32,7 +590,23 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..e2268f808119031442c53eb320900a5a
      const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
      const threadListAdapter = options.adapters?.threadList;
      if (!coreRef.current) {
-@@ -107,7 +109,14 @@ export function useAgUiRuntime(options) {
+@@ -16,6 +18,7 @@ export function useAgUiRuntime(options) {
+             agent: options.agent,
+             logger,
+             showThinking: options.showThinking ?? true,
++            externalMessagesStrategy: options.externalMessagesStrategy ?? "replace",
+             ...(options.onError && { onError: options.onError }),
+             ...(options.onCancel && { onCancel: options.onCancel }),
+             ...(historyAdapter && { history: historyAdapter }),
+@@ -27,6 +30,7 @@ export function useAgUiRuntime(options) {
+         agent: options.agent,
+         logger,
+         showThinking: options.showThinking ?? true,
++        externalMessagesStrategy: options.externalMessagesStrategy ?? "replace",
+         ...(options.onError && { onError: options.onError }),
+         ...(options.onCancel && { onCancel: options.onCancel }),
+         ...(historyAdapter && { history: historyAdapter }),
+@@ -107,7 +111,14 @@ export function useAgUiRuntime(options) {
              messages: core.getMessages(),
              state: core.getState(),
              isRunning: core.isRunning() || hasExecutingTools,
@@ -48,8 +622,661 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..e2268f808119031442c53eb320900a5a
              onEdit: (message) => core.edit(message),
              onReload: (parentId, config) => core.reload(parentId, config),
              onCancel: async () => {
+@@ -134,8 +145,8 @@ export function useAgUiRuntime(options) {
+         };
+     }, [core, runtime]);
+     useEffect(() => {
+-        core.__internal_load();
+-    }, [core]);
++        core.__internal_load(options.historyLoadKey);
++    }, [core, options.historyLoadKey]);
+     return runtime;
+ }
+ //# sourceMappingURL=useAgUiRuntime.js.map
+diff --git a/src/runtime/AgUiThreadRuntimeCore.ts b/src/runtime/AgUiThreadRuntimeCore.ts
+index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e5598adc8b8 100644
+--- a/src/runtime/AgUiThreadRuntimeCore.ts
++++ b/src/runtime/AgUiThreadRuntimeCore.ts
+@@ -35,6 +35,7 @@ type CoreOptions = {
+   agent: HttpAgent;
+   logger: Logger;
+   showThinking: boolean;
++  externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
+   onError?: (error: Error) => void;
+   onCancel?: () => void;
+   history?: ThreadHistoryAdapter;
+@@ -47,6 +48,7 @@ export class AgUiThreadRuntimeCore {
+   private agent: HttpAgent;
+   private logger: Logger;
+   private showThinking: boolean;
++  private externalMessagesStrategy: "replace" | "merge-after-local-mutations";
+   private onError: ((error: Error) => void) | undefined;
+   private onCancel: (() => void) | undefined;
+   private readonly notifyUpdate: () => void;
+@@ -61,13 +63,18 @@ export class AgUiThreadRuntimeCore {
+   private lastRunConfig: RunConfig | undefined;
+   private readonly assistantHistoryParents = new Map<string, string | null>();
+   private readonly recordedHistoryIds = new Set<string>();
++  private hasLocalRuntimeMutations = false;
+   private _isLoading = false;
+   private _loadPromise: Promise<void> | undefined;
++  private _loadKey: string | undefined;
++  private loadGeneration = 0;
+ 
+   constructor(options: CoreOptions) {
+     this.agent = options.agent;
+     this.logger = options.logger;
+     this.showThinking = options.showThinking;
++    this.externalMessagesStrategy =
++      options.externalMessagesStrategy ?? "replace";
+     this.onError = options.onError;
+     this.onCancel = options.onCancel;
+     this.history = options.history;
+@@ -75,12 +82,21 @@ export class AgUiThreadRuntimeCore {
+   }
+ 
+   updateOptions(options: Omit<CoreOptions, "notifyUpdate">) {
++    const loadSourceChanged = this.agent !== options.agent;
+     this.agent = options.agent;
+     this.logger = options.logger;
+     this.showThinking = options.showThinking;
++    this.externalMessagesStrategy =
++      options.externalMessagesStrategy ?? "replace";
+     this.onError = options.onError;
+     this.onCancel = options.onCancel;
+     this.history = options.history;
++    if (loadSourceChanged) {
++      this.loadGeneration += 1;
++      this._loadPromise = undefined;
++      this._loadKey = undefined;
++      this._isLoading = false;
++    }
+   }
+ 
+   attachRuntime(runtime: AssistantRuntime) {
+@@ -107,33 +123,56 @@ export class AgUiThreadRuntimeCore {
+     return this._isLoading;
+   }
+ 
+-  __internal_load(): Promise<void> {
+-    if (this._loadPromise) return this._loadPromise;
++  __internal_load(loadKey = "default"): Promise<void> {
++    if (this._loadPromise && this._loadKey === loadKey) {
++      return this._loadPromise;
++    }
+ 
++    const generation = this.loadGeneration + 1;
++    this.loadGeneration = generation;
+     const promise = this.history?.load() ?? Promise.resolve(null);
+ 
++    this._loadKey = loadKey;
+     this._isLoading = true;
+ 
++    let loadFailed = false;
+     this._loadPromise = promise
+       .then(async (repo) => {
++        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++          return;
++        }
+         if (!repo) return;
+ 
+         const messages = repo.messages.map((item) => item.message);
+         this.applyExternalMessages(messages);
+ 
+         if (repo.unstable_resume) {
++          if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++            return;
++          }
+           const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
+-          await this.startRun(parentId, this.lastRunConfig);
++          await this.startRun(parentId, this.lastRunConfig, false);
+         }
+       })
+       .catch((error) => {
++        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++          return;
++        }
++        loadFailed = true;
+         this.logger.error?.("[agui] failed to load history", error);
+         this.onError?.(
+           error instanceof Error ? error : new Error(String(error)),
+         );
+       })
+       .finally(() => {
++        if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
++          return;
++        }
+         this._isLoading = false;
++        if (loadFailed) {
++          this._loadPromise = undefined;
++          this._loadKey = undefined;
++        }
+         this.notifyUpdate();
+       });
+ 
+@@ -142,6 +181,8 @@ export class AgUiThreadRuntimeCore {
+   }
+ 
+   async append(message: AppendMessage): Promise<void> {
++    await this.waitForInitialLoad();
++
+     const startRun = message.startRun ?? message.role === "user";
+     if (message.sourceId) {
+       this.messages = this.messages.filter(
+@@ -152,6 +193,7 @@ export class AgUiThreadRuntimeCore {
+ 
+     const threadMessage = this.toThreadMessage(message);
+     this.messages = [...this.messages, threadMessage];
++    this.hasLocalRuntimeMutations = true;
+     this.notifyUpdate();
+     this.recordHistoryEntry(message.parentId ?? null, threadMessage);
+ 
+@@ -167,6 +209,7 @@ export class AgUiThreadRuntimeCore {
+     parentId: string | null,
+     config: { runConfig?: RunConfig } = {},
+   ): Promise<void> {
++    await this.waitForInitialLoad();
+     this.resetHead(parentId);
+     this.notifyUpdate();
+     await this.startRun(parentId, config.runConfig);
+@@ -178,6 +221,8 @@ export class AgUiThreadRuntimeCore {
+   }
+ 
+   async resume(config: ResumeRunConfig): Promise<void> {
++    await this.waitForInitialLoad();
++
+     if (config.stream) {
+       this.logger.debug?.(
+         "[agui] resume stream is not supported, falling back to regular run",
+@@ -252,6 +297,7 @@ export class AgUiThreadRuntimeCore {
+     });
+ 
+     if (updated) {
++      this.hasLocalRuntimeMutations = true;
+       this.notifyUpdate();
+ 
+       if (shouldResume) {
+@@ -272,7 +318,16 @@ export class AgUiThreadRuntimeCore {
+ 
+   applyExternalMessages(messages: readonly ThreadMessage[]): void {
+     this.assistantHistoryParents.clear();
+-    this.messages = [...messages];
++    if (
++      this.externalMessagesStrategy === "merge-after-local-mutations" &&
++      this.messages.length > 0 &&
++      this.hasLocalRuntimeMutations
++    ) {
++      this.mergeExternalMessages(messages);
++    } else {
++      this.replaceAllMessages(messages);
++      this.hasLocalRuntimeMutations = false;
++    }
+     this.recordedHistoryIds.clear();
+     for (const message of this.messages) {
+       this.recordedHistoryIds.add(message.id);
+@@ -288,7 +343,12 @@ export class AgUiThreadRuntimeCore {
+   private async startRun(
+     parentId: string | null,
+     runConfig?: RunConfig,
++    waitForLoad = true,
+   ): Promise<void> {
++    if (waitForLoad) {
++      await this.waitForInitialLoad();
++    }
++
+     const normalizedRunConfig = runConfig ?? {};
+     this.lastRunConfig = normalizedRunConfig;
+     this.resetHead(parentId);
+@@ -303,7 +363,22 @@ export class AgUiThreadRuntimeCore {
+     );
+     const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
+     let assistantMessageId: string | undefined;
+-    const ensureAssistant = () => {
++    const ensureAssistant = (targetMessageId: string | undefined) => {
++      if (targetMessageId) {
++        const existing = this.messages.some(
++          (message) => message.id === targetMessageId,
++        );
++        if (!existing) {
++          this.messages = [
++            ...this.messages,
++            this.createAssistantMessage(targetMessageId),
++          ];
++          this.notifyUpdate();
++        }
++        this.markPendingAssistantHistory(targetMessageId, assistantParentId);
++        this.removeEmptySyntheticAssistant(assistantMessageId);
++        return targetMessageId;
++      }
+       if (assistantMessageId) return assistantMessageId;
+       const created = this.insertAssistantPlaceholder();
+       assistantMessageId = created;
+@@ -314,7 +389,8 @@ export class AgUiThreadRuntimeCore {
+     const aggregator = new RunAggregator({
+       showThinking: this.showThinking,
+       logger: this.logger,
+-      emit: (update) => this.updateAssistantMessage(ensureAssistant(), update),
++      emit: (update, targetMessageId) =>
++        this.updateAssistantMessage(ensureAssistant(targetMessageId), update),
+     });
+     const dispatch = (event: AgUiEvent) => this.handleEvent(aggregator, event);
+ 
+@@ -411,7 +487,14 @@ export class AgUiThreadRuntimeCore {
+ 
+   private insertAssistantPlaceholder(): string {
+     const id = generateId();
+-    const assistant: ThreadAssistantMessage = {
++    const assistant = this.createAssistantMessage(id);
++    this.messages = [...this.messages, assistant];
++    this.notifyUpdate();
++    return id;
++  }
++
++  private createAssistantMessage(id: string): ThreadAssistantMessage {
++    return {
+       id,
+       role: "assistant",
+       createdAt: new Date(),
+@@ -425,9 +508,6 @@ export class AgUiThreadRuntimeCore {
+         custom: {},
+       },
+     };
+-    this.messages = [...this.messages, assistant];
+-    this.notifyUpdate();
+-    return id;
+   }
+ 
+   private updateAssistantMessage(
+@@ -542,6 +622,125 @@ export class AgUiThreadRuntimeCore {
+     );
+   }
+ 
++  private replaceAllMessages(messages: readonly ThreadMessage[]): void {
++    this.messages = this.dedupeMessages(messages);
++  }
++
++  private mergeExternalMessages(messages: readonly ThreadMessage[]): void {
++    let changed = false;
++    for (const message of messages) {
++      const existingIndex = this.messages.findIndex(
++        (candidate) => candidate.id === message.id,
++      );
++      if (existingIndex === -1) {
++        this.messages = [...this.messages, message];
++        this.recordedHistoryIds.add(message.id);
++        changed = true;
++        continue;
++      }
++
++      const existing = this.messages[existingIndex];
++      if (!existing) continue;
++      const merged = this.mergeDuplicateMessage(existing, message);
++      if (merged !== existing) {
++        this.messages = this.messages.slice();
++        this.messages[existingIndex] = merged;
++        changed = true;
++      }
++    }
++
++    if (changed) {
++      this.notifyUpdate();
++    }
++  }
++
++  private dedupeMessages(messages: readonly ThreadMessage[]): ThreadMessage[] {
++    const nextMessages: ThreadMessage[] = [];
++    const nextIndexById = new Map<string, number>();
++
++    for (const message of messages) {
++      const existingIndex = nextIndexById.get(message.id);
++      if (existingIndex === undefined) {
++        nextIndexById.set(message.id, nextMessages.length);
++        nextMessages.push(message);
++        continue;
++      }
++
++      const existing = nextMessages[existingIndex];
++      if (!existing) continue;
++      nextMessages[existingIndex] = this.mergeDuplicateMessage(
++        existing,
++        message,
++      );
++    }
++
++    return nextMessages;
++  }
++
++  private mergeDuplicateMessage(
++    existing: ThreadMessage,
++    incoming: ThreadMessage,
++  ): ThreadMessage {
++    if (existing.role === "assistant" && incoming.role === "assistant") {
++      return this.mergeAssistantMessage(existing, incoming);
++    }
++
++    return existing;
++  }
++
++  private mergeAssistantMessage(
++    existing: ThreadAssistantMessage,
++    incoming: ThreadAssistantMessage,
++  ): ThreadAssistantMessage {
++    if (incoming.content.length === 0) {
++      return existing;
++    }
++
++    if (existing.content.length === 0) {
++      return incoming;
++    }
++
++    if (this.isIncomingAssistantMoreComplete(existing, incoming)) {
++      return incoming;
++    }
++
++    return existing;
++  }
++
++  private isIncomingAssistantMoreComplete(
++    existing: ThreadAssistantMessage,
++    incoming: ThreadAssistantMessage,
++  ): boolean {
++    if (
++      !this.isTerminalStatus(existing.status) &&
++      this.isTerminalStatus(incoming.status)
++    ) {
++      return true;
++    }
++
++    return (
++      this.getAssistantContentScore(incoming.content) >
++      this.getAssistantContentScore(existing.content)
++    );
++  }
++
++  private getAssistantContentScore(
++    content: ThreadAssistantMessage["content"],
++  ): number {
++    return content.reduce((score, part) => {
++      if (part.type === "text") {
++        return score + 1_000 + part.text.length;
++      }
++      if (part.type === "reasoning") {
++        return score + 1_000 + part.text.length;
++      }
++      if (part.type === "tool-call") {
++        return score + ("result" in part && part.result !== undefined ? 2 : 1);
++      }
++      return score + 1;
++    }, 0);
++  }
++
+   private resetHead(parentId: string | null | undefined) {
+     if (!parentId) {
+       if (this.messages.length) {
+@@ -558,6 +757,22 @@ export class AgUiThreadRuntimeCore {
+     return status?.type === "complete" || status?.type === "incomplete";
+   }
+ 
++  private async waitForInitialLoad(): Promise<void> {
++    if (!this._isLoading || !this._loadPromise) return;
++    await this._loadPromise;
++  }
++
++  private removeEmptySyntheticAssistant(messageId: string | undefined): void {
++    if (!messageId) return;
++    const message = this.messages.find((candidate) => candidate.id === messageId);
++    if (message?.role !== "assistant" || message.content.length > 0) {
++      return;
++    }
++    this.messages = this.messages.filter(
++      (candidate) => candidate.id !== messageId,
++    );
++  }
++
+   private recordHistoryEntry(parentId: string | null, message: ThreadMessage) {
+     this.appendHistoryItem(parentId, message);
+   }
+diff --git a/src/runtime/adapter/run-aggregator.ts b/src/runtime/adapter/run-aggregator.ts
+index 4f633601ac875109edfc5d7d13bcfd1d909f830c..4579dcbb6f881212e5297fa142e97f5cd49012c1 100644
+--- a/src/runtime/adapter/run-aggregator.ts
++++ b/src/runtime/adapter/run-aggregator.ts
+@@ -8,7 +8,10 @@ import type {
+ import type { AgUiEvent } from "../types";
+ import type { Logger } from "../logger";
+ 
+-type Emit = (update: ChatModelRunResult) => void;
++type Emit = (
++  update: ChatModelRunResult,
++  targetMessageId: string | undefined,
++) => void;
+ 
+ type ToolCallState = {
+   toolCallId: string;
+@@ -53,6 +56,7 @@ export class RunAggregator {
+   )[] = [];
+   private hasReasoningPart = false;
+   private textPartCounter = 0;
++  private lastTargetMessageId: string | undefined;
+ 
+   constructor(options: RunAggregatorOptions) {
+     this.emitUpdate = options.emit;
+@@ -71,8 +75,9 @@ export class RunAggregator {
+         this.hasReasoningPart = false;
+         this.textPartCounter = 0;
+         this.activeTextMessageId = undefined;
++        this.lastTargetMessageId = undefined;
+         this.status = { type: "running" };
+-        this.emit();
++        this.emit(undefined);
+         break;
+       }
+       case "RUN_FINISHED": {
+@@ -83,7 +88,7 @@ export class RunAggregator {
+         this.status = hasUnresolvedToolCalls
+           ? { type: "requires-action", reason: "tool-calls" }
+           : { type: "complete", reason: "unknown" };
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+         break;
+       }
+       case "RUN_ERROR": {
+@@ -92,12 +97,12 @@ export class RunAggregator {
+           reason: "error",
+           ...(event.message !== undefined ? { error: event.message } : {}),
+         };
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+         break;
+       }
+       case "RUN_CANCELLED": {
+         this.status = { type: "incomplete", reason: "cancelled" };
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+         break;
+       }
+ 
+@@ -106,7 +111,7 @@ export class RunAggregator {
+         if (id) {
+           this.markTextPartTouched(id);
+         }
+-        this.emit();
++        this.emit(this.targetMessageIdForText(id));
+         break;
+       }
+       case "TEXT_MESSAGE_CONTENT":
+@@ -116,14 +121,17 @@ export class RunAggregator {
+           "messageId" in event ? event.messageId : undefined,
+         );
+         this.appendText(id, event.delta);
+-        this.emit();
++        this.emit(this.targetMessageIdForText(id));
+         break;
+       }
+       case "TEXT_MESSAGE_END": {
++        const targetMessageId = event.messageId
++          ? this.targetMessageIdForText(event.messageId)
++          : this.lastTargetMessageId;
+         if (event.messageId && this.activeTextMessageId === event.messageId) {
+           this.activeTextMessageId = undefined;
+         }
+-        this.emit();
++        this.emit(targetMessageId);
+         break;
+       }
+ 
+@@ -150,18 +158,18 @@ export class RunAggregator {
+           event.toolCallName,
+           event.parentMessageId,
+         );
+-        this.emit();
++        this.emit(this.lastTargetMessageId);
+         break;
+       }
+       case "TOOL_CALL_ARGS":
+       case "TOOL_CALL_CHUNK": {
+         if (!event.delta) break;
+         this.appendToolArgs(event.toolCallId, event.delta);
+-        this.emit();
++        this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+         break;
+       }
+       case "TOOL_CALL_END": {
+-        this.emit();
++        this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+         break;
+       }
+       case "TOOL_CALL_RESULT": {
+@@ -170,7 +178,7 @@ export class RunAggregator {
+           event.content ?? "",
+           event.role === "tool" ? false : undefined,
+         );
+-        this.emit();
++        this.emit(this.targetMessageIdForToolCall(event.toolCallId));
+         break;
+       }
+ 
+@@ -193,6 +201,11 @@ export class RunAggregator {
+     const id = messageId ?? this.generateTextKey();
+     this.ensureTextPart(id);
+     this.activeTextMessageId = id;
++    if (messageId) {
++      this.lastTargetMessageId = messageId;
++    } else {
++      this.lastTargetMessageId = undefined;
++    }
+     return id;
+   }
+ 
+@@ -200,6 +213,7 @@ export class RunAggregator {
+     if (messageId) {
+       this.ensureTextPart(messageId);
+       this.activeTextMessageId = messageId;
++      this.lastTargetMessageId = messageId;
+       return messageId;
+     }
+ 
+@@ -210,6 +224,7 @@ export class RunAggregator {
+     const generated = this.generateTextKey();
+     this.ensureTextPart(generated);
+     this.activeTextMessageId = generated;
++    this.lastTargetMessageId = undefined;
+     return generated;
+   }
+ 
+@@ -238,6 +253,10 @@ export class RunAggregator {
+     entry.touched = true;
+   }
+ 
++  private targetMessageIdForText(id: string): string | undefined {
++    return id === this.activeTextMessageId ? this.lastTargetMessageId : id;
++  }
++
+   private startToolCall(
+     id: string | undefined,
+     name?: string,
+@@ -251,6 +270,13 @@ export class RunAggregator {
+     ) {
+       this.partOrder.push({ kind: "tool-call", toolCallId: id });
+     }
++    const parentTool = parentMessageId
++      ? this.toolCalls.get(parentMessageId)
++      : undefined;
++    const resolvedParentMessageId =
++      parentTool?.parentMessageId ??
++      parentMessageId ??
++      this.lastTargetMessageId;
+     const state: ToolCallState = {
+       toolCallId: id,
+       toolCallName: name ?? "tool",
+@@ -259,12 +285,24 @@ export class RunAggregator {
+       result: undefined,
+       isError: undefined,
+     };
+-    if (parentMessageId) {
+-      state.parentMessageId = parentMessageId;
++    if (resolvedParentMessageId) {
++      state.parentMessageId = resolvedParentMessageId;
++      this.lastTargetMessageId = resolvedParentMessageId;
+     }
+     this.toolCalls.set(id, state);
+   }
+ 
++  private targetMessageIdForToolCall(
++    id: string | undefined,
++  ): string | undefined {
++    const entry = id ? this.toolCalls.get(id) : undefined;
++    if (entry?.parentMessageId) {
++      this.lastTargetMessageId = entry.parentMessageId;
++      return entry.parentMessageId;
++    }
++    return this.lastTargetMessageId;
++  }
++
+   private appendToolArgs(id: string | undefined, delta: string) {
+     const entry = id ? this.toolCalls.get(id) : undefined;
+     if (!entry) return;
+@@ -315,7 +353,7 @@ export class RunAggregator {
+     }
+   }
+ 
+-  private emit(): void {
++  private emit(targetMessageId: string | undefined): void {
+     const snapshot: ThreadAssistantMessagePart[] = [];
+ 
+     for (const part of this.partOrder) {
+@@ -359,26 +397,26 @@ export class RunAggregator {
+       content: snapshot,
+       ...(this.status ? { status: this.status } : undefined),
+     };
+-    this.emitUpdate(result);
++    this.emitUpdate(result, targetMessageId);
+   }
+ 
+   private handleReasoningStart(): void {
+     if (!this.showThinking) return;
+     this.reasoningActive = true;
+     this.ensureReasoningPart();
+-    this.emit();
++    this.emit(this.lastTargetMessageId);
+   }
+ 
+   private handleReasoningContent(delta: string): void {
+     if (!this.showThinking || !delta) return;
+     this.reasoningBuffer += delta;
+     this.ensureReasoningPart();
+-    this.emit();
++    this.emit(this.lastTargetMessageId);
+   }
+ 
+   private handleReasoningEnd(): void {
+     if (!this.showThinking) return;
+-    this.emit();
++    this.emit(this.lastTargetMessageId);
+   }
+ 
+   private ensureReasoningPart(): void {
 diff --git a/src/runtime/types.ts b/src/runtime/types.ts
-index ba0fda6ec2557b20276f2faec8a9395e54543425..27739d8d8ed7486caf2fd190ac425eec2b2f9354 100644
+index ba0fda6ec2557b20276f2faec8a9395e54543425..87512fc414ed00d64ab585020afd7174be8d87af 100644
 --- a/src/runtime/types.ts
 +++ b/src/runtime/types.ts
 @@ -2,6 +2,7 @@ import type {
@@ -60,10 +1287,12 @@ index ba0fda6ec2557b20276f2faec8a9395e54543425..27739d8d8ed7486caf2fd190ac425eec
    SpeechSynthesisAdapter,
    ThreadHistoryAdapter,
    ThreadMessage,
-@@ -44,6 +45,10 @@ export type UseAgUiRuntimeOptions = {
+@@ -44,6 +45,12 @@ export type UseAgUiRuntimeOptions = {
    showThinking?: boolean;
    onError?: (e: Error) => void;
    onCancel?: () => void;
++  historyLoadKey?: string;
++  externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
 +  queue?: {
 +    shouldQueue: (message: AppendMessage) => boolean;
 +    enqueue: (message: AppendMessage) => Promise<void> | void;
@@ -72,7 +1301,7 @@ index ba0fda6ec2557b20276f2faec8a9395e54543425..27739d8d8ed7486caf2fd190ac425eec
  };
  
 diff --git a/src/useAgUiRuntime.ts b/src/useAgUiRuntime.ts
-index df696bad4c76f279da5b362f26c48c26866adba3..d7230ec08dd3f35dbce6847ecb041fd85cec4d48 100644
+index df696bad4c76f279da5b362f26c48c26866adba3..c733de786f9474e2c920e75077d59d1acb05eb55 100644
 --- a/src/useAgUiRuntime.ts
 +++ b/src/useAgUiRuntime.ts
 @@ -26,6 +26,8 @@ export function useAgUiRuntime(
@@ -84,7 +1313,23 @@ index df696bad4c76f279da5b362f26c48c26866adba3..d7230ec08dd3f35dbce6847ecb041fd8
  
    const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
    const threadListAdapter = options.adapters?.threadList;
-@@ -145,7 +147,14 @@ export function useAgUiRuntime(
+@@ -35,6 +37,7 @@ export function useAgUiRuntime(
+       agent: options.agent,
+       logger,
+       showThinking: options.showThinking ?? true,
++      externalMessagesStrategy: options.externalMessagesStrategy ?? "replace",
+       ...(options.onError && { onError: options.onError }),
+       ...(options.onCancel && { onCancel: options.onCancel }),
+       ...(historyAdapter && { history: historyAdapter }),
+@@ -47,6 +50,7 @@ export function useAgUiRuntime(
+     agent: options.agent,
+     logger,
+     showThinking: options.showThinking ?? true,
++    externalMessagesStrategy: options.externalMessagesStrategy ?? "replace",
+     ...(options.onError && { onError: options.onError }),
+     ...(options.onCancel && { onCancel: options.onCancel }),
+     ...(historyAdapter && { history: historyAdapter }),
+@@ -145,7 +149,14 @@ export function useAgUiRuntime(
          messages: core.getMessages(),
          state: core.getState(),
          isRunning: core.isRunning() || hasExecutingTools,
@@ -100,3 +1345,14 @@ index df696bad4c76f279da5b362f26c48c26866adba3..d7230ec08dd3f35dbce6847ecb041fd8
          onEdit: (message: AppendMessage) => core.edit(message),
          onReload: (parentId: string | null, config: { runConfig?: any }) =>
            core.reload(parentId, config),
+@@ -184,8 +195,8 @@ export function useAgUiRuntime(
+   }, [core, runtime]);
+ 
+   useEffect(() => {
+-    core.__internal_load();
+-  }, [core]);
++    core.__internal_load(options.historyLoadKey);
++  }, [core, options.historyLoadKey]);
+ 
+   return runtime;
+ }
