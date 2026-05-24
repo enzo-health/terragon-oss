@@ -1,7 +1,7 @@
 "use client";
 
 import type { UIMessage, UIPart } from "@terragon/shared";
-import { memo, useRef } from "react";
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { AgentMetaFooter } from "../chat-message-agent-meta-footer";
 import { MessageToolbar } from "../chat-message-toolbar";
@@ -11,6 +11,7 @@ import {
   type TerragonMessageRenderContext,
   useTerragonMessageRender,
 } from "./thread-context";
+import { useStablePrefix } from "./use-stable-prefix";
 
 type RuntimeTerragonMessageProps = {
   message: UIMessage;
@@ -32,7 +33,7 @@ export const RuntimeTerragonMessage = memo(function RuntimeTerragonMessage({
     ctx.isAgentWorking && isLatestMessage && message.role === "agent";
   const renderableParts = getRenderableParts(message);
   const shouldSplitLiveTail = rowIsAgentWorking && renderableParts.length > 1;
-  const staticParts = useStablePartPrefix(
+  const staticParts = useStablePrefix(
     renderableParts,
     shouldSplitLiveTail ? renderableParts.length - 1 : 0,
   );
@@ -184,27 +185,6 @@ const RuntimeMessagePart = memo(function RuntimeMessagePart({
     />
   );
 });
-
-function useStablePartPrefix(parts: UIPart[], endExclusive: number): UIPart[] {
-  const previousRef = useRef<{
-    endExclusive: number;
-    prefix: UIPart[];
-  } | null>(null);
-  const previous = previousRef.current;
-
-  if (
-    previous &&
-    previous.endExclusive === endExclusive &&
-    parts.length >= endExclusive &&
-    previous.prefix.every((part, index) => parts[index] === part)
-  ) {
-    return previous.prefix;
-  }
-
-  const prefix = parts.slice(0, endExclusive);
-  previousRef.current = { endExclusive, prefix };
-  return prefix;
-}
 
 function getRenderableParts(message: UIMessage): UIPart[] {
   switch (message.role) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useRef } from "react";
+import { memo } from "react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
@@ -14,6 +14,7 @@ import { MessageScheduled, WorkingMessage } from "../chat-messages";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { RuntimeTerragonMessage } from "./runtime-terragon-message";
 import { TerragonSystemMessage } from "./system-message";
+import { useStablePrefix } from "./use-stable-prefix";
 import { TerragonUserMessage } from "./user-message";
 
 type TerragonTranscriptSurfaceProps = {
@@ -66,10 +67,7 @@ export function TerragonTranscriptSurface({
   threadChatStatus,
 }: TerragonTranscriptSurfaceProps) {
   const lastIndex = messages.length - 1;
-  const staticMessages = useStableMessagePrefix(
-    messages,
-    Math.max(0, lastIndex),
-  );
+  const staticMessages = useStablePrefix(messages, Math.max(0, lastIndex));
   const liveMessage = lastIndex >= 0 ? messages[lastIndex] : undefined;
   const hasTranscriptMessages = messages.length > 0;
   const shouldRenderWorkingMessage = showWorkingMessage || passiveWait !== null;
@@ -222,28 +220,4 @@ export function getWorkingMessageSlotClassName({
   return threadStatus === "booting" && !hasTranscriptMessages
     ? "min-h-[168px]"
     : "min-h-11 flex items-start";
-}
-
-function useStableMessagePrefix(
-  messages: UIMessage[],
-  endExclusive: number,
-): UIMessage[] {
-  const previousRef = useRef<{
-    endExclusive: number;
-    prefix: UIMessage[];
-  } | null>(null);
-  const previous = previousRef.current;
-
-  if (
-    previous &&
-    previous.endExclusive === endExclusive &&
-    messages.length >= endExclusive &&
-    previous.prefix.every((message, index) => messages[index] === message)
-  ) {
-    return previous.prefix;
-  }
-
-  const prefix = messages.slice(0, endExclusive);
-  previousRef.current = { endExclusive, prefix };
-  return prefix;
 }
