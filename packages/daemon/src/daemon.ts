@@ -42,6 +42,7 @@ import {
   geminiCommand,
   parseGeminiLine,
 } from "./gemini";
+import { droidCommand, getDroidApiKeyOrNull, parseDroidLine } from "./droid";
 import {
   getOpencodeApiKeyOrNull,
   opencodeCommand,
@@ -1056,7 +1057,8 @@ export class TerragonDaemon {
         await this.runOpencodeCommand(input);
         break;
       case "droid":
-        throw new Error("droid agent is not yet supported by the daemon");
+        await this.runDroidCommand(input);
+        break;
       default: {
         // This ensures we handle all model types exhaustively
         const _exhaustiveCheck: never = input.agent;
@@ -4098,6 +4100,58 @@ export class TerragonDaemon {
           }
           this.addMessageToBuffer({
             agent: "opencode",
+            message: parsedMessage,
+            threadId: input.threadId,
+            threadChatId: input.threadChatId,
+            token: input.token,
+          });
+        }
+      },
+    });
+  }
+
+  private async runDroidCommand(input: DaemonMessageClaude): Promise<void> {
+    return this.spawnAgentProcess({
+      agentName: "Droid",
+      input,
+      command: droidCommand({
+        runtime: this.runtime,
+        prompt: input.prompt,
+        model: input.model,
+        sessionId: input.sessionId,
+      }),
+      env: {
+        FACTORY_API_KEY: getDroidApiKeyOrNull(this.runtime),
+      },
+      getMockSuccessResult: () => "Droid successfully completed",
+      onStdoutLine: (line) => {
+        const activeProcessState = this.activeProcesses.get(input.threadChatId);
+        const parsedMessages = parseDroidLine({
+          line,
+          runtime: this.runtime,
+          isWorking: !!activeProcessState?.isWorking,
+        });
+        for (const parsedMessage of parsedMessages) {
+          const type = parsedMessage.type;
+          const sessionId = parsedMessage.session_id;
+          if (type === "system" && sessionId) {
+            this.updateActiveProcessState(input.threadChatId, {
+              sessionId,
+              isWorking: true,
+            });
+          } else if (
+            activeProcessState?.sessionId &&
+            (type === "assistant" || type === "user")
+          ) {
+            parsedMessage.session_id = activeProcessState.sessionId;
+          }
+          if (type === "result") {
+            this.updateActiveProcessState(input.threadChatId, {
+              isCompleted: true,
+            });
+          }
+          this.addMessageToBuffer({
+            agent: "droid",
             message: parsedMessage,
             threadId: input.threadId,
             threadChatId: input.threadChatId,
