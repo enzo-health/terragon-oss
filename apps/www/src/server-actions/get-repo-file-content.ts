@@ -29,6 +29,18 @@ type RepoFileContentErrorCategory =
   | "unsupported-content"
   | "github-error";
 
+/**
+ * One entry in a directory listing. `path` is repo-relative (as GitHub returns
+ * it) so it feeds straight back into the same in-repo open flow when clicked.
+ * Only `file`/`dir` entries are surfaced; symlinks and submodules are dropped
+ * because they cannot be previewed or browsed in place.
+ */
+export interface RepoDirectoryEntry {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
 export type GetRepoFileContentResult =
   | {
       status: "ready";
@@ -38,6 +50,15 @@ export type GetRepoFileContentResult =
       path: string;
       /** The git ref the blob was read from (working branch, else base). */
       ref: string;
+    }
+  | {
+      status: "directory";
+      /** Normalized repo-relative directory path. */
+      path: string;
+      /** The git ref the listing was read from (working branch, else base). */
+      ref: string;
+      /** Child entries, directories first then files, each alphabetical. */
+      entries: RepoDirectoryEntry[];
     }
   | {
       status: "error";
@@ -55,6 +76,29 @@ class RepoFileContentError extends Error {
     this.name = "RepoFileContentError";
     this.category = category;
   }
+}
+
+/**
+ * Map GitHub's directory-listing array into the typed entry list. Items that
+ * are not plain file/dir entries (symlinks, submodules, malformed records) are
+ * dropped. Sorted directories-first, then files, each case-insensitively
+ * alphabetical, so the panel renders a stable, predictable order.
+ */
+function parseDirectoryListing(items: unknown[]): RepoDirectoryEntry[] {
+  const entries: RepoDirectoryEntry[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    const { name, path, type } = record;
+    if (typeof name !== "string" || typeof path !== "string") continue;
+    if (type !== "file" && type !== "dir") continue;
+    entries.push({ name, path, type });
+  }
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+  return entries;
 }
 
 function isHttpStatusError(error: unknown): error is { status: number } {
@@ -167,13 +211,23 @@ async function loadRepoFileContent(
       throw new RepoFileContentError("github-error");
     }
 
-    // A directory (or symlink/submodule) comes back as an array or without a
-    // base64 `content` field; treat anything that is not a readable file blob
-    // as unsupported rather than guessing.
+    // A directory comes back as an array of entries; return a browsable listing
+    // so each child opens through the same in-repo flow when clicked.
+    if (Array.isArray(data)) {
+      return {
+        status: "directory",
+        path: classified.path,
+        ref,
+        entries: parseDirectoryListing(data),
+      };
+    }
+
+    // A symlink/submodule comes back without a base64 `content` field; treat
+    // anything that is not a readable file blob as unsupported rather than
+    // guessing.
     if (
       typeof data !== "object" ||
       data === null ||
-      Array.isArray(data) ||
       !("content" in data) ||
       typeof (data as { content: unknown }).content !== "string" ||
       (data as { encoding?: unknown }).encoding !== "base64"
