@@ -171,6 +171,8 @@ function runtimeProviderForDispatch({
           return "legacy-opencode";
         case "codex":
           return "codex-app-server";
+        case "droid":
+          throw new Error("droid agent is not yet supported");
         default: {
           const _exhaustiveCheck: never = agent;
           throw new Error(
@@ -1054,6 +1056,7 @@ async function preparePromptForModel({
     case "amp":
     case "gemini":
     case "opencode":
+    case "droid":
     case "claudeCode": {
       prompt = await promptWithMessageToSendOnly();
       break;

@@ -641,6 +641,19 @@ async function updateAgentFiles({
       });
       break;
     }
+    case "droid": {
+      await updateAgentFilesShared({
+        session,
+        homeDir,
+        agentConfigDir: ".factory",
+        agentCredentialsFilename: null,
+        agentCredentials: null,
+        isCreatingSandbox,
+        customSystemPromptFilename: "AGENTS.md",
+        customSystemPrompt,
+      });
+      break;
+    }
     default: {
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);

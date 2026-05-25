@@ -129,6 +129,7 @@ export function resolveImplementationRuntimeAdapter(
     case "amp":
     case "gemini":
     case "opencode":
+    case "droid":
       return genericImplementationAdapter;
     default: {
       const _exhaustiveCheck: never = agent;

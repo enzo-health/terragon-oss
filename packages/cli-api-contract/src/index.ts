@@ -56,7 +56,14 @@ const threadDetailContract = oc
       githubRepoFullName: z.string().nullable(),
       githubPRNumber: z.number().nullable(),
       jsonl: z.array(z.any()).nullable(),
-      agent: z.enum(["claudeCode", "gemini", "amp", "codex", "opencode"]),
+      agent: z.enum([
+        "claudeCode",
+        "gemini",
+        "amp",
+        "codex",
+        "opencode",
+        "droid",
+      ]),
       hasChanges: z.boolean().optional(),
     }),
   );

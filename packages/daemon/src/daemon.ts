@@ -1055,6 +1055,8 @@ export class TerragonDaemon {
       case "opencode":
         await this.runOpencodeCommand(input);
         break;
+      case "droid":
+        throw new Error("droid agent is not yet supported by the daemon");
       default: {
         // This ensures we handle all model types exhaustively
         const _exhaustiveCheck: never = input.agent;
@@ -2166,6 +2168,8 @@ export class TerragonDaemon {
           return "opencode";
         case "gemini":
           throw new Error("ACP transport is not supported for gemini agent");
+        case "droid":
+          throw new Error("ACP transport is not supported for droid agent");
         default: {
           const _exhaustiveCheck: never = input.agent;
           throw new Error(

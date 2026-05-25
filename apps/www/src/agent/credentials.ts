@@ -78,7 +78,8 @@ export async function getAndVerifyCredentials({
       };
     }
     case "gemini":
-    case "opencode": {
+    case "opencode":
+    case "droid": {
       return {
         type: "built-in-credits",
       };
