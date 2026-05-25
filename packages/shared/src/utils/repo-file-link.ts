@@ -51,6 +51,14 @@ function parseLineAnchor(anchor: string): RepoFileLineRange | undefined {
 /**
  * Normalize a repo path, rejecting any `..` traversal. Returns null if the path
  * would escape the workspace root or is empty after normalization.
+ *
+ * Only literal `..` segments are rejected. A percent-encoded sequence like
+ * `%2e%2e%2f` is NOT decoded and survives as a single opaque path segment. This
+ * does not let a caller escape the repo: the literal segment is handed to
+ * octokit `repos.getContent`, which is repo-scoped and 404s for a non-existent
+ * path, so it can never read outside the repo tree. We deliberately do not
+ * decode here — decoding would reintroduce ambiguity about what the canonical
+ * path is, and the repo-scoped fetch is the real boundary.
  */
 function normalizeRepoPath(rawPath: string): string | null {
   if (rawPath.length === 0) return null;

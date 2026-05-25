@@ -95,6 +95,16 @@ describe("classifyRepoFileLink", () => {
     ])("rejects %s", (href) => {
       expect(classifyRepoFileLink(href)).toBeNull();
     });
+
+    it("percent-encoded traversal is NOT decoded; it survives as a literal segment", () => {
+      // Defense-in-depth: we do not decode `%2e%2e%2f` to `../`. The encoded
+      // segment passes through verbatim and is later handed to the repo-scoped
+      // octokit getContent, which 404s for the non-existent path — it cannot
+      // escape the repo tree. See normalizeRepoPath for the rationale.
+      expect(classifyRepoFileLink("src/%2e%2e%2fsecrets.ts")).toEqual({
+        path: "src/%2e%2e%2fsecrets.ts",
+      });
+    });
   });
 
   describe("rejects non-file inputs", () => {
