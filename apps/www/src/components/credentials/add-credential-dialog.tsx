@@ -69,6 +69,25 @@ const API_KEY_CONFIGS = {
       </>
     ),
   },
+  droid: {
+    agent: "droid" as const,
+    agentName: "Droid",
+    placeholder: "fk-...",
+    validatePrefix: "fk-",
+    helpText: (
+      <>
+        Enter your Factory API key to use the Droid model. Create one at{" "}
+        <a
+          href="https://app.factory.ai/settings/api-keys"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline"
+        >
+          Factory Settings
+        </a>
+      </>
+    ),
+  },
 } as const satisfies Record<string, ApiKeyConfig>;
 
 // Generic API key dialog for providers that only support API keys
@@ -193,6 +212,22 @@ export function AddGeminiCredentialDialog({
       open={open}
       onOpenChange={onOpenChange}
       config={API_KEY_CONFIGS.gemini}
+    />
+  );
+}
+
+export function AddDroidCredentialDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <AddApiKeyDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      config={API_KEY_CONFIGS.droid}
     />
   );
 }

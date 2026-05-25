@@ -72,8 +72,8 @@ export function AgentIcon({
       );
     case "droid":
       return (
-        <span className="flex-shrink-0 inline-flex items-center text-xs font-medium text-muted-foreground">
-          Droid
+        <span className="flex-shrink-0 inline-flex items-center">
+          <Image src="/agents/droid.svg" alt="Droid" width={16} height={16} />
         </span>
       );
     default:
