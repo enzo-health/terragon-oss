@@ -84,15 +84,22 @@ export function RepoTreeArtifactRenderer({
     ),
   );
 
-  // Fold fetched paths + git status into the model once the tree resolves.
+  // Rebuild paths only when the fetched tree changes. resetPaths is a coarse
+  // whole-tree reset that collapses expansion, so it must not run on a status
+  // change.
   useEffect(() => {
     if (result?.status !== "ready") return;
     fileSetRef.current = new Set(result.paths);
     model.resetPaths(result.paths, {
       preparedInput: prepareFileTreeInput(result.paths),
     });
+  }, [result, model]);
+
+  // Apply git-status colors independently (keyed by path, order-independent)
+  // so live diff updates recolor files without collapsing expanded folders.
+  useEffect(() => {
     model.setGitStatus(gitStatus);
-  }, [result, gitStatus, model]);
+  }, [gitStatus, model]);
 
   // Reveal + highlight the file open in the preview.
   useEffect(() => {
