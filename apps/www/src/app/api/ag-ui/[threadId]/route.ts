@@ -7,7 +7,6 @@ import {
 } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DBMessage } from "@terragon/shared";
-import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
   agUiStreamKey,
@@ -17,7 +16,6 @@ import {
   isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
@@ -40,6 +38,7 @@ import {
 } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 import { runFollowUpFromAgUiInput } from "@/server-lib/run-from-ag-ui";
+import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -816,23 +815,13 @@ export async function GET(
   // threadChatId belongs to that same thread. Without the join a caller
   // who owns thread-A could pass threadChatId pointing at someone else's
   // chat. Return 404 on mismatch to avoid leaking existence.
-  const ownership = await db
-    .select({
-      id: schema.threadChat.id,
-      messages: schema.threadChat.messages,
-    })
-    .from(schema.threadChat)
-    .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
-    .where(
-      and(
-        eq(schema.threadChat.id, threadChatId),
-        eq(schema.thread.id, threadId),
-        eq(schema.thread.userId, session.user.id),
-      ),
-    )
-    .limit(1);
+  const ownership = await authorizeAgUiThreadChat({
+    threadId,
+    threadChatId,
+    userId: session.user.id,
+  });
 
-  if (ownership.length === 0) {
+  if (ownership === null) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -849,7 +838,7 @@ export async function GET(
     const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
     const messages = mergeMissingDbUserMessagesIntoHistory({
       historyItems: history.items,
-      dbMessages: ownership[0]?.messages ?? [],
+      dbMessages: ownership.messages,
     });
     const includedCursor =
       history.lastSeqOffset >= 0
