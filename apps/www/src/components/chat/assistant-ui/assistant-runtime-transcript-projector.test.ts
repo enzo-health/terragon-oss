@@ -5,7 +5,7 @@ import type {
 import type { AIAgent } from "@terragon/agent/types";
 import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { describe, expect, it } from "vitest";
-import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
+import { createAssistantRuntimeTranscriptProjector } from "./assistant-runtime-transcript-projector";
 
 const createdAt = new Date(0);
 const projectRuntimeTranscriptMessages = ({
@@ -15,7 +15,7 @@ const projectRuntimeTranscriptMessages = ({
   runtimeMessages: readonly ThreadMessage[];
   agent: AIAgent;
 }) =>
-  createRuntimeTranscriptProjector()({
+  createAssistantRuntimeTranscriptProjector()({
     runtimeMessages,
     agent,
   });
@@ -482,7 +482,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 
   it("reprojects a runtime tool when its artifact changes", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const baseMessage: ThreadMessage = {
       id: "assistant-1",
       role: "assistant",
@@ -604,7 +604,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 
   it("reprojects a pending tool when it completes with a null result", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const assistantMessage: ThreadMessage = {
       id: "assistant-1",
       role: "assistant",
@@ -756,7 +756,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 });
 
-describe("createRuntimeTranscriptProjector", () => {
+describe("createAssistantRuntimeTranscriptProjector", () => {
   it("keeps the mutable tail message responsive while reusing stable history", () => {
     const userMessage: ThreadMessage = {
       id: "user-1",
@@ -780,7 +780,7 @@ describe("createRuntimeTranscriptProjector", () => {
         custom: {},
       },
     };
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const first = projector({
       runtimeMessages: [userMessage, assistantMessage],
       agent: "codex",
@@ -814,7 +814,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("detects long text edits with unchanged prefix, suffix, and length", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const firstText = `${"a".repeat(48)}${"b".repeat(120)}${"z".repeat(96)}`;
     const secondText = `${"a".repeat(48)}${"c".repeat(120)}${"z".repeat(96)}`;
     const assistantMessage: ThreadMessage = {
@@ -852,7 +852,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("reprojects an immutable non-tail rich part update without touching stable neighbors", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",
@@ -955,7 +955,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("updates only the compact tail projection for large streaming histories", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const history: ThreadMessage[] = Array.from({ length: 500 }, (_, index) =>
       index % 2 === 0
         ? {
@@ -1022,7 +1022,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("skips deep snapshot work for unchanged suffix messages", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     let argsReadCount = 0;
     const args = Object.defineProperty(
       {} as { readonly command: string },
@@ -1090,7 +1090,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("re-projects only the runtime message that changed by reference", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",
@@ -1151,7 +1151,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("reuses unchanged sibling parts when one active message part changes", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const textPart: ThreadAssistantMessagePart = {
       type: "text",
       text: "Checking",
@@ -1240,7 +1240,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("re-projects a non-tail message changed after a tail update", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",

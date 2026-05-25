@@ -30,7 +30,7 @@ import { TSubmitForm } from "./send-button";
 import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
 import { toast } from "sonner";
 import { getDynamicSlashCommands } from "./add-context-button";
-import { submitComposerMessage } from "./composer-submission";
+import { routeComposerSubmit } from "./composer-submit-routing";
 
 export type HandleSubmitArgs = {
   userMessage: DBUserMessage;
@@ -695,7 +695,7 @@ export function usePromptBox({
           attachedFiles,
         });
 
-        await submitComposerMessage({
+        await routeComposerSubmit({
           userMessage,
           selectedModels,
           repoFullName: repoFullName ?? "",

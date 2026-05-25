@@ -61,7 +61,7 @@ import {
   useRetryThreadMutation,
 } from "./use-thread-mutations";
 import { useThreadViewModel } from "./use-ag-ui-messages";
-import { useTerragonAgUiSidecars } from "./use-terragon-ag-ui-sidecars";
+import { useProductSidecars } from "./use-product-sidecars";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -281,7 +281,7 @@ function ChatUIContent() {
     snapshot: threadViewSnapshot,
     includeTranscriptMessages: false,
   });
-  useTerragonAgUiSidecars({
+  useProductSidecars({
     agent,
     threadId,
     threadChatId,

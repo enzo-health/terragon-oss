@@ -1,7 +1,4 @@
-import {
-  decodeTerragonAgUiRunConfig,
-  getTerragonRunConfigProps,
-} from "./terragon-ag-ui-run-config";
+import { decodeRunMetadata, getRunMetadataProps } from "./run-metadata";
 
 export type AgentTraceAttribute = boolean | number | string | null;
 
@@ -84,13 +81,13 @@ function isAgentTraceActive(): boolean {
 export function getTraceIdFromAgUiForwardedProps(
   forwardedProps: unknown,
 ): string | null {
-  return decodeTerragonAgUiRunConfig(forwardedProps).traceId;
+  return decodeRunMetadata(forwardedProps).traceId;
 }
 
 export function getTerragonProps(
   forwardedProps: unknown,
 ): Record<string, unknown> | null {
-  return getTerragonRunConfigProps(forwardedProps);
+  return getRunMetadataProps(forwardedProps);
 }
 
 function recordBrowserPerformanceMark(span: AgentTraceSpan): void {

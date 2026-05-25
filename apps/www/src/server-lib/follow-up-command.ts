@@ -13,19 +13,19 @@ import { getLatestRunIdForThreadChat } from "@terragon/shared/model/agent-event-
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { followUpInternal } from "@/server-lib/follow-up";
-import { decodeTerragonAgUiRunConfig } from "@/lib/terragon-ag-ui-run-config";
+import { decodeRunMetadata } from "@/lib/run-metadata";
 
 // ---------------------------------------------------------------------------
 // Public contract
 // ---------------------------------------------------------------------------
 
-export type AgUiRunResult =
+export type FollowUpCommandResult =
   | { runId: string }
   | { skipped: "replay-mode" }
   | { skipped: "duplicate-submission" }
-  | { error: AgUiRunError };
+  | { error: FollowUpCommandError };
 
-export type AgUiRunError =
+export type FollowUpCommandError =
   | { kind: "unauthorized" }
   | { kind: "thread-not-found" }
   | { kind: "lock-held" } // another POST already in flight
@@ -168,7 +168,7 @@ function extractStateMetadata(body: RunAgentInput): void {
   if (!isRecord(terragon)) return;
   if ("saveAsDraft" in terragon || "scheduleAt" in terragon) {
     console.log(
-      "[run-from-ag-ui] ignoring unsupported state fields: saveAsDraft/scheduleAt",
+      "[follow-up-command] ignoring unsupported state fields: saveAsDraft/scheduleAt",
       {
         saveAsDraft: terragon["saveAsDraft"],
         scheduleAt: terragon["scheduleAt"],
@@ -186,7 +186,7 @@ function extractStateMetadata(body: RunAgentInput): void {
  *
  * See contract in spec comment at top of file.
  */
-export async function runFollowUpFromAgUiInput(args: {
+export async function dispatchFollowUpFromAppend(args: {
   threadId: string;
   threadChatId: string;
   userId: string;
@@ -196,7 +196,7 @@ export async function runFollowUpFromAgUiInput(args: {
    * Skips followUp invocation — no DB writes, no lock, no dispatch.
    */
   isReplayMode: boolean;
-}): Promise<AgUiRunResult> {
+}): Promise<FollowUpCommandResult> {
   const { threadId, threadChatId, userId, body, isReplayMode } = args;
 
   // 1. Replay-mode bypass
@@ -224,7 +224,7 @@ export async function runFollowUpFromAgUiInput(args: {
     invalidSelectedModel,
     permissionMode,
     clientSubmissionId,
-  } = decodeTerragonAgUiRunConfig(body.forwardedProps);
+  } = decodeRunMetadata(body.forwardedProps);
   if (invalidSelectedModel !== null) {
     return {
       error: {

@@ -4,8 +4,8 @@ import { useAuiState } from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage, UIPart, UIUserMessage } from "@terragon/shared";
 import { useMemo } from "react";
-import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
-import { createTerragonTranscriptModelBuilder } from "./terragon-transcript-model";
+import { createAssistantRuntimeTranscriptProjector } from "./assistant-runtime-transcript-projector";
+import { createTranscriptDisplayModelBuilder } from "./transcript-display-model";
 
 export type TerragonTranscript = {
   messages: UIMessage[];
@@ -28,7 +28,7 @@ export function useTerragonTranscript({
   const runtimeMessages = useAuiState((state) => state.thread.messages);
   const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
   const runtimeTranscriptProjector = useMemo(
-    () => createRuntimeTranscriptProjector(),
+    () => createAssistantRuntimeTranscriptProjector(),
     [],
   );
   const projectedTranscript = useMemo(
@@ -40,7 +40,7 @@ export function useTerragonTranscript({
     [chatAgent, runtimeMessages, runtimeTranscriptProjector],
   );
   const transcriptModelBuilder = useMemo(
-    () => createTerragonTranscriptModelBuilder(),
+    () => createTranscriptDisplayModelBuilder(),
     [],
   );
   const transcriptModel = useMemo(

@@ -11,7 +11,7 @@ import {
 const EMPTY_PLAN_OCCURRENCES = new Map<UIPart, number>();
 export type AgentUIMessage = Extract<UIMessage, { role: "agent" }>;
 
-export type TerragonTranscriptModel = {
+export type TranscriptDisplayModel = {
   messages: UIMessage[];
   latestAgentMessageIndex: number;
   hasRenderableAgentParts: boolean;
@@ -19,18 +19,16 @@ export type TerragonTranscriptModel = {
   planOccurrencesRaw: Map<UIPart, number>;
 };
 
-export type BuildTerragonTranscriptModelInput = {
+export type BuildTranscriptDisplayModelInput = {
   runtimeMessages: UIMessage[];
   optimisticUserMessages: UIUserMessage[];
 };
 
-export function createTerragonTranscriptModelBuilder() {
-  let previousInput: BuildTerragonTranscriptModelInput | null = null;
-  let previousModel: TerragonTranscriptModel | null = null;
+export function createTranscriptDisplayModelBuilder() {
+  let previousInput: BuildTranscriptDisplayModelInput | null = null;
+  let previousModel: TranscriptDisplayModel | null = null;
 
-  return (
-    input: BuildTerragonTranscriptModelInput,
-  ): TerragonTranscriptModel => {
+  return (input: BuildTranscriptDisplayModelInput): TranscriptDisplayModel => {
     const steadyRuntimeModel =
       tryBuildSteadyRuntimeModel({
         input,
@@ -47,17 +45,17 @@ export function createTerragonTranscriptModelBuilder() {
         previousInput,
         previousModel,
       });
-    const model = steadyRuntimeModel ?? buildTerragonTranscriptModel(input);
+    const model = steadyRuntimeModel ?? buildTranscriptDisplayModel(input);
     previousInput = input;
     previousModel = model;
     return model;
   };
 }
 
-export function buildTerragonTranscriptModel({
+export function buildTranscriptDisplayModel({
   runtimeMessages,
   optimisticUserMessages,
-}: BuildTerragonTranscriptModelInput): TerragonTranscriptModel {
+}: BuildTranscriptDisplayModelInput): TranscriptDisplayModel {
   const messages = coalesceContiguousAgentMessages(
     appendOptimisticUserMessages(runtimeMessages, optimisticUserMessages),
   );
@@ -127,7 +125,7 @@ export function coalesceAgentMessages(
 export function deriveTranscriptFacts(
   messages: UIMessage[],
 ): Pick<
-  TerragonTranscriptModel,
+  TranscriptDisplayModel,
   "latestAgentMessageIndex" | "hasRenderableAgentParts" | "hasPendingToolCall"
 > {
   let latestAgentMessageIndex = -1;

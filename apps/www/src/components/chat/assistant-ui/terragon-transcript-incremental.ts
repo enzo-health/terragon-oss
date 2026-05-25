@@ -9,14 +9,14 @@ import {
   messageHasRenderableAgentParts,
   messageMayContainProposedPlan,
   type AgentUIMessage,
-  type BuildTerragonTranscriptModelInput,
-  type TerragonTranscriptModel,
-} from "./terragon-transcript-model";
+  type BuildTranscriptDisplayModelInput,
+  type TranscriptDisplayModel,
+} from "./transcript-display-model";
 
 type SteadyFastPathContext = {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput;
-  previousModel: TerragonTranscriptModel;
+  input: BuildTranscriptDisplayModelInput;
+  previousInput: BuildTranscriptDisplayModelInput;
+  previousModel: TranscriptDisplayModel;
 };
 
 function resolveSteadyFastPathContext({
@@ -24,9 +24,9 @@ function resolveSteadyFastPathContext({
   previousInput,
   previousModel,
 }: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
+  input: BuildTranscriptDisplayModelInput;
+  previousInput: BuildTranscriptDisplayModelInput | null;
+  previousModel: TranscriptDisplayModel | null;
 }): SteadyFastPathContext | null {
   if (
     !previousInput ||
@@ -40,8 +40,8 @@ function resolveSteadyFastPathContext({
 }
 
 function runtimePrefixUnchanged(
-  input: BuildTerragonTranscriptModelInput,
-  previousInput: BuildTerragonTranscriptModelInput,
+  input: BuildTranscriptDisplayModelInput,
+  previousInput: BuildTranscriptDisplayModelInput,
   prefixLength: number,
 ): boolean {
   for (let index = 0; index < prefixLength; index += 1) {
@@ -53,10 +53,10 @@ function runtimePrefixUnchanged(
 }
 
 export function tryBuildSteadyRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
+  input: BuildTranscriptDisplayModelInput;
+  previousInput: BuildTranscriptDisplayModelInput | null;
+  previousModel: TranscriptDisplayModel | null;
+}): TranscriptDisplayModel | null {
   const context = resolveSteadyFastPathContext(args);
   if (!context) {
     return null;
@@ -107,10 +107,10 @@ export function tryBuildSteadyRuntimeModel(args: {
 }
 
 export function tryBuildAppendedRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
+  input: BuildTranscriptDisplayModelInput;
+  previousInput: BuildTranscriptDisplayModelInput | null;
+  previousModel: TranscriptDisplayModel | null;
+}): TranscriptDisplayModel | null {
   const context = resolveSteadyFastPathContext(args);
   if (!context) {
     return null;
@@ -162,10 +162,10 @@ export function tryBuildAppendedRuntimeModel(args: {
 }
 
 export function tryBuildSteadyCoalescedRuntimeModel(args: {
-  input: BuildTerragonTranscriptModelInput;
-  previousInput: BuildTerragonTranscriptModelInput | null;
-  previousModel: TerragonTranscriptModel | null;
-}): TerragonTranscriptModel | null {
+  input: BuildTranscriptDisplayModelInput;
+  previousInput: BuildTranscriptDisplayModelInput | null;
+  previousModel: TranscriptDisplayModel | null;
+}): TranscriptDisplayModel | null {
   const context = resolveSteadyFastPathContext(args);
   if (!context) {
     return null;
@@ -269,13 +269,13 @@ function deriveSteadyTailTranscriptFacts({
   tailIndex,
   messages,
 }: {
-  previousModel: TerragonTranscriptModel;
+  previousModel: TranscriptDisplayModel;
   previousTail: UIMessage;
   nextTail: UIMessage;
   tailIndex: number;
   messages: UIMessage[];
 }): Pick<
-  TerragonTranscriptModel,
+  TranscriptDisplayModel,
   "latestAgentMessageIndex" | "hasRenderableAgentParts" | "hasPendingToolCall"
 > {
   const previousTailRenderable = messageHasRenderableAgentParts(previousTail);

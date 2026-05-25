@@ -2,12 +2,12 @@ import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
-  dbPartsToAssistantUiContent,
-  getComposerRuntimeRouting,
-  submitComposerMessage,
-  type ComposerSubmissionCommand,
-  type ComposerSubmissionRuntime,
-} from "./composer-submission";
+  toAssistantUserContent,
+  classifyComposerSubmitRoute,
+  routeComposerSubmit,
+  type ComposerSubmitCommand,
+  type ComposerSubmitRuntime,
+} from "./composer-submit-routing";
 
 const model = "claude-3-5-sonnet-20241022" as AIModel;
 const selectedModels = {} as SelectedAIModels;
@@ -46,13 +46,13 @@ function submitArgs() {
   };
 }
 
-function runtime(append: ComposerSubmissionRuntime["append"]) {
-  return { append } satisfies ComposerSubmissionRuntime;
+function runtime(append: ComposerSubmitRuntime["append"]) {
+  return { append } satisfies ComposerSubmitRuntime;
 }
 
-describe("dbPartsToAssistantUiContent", () => {
+describe("toAssistantUserContent", () => {
   it("converts text, rich text, mentions, and images to assistant-ui content", () => {
-    const content = dbPartsToAssistantUiContent([
+    const content = toAssistantUserContent([
       { type: "text", text: "plain" },
       { type: "rich-text", nodes: [{ type: "text", text: "hello" }] },
       { type: "rich-text", nodes: [{ type: "mention", text: "src/app.ts" }] },
@@ -72,21 +72,21 @@ describe("dbPartsToAssistantUiContent", () => {
   });
 });
 
-describe("getComposerRuntimeRouting", () => {
+describe("classifyComposerSubmitRoute", () => {
   it("routes text-only messages through runtime append", () => {
-    const routing = getComposerRuntimeRouting(richTextMessage("ship it"));
+    const routing = classifyComposerSubmitRoute(richTextMessage("ship it"));
 
     expect(routing.type).toBe("runtime");
   });
 
   it("routes mixed supported and unsupported attachment messages to fallback", () => {
-    const routing = getComposerRuntimeRouting(messageWithPdf());
+    const routing = classifyComposerSubmitRoute(messageWithPdf());
 
     expect(routing.type).toBe("unsupported-parts");
   });
 
   it("routes empty runtime content as a validation no-op", () => {
-    const routing = getComposerRuntimeRouting({
+    const routing = classifyComposerSubmitRoute({
       type: "user",
       model,
       parts: [{ type: "rich-text", nodes: [] }],
@@ -96,13 +96,13 @@ describe("getComposerRuntimeRouting", () => {
   });
 });
 
-describe("submitComposerMessage", () => {
+describe("routeComposerSubmit", () => {
   it("starts runtime append for idle supported messages", async () => {
-    const append = vi.fn<ComposerSubmissionRuntime["append"]>();
-    const fallback = vi.fn<ComposerSubmissionCommand>();
-    const queue = vi.fn<ComposerSubmissionCommand>();
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
+    const queue = vi.fn<ComposerSubmitCommand>();
 
-    const outcome = await submitComposerMessage({
+    const outcome = await routeComposerSubmit({
       ...submitArgs(),
       userMessage: richTextMessage("ship it"),
       threadRuntime: runtime(append),
@@ -130,10 +130,10 @@ describe("submitComposerMessage", () => {
   });
 
   it("falls back for draft or scheduled submit intents while runtime is present", async () => {
-    const append = vi.fn<ComposerSubmissionRuntime["append"]>();
-    const fallback = vi.fn<ComposerSubmissionCommand>();
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
 
-    const outcome = await submitComposerMessage({
+    const outcome = await routeComposerSubmit({
       ...submitArgs(),
       saveAsDraft: true,
       userMessage: richTextMessage("save"),
@@ -152,11 +152,11 @@ describe("submitComposerMessage", () => {
   });
 
   it("queues active messages at the composer boundary", async () => {
-    const append = vi.fn<ComposerSubmissionRuntime["append"]>();
-    const fallback = vi.fn<ComposerSubmissionCommand>();
-    const queue = vi.fn<ComposerSubmissionCommand>();
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
+    const queue = vi.fn<ComposerSubmitCommand>();
 
-    const outcome = await submitComposerMessage({
+    const outcome = await routeComposerSubmit({
       ...submitArgs(),
       userMessage: richTextMessage("queue it"),
       threadRuntime: runtime(append),
@@ -173,10 +173,10 @@ describe("submitComposerMessage", () => {
   });
 
   it("falls back for unsupported mixed attachment messages instead of partially appending", async () => {
-    const append = vi.fn<ComposerSubmissionRuntime["append"]>();
-    const fallback = vi.fn<ComposerSubmissionCommand>();
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
 
-    const outcome = await submitComposerMessage({
+    const outcome = await routeComposerSubmit({
       ...submitArgs(),
       userMessage: messageWithPdf(),
       threadRuntime: runtime(append),
@@ -194,9 +194,9 @@ describe("submitComposerMessage", () => {
   });
 
   it("uses fallback submit when no runtime exists", async () => {
-    const fallback = vi.fn<ComposerSubmissionCommand>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
 
-    const outcome = await submitComposerMessage({
+    const outcome = await routeComposerSubmit({
       ...submitArgs(),
       userMessage: richTextMessage("create thread"),
       threadRuntime: null,

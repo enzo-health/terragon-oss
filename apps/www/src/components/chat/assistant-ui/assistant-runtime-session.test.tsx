@@ -9,7 +9,7 @@ import { HttpAgent } from "@ag-ui/client";
 import type { Message as AgUiMessage } from "@ag-ui/core";
 import type { UseAgUiRuntimeOptions } from "@assistant-ui/react-ag-ui";
 import type { AIAgent } from "@terragon/agent/types";
-import { TerragonRuntimeSession } from "./terragon-runtime-session";
+import { AssistantRuntimeSession } from "./assistant-runtime-session";
 
 const useAgUiRuntimeSpy = vi.fn<(options: UseAgUiRuntimeOptions) => unknown>();
 
@@ -55,11 +55,11 @@ function SessionHarness({
     lastSeq: number;
   }>;
   setReplayCursor?: React.ComponentProps<
-    typeof TerragonRuntimeSession
+    typeof AssistantRuntimeSession
   >["setReplayCursor"];
 }) {
   return (
-    <TerragonRuntimeSession
+    <AssistantRuntimeSession
       agent={agent}
       loadAgUiHistoryMessages={loadAgUiHistoryMessages}
       chatAgent={chatAgent}
@@ -69,7 +69,7 @@ function SessionHarness({
       setReplayCursor={setReplayCursor}
     >
       {() => <div />}
-    </TerragonRuntimeSession>
+    </AssistantRuntimeSession>
   );
 }
 
@@ -88,7 +88,7 @@ function mountSessionHarness(
 
   function Harness() {
     return (
-      <TerragonRuntimeSession
+      <AssistantRuntimeSession
         agent={props.agent}
         loadAgUiHistoryMessages={props.loadAgUiHistoryMessages}
         chatAgent={props.chatAgent ?? "codex"}
@@ -118,7 +118,7 @@ function mountSessionHarness(
             </div>
           );
         }}
-      </TerragonRuntimeSession>
+      </AssistantRuntimeSession>
     );
   }
 
@@ -136,7 +136,7 @@ function mountSessionHarness(
   };
 }
 
-describe("TerragonRuntimeSession", () => {
+describe("AssistantRuntimeSession", () => {
   beforeEach(() => {
     useAgUiRuntimeSpy.mockClear();
     vi.unstubAllGlobals();

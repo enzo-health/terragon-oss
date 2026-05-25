@@ -18,7 +18,7 @@ export type CancelResult =
 /**
  * Adapter that bridges an AG-UI cancel request to `stopThreadInternal()`.
  *
- * Mirrors the shape of `runFollowUpFromAgUiInput` in run-from-ag-ui.ts but
+ * Mirrors the shape of `dispatchFollowUpFromAppend` in follow-up-command.ts but
  * is intentionally simpler: no lock (stopThread is idempotent) and no body
  * to parse.
  *

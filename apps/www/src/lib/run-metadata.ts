@@ -1,32 +1,32 @@
 import { AIModelSchema, type AIModel } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 
-export type TerragonAgUiPostIntent = "append" | "resume";
+export type RunPostIntent = "append" | "resume";
 
-export type TerragonAgUiRunConfig = {
+export type RunMetadata = {
   selectedModel: AIModel | null;
   invalidSelectedModel: string | null;
   permissionMode: DBUserMessage["permissionMode"];
   traceId: string | null;
-  intent: TerragonAgUiPostIntent;
+  intent: RunPostIntent;
   clientSubmissionId: string | null;
 };
 
-export type TerragonAgUiRunConfigInput = {
+export type RunMetadataInput = {
   selectedModel: AIModel | null;
   permissionMode: DBUserMessage["permissionMode"];
   traceId?: string | null;
-  intent?: TerragonAgUiPostIntent;
+  intent?: RunPostIntent;
   clientSubmissionId?: string | null;
 };
 
-export function encodeTerragonAgUiRunConfig({
+export function encodeRunMetadata({
   selectedModel,
   permissionMode,
   traceId,
   intent,
   clientSubmissionId,
-}: TerragonAgUiRunConfigInput): {
+}: RunMetadataInput): {
   terragon: Record<string, string | null>;
 } {
   return {
@@ -40,10 +40,8 @@ export function encodeTerragonAgUiRunConfig({
   };
 }
 
-export function decodeTerragonAgUiRunConfig(
-  forwardedProps: unknown,
-): TerragonAgUiRunConfig {
-  const terragon = getTerragonRunConfigProps(forwardedProps);
+export function decodeRunMetadata(forwardedProps: unknown): RunMetadata {
+  const terragon = getRunMetadataProps(forwardedProps);
   const selectedModelValue = terragon?.["selectedModel"];
   const permissionModeValue = terragon?.["permissionMode"];
   const traceIdValue = terragon?.["traceId"];
@@ -74,7 +72,7 @@ export function decodeTerragonAgUiRunConfig(
   };
 }
 
-export function getTerragonRunConfigProps(
+export function getRunMetadataProps(
   forwardedProps: unknown,
 ): Record<string, unknown> | null {
   if (!isRecord(forwardedProps)) {

@@ -10,17 +10,17 @@ import type { AIAgent } from "@terragon/agent/types";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
-import { createAgUiHistoryAdapter } from "../ag-ui-history-adapter";
+import { createAssistantHistoryAdapter } from "../ag-ui-history-to-assistant-thread";
 import { resolveRuntimeResumePolicy } from "./runtime-resume-policy";
 
-class TerragonHistoryLoadError extends Error {
+class AssistantHistoryLoadError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "TerragonHistoryLoadError";
+    this.name = "AssistantHistoryLoadError";
   }
 }
 
-async function postTerragonCancel({
+async function postRuntimeCancel({
   threadId,
   threadChatId,
   onError,
@@ -55,7 +55,7 @@ async function postTerragonCancel({
   }
 }
 
-function resolveTerragonThreadErrorProps({
+function resolveThreadRuntimeErrorProps({
   callerError,
   callerErrorType,
   callerErrorInfo,
@@ -93,7 +93,7 @@ function resolveTerragonThreadErrorProps({
   return {};
 }
 
-export type TerragonRuntimeSessionProps = {
+export type AssistantRuntimeSessionProps = {
   agent: HttpAgent;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   chatAgent: AIAgent;
@@ -112,7 +112,7 @@ export type TerragonRuntimeSessionProps = {
   }) => React.ReactNode;
 };
 
-export function TerragonRuntimeSession({
+export function AssistantRuntimeSession({
   agent,
   loadAgUiHistoryMessages,
   chatAgent,
@@ -124,11 +124,11 @@ export function TerragonRuntimeSession({
   callerErrorType,
   callerErrorInfo,
   children,
-}: TerragonRuntimeSessionProps) {
+}: AssistantRuntimeSessionProps) {
   const showThinking = chatAgent === "claudeCode" || chatAgent === "codex";
   const [historyLoadErrorState, setHistoryLoadErrorState] = useState<{
     agent: HttpAgent;
-    loadAgUiHistoryMessages: TerragonRuntimeSessionProps["loadAgUiHistoryMessages"];
+    loadAgUiHistoryMessages: AssistantRuntimeSessionProps["loadAgUiHistoryMessages"];
     message: string;
   } | null>(null);
   const [runtimeErrorState, setRuntimeErrorState] = useState<{
@@ -182,7 +182,7 @@ export function TerragonRuntimeSession({
         loadAgUiHistoryMessages,
         message,
       });
-      throw new TerragonHistoryLoadError(message);
+      throw new AssistantHistoryLoadError(message);
     }
   }, [
     agent,
@@ -193,7 +193,7 @@ export function TerragonRuntimeSession({
 
   const handleRuntimeError = useCallback(
     (error: Error) => {
-      if (error instanceof TerragonHistoryLoadError) {
+      if (error instanceof AssistantHistoryLoadError) {
         setHistoryLoadErrorState({
           agent,
           loadAgUiHistoryMessages,
@@ -208,7 +208,7 @@ export function TerragonRuntimeSession({
 
   const history = useMemo(
     () =>
-      createAgUiHistoryAdapter(
+      createAssistantHistoryAdapter(
         async () => {
           try {
             return await loadHistoryMessages();
@@ -233,7 +233,7 @@ export function TerragonRuntimeSession({
       onError: handleRuntimeError,
       ...(threadChatId && {
         onCancel: () => {
-          void postTerragonCancel({
+          void postRuntimeCancel({
             threadId,
             threadChatId,
             onError: handleRuntimeError,
@@ -258,7 +258,7 @@ export function TerragonRuntimeSession({
   );
 
   const runtime = useAgUiRuntime(runtimeOptions);
-  const resolvedErrorProps = resolveTerragonThreadErrorProps({
+  const resolvedErrorProps = resolveThreadRuntimeErrorProps({
     callerError,
     callerErrorType,
     callerErrorInfo,

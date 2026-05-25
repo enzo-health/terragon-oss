@@ -18,7 +18,7 @@ const PRODUCT_META_EVENT_KINDS = new Set([
   "mcp_server.startup_status_updated",
 ]);
 
-function isTerragonProductSidecarEvent(event: ThreadViewEventForAgUi): boolean {
+function isProductSidecarEvent(event: ThreadViewEventForAgUi): boolean {
   switch (event.type) {
     case EventType.RUN_STARTED:
     case EventType.RUN_FINISHED:
@@ -49,7 +49,7 @@ function isAllowedCustomSidecarEvent(event: ThreadViewEventForAgUi): boolean {
   return typeof kind === "string" && PRODUCT_META_EVENT_KINDS.has(kind);
 }
 
-export function useTerragonAgUiSidecars({
+export function useProductSidecars({
   agent,
   threadId,
   threadChatId,
@@ -65,7 +65,7 @@ export function useTerragonAgUiSidecars({
       includeTranscriptEvents: false,
     });
     return (event: ThreadViewEventForAgUi) =>
-      isTerragonProductSidecarEvent(event) ? projector(event) : null;
+      isProductSidecarEvent(event) ? projector(event) : null;
   }, []);
   const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
     threadId,

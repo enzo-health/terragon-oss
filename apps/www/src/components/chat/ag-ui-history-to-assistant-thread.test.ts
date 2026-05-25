@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { EventType } from "@ag-ui/core";
 import {
-  agUiMessagesToThreadMessages,
-  createAgUiHistoryAdapter,
-} from "./ag-ui-history-adapter";
+  hydrateAssistantThreadMessages,
+  createAssistantHistoryAdapter,
+} from "./ag-ui-history-to-assistant-thread";
 import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
 
-describe("agUiMessagesToThreadMessages", () => {
+describe("hydrateAssistantThreadMessages", () => {
   it("projects failed durable tool results as failed tool-call parts", () => {
-    const messages = agUiMessagesToThreadMessages([
+    const messages = hydrateAssistantThreadMessages([
       {
         id: "assistant-1",
         role: "assistant",
@@ -46,7 +46,7 @@ describe("agUiMessagesToThreadMessages", () => {
   });
 
   it("dedupes repeated history messages before hydrating the runtime", () => {
-    const messages = agUiMessagesToThreadMessages([
+    const messages = hydrateAssistantThreadMessages([
       {
         id: "user-1",
         role: "user",
@@ -89,7 +89,7 @@ describe("agUiMessagesToThreadMessages", () => {
   });
 
   it("marks unresolved idle-finalized tool calls as errored", async () => {
-    const adapter = createAgUiHistoryAdapter(
+    const adapter = createAssistantHistoryAdapter(
       () => [
         {
           id: "assistant-1",
@@ -123,7 +123,7 @@ describe("agUiMessagesToThreadMessages", () => {
   });
 
   it("keeps unresolved active-resume tool calls pending", async () => {
-    const adapter = createAgUiHistoryAdapter(
+    const adapter = createAssistantHistoryAdapter(
       () => [
         {
           id: "assistant-1",
@@ -174,7 +174,7 @@ describe("agUiMessagesToThreadMessages", () => {
       },
     };
 
-    const messages = agUiMessagesToThreadMessages([event]);
+    const messages = hydrateAssistantThreadMessages([event]);
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.id).toBe("assistant-live");
@@ -215,7 +215,7 @@ describe("agUiMessagesToThreadMessages", () => {
       },
     };
 
-    const messages = agUiMessagesToThreadMessages([event]);
+    const messages = hydrateAssistantThreadMessages([event]);
 
     expect(messages).toEqual([]);
   });

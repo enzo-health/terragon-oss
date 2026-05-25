@@ -7,7 +7,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadViewEvent } from "./thread-view-model/types";
-import { useTerragonAgUiSidecars } from "./use-terragon-ag-ui-sidecars";
+import { useProductSidecars } from "./use-product-sidecars";
 
 type FakeAgent = {
   subscribe: (subscriber: {
@@ -67,7 +67,7 @@ function Harness({
   agent: HttpAgent | null;
   dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
 }): null {
-  useTerragonAgUiSidecars({
+  useProductSidecars({
     agent,
     threadId: "thread-1",
     threadChatId: "chat-1",
@@ -82,7 +82,7 @@ async function flushScheduledInvalidations(): Promise<void> {
   });
 }
 
-describe("useTerragonAgUiSidecars", () => {
+describe("useProductSidecars", () => {
   let root: Root | null = null;
   let container: HTMLDivElement | null = null;
 

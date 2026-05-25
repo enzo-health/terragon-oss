@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  decodeTerragonAgUiRunConfig,
-  encodeTerragonAgUiRunConfig,
-  getTerragonRunConfigProps,
-} from "./terragon-ag-ui-run-config";
+  decodeRunMetadata,
+  encodeRunMetadata,
+  getRunMetadataProps,
+} from "./run-metadata";
 
-describe("terragon AG-UI run config", () => {
+describe("run metadata", () => {
   it("encodes assistant-ui runConfig custom payloads", () => {
     expect(
-      encodeTerragonAgUiRunConfig({
+      encodeRunMetadata({
         selectedModel: "sonnet",
         permissionMode: "plan",
         traceId: "trace-1",
@@ -27,7 +27,7 @@ describe("terragon AG-UI run config", () => {
   });
 
   it("decodes the assistant-ui forwardedProps.runConfig layout", () => {
-    const decoded = decodeTerragonAgUiRunConfig({
+    const decoded = decodeRunMetadata({
       runConfig: {
         terragon: {
           selectedModel: "gpt-5.4",
@@ -51,7 +51,7 @@ describe("terragon AG-UI run config", () => {
 
   it("does not accept the legacy direct forwardedProps.terragon layout", () => {
     expect(
-      getTerragonRunConfigProps({
+      getRunMetadataProps({
         terragon: { selectedModel: "sonnet" },
       }),
     ).toBeNull();
@@ -59,7 +59,7 @@ describe("terragon AG-UI run config", () => {
 
   it("reads only the assistant-ui runtime layout when both layouts are present", () => {
     expect(
-      decodeTerragonAgUiRunConfig({
+      decodeRunMetadata({
         runConfig: {
           terragon: { selectedModel: "sonnet", permissionMode: "plan" },
         },
@@ -77,7 +77,7 @@ describe("terragon AG-UI run config", () => {
 
   it("surfaces non-canonical models without casting", () => {
     expect(
-      decodeTerragonAgUiRunConfig({
+      decodeRunMetadata({
         runConfig: { terragon: { selectedModel: "claude-3-5-sonnet" } },
       }),
     ).toEqual({

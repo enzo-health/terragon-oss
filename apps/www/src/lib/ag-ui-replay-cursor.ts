@@ -1,9 +1,9 @@
 import type { RunAgentInput } from "@ag-ui/core";
 import {
-  decodeTerragonAgUiRunConfig,
-  getTerragonRunConfigProps,
-  type TerragonAgUiPostIntent,
-} from "./terragon-ag-ui-run-config";
+  decodeRunMetadata,
+  getRunMetadataProps,
+  type RunPostIntent,
+} from "./run-metadata";
 
 export type AgUiReplayCursor = {
   seq: number;
@@ -87,14 +87,14 @@ export function classifyAgUiPostIntent({
   lastEventId: string | null;
   fromSeq: string | null;
   body: Pick<RunAgentInput, "forwardedProps">;
-}): TerragonAgUiPostIntent {
-  const terragonRunConfig = getTerragonRunConfigProps(body.forwardedProps);
-  const explicitIntent = terragonRunConfig?.["intent"];
+}): RunPostIntent {
+  const runMetadata = getRunMetadataProps(body.forwardedProps);
+  const explicitIntent = runMetadata?.["intent"];
   if (explicitIntent === "append" || explicitIntent === "resume") {
     return explicitIntent;
   }
   if (resolveAgUiReplayCursor({ lastEventId, fromSeq }) !== null) {
     return "resume";
   }
-  return decodeTerragonAgUiRunConfig(body.forwardedProps).intent;
+  return decodeRunMetadata(body.forwardedProps).intent;
 }

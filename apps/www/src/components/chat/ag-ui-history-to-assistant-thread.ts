@@ -378,7 +378,7 @@ function finishUnresolvedToolCalls(messages: ThreadMessage[]): ThreadMessage[] {
   });
 }
 
-export function agUiMessagesToThreadMessages(
+export function hydrateAssistantThreadMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
@@ -441,14 +441,14 @@ export function agUiMessagesToThreadMessages(
   return messages;
 }
 
-export function createAgUiHistoryAdapter(
+export function createAssistantHistoryAdapter(
   loadAgUiMessages: AgUiHistoryLoader,
   options: { mode?: AgUiHistoryMode } = {},
 ): ThreadHistoryAdapter {
   return {
     load: async () => {
       const agUiMessages = await loadAgUiMessages();
-      const importedMessages = agUiMessagesToThreadMessages(agUiMessages);
+      const importedMessages = hydrateAssistantThreadMessages(agUiMessages);
       const mode = options.mode ?? "active-resume";
       const messages =
         mode === "idle-finalized"

@@ -1,10 +1,10 @@
 import type { SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 import type { ThreadUserMessagePart } from "@assistant-ui/react";
-import { encodeTerragonAgUiRunConfig } from "@/lib/terragon-ag-ui-run-config";
+import { encodeRunMetadata } from "@/lib/run-metadata";
 import type { TSubmitForm } from "./send-button";
 
-export type ComposerSubmissionOutcome =
+export type ComposerSubmitRouteOutcome =
   | { type: "runtime-append-started" }
   | { type: "queued-locally" }
   | {
@@ -13,15 +13,15 @@ export type ComposerSubmissionOutcome =
     }
   | { type: "validation-no-op"; reason: "empty-runtime-content" };
 
-export type ComposerSubmissionRuntime = {
+export type ComposerSubmitRuntime = {
   append: (message: {
     role: "user";
     content: ThreadUserMessagePart[];
-    runConfig: { custom: ReturnType<typeof encodeTerragonAgUiRunConfig> };
+    runConfig: { custom: ReturnType<typeof encodeRunMetadata> };
   }) => Promise<void> | void;
 };
 
-export type ComposerSubmissionCommand = (args: {
+export type ComposerSubmitCommand = (args: {
   userMessage: DBUserMessage;
   selectedModels: SelectedAIModels;
   repoFullName: string;
@@ -30,21 +30,21 @@ export type ComposerSubmissionCommand = (args: {
   scheduleAt: Parameters<TSubmitForm>[0]["scheduleAt"];
 }) => Promise<void>;
 
-export type SubmitComposerMessageArgs = {
+export type RouteComposerSubmitArgs = {
   userMessage: DBUserMessage;
   selectedModels: SelectedAIModels;
   repoFullName: string;
   branchName: string;
   saveAsDraft: boolean;
   scheduleAt: Parameters<TSubmitForm>[0]["scheduleAt"];
-  threadRuntime: ComposerSubmissionRuntime | null;
+  threadRuntime: ComposerSubmitRuntime | null;
   isAgentWorking: boolean;
   isQueueingEnabled: boolean;
-  submitFallback: ComposerSubmissionCommand;
-  queueMessage?: ComposerSubmissionCommand;
+  submitFallback: ComposerSubmitCommand;
+  queueMessage?: ComposerSubmitCommand;
 };
 
-export async function submitComposerMessage({
+export async function routeComposerSubmit({
   userMessage,
   selectedModels,
   repoFullName,
@@ -56,7 +56,7 @@ export async function submitComposerMessage({
   isQueueingEnabled,
   submitFallback,
   queueMessage,
-}: SubmitComposerMessageArgs): Promise<ComposerSubmissionOutcome> {
+}: RouteComposerSubmitArgs): Promise<ComposerSubmitRouteOutcome> {
   const commandArgs = {
     userMessage,
     selectedModels,
@@ -81,14 +81,14 @@ export async function submitComposerMessage({
     return { type: "queued-locally" };
   }
 
-  const routing = getComposerRuntimeRouting(userMessage);
+  const routing = classifyComposerSubmitRoute(userMessage);
   if (threadRuntime !== null && routing.type === "runtime") {
     void Promise.resolve(
       threadRuntime.append({
         role: "user",
         content: routing.content,
         runConfig: {
-          custom: encodeTerragonAgUiRunConfig({
+          custom: encodeRunMetadata({
             selectedModel: userMessage.model,
             permissionMode: userMessage.permissionMode,
             clientSubmissionId: crypto.randomUUID(),
@@ -96,7 +96,7 @@ export async function submitComposerMessage({
         },
       }),
     ).catch((error) => {
-      console.error("[composer-submission] runtime append failed", error);
+      console.error("[composer-submit-routing] runtime append failed", error);
     });
     return { type: "runtime-append-started" };
   }
@@ -114,19 +114,19 @@ export async function submitComposerMessage({
   return { type: "fallback-submitted", reason: "no-runtime" };
 }
 
-type ComposerRuntimeRouting =
+type ComposerSubmitRoute =
   | { type: "runtime"; content: ThreadUserMessagePart[] }
   | { type: "unsupported-parts" }
   | { type: "empty-runtime-content" };
 
-export function getComposerRuntimeRouting(
+export function classifyComposerSubmitRoute(
   userMessage: DBUserMessage,
-): ComposerRuntimeRouting {
+): ComposerSubmitRoute {
   if (hasUnsupportedRuntimeParts(userMessage)) {
     return { type: "unsupported-parts" };
   }
 
-  const content = dbPartsToAssistantUiContent(userMessage.parts);
+  const content = toAssistantUserContent(userMessage.parts);
   return content.length > 0
     ? { type: "runtime", content }
     : { type: "empty-runtime-content" };
@@ -138,7 +138,7 @@ function hasUnsupportedRuntimeParts(userMessage: DBUserMessage): boolean {
   );
 }
 
-export function dbPartsToAssistantUiContent(
+export function toAssistantUserContent(
   parts: DBUserMessage["parts"],
 ): ThreadUserMessagePart[] {
   const result: ThreadUserMessagePart[] = [];

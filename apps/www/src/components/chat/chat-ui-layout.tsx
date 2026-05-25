@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import { TerragonRuntimeSession } from "./assistant-ui/terragon-runtime-session";
+import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
 import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
@@ -125,7 +125,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           githubSummary={threadViewModel.githubSummary}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
-          <TerragonRuntimeSession
+          <AssistantRuntimeSession
             agent={agent}
             loadAgUiHistoryMessages={loadAgUiHistoryMessages}
             chatAgent={chatAgent}
@@ -248,7 +248,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 )}
               </div>
             )}
-          </TerragonRuntimeSession>
+          </AssistantRuntimeSession>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
               thread={threadWithViewModelStatus}

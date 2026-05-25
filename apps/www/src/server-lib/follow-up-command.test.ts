@@ -43,7 +43,7 @@ vi.mock("@/lib/redis", () => ({
   redis: redisMocks,
 }));
 
-import { runFollowUpFromAgUiInput } from "./run-from-ag-ui";
+import { dispatchFollowUpFromAppend } from "./follow-up-command";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,7 +84,7 @@ const BASE_ARGS = {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("runFollowUpFromAgUiInput", () => {
+describe("dispatchFollowUpFromAppend", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default happy-path mocks
@@ -101,7 +101,7 @@ describe("runFollowUpFromAgUiInput", () => {
 
   describe("replay-mode bypass", () => {
     it("returns { skipped: 'replay-mode' } immediately", async () => {
-      const result = await runFollowUpFromAgUiInput({
+      const result = await dispatchFollowUpFromAppend({
         ...BASE_ARGS,
         isReplayMode: true,
       });
@@ -110,13 +110,13 @@ describe("runFollowUpFromAgUiInput", () => {
     });
 
     it("does NOT call followUpInternal in replay mode", async () => {
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, isReplayMode: true });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, isReplayMode: true });
 
       expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
     });
 
     it("does NOT acquire the Redis lock in replay mode", async () => {
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, isReplayMode: true });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, isReplayMode: true });
 
       expect(redisMocks.set).not.toHaveBeenCalled();
       expect(redisMocks.del).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("returns { error: { kind: 'unauthorized' } } when getThreadChat returns undefined", async () => {
       threadMocks.getThreadChat.mockResolvedValue(undefined);
 
-      const result = await runFollowUpFromAgUiInput(BASE_ARGS);
+      const result = await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(result).toEqual({ error: { kind: "unauthorized" } });
     });
@@ -139,7 +139,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("does NOT acquire the lock when ownership check fails", async () => {
       threadMocks.getThreadChat.mockResolvedValue(undefined);
 
-      await runFollowUpFromAgUiInput(BASE_ARGS);
+      await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(redisMocks.set).not.toHaveBeenCalled();
     });
@@ -153,7 +153,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("returns { error: { kind: 'lock-held' } } when SET NX returns null", async () => {
       redisMocks.set.mockResolvedValue(null);
 
-      const result = await runFollowUpFromAgUiInput(BASE_ARGS);
+      const result = await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(result).toEqual({ error: { kind: "lock-held" } });
     });
@@ -161,7 +161,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("does NOT call followUpInternal when the lock is held", async () => {
       redisMocks.set.mockResolvedValue(null);
 
-      await runFollowUpFromAgUiInput(BASE_ARGS);
+      await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
     });
@@ -169,7 +169,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("uses the correct Redis key for the lock", async () => {
       redisMocks.set.mockResolvedValue("OK");
 
-      await runFollowUpFromAgUiInput(BASE_ARGS);
+      await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(redisMocks.set).toHaveBeenCalledWith("lock:run:chat-1", "1", {
         nx: true,
@@ -184,7 +184,7 @@ describe("runFollowUpFromAgUiInput", () => {
 
   describe("successful dispatch", () => {
     it("calls followUpInternal with the correct arguments", async () => {
-      await runFollowUpFromAgUiInput(BASE_ARGS);
+      await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith({
         userId: "user-1",
@@ -206,7 +206,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("returns { runId } from getLatestRunIdForThreadChat", async () => {
       agentEventMocks.getLatestRunIdForThreadChat.mockResolvedValue("run-abc");
 
-      const result = await runFollowUpFromAgUiInput(BASE_ARGS);
+      const result = await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(result).toEqual({ runId: "run-abc" });
     });
@@ -214,13 +214,13 @@ describe("runFollowUpFromAgUiInput", () => {
     it("returns { runId: '' } when getLatestRunIdForThreadChat returns null (dispatch not yet written)", async () => {
       agentEventMocks.getLatestRunIdForThreadChat.mockResolvedValue(null);
 
-      const result = await runFollowUpFromAgUiInput(BASE_ARGS);
+      const result = await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(result).toEqual({ runId: "" });
     });
 
     it("releases the Redis lock in the finally block after success", async () => {
-      await runFollowUpFromAgUiInput(BASE_ARGS);
+      await dispatchFollowUpFromAppend(BASE_ARGS);
 
       expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
     });
@@ -230,7 +230,7 @@ describe("runFollowUpFromAgUiInput", () => {
         new Error("dispatch error"),
       );
 
-      await expect(runFollowUpFromAgUiInput(BASE_ARGS)).rejects.toThrow(
+      await expect(dispatchFollowUpFromAppend(BASE_ARGS)).rejects.toThrow(
         "dispatch error",
       );
 
@@ -250,8 +250,8 @@ describe("runFollowUpFromAgUiInput", () => {
         .mockResolvedValueOnce("OK")
         .mockResolvedValueOnce(null);
 
-      const first = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
-      const second = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const first = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+      const second = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(first).toEqual({ runId: "run-xyz" });
       expect(second).toEqual({ skipped: "duplicate-submission" });
@@ -277,7 +277,7 @@ describe("runFollowUpFromAgUiInput", () => {
         },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -297,7 +297,7 @@ describe("runFollowUpFromAgUiInput", () => {
         },
       });
 
-      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(result).toEqual({
         error: {
@@ -311,7 +311,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("sets model to null when forwardedProps is absent", async () => {
       const body = makeBody({ forwardedProps: undefined });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -325,7 +325,7 @@ describe("runFollowUpFromAgUiInput", () => {
         forwardedProps: { terragon: { permissionMode: "plan" } },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -341,7 +341,7 @@ describe("runFollowUpFromAgUiInput", () => {
         forwardedProps: { terragon: { permissionMode: "bogus" } },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -367,7 +367,7 @@ describe("runFollowUpFromAgUiInput", () => {
         },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -389,7 +389,7 @@ describe("runFollowUpFromAgUiInput", () => {
         },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -426,7 +426,7 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(result).toEqual({
         error: {
@@ -458,7 +458,7 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -496,7 +496,7 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(result).toEqual({
         error: {
@@ -525,7 +525,7 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(result).toEqual({
         error: { kind: "invalid-input", reason: expect.any(String) },
@@ -535,7 +535,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("releases the lock even when input is invalid", async () => {
       const body = makeBody({ messages: [] });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
       expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
     });

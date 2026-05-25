@@ -77,11 +77,11 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
 }));
 
 const adapterMock = vi.hoisted(() => ({
-  runFollowUpFromAgUiInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  dispatchFollowUpFromAppend: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock("@/server-lib/run-from-ag-ui", () => ({
-  runFollowUpFromAgUiInput: adapterMock.runFollowUpFromAgUiInput,
+vi.mock("@/server-lib/follow-up-command", () => ({
+  dispatchFollowUpFromAppend: adapterMock.dispatchFollowUpFromAppend,
 }));
 
 // ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ describe("ag-ui SSE route", () => {
     redisMocks.xread.mockReset();
     redisMocks.xrevrange.mockReset();
     // Default adapter result: success with a runId
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       runId: "run-new",
     });
     vi.mocked(getSessionOrNull).mockResolvedValue({
@@ -3209,7 +3209,7 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter was called with the right args
-    expect(adapterMock.runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+    expect(adapterMock.dispatchFollowUpFromAppend).toHaveBeenCalledWith({
       threadId: "thread-1",
       threadChatId: "chat-1",
       userId: "user-1",
@@ -3233,7 +3233,7 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter NOT called when body is absent
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
 
     // SSE stream still opens
     expect(response.status).toBe(200);
@@ -3259,7 +3259,7 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter NOT called in replay mode
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
 
     // SSE stream opens
     expect(response.status).toBe(200);
@@ -3283,7 +3283,7 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-1"),
     );
 
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
@@ -3312,7 +3312,7 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-1"),
     );
 
-    expect(adapterMock.runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+    expect(adapterMock.dispatchFollowUpFromAppend).toHaveBeenCalledWith({
       threadId: "thread-1",
       threadChatId: "chat-1",
       userId: "user-1",
@@ -3341,7 +3341,7 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-1"),
     );
 
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
@@ -3370,13 +3370,13 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-1"),
     );
 
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
   it("POST with adapter returning lock-held returns 409", async () => {
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       error: { kind: "lock-held" },
     });
 
@@ -3400,7 +3400,7 @@ describe("ag-ui SSE route", () => {
   });
 
   it("POST with adapter returning unauthorized returns 403", async () => {
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       error: { kind: "unauthorized" },
     });
 

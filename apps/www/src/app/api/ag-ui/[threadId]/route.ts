@@ -37,7 +37,7 @@ import {
   getDurableAgUiHistoryItemsFromEvents,
 } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
-import { runFollowUpFromAgUiInput } from "@/server-lib/run-from-ag-ui";
+import { dispatchFollowUpFromAppend } from "@/server-lib/follow-up-command";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -1769,7 +1769,7 @@ export async function GET(
 
 // POST: client-initiated runs.
 // HttpAgent POSTs RunAgentInput; we extract the new user message + metadata,
-// call followUp() via runFollowUpFromAgUiInput, then fall through to the SSE
+// call followUp() via dispatchFollowUpFromAppend, then fall through to the SSE
 // stream machinery shared with GET. The advisory lock in the adapter holds
 // the dedup invariant (see ADR docs/plans/2026-04-30-runtime-owns-writes-adr.md).
 //
@@ -1839,7 +1839,7 @@ export async function POST(
       });
       if (intent === "append") {
         const followUpStartedAtMs = Date.now();
-        const result = await runFollowUpFromAgUiInput({
+        const result = await dispatchFollowUpFromAppend({
           threadId,
           threadChatId,
           userId,

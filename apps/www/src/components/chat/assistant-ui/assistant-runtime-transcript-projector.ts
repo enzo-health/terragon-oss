@@ -145,7 +145,7 @@ function runtimeMessageToUIMessageCached({
   };
 }
 
-export function createRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
+export function createAssistantRuntimeTranscriptProjector(): RuntimeTranscriptProjector {
   const cache = new Map<string, RuntimeProjectionCacheEntry>();
   let previousAgent: AIAgent | null = null;
   let previousRuntimeMessages: readonly ThreadMessage[] = [];

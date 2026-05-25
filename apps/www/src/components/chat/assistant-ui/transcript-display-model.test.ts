@@ -1,9 +1,9 @@
 import type { UIMessage, UIUserMessage } from "@terragon/shared";
 import { describe, expect, it } from "vitest";
 import {
-  buildTerragonTranscriptModel,
-  createTerragonTranscriptModelBuilder,
-} from "./terragon-transcript-model";
+  buildTranscriptDisplayModel,
+  createTranscriptDisplayModelBuilder,
+} from "./transcript-display-model";
 
 const runtimeAgentMessage: UIMessage = {
   id: "agent-1",
@@ -12,7 +12,7 @@ const runtimeAgentMessage: UIMessage = {
   parts: [{ type: "text", text: "runtime" }],
 };
 
-describe("buildTerragonTranscriptModel", () => {
+describe("buildTranscriptDisplayModel", () => {
   it("derives latest agent and renderable-agent state from final transcript messages", () => {
     const optimisticMessage: UIUserMessage = {
       id: "user-optimistic-1",
@@ -22,7 +22,7 @@ describe("buildTerragonTranscriptModel", () => {
       model: null,
     };
 
-    const model = buildTerragonTranscriptModel({
+    const model = buildTranscriptDisplayModel({
       runtimeMessages: [runtimeAgentMessage],
       optimisticUserMessages: [optimisticMessage],
     });
@@ -51,7 +51,7 @@ describe("buildTerragonTranscriptModel", () => {
       ],
     };
 
-    const model = buildTerragonTranscriptModel({
+    const model = buildTranscriptDisplayModel({
       runtimeMessages: [pendingToolMessage],
       optimisticUserMessages: [],
     });
@@ -84,7 +84,7 @@ describe("buildTerragonTranscriptModel", () => {
       parts: [{ type: "text", text: "Still working" }],
     };
 
-    const model = buildTerragonTranscriptModel({
+    const model = buildTranscriptDisplayModel({
       runtimeMessages: [pendingToolMessage, laterTextMessage],
       optimisticUserMessages: [],
     });
@@ -124,7 +124,7 @@ describe("buildTerragonTranscriptModel", () => {
       parts: [{ type: "text", text: "Done" }],
     };
 
-    const model = buildTerragonTranscriptModel({
+    const model = buildTranscriptDisplayModel({
       runtimeMessages: [firstTextMessage, toolMessage, finalTextMessage],
       optimisticUserMessages: [],
     });
@@ -157,7 +157,7 @@ describe("buildTerragonTranscriptModel", () => {
       ],
     };
 
-    const model = buildTerragonTranscriptModel({
+    const model = buildTranscriptDisplayModel({
       runtimeMessages: [runtimePlanMessage],
       optimisticUserMessages: [],
     });
@@ -166,9 +166,9 @@ describe("buildTerragonTranscriptModel", () => {
   });
 });
 
-describe("createTerragonTranscriptModelBuilder", () => {
+describe("createTranscriptDisplayModelBuilder", () => {
   it("reuses the previous model when steady runtime inputs are unchanged", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const first = buildModel({
       runtimeMessages: [runtimeAgentMessage],
@@ -183,7 +183,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("updates only the tail message for steady runtime streaming", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstMessage: UIMessage = {
       id: "agent-1",
@@ -209,7 +209,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("rebuilds instead of using the steady fast path when optimistic messages are present", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const firstAgentMessage: UIMessage = {
       id: "agent-1",
       role: "agent",
@@ -257,7 +257,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("updates pending tool state when a steady tail gains a pending tool", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstMessage: UIMessage = {
       id: "agent-tail",
@@ -293,7 +293,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("clears pending tool state when the steady tail completes the only pending tool", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstMessage: UIMessage = {
       id: "agent-tail",
@@ -340,7 +340,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("keeps steady tail streaming fast when historical proposed plans exist", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const planMessage: UIMessage = {
       id: "agent-plan",
@@ -379,7 +379,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("appends contiguous agent messages without rebuilding stable transcript rows", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstAgentMessage: UIMessage = {
       id: "agent-1",
@@ -414,7 +414,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("coalesces appended contiguous agent messages incrementally", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstPart = { type: "text" as const, text: "starting" };
     const firstAgentMessage: UIMessage = {
@@ -460,7 +460,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("updates coalesced live agent tails without rebuilding stable parts", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const staticTextPart = { type: "text" as const, text: "starting" };
     const toolPart = {
@@ -519,7 +519,7 @@ describe("createTerragonTranscriptModelBuilder", () => {
   });
 
   it("falls back when appended runtime messages contain proposed plans", () => {
-    const buildModel = createTerragonTranscriptModelBuilder();
+    const buildModel = createTranscriptDisplayModelBuilder();
     const optimisticUserMessages: UIUserMessage[] = [];
     const firstAgentMessage: UIMessage = {
       id: "agent-1",
