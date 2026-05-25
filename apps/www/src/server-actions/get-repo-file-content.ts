@@ -5,8 +5,17 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { getThreadPageShellWithPermissions } from "@terragon/shared/model/thread-page";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
+import type { Octokit } from "octokit";
 import { getHasRepoPermissionsForUser } from "./get-thread";
 import { getOctokitForUserOrThrow, parseRepoFullName } from "@/lib/github";
+
+/** The `repos.getContent` response body: a file/symlink/submodule object, or a
+ * directory's entry array. Derived from the SDK so the directory branch is
+ * typed end-to-end rather than re-validated from `unknown`. */
+type GetContentData = Awaited<
+  ReturnType<Octokit["rest"]["repos"]["getContent"]>
+>["data"];
+type GetContentDirectory = Extract<GetContentData, unknown[]>;
 
 /**
  * Server-side cap on a previewed repo file. Decoded UTF-8 content larger than
@@ -84,13 +93,11 @@ class RepoFileContentError extends Error {
  * dropped. Sorted directories-first, then files, each case-insensitively
  * alphabetical, so the panel renders a stable, predictable order.
  */
-function parseDirectoryListing(items: unknown[]): RepoDirectoryEntry[] {
+function parseDirectoryListing(
+  items: GetContentDirectory,
+): RepoDirectoryEntry[] {
   const entries: RepoDirectoryEntry[] = [];
-  for (const item of items) {
-    if (typeof item !== "object" || item === null) continue;
-    const record = item as Record<string, unknown>;
-    const { name, path, type } = record;
-    if (typeof name !== "string" || typeof path !== "string") continue;
+  for (const { name, path, type } of items) {
     if (type !== "file" && type !== "dir") continue;
     entries.push({ name, path, type });
   }
@@ -195,7 +202,7 @@ async function loadRepoFileContent(
     const [owner, repo] = parseRepoFullName(shell.githubRepoFullName);
     const octokit = await getOctokitForUserOrThrow({ userId });
 
-    let data: unknown;
+    let data: GetContentData;
     try {
       const response = await octokit.rest.repos.getContent({
         owner,
