@@ -3,7 +3,6 @@ import {
   EventType,
   type Message,
   type MessagesSnapshotEvent,
-  RunAgentInputSchema,
 } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DBMessage } from "@terragon/shared";
@@ -20,15 +19,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
   type AgUiReplayCursor,
-  classifyAgUiPostIntent,
   replayQueryAfterSeq,
   resolveAgUiReplayCursor,
   shouldReplayEnvelope,
 } from "@/lib/ag-ui-replay-cursor";
-import {
-  getTraceIdFromAgUiForwardedProps,
-  recordAgentTraceSpan,
-} from "@/lib/agent-trace";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import {
@@ -37,7 +32,7 @@ import {
   getDurableAgUiHistoryItemsFromEvents,
 } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
-import { dispatchFollowUpFromAppend } from "@/server-lib/follow-up-command";
+import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -1801,97 +1796,20 @@ export async function POST(
   // 4. Detect replay mode via header X-Terragon-Test-Replay (any truthy value)
   const isReplayMode = !!request.headers.get("X-Terragon-Test-Replay");
 
-  // 5. Parse the request body as RunAgentInput (skip in replay mode)
-  if (!isReplayMode) {
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      // Body parse failure — no body or non-JSON; fall through to SSE stream
-      rawBody = null;
-    }
-
-    const parsed =
-      rawBody != null
-        ? RunAgentInputSchema.safeParse(rawBody)
-        : { success: false as const };
-
-    // 6. If body parsed successfully, call the adapter for new appends.
-    // Active history resumes use AG-UI POST only to open the SSE stream; they
-    // must not replay the last user message back into the follow-up queue.
-    if (parsed.success) {
-      const traceId =
-        getTraceIdFromAgUiForwardedProps(parsed.data.forwardedProps) ??
-        parsed.data.runId;
-      recordAgentTraceSpan({
-        traceId,
-        name: "server.agui.post.received",
-        attributes: {
-          threadId,
-          threadChatId,
-          runId: parsed.data.runId,
-        },
-      });
-      const intent = classifyAgUiPostIntent({
-        lastEventId: request.headers.get("last-event-id"),
-        fromSeq: request.nextUrl.searchParams.get("fromSeq"),
-        body: parsed.data,
-      });
-      if (intent === "append") {
-        const followUpStartedAtMs = Date.now();
-        const result = await dispatchFollowUpFromAppend({
-          threadId,
-          threadChatId,
-          userId,
-          body: parsed.data,
-          isReplayMode: false,
-        });
-        const resultKind =
-          "error" in result
-            ? result.error.kind
-            : "runId" in result
-              ? "dispatched"
-              : result.skipped;
-        recordAgentTraceSpan({
-          traceId,
-          name: "server.agui.followup.dispatched",
-          startedAtMs: followUpStartedAtMs,
-          endedAtMs: Date.now(),
-          attributes: {
-            threadId,
-            threadChatId,
-            runId: "runId" in result ? result.runId : parsed.data.runId,
-            result: resultKind,
-          },
-        });
-
-        if ("error" in result) {
-          const { error } = result;
-          if (error.kind === "unauthorized") {
-            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-          }
-          if (error.kind === "thread-not-found") {
-            return NextResponse.json(
-              { error: "Thread not found" },
-              { status: 404 },
-            );
-          }
-          if (error.kind === "lock-held") {
-            return NextResponse.json(
-              { error: "Run already in progress" },
-              { status: 409 },
-            );
-          }
-          if (error.kind === "invalid-input") {
-            return NextResponse.json({ error: error.reason }, { status: 400 });
-          }
-        }
-        // { runId } or { skipped } — fall through to SSE stream
-      }
-    }
-    // Body absent or parse failed — fall through to SSE stream (back-compat)
+  // 5. Dispatch new append POSTs; resume/back-compat requests fall through to SSE.
+  const commandResult = await handleAgUiPostCommand({
+    request,
+    threadId,
+    threadChatId,
+    userId,
+    isReplayMode,
+  });
+  if (commandResult.type === "response") {
+    return NextResponse.json(commandResult.body, {
+      status: commandResult.status,
+    });
   }
 
-  // 7. Fall through: open the SSE stream via the existing GET handler
+  // 6. Fall through: open the SSE stream via the existing GET handler
   return GET(request, ctx);
 }
