@@ -97,7 +97,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
       };
     }
 
-    // Gemini: legacy transport (ACP not supported)
+    // Gemini and Droid: legacy transport (ACP not supported)
     return {
       transportMode: "legacy" as const,
       protocolVersion: 1 as const,

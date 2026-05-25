@@ -21,7 +21,6 @@ import {
 } from "@terragon/shared";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { DB } from "@terragon/shared/db";
-import type { AgentRuntimeProvider } from "@terragon/shared/db/types";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
@@ -35,11 +34,11 @@ import {
   updateThreadChat,
 } from "@terragon/shared/model/threads";
 import type { ThreadMetaEvent } from "@terragon/shared/runtime/thread-meta-event";
-import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { waitUntil } from "@vercel/functions";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
+import { runtimeProviderForDispatch } from "@/agent/msg/runtime-provider-for-dispatch";
 import {
   createSandboxForThread,
   getSandboxForThreadOrNull,
@@ -144,47 +143,6 @@ async function checkTaskQueueLimit({ db, userId }: { db: DB; userId: string }) {
       "You have reached the maximum limit of 25 queued tasks. Please wait for some tasks to complete before adding more.",
       null,
     );
-  }
-}
-
-function runtimeProviderForDispatch({
-  agent,
-  adapterId,
-}: {
-  agent: AIAgent;
-  adapterId: RuntimeAdapterContract["adapterId"];
-}): AgentRuntimeProvider {
-  switch (adapterId) {
-    case "codex-app-server":
-      return "codex-app-server";
-    case "claude-acp":
-      return "claude-acp";
-    case "legacy": {
-      switch (agent) {
-        case "claudeCode":
-          return "legacy-claude";
-        case "gemini":
-          return "legacy-gemini";
-        case "amp":
-          return "legacy-amp";
-        case "opencode":
-          return "legacy-opencode";
-        case "codex":
-          return "codex-app-server";
-        case "droid":
-          return "legacy-droid";
-        default: {
-          const _exhaustiveCheck: never = agent;
-          throw new Error(
-            `unsupported legacy runtime provider for ${_exhaustiveCheck}`,
-          );
-        }
-      }
-    }
-    default: {
-      const _exhaustiveCheck: never = adapterId;
-      throw new Error(`unsupported runtime adapter ${_exhaustiveCheck}`);
-    }
   }
 }
 
