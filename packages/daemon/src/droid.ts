@@ -10,18 +10,6 @@ export function getDroidApiKeyOrNull(_runtime: IDaemonRuntime): string {
   return process.env.FACTORY_API_KEY ?? "";
 }
 
-/**
- * Droid `droid exec --output-format stream-json` line events.
- *
- * Pinned to the verified real CLI output (droid 0.132.1):
- *   {"type":"system","subtype":"init","session_id":...,"model":...,"tools":[...]}
- *   {"type":"message","role":"user"|"assistant","text":...,"id":...,"session_id":...}
- *   {"type":"reasoning","text":...,"session_id":...}            (intermediate; ignored)
- *   {"type":"tool_call","id":...,"toolId":...,"toolName":...,"parameters":{...}}
- *   {"type":"tool_result","id":...,"toolId":...,"isError":bool,"value":...}
- *   {"type":"completion","finalText":...,"numTurns":...,"durationMs":...,"usage":{...}}
- *   {"type":"error","message":...,"timestamp":...}
- */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -33,6 +21,15 @@ function asString(value: unknown): string | undefined {
 /**
  * Parse a line of JSON output from the Droid CLI (`--output-format stream-json`).
  * Transforms Droid stream events into the shared ClaudeMessage format.
+ *
+ * Event shapes, pinned to the verified real CLI output (droid 0.132.1):
+ *   {"type":"system","subtype":"init","session_id":...,"model":...,"tools":[...]}
+ *   {"type":"message","role":"user"|"assistant","text":...,"id":...,"session_id":...}
+ *   {"type":"reasoning","text":...,"session_id":...}            (intermediate; ignored)
+ *   {"type":"tool_call","id":...,"toolId":...,"toolName":...,"parameters":{...}}
+ *   {"type":"tool_result","id":...,"toolId":...,"isError":bool,"value":...}
+ *   {"type":"completion","finalText":...,"numTurns":...,"durationMs":...,"usage":{...}}
+ *   {"type":"error","message":...,"timestamp":...}
  *
  * Mapping (pinned to verified real output):
  * - system/init  -> system init message (also synthesized on the first event seen)
