@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
 import { useState } from "react";
 import { UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -9,17 +9,24 @@ import { AIAgent } from "@terragon/agent/types";
 import { ChevronRight } from "lucide-react";
 import { MessagePart } from "./message-part";
 import { MessagePartRenderProps, PartGroup } from "./chat-message.types";
+import { summarizeActivityGroup } from "./tools/activity-summary";
 import { cn } from "@/lib/utils";
 
-function CollapsibleAgentActivityGroupLabel() {
+function CollapsibleAgentActivityGroupLabel({ group }: { group: PartGroup }) {
   // A `CollapsibleAgentActivityGroup` is, by construction, never the latest
   // group in its message: `groupParts` renders the message's last part
   // (and anything at or after the last text part) as its own
   // non-collapsible group. So any collapsed block represents historical
   // activity that has been superseded by visible content beneath it.
-  // Labeling it "Working..." based on a message/thread-level active flag
-  // was misleading — the thread footer already communicates that state.
-  return <span className="truncate">Finished working</span>;
+  //
+  // The label is a Codex-style activity summary of the collapsed tool calls
+  // ("Explored 4 files, 1 search, ran 1 command"). Reasoning-only groups (no
+  // countable tool activity) fall back to the generic "Finished working".
+  const summary = useMemo(
+    () => summarizeActivityGroup(group.parts),
+    [group.parts],
+  );
+  return <span className="truncate">{summary ?? "Finished working"}</span>;
 }
 
 type CollapsibleAgentActivityGroupProps = {
@@ -60,7 +67,7 @@ export const CollapsibleAgentActivityGroup = memo(
               !isCollapsed && "rotate-90",
             )}
           />
-          <CollapsibleAgentActivityGroupLabel />
+          <CollapsibleAgentActivityGroupLabel group={group} />
         </button>
         {/* Color-block surface (no border) — one elevation step above the
             canvas via surface-soft. The previous 15% muted bg + half-opacity

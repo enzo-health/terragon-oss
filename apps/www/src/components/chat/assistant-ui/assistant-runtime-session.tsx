@@ -11,6 +11,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { createAssistantHistoryHydrationAdapter } from "../assistant-history-hydration-adapter";
+import { isTransientRunLifecycleError } from "./runtime-error-classification";
 import { resolveRuntimeResumePolicy } from "./runtime-resume-policy";
 
 class AssistantHistoryLoadError extends Error {
@@ -233,6 +234,14 @@ export function AssistantRuntimeSession({
           loadAgUiHistoryMessages,
           message: error.message,
         });
+        return;
+      }
+      // A `RUN_STARTED`-while-active race (and the symmetric post-finish tail
+      // race) is a benign client-side lifecycle hiccup — the run is still
+      // streaming, nothing failed. Surfacing it as "An error occurred" is
+      // noise, so swallow it instead of flipping the thread into an error
+      // state. Real failures still surface.
+      if (isTransientRunLifecycleError(error)) {
         return;
       }
       setRuntimeErrorState({ agent, message: error.message });

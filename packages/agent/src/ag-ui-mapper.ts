@@ -32,6 +32,7 @@ import type {
   ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   ToolCallStartEvent as CanonicalToolCallStartEvent,
 } from "./canonical-events";
+import { capToolResultContent } from "./tool-output-cap";
 
 /**
  * Pure mapping functions from Terragon's canonical events / daemon deltas /
@@ -183,7 +184,7 @@ function mapToolCallResult(
     timestamp,
     messageId: event.toolCallId,
     toolCallId: event.toolCallId,
-    content: event.result,
+    content: capToolResultContent(event.result),
   };
 
   if (event.isError) {
