@@ -92,6 +92,12 @@ describe("classifyRepoFileLink", () => {
       "./../foo.ts",
       "/../../etc/passwd",
       "a/b/../../../c.ts",
+      "..\\..\\secrets.ts",
+      "src\\..\\..\\secrets.ts",
+      "src/%2e%2e/secrets.ts",
+      "%2e%2e/secrets.ts",
+      "..%2fsecrets.ts",
+      "src\\%2e%2e\\secrets.ts",
     ])("rejects %s", (href) => {
       expect(classifyRepoFileLink(href)).toBeNull();
     });

@@ -55,9 +55,22 @@ function parseLineAnchor(anchor: string): RepoFileLineRange | undefined {
 function normalizeRepoPath(rawPath: string): string | null {
   if (rawPath.length === 0) return null;
 
+  // Decode percent-encoding so `%2e%2e` traversal is caught by the `..` check
+  // below. Malformed escapes (e.g. a lone `%`) throw; treat them as non-files.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+
+  // Treat backslashes as separators too, so Windows-style traversal
+  // (`..\..\secrets.ts`) splits into `..` segments instead of one opaque one.
+  const unified = decoded.replace(/\\/g, "/");
+
   // Strip a single leading slash (workspace-root-absolute → relative) and a
   // leading `./`.
-  let path = rawPath.replace(/^\/+/, "").replace(/^\.\//, "");
+  const path = unified.replace(/^\/+/, "").replace(/^\.\//, "");
 
   const segments = path.split("/");
   const normalized: string[] = [];
