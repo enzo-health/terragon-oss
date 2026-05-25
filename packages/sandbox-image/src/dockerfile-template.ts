@@ -62,13 +62,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN curl -fsSL https://bun.sh/install | bash \\
     && ln -s /root/.bun/bin/bun /usr/local/bin/bun
 
-# Install pnpm, sandbox-agent, claude code, gemini cli, amp, codex, and opencode
+# Install pnpm, sandbox-agent, claude code, gemini cli, amp, codex, opencode, and droid
 RUN npm install -g pnpm \\
     @anthropic-ai/claude-code@2.1.107 \\
     @google/gemini-cli@0.29.7 \\
     @sourcegraph/amp@0.0.1771963583-ga618c9 \\
     @openai/codex@0.128.0 \\
     opencode-ai@1.2.10 \\
+    droid@0.132.1 \\
     @sandbox-agent/cli@0.2.1
 
 
