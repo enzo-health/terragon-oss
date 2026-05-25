@@ -133,7 +133,7 @@ function BashToolResult({
       >
         <button
           onClick={handleCopy}
-          className="absolute top-1 right-1 p-1 rounded-md bg-muted/80 text-muted-foreground hover:text-foreground opacity-0 group-hover/bash:opacity-100 transition-opacity"
+          className="absolute top-1 right-1 p-1 rounded-md bg-muted/80 text-muted-foreground hover:text-foreground opacity-0 group-hover/bash:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
           title="Copy output"
         >
           {copied ? (

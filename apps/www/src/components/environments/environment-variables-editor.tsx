@@ -231,9 +231,9 @@ export function EnvironmentVariablesEditor({
               errors[index] && "border-error/60",
             )}
           >
-            <div className="flex-1 space-y-2">
-              <div className="flex gap-2">
-                <div className="flex-1">
+            <div className="flex-1 space-y-2 min-w-0">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1 min-w-0">
                   <Input
                     placeholder="KEY"
                     value={variable.key}
@@ -312,7 +312,7 @@ export function EnvironmentVariablesEditor({
       </div>
 
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogContent className="sm:max-w-2xl max-h-[90dvh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Import from .env File</DialogTitle>
             <DialogDescription>

@@ -289,6 +289,7 @@
 }
 
 @theme inline {
+  --breakpoint-xs: 30rem;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -506,9 +507,10 @@
     color-scheme: dark;
   }
 
-  /* Safe area utility class for PWA bottom padding */
+  /* Clear the home indicator / browser bottom chrome on mobile, not only in
+     PWA standalone mode. env() resolves to 0 where there's no inset. */
   .chat-prompt-box {
-    padding-bottom: 0.5rem;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
   }
 
   @media (display-mode: standalone) {

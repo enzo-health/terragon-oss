@@ -139,7 +139,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
             callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
           >
             {(runtimeProps) => (
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden min-w-0">
                 <div className="relative flex-1 overflow-hidden">
                   <ScrollArea
                     ref={scrollAreaRef}

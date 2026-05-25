@@ -17,7 +17,7 @@ export default function Error({
   }, [error]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 w-full">
+    <div className="flex min-h-svh items-center justify-center p-4 w-full">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center gap-6 text-center">
           {/* Error Icon */}

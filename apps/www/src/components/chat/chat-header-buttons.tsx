@@ -76,27 +76,25 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
           aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
           aria-haspopup={isSmallScreen ? "dialog" : undefined}
         >
-          {isSmallScreen ? (
-            <PanelBottom
-              className="size-4"
-              isOpen={isSecondaryPanelOpen}
-              aria-hidden="true"
-            />
-          ) : (
-            <PanelRight
-              className="size-4"
-              isOpen={isSecondaryPanelOpen}
-              aria-hidden="true"
-            />
-          )}
+          <PanelBottom
+            className="size-4 sm:hidden"
+            isOpen={isSecondaryPanelOpen}
+            aria-hidden="true"
+          />
+          <PanelRight
+            className="size-4 hidden sm:block"
+            isOpen={isSecondaryPanelOpen}
+            aria-hidden="true"
+          />
         </Button>
-        {!isReadOnly && !isSmallScreen && (
-          <CodeButton thread={thread} agent={threadAgent} />
+        {!isReadOnly && (
+          <span className="hidden sm:inline-flex">
+            <CodeButton thread={thread} agent={threadAgent} />
+          </span>
         )}
-        {/* Hide ShareButton on mobile */}
-        {!isSmallScreen && (
+        <span className="hidden sm:inline-flex">
           <ShareButton thread={thread} isReadOnly={isReadOnly} />
-        )}
+        </span>
       </div>
 
       {/* Share Drawer for mobile */}

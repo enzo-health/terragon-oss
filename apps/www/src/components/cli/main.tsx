@@ -55,7 +55,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
 
   if (status === "initial") {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 w-full">
+      <div className="flex min-h-svh items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <div className="mx-auto relative mb-4 flex w-fit items-center justify-center rounded-full bg-coral/10 p-4">
@@ -86,7 +86,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
 
   if (status === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 w-full">
+      <div className="flex min-h-svh items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Loader2 className="mb-4 h-8 w-8 animate-spin text-mid" />
@@ -102,7 +102,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
 
   if (status === "success") {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 w-full">
+      <div className="flex min-h-svh items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
@@ -134,7 +134,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
 
   // Error state - show manual copy UI
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 w-full">
+    <div className="flex min-h-svh items-center justify-center p-4 w-full">
       <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle>

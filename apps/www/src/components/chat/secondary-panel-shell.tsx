@@ -224,7 +224,7 @@ function ArtifactWorkspaceShell({
             ref={tablistRef}
             role="tablist"
             aria-label="Artifacts"
-            className="flex gap-0 px-3 border-t border-border/50"
+            className="flex gap-0 px-3 border-t border-border/50 overflow-x-auto min-w-0"
           >
             {artifacts.map((artifact) => {
               const isActive = artifact.id === resolvedActiveArtifactId;
