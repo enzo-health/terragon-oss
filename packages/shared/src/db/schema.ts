@@ -1603,6 +1603,20 @@ export const githubWebhookDeliveries = pgTable("github_webhook_deliveries", {
 });
 
 /**
+ * Idempotency store for routed GitHub feedback (CI failures, reviews,
+ * comments). The primary key is the per-cause delivery marker. The
+ * marker-in-transcript scan handles long-term idempotency; this table closes
+ * the read-then-write race where two webhooks for the same logical CI failure
+ * (e.g. check_run.completed and check_suite.completed on the same commit) both
+ * read the thread before either has queued, and would otherwise both enqueue.
+ */
+export const githubFeedbackDeliveries = pgTable("github_feedback_deliveries", {
+  deliveryMarkerKey: text("delivery_marker_key").primaryKey(),
+  threadId: text("thread_id"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/**
  * Idempotency store for Linear webhook deliveries.
  *
  * Lifecycle:
