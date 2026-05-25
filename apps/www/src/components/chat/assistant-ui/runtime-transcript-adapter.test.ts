@@ -20,6 +20,22 @@ const projectRuntimeTranscriptMessages = ({
     agent,
   });
 
+function terragonRuntimeDataPart(
+  name: string,
+  data: unknown,
+): ThreadAssistantMessagePart {
+  return {
+    type: "data",
+    name,
+    data: {
+      name,
+      messageId: "assistant-1",
+      partIndex: 0,
+      data,
+    },
+  };
+}
+
 describe("projectRuntimeTranscriptMessages", () => {
   it("uses runtime messages when they project to Terragon UI messages", () => {
     const runtimeMessages: ThreadMessage[] = [
@@ -213,6 +229,86 @@ describe("projectRuntimeTranscriptMessages", () => {
         ],
       },
     ]);
+  });
+
+  it("projects product-only Terragon data parts through the runtime transcript", () => {
+    const runtimeMessages: ThreadMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        createdAt,
+        content: [
+          terragonRuntimeDataPart("terragon.audio", {
+            type: "audio",
+            mimeType: "audio/wav",
+            uri: "https://example.com/audio.wav",
+          }),
+          terragonRuntimeDataPart("terragon.resource-link", {
+            type: "resource-link",
+            uri: "https://example.com/report.pdf",
+            name: "report.pdf",
+            title: "Report",
+          }),
+          terragonRuntimeDataPart("terragon.auto-approval-review", {
+            type: "auto-approval-review",
+            reviewId: "review-1",
+            targetItemId: "item-1",
+            riskLevel: "low",
+            action: "edit file",
+            decision: "approved",
+            status: "approved",
+          }),
+          terragonRuntimeDataPart("terragon.delegation", {
+            type: "delegation",
+            delegationId: "delegation-1",
+            tool: "spawn",
+            status: "running",
+            model: null,
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["thread-2"],
+            prompt: "Review this",
+            delegatedModel: "codex",
+            agentsStates: { "thread-2": "running" },
+          }),
+        ],
+        status: { type: "complete", reason: "unknown" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+
+    const projection = projectRuntimeTranscriptMessages({
+      runtimeMessages,
+      agent: "codex",
+    });
+
+    expect(projection.messages[0]).toMatchObject({
+      id: "assistant-1",
+      role: "agent",
+      agent: "codex",
+      parts: [
+        { type: "audio", uri: "https://example.com/audio.wav" },
+        {
+          type: "resource-link",
+          uri: "https://example.com/report.pdf",
+        },
+        {
+          type: "auto-approval-review",
+          reviewId: "review-1",
+          status: "approved",
+        },
+        {
+          type: "delegation",
+          delegationId: "delegation-1",
+          status: "running",
+        },
+      ],
+    });
   });
 
   it("rejects unwrapped Terragon data payloads", () => {
