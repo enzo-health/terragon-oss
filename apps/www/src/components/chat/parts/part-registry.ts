@@ -352,7 +352,15 @@ export const PART_REGISTRY: PartRegistry = {
 
   terminal: definePartEntry(TerminalPartView, (_ctx, part) => ({ part })),
 
-  diff: definePartEntry(DiffPartView, (_ctx, part) => ({ part })),
+  // The git-diff header file path becomes a clickable affordance (R4) only
+  // when the `repoFilePreview` flag is on and a producer is wired. Both ride
+  // on `toolProps`; gate here so a flag-off thread keeps the plain header.
+  diff: definePartEntry(DiffPartView, (ctx, part) => ({
+    part,
+    onOpenRepoFile: ctx.toolProps.repoFilePreviewEnabled
+      ? ctx.toolProps.onOpenRepoFile
+      : undefined,
+  })),
 
   "auto-approval-review": definePartEntry(
     AutoApprovalReviewCard,

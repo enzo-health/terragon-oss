@@ -13,9 +13,12 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function EditTool({
   toolPart,
+  onOpenRepoFile,
 }: {
   toolPart: Extract<AllToolParts, { name: "Edit" }>;
+  onOpenRepoFile?: (filePath: string) => void;
 }) {
+  const filePath = toolPart.parameters.file_path;
   return (
     <GenericToolPart
       toolName="Update"
@@ -24,6 +27,9 @@ export function EditTool({
         excludeKeys: ["old_string", "new_string", "expected_replacements"],
       })}
       toolStatus={toolPart.status}
+      onToolArgClick={
+        onOpenRepoFile && filePath ? () => onOpenRepoFile(filePath) : undefined
+      }
     >
       <ToolPartEditResult toolPart={toolPart} />
     </GenericToolPart>

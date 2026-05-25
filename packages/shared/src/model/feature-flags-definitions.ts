@@ -129,6 +129,12 @@ export const featureFlagsDefinitions = {
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
+  repoFilePreview: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enables click-to-open affordances for in-repo file paths (in chat, markdown, tool output, and diffs) that open a file preview in the artifacts panel instead of navigating away.",
+  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;

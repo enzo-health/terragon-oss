@@ -29,6 +29,7 @@ export {
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
+  resolveRepoFileArtifactId,
   ARTIFACT_WORKSPACE_PANEL_ID,
   type ArtifactDescriptorLookup,
   type ArtifactWorkspaceItemSummary,

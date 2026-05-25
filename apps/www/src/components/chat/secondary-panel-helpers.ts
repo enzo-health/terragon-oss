@@ -64,6 +64,28 @@ export function createArtifactDescriptorLookup(
 }
 
 /**
+ * Maps a clicked in-repo file path to the artifact that should open in the
+ * workspace. The current artifact open flow keys on the working-tree git-diff
+ * artifact (it renders every changed file), so a file path resolves to the
+ * first `git-diff` descriptor. `filePath` is accepted so a future per-file
+ * selection inside the diff view can narrow the target without changing the
+ * call sites. Returns `null` when no git-diff artifact exists yet.
+ */
+export function resolveRepoFileArtifactId({
+  artifacts,
+  filePath,
+}: {
+  artifacts: Array<Pick<ArtifactDescriptor, "id" | "kind">>;
+  filePath: string;
+}): string | null {
+  void filePath;
+  const gitDiffArtifact = artifacts.find(
+    (artifact) => artifact.kind === "git-diff",
+  );
+  return gitDiffArtifact?.id ?? null;
+}
+
+/**
  * Resolves which artifact should be the active one in the workspace.
  *
  * Returns the requested `activeArtifactId` if it is still present in the

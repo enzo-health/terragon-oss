@@ -57,6 +57,16 @@ export type ToolRenderContext = {
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
+  /**
+   * Opens an in-repo file path in the artifacts panel. Produced by
+   * `handleOpenRepoFile` in `chat-ui.tsx` (maps the path to the working-tree
+   * git-diff artifact and routes through `handleOpenArtifact`) and threaded in
+   * via `toolProps`. Renderers read it from `ctx`. Only wired when the
+   * `repoFilePreview` flag is on — see `repoFilePreviewEnabled`.
+   */
+  onOpenRepoFile?: (filePath: string) => void;
+  /** Mirror of the `repoFilePreview` feature flag, resolved once at the host. */
+  repoFilePreviewEnabled: boolean;
   renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
 };
 
@@ -97,10 +107,26 @@ type ToolDispatchTable = { [N in ToolName]: ToolRenderer<N> };
  * Unknown tool names (not in `ToolName`) fall back to `renderUnknownTool` at
  * runtime.
  */
+/**
+ * Resolves the in-repo file opener for a renderer, gated by the
+ * `repoFilePreview` flag. Returns `undefined` when the flag is off OR no
+ * opener is wired, so renderers fall back to their unchanged static behavior.
+ * Centralized here so the flag gate lives in one place rather than in each of
+ * the five file-output renderers.
+ */
+const repoFileOpener = (
+  ctx: ToolRenderContext,
+): ((filePath: string) => void) | undefined =>
+  ctx.repoFilePreviewEnabled ? ctx.onOpenRepoFile : undefined;
+
 const TOOL_DISPATCH: ToolDispatchTable = {
-  Read: (tp) => <ReadTool toolPart={tp} />,
-  Write: (tp) => <WriteTool toolPart={tp} />,
-  Edit: (tp) => {
+  Read: (tp, ctx) => (
+    <ReadTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+  ),
+  Write: (tp, ctx) => (
+    <WriteTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+  ),
+  Edit: (tp, ctx) => {
     // Some Edit calls come without new/old_string (e.g. partial updates from
     // older daemon versions). Fall back to DefaultTool rather than crash.
     if (
@@ -108,11 +134,13 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       "new_string" in tp.parameters &&
       "old_string" in tp.parameters
     ) {
-      return <EditTool toolPart={tp} />;
+      return <EditTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />;
     }
     return <DefaultTool toolPart={tp} />;
   },
-  MultiEdit: (tp) => <MultiEditTool toolPart={tp} />,
+  MultiEdit: (tp, ctx) => (
+    <MultiEditTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+  ),
   Grep: (tp) => <SearchTool toolPart={tp} />,
   Glob: (tp) => <SearchTool toolPart={tp} />,
   LS: (tp) => <LSTool toolPart={tp} />,
@@ -164,7 +192,9 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       isReadOnly={ctx.isReadOnly}
     />
   ),
-  FileChange: (tp) => <FileChangeTool toolPart={tp} />,
+  FileChange: (tp, ctx) => (
+    <FileChangeTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+  ),
   // Codex MCPTool: rewrite name to `mcp__server__tool` then route to
   // DefaultTool. The daemon emits it pre-rewrite; this is the only place that
   // rewrite happens.
@@ -219,6 +249,8 @@ export type ToolPartProps = {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
+  onOpenRepoFile?: (filePath: string) => void;
+  repoFilePreviewEnabled?: boolean;
 };
 
 export function renderToolPartContent(
@@ -385,6 +417,8 @@ const ToolPart = memo(function ToolPart({
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact,
+  onOpenRepoFile,
+  repoFilePreviewEnabled = false,
 }: ToolPartProps) {
   // Stable recursive renderer. Deps mirror the props compared by
   // `areToolPartPropsEqual` below — when those are referentially stable across
@@ -407,6 +441,8 @@ const ToolPart = memo(function ToolPart({
         artifactDescriptors={artifactDescriptors}
         artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
+        onOpenRepoFile={onOpenRepoFile}
+        repoFilePreviewEnabled={repoFilePreviewEnabled}
       />
     ),
     [
@@ -423,6 +459,8 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
+      repoFilePreviewEnabled,
       ToolPart,
     ],
   );
@@ -446,6 +484,8 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
+      repoFilePreviewEnabled,
       renderChildToolPart,
     }),
     [
@@ -462,6 +502,8 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
+      repoFilePreviewEnabled,
       renderChildToolPart,
     ],
   );
@@ -489,7 +531,9 @@ function areToolPartPropsEqual(
       nextProps.onOptimisticPermissionModeUpdate ||
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
-    prevProps.onOpenArtifact !== nextProps.onOpenArtifact
+    prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.onOpenRepoFile !== nextProps.onOpenRepoFile ||
+    prevProps.repoFilePreviewEnabled !== nextProps.repoFilePreviewEnabled
   ) {
     return false;
   }

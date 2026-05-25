@@ -20,6 +20,7 @@ import {
   useCurrentRunId,
 } from "@/hooks/use-current-run-id";
 import { usePlatform } from "@/hooks/use-platform";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
@@ -44,6 +45,7 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
+import { resolveRepoFileArtifactId } from "./secondary-panel-helpers";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
@@ -136,6 +138,7 @@ function ChatUIContent() {
     { observedRef: transcriptRef },
   );
   const platform = usePlatform();
+  const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
@@ -312,6 +315,31 @@ function ChatUIContent() {
     [dispatch],
   );
 
+  const handleOpenArtifact = useCallback(
+    (artifactId: string) => {
+      setActiveArtifactId(artifactId);
+      setIsSecondaryPanelOpen(true);
+    },
+    [setIsSecondaryPanelOpen],
+  );
+
+  // Producer for the file-path affordance on Read/Write/Edit/MultiEdit/
+  // FileChange renderers and the git-diff header (behind the `repoFilePreview`
+  // flag). A clicked repo file routes into the artifacts panel via the same
+  // `handleOpenArtifact` chain everything else uses; `resolveRepoFileArtifactId`
+  // maps the path to the working-tree git-diff artifact.
+  const handleOpenRepoFile = useCallback(
+    (filePath: string) => {
+      const artifactId = resolveRepoFileArtifactId({
+        artifacts: artifactDescriptors,
+        filePath,
+      });
+      if (!artifactId) return;
+      handleOpenArtifact(artifactId);
+    },
+    [artifactDescriptors, handleOpenArtifact],
+  );
+
   const toolProps = useMemo(
     () => ({
       threadId,
@@ -324,6 +352,8 @@ function ChatUIContent() {
       repoBaseBranchName: thread.repoBaseBranchName ?? "main",
       branchName: thread.branchName ?? null,
       onOptimisticPermissionModeUpdate,
+      repoFilePreviewEnabled,
+      onOpenRepoFile: handleOpenRepoFile,
     }),
     [
       isReadOnly,
@@ -334,6 +364,8 @@ function ChatUIContent() {
       thread.repoBaseBranchName,
       threadViewModel.threadChatId,
       threadId,
+      repoFilePreviewEnabled,
+      handleOpenRepoFile,
     ],
   );
 
@@ -345,14 +377,6 @@ function ChatUIContent() {
     thread,
     setError,
   });
-
-  const handleOpenArtifact = useCallback(
-    (artifactId: string) => {
-      setActiveArtifactId(artifactId);
-      setIsSecondaryPanelOpen(true);
-    },
-    [setIsSecondaryPanelOpen],
-  );
 
   useAutoOpenPanelOnNewPlan({
     artifactDescriptors,
