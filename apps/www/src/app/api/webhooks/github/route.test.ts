@@ -1878,6 +1878,22 @@ describe("GitHub webhook route", () => {
           repoFullName: pr1.repoFullName,
         },
       });
+      // Auto-fix routing resolves open PRs from the head SHA so it never
+      // re-wakes a merged/closed PR. Both PRs report open here. mockReset
+      // drains any mockResolvedValueOnce values leaked by earlier tests.
+      vi.mocked(getOctokitForApp).mockReset();
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit: vi.fn().mockResolvedValue({
+              data: [
+                { number: pr1.number, state: "open" },
+                { number: pr2.number, state: "open" },
+              ],
+            }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
       const body = createCheckRunBody({
         repoFullName: pr1.repoFullName,
         prNumbers: [pr1.number, pr2.number],
@@ -1917,6 +1933,76 @@ describe("GitHub webhook route", () => {
           checkRunId: 1,
         }),
       );
+    });
+
+    it("does not route auto-fix feedback to closed PRs on a failed check run", async () => {
+      const openPr = await createTestGitHubPR({ db });
+      const closedPr = await createTestGitHubPR({
+        db,
+        overrides: {
+          number: openPr.number + 1,
+          repoFullName: openPr.repoFullName,
+        },
+      });
+      vi.mocked(getOctokitForApp).mockReset();
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit: vi.fn().mockResolvedValue({
+              data: [
+                { number: openPr.number, state: "open" },
+                { number: closedPr.number, state: "closed" },
+              ],
+            }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: openPr.repoFullName,
+          prNumbers: [openPr.number, closedPr.number],
+          conclusion: "failure",
+        }),
+        {
+          "x-github-event": "check_run",
+          "x-github-delivery": "delivery-check-run-closed-pr",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prNumber: openPr.number,
+          eventType: "check_run.completed",
+        }),
+      );
+    });
+
+    it("does not route auto-fix feedback for a cancelled check run", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          conclusion: "cancelled",
+        }),
+        {
+          "x-github-event": "check_run",
+          "x-github-delivery": "delivery-check-run-cancelled",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
     it("should handle check runs with no associated PRs", async () => {

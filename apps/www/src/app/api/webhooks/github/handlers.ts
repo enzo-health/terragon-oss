@@ -59,6 +59,18 @@ function isActionableCheckFailure(conclusion: string | null): boolean {
   ].includes(conclusion);
 }
 
+// A check that is "not green" (used for snapshot aggregation) is broader than a
+// check the agent can fix by changing code. `cancelled` (manual/automatic
+// cancel), `stale` (superseded by a newer commit), and `action_required`
+// (awaiting human approval, e.g. a deploy gate) are not code failures — routing
+// auto-fix feedback for them would wake the agent on nothing it can act on.
+function isAgentFixableCheckFailure(conclusion: string | null): boolean {
+  if (!conclusion) {
+    return false;
+  }
+  return ["failure", "timed_out", "startup_failure"].includes(conclusion);
+}
+
 function getCheckSignalOutcome(
   conclusion: string | null,
 ): "pass" | "fail" | null {
@@ -66,7 +78,7 @@ function getCheckSignalOutcome(
     return "pass";
   }
 
-  if (isActionableCheckFailure(conclusion)) {
+  if (isAgentFixableCheckFailure(conclusion)) {
     return "fail";
   }
 
@@ -1099,8 +1111,18 @@ export async function handleCheckRunEvent(
           ciSnapshot,
         );
 
+        // Only route auto-fix feedback to PRs still open. The inline
+        // pull_requests array carries no state, so a late check completing on
+        // a merged/closed PR would otherwise re-wake an archived thread.
+        const openPrNumbers = checkRun.head_sha
+          ? await resolvePrNumbersFromSha({
+              repoFullName,
+              headSha: checkRun.head_sha,
+            })
+          : prNumbers;
+
         await Promise.all(
-          prNumbers.map(async (prNumber) => {
+          openPrNumbers.map(async (prNumber) => {
             const routeUserIds: Array<string | null> = [null];
 
             if (routeUserIds.length === 0) {
@@ -1116,6 +1138,7 @@ export async function handleCheckRunEvent(
                     prNumber,
                     eventType: "check_run.completed",
                     deliveryId,
+                    headSha: checkRun.head_sha ?? undefined,
                     checkSummary: ciSnapshot
                       ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
                       : `${checkRun.name} (${checkRun.status}:${signalOutcome})`,
@@ -1220,8 +1243,18 @@ export async function handleCheckSuiteEvent(
           ciSnapshot,
         );
 
+        // Only route auto-fix feedback to PRs still open. The inline
+        // pull_requests array carries no state, so a late suite completing on
+        // a merged/closed PR would otherwise re-wake an archived thread.
+        const openPrNumbers = checkSuite.head_sha
+          ? await resolvePrNumbersFromSha({
+              repoFullName,
+              headSha: checkSuite.head_sha,
+            })
+          : prNumbers;
+
         await Promise.all(
-          prNumbers.map(async (prNumber) => {
+          openPrNumbers.map(async (prNumber) => {
             const routeUserIds: Array<string | null> = [null];
 
             if (routeUserIds.length === 0) {
@@ -1237,6 +1270,7 @@ export async function handleCheckSuiteEvent(
                     prNumber,
                     eventType: "check_suite.completed",
                     deliveryId,
+                    headSha: checkSuite.head_sha ?? undefined,
                     checkSummary: ciSnapshot
                       ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
                       : `Check suite (${checkSuite.status}:${signalOutcome})`,
@@ -1469,6 +1503,7 @@ export async function handleStatusEvent(
           prNumber,
           eventType: "status",
           deliveryId,
+          headSha,
           checkSummary: ciSnapshot
             ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
             : `Legacy status failed: ${event.context ?? "status"}`,
