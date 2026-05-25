@@ -76,7 +76,7 @@ export function SystemMessage({
         return "bg-error";
       case "clear-context":
       case "compact-result":
-        return "bg-emerald-500 dark:bg-emerald-400";
+        return "bg-success";
       case "cancel-schedule":
         return "bg-muted-foreground";
       case "stop":

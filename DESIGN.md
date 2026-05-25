@@ -226,6 +226,25 @@ All semantics chosen to feel editorial-warm rather than SaaS-default. No emerald
 
 **The No-Diff-Brand-Color Rule.** Diff add/remove uses pure emerald/red (Tailwind palette) — not sage/clay. Diff convention universally expects red-removed / green-added; brand semantic colors would feel wrong in this domain.
 
+### Dark Mode: Codex-Charcoal
+
+Light mode is the warm-cream system above. Dark mode is a separate, deliberate model measured from the Codex desktop app: a warm charcoal canvas (not the old near-black plum) with a clear surface-elevation ladder. Neutrals share a faint warm cast (hue ~106, chroma ~0.003 — perceptually neutral; the hue number differs from the light-mode hue-80 ladder but at this chroma the difference is invisible).
+
+Dark elevation ladder (OKLCH lightness, all hue ~106):
+
+- **Canvas** `0.296` — body background and the floor everything sits on. This replaces the old ~0.18 floor; dark mode is a charcoal, not a near-black.
+- **Sidebar** `0.324` — the left rail, one faint step above canvas.
+- **Muted / sunken** `0.34` — recessed fills (`bg-muted`); sits below card so muted regions and inline code stay visible on a card.
+- **Card / popover / surface** `0.367` — elevated surfaces; the single floating tier.
+- **Border** `0.40` — hairline.
+- **Accent / input / hover** `0.44` — interactive hover/active fills, sitting clearly above border.
+- **Foreground** `0.82` — soft off-white body text (not pure white).
+- **Muted-foreground** `0.633` — secondary text. This is **intentionally below WCAG AA** (~3-4:1 on canvas/card) to match Codex's deliberately dim secondary text; it is a conscious fidelity-over-compliance choice for dark mode only.
+
+Coral primary, sage/clay/terracotta/steel semantics, and diff red/green carry through unchanged.
+
+**The Anchored-Dark Rule (revised).** Terminal and inline tool output (bash/grep results, the xterm panel) sit on the dark code floor (`--base`, ~0.24 in dark) with `--on-dark` text, in both light and dark mode — code output is always a dark surface. Markdown inline code and code blocks instead use a subtle theme-following `bg-muted` fill (Codex-style: a quiet sunken tint, not a hard black well), so prose code reads gently in both modes while terminal output stays anchored dark.
+
 ## 3. Typography
 
 **Display Font:** Cormorant Garamond (with Tiempos Headline, EB Garamond fallbacks)
@@ -276,6 +295,8 @@ Shadows are calibrated for cream specifically: warm-cream amplifies dark drop-sh
 **The Cream-Calibrated Shadows Rule.** Shadow alphas in this system run ~30–40% lower than typical Stripe/Linear/gray-system defaults. Cream amplifies darkness. If a shadow looks "right" against a gray reference, it's too heavy on cream. Halve the alpha, double the blur.
 
 **The Hairline-Beats-Shadow Rule.** When a surface needs to be distinguished from its container, prefer a hairline border (oklch(0.885 0.010 80)) over a shadow. Shadows are reserved for surfaces that genuinely lift off the page.
+
+**The Dark-Mode-Shadow Rule.** The cream-calibrated low alphas above are a light-mode rule: near-zero-opacity black is invisible on the charcoal canvas. Dark mode runs its own scale (black alpha 0.18 to 0.48, larger blur) plus a faint white top inset (`rgba(255,255,255,0.04)`) that reads as a catch-light on the leading edge. This is how elevated cards, popovers, dialogs, and the prompt box float on charcoal; it inverts, on purpose, the "halve the alpha" light-mode guidance.
 
 ## 5. Components
 

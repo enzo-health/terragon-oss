@@ -371,7 +371,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           className={cn(
             "block rounded-md transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1 relative pr-8 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             pathname === `/task/${thread.id}` && !isSelectionMode
-              ? "bg-primary/[0.10] border-primary/25"
+              ? "bg-primary/[0.06] border-transparent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-primary before:content-['']"
               : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
             isOptimisticThread && [

@@ -15,9 +15,9 @@ const VARIANT_CLASSES: Record<MetaChipVariant, string> = {
   // semantic tokens themselves.
   neutral: "border-sunken text-mid",
   active: "border-sunken text-mid",
-  warning: "border-warning/70 bg-warning/12 text-warning dark:bg-warning/20",
-  success: "border-success/60 bg-success/12 text-success dark:bg-success/20",
-  danger: "border-error/70 bg-error/12 text-error dark:bg-error/20",
+  warning: "border-warning/70 bg-warning/12 text-warning",
+  success: "border-success/60 bg-success/12 text-success",
+  danger: "border-error/70 bg-error/12 text-error",
 };
 
 export interface MetaChipProps {

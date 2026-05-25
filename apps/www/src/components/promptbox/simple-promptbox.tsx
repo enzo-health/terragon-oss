@@ -140,7 +140,7 @@ export function SimplePromptBox({
           // Compact composer chrome. Outer has no padding so the editor
           // and toolbar pin directly to the border; each inner region
           // owns its own padding. Coral ring lights up on focus.
-          "relative flex flex-col rounded-xl border border-hairline bg-card shadow-xs transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
+          "relative flex flex-col rounded-[17px] border border-hairline bg-card shadow-warm-lift transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-out hover:border-foreground/20 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20",
           isSubmitting && [
             "opacity-80 pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
             "animate-pulse-subtle",
@@ -149,7 +149,7 @@ export function SimplePromptBox({
         )}
       >
         {isSubmitting && (
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-xl">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[17px]">
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
