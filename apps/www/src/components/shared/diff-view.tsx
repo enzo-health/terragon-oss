@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import React from "react";
-import { DiffRenderer } from "@/components/shared/diff-renderer";
+import {
+  DiffRenderer,
+  type DiffRendererProps,
+} from "@/components/shared/diff-renderer";
 
 export type DiffMode = "unified" | "split";
 
@@ -141,7 +144,10 @@ function createMultiEditPatch(
 /**
  * Generates a unified diff patch showing unchanged content (for read tool).
  */
-function createNoChangePatch(filePath: string, contents: string): string {
+export function createNoChangePatch(
+  filePath: string,
+  contents: string,
+): string {
   const contentLines = contents.split("\n");
 
   const lines: string[] = [
@@ -161,14 +167,20 @@ function createNoChangePatch(filePath: string, contents: string): string {
 /**
  * Wrapper component for DiffRenderer with consistent styling and theme support.
  */
-export function HighlightedDiffView({
+export function HighlightedDiffView<T = unknown>({
   patch,
   containerClassName,
   mode = "unified",
+  enableLineNumbers,
+  lineAnnotations,
+  renderAnnotation,
 }: {
   patch: string;
   containerClassName?: string;
   mode?: DiffMode;
+  enableLineNumbers?: DiffRendererProps<T>["enableLineNumbers"];
+  lineAnnotations?: DiffRendererProps<T>["lineAnnotations"];
+  renderAnnotation?: DiffRendererProps<T>["renderAnnotation"];
 }) {
   return (
     <div
@@ -177,7 +189,13 @@ export function HighlightedDiffView({
         containerClassName,
       )}
     >
-      <DiffRenderer patch={patch} mode={mode} />
+      <DiffRenderer<T>
+        patch={patch}
+        mode={mode}
+        enableLineNumbers={enableLineNumbers}
+        lineAnnotations={lineAnnotations}
+        renderAnnotation={renderAnnotation}
+      />
     </div>
   );
 }

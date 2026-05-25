@@ -77,6 +77,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     toolProps,
     lastUsedModel,
     handleOpenArtifact,
+    onOpenRepoFile,
   } = viewModel;
 
   const {
@@ -167,6 +168,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
+                          onOpenRepoFile={onOpenRepoFile}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -263,6 +265,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
             />
           ) : null}
         </div>
@@ -315,6 +318,11 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
+  /**
+   * Opens an in-repo file path (from a markdown link, tool-output affordance,
+   * git-diff header, or git-diff file tree) as a dedicated repo-file artifact.
+   */
+  onOpenRepoFile?: (href: string) => void;
 };
 
 /**

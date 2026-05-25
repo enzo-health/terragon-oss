@@ -10,29 +10,32 @@ import {
   UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
+import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
+import {
+  getCachedTranscript,
+  invalidateCachedTranscript,
+  seedTranscript,
+} from "@/collections/thread-transcript-collection";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
   useCurrentRunId,
 } from "@/hooks/use-current-run-id";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
-import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
+import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
-  getCachedTranscript,
-  invalidateCachedTranscript,
-  seedTranscript,
-} from "@/collections/thread-transcript-collection";
-import {
-  ChatUILayout,
   type ChatUICoreData,
   type ChatUIDialogData,
   type ChatUIErrorState,
+  ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
   type ChatUIScrollState,
@@ -44,24 +47,25 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
+import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
+  createRepoFileOpenedEvent,
 } from "./thread-view-model/optimistic-events";
-import { ThreadProvider, useThreadContext } from "./thread-provider";
+import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
   useInvalidateCreditBalanceOnAgentIdle,
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
+import { useProductSidecars } from "./use-product-sidecars";
 import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import { useThreadViewModel } from "./use-ag-ui-messages";
-import { useProductSidecars } from "./use-product-sidecars";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -136,6 +140,7 @@ function ChatUIContent() {
     { observedRef: transcriptRef },
   );
   const platform = usePlatform();
+  const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
@@ -312,6 +317,53 @@ function ChatUIContent() {
     [dispatch],
   );
 
+  const handleOpenArtifact = useCallback(
+    (artifactId: string) => {
+      setActiveArtifactId(artifactId);
+      setIsSecondaryPanelOpen(true);
+    },
+    [setIsSecondaryPanelOpen],
+  );
+
+  // Producer for every file-path affordance (markdown links, Read/Write/Edit/
+  // MultiEdit/FileChange renderers, the git-diff header and file tree). A
+  // clicked in-repo path is classified and dispatched as a `repo-file.opened`
+  // event; the reducer synthesizes the descriptor into `state.artifacts` (the
+  // one path every artifact flows through), then we focus its tab. The reducer
+  // re-seeds from the snapshot on chat switch, so previews never leak across
+  // chats without any manual reset here.
+  const handleOpenRepoFile = useCallback(
+    (href: string) => {
+      const classified = classifyRepoFileLink(href);
+      if (!classified) return;
+      // Mirror the server's ref-resolution rule (get-repo-file-content.ts):
+      // working branch when present, else base branch. Keeps the descriptor id
+      // and label consistent with the ref the content is actually read from.
+      const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
+      dispatch(
+        createRepoFileOpenedEvent({
+          path: classified.path,
+          ref,
+          lineRange: classified.lineRange,
+        }),
+      );
+      handleOpenArtifact(
+        buildRepoFileArtifactId({ path: classified.path, ref }),
+      );
+    },
+    [
+      dispatch,
+      handleOpenArtifact,
+      thread.branchName,
+      thread.repoBaseBranchName,
+    ],
+  );
+  // Gate the producer on the feature flag: when off, the callback is undefined
+  // end-to-end so in-repo links keep their default new-tab navigation.
+  const onOpenRepoFile = repoFilePreviewEnabled
+    ? handleOpenRepoFile
+    : undefined;
+
   const toolProps = useMemo(
     () => ({
       threadId,
@@ -324,6 +376,7 @@ function ChatUIContent() {
       repoBaseBranchName: thread.repoBaseBranchName ?? "main",
       branchName: thread.branchName ?? null,
       onOptimisticPermissionModeUpdate,
+      onOpenRepoFile,
     }),
     [
       isReadOnly,
@@ -334,6 +387,7 @@ function ChatUIContent() {
       thread.repoBaseBranchName,
       threadViewModel.threadChatId,
       threadId,
+      onOpenRepoFile,
     ],
   );
 
@@ -345,14 +399,6 @@ function ChatUIContent() {
     thread,
     setError,
   });
-
-  const handleOpenArtifact = useCallback(
-    (artifactId: string) => {
-      setActiveArtifactId(artifactId);
-      setIsSecondaryPanelOpen(true);
-    },
-    [setIsSecondaryPanelOpen],
-  );
 
   useAutoOpenPanelOnNewPlan({
     artifactDescriptors,
@@ -480,11 +526,13 @@ function ChatUIContent() {
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
+      onOpenRepoFile,
     }),
     [
       artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
+      onOpenRepoFile,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,

@@ -13,8 +13,10 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function WriteTool({
   toolPart,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "Write" }>;
+  onToolArgClick?: () => void;
 }) {
   return (
     <GenericToolPart
@@ -24,6 +26,7 @@ export function WriteTool({
         excludeKeys: ["content"],
       })}
       toolStatus={toolPart.status}
+      onToolArgClick={onToolArgClick}
     >
       <WriteToolContent toolPart={toolPart} />
     </GenericToolPart>

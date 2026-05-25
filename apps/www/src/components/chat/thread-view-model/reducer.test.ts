@@ -1,5 +1,6 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
+import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -297,6 +298,60 @@ describe("ThreadViewModel reducer", () => {
       }),
     });
     expect(projectThreadViewModel(state).permissionMode).toBe("allowAll");
+  });
+
+  it("opens a repo-file descriptor into artifacts, deduped by path+ref", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "feature-branch",
+    });
+    const opened = projectThreadViewModel(state).artifacts.descriptors;
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      id: buildRepoFileArtifactId({
+        path: "src/foo.ts",
+        ref: "feature-branch",
+      }),
+      kind: "repo-file",
+      title: "foo.ts",
+    });
+
+    const before = state.artifacts;
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "feature-branch",
+    });
+    expect(state.artifacts).toBe(before);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "other-branch",
+    });
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(2);
+  });
+
+  it("preserves an opened repo-file descriptor across snapshot hydration", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      { type: "repo-file.opened", path: "src/foo.ts", ref: "feature-branch" },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")]),
+    });
+
+    expect(
+      projectThreadViewModel(state).artifacts.descriptors.map((d) => d.id),
+    ).toContain(
+      buildRepoFileArtifactId({ path: "src/foo.ts", ref: "feature-branch" }),
+    );
   });
 
   it("preserves live lifecycle across hydration until durable reconciliation", () => {

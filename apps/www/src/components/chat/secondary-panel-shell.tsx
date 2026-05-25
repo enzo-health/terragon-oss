@@ -2,6 +2,7 @@ import { DBMessage, ThreadInfoFull } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
   type PlanArtifactDescriptor,
+  type RepoFileArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import React, { useCallback, useRef } from "react";
@@ -17,6 +18,7 @@ import {
 } from "./secondary-panel-helpers";
 import { MediaArtifactRenderer } from "./secondary-panel-media";
 import { PlanArtifactRenderer } from "./secondary-panel-plan";
+import { RepoFileArtifactRenderer } from "./secondary-panel-repo-file";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import { TextFileArtifactRenderer } from "./secondary-panel-text-file";
 import type { PromptBoxRef } from "./thread-context";
@@ -34,6 +36,7 @@ export function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -47,6 +50,7 @@ export function SecondaryPanelContent({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -62,6 +66,7 @@ export function SecondaryPanelContent({
       isReadOnly={isReadOnly}
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+      onOpenRepoFile={onOpenRepoFile}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -84,6 +89,7 @@ function ArtifactWorkspaceShell({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -98,6 +104,7 @@ function ArtifactWorkspaceShell({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
   emptyState: {
     title: string;
     description: string;
@@ -296,6 +303,7 @@ function ArtifactWorkspaceShell({
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
             />
           </div>
         )}
@@ -312,6 +320,7 @@ function ActiveArtifactRenderer({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -320,14 +329,29 @@ function ActiveArtifactRenderer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
-      return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+      return (
+        <GitDiffView
+          thread={thread}
+          diffPart={descriptor.part}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
     case "document":
       return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
     case "file":
       return <TextFileArtifactRenderer textFilePart={descriptor.part} />;
+    case "repo-file":
+      return (
+        <RepoFileArtifactRenderer
+          repoFilePart={(descriptor as RepoFileArtifactDescriptor).part}
+          threadId={thread.id}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
     case "media":
       return <MediaArtifactRenderer mediaPart={descriptor.part} />;
     case "plan":

@@ -5,6 +5,7 @@ import { AIAgent } from "@terragon/agent/types";
 import { type DBPlanPart, DBSystemMessage } from "./db-message";
 import { GitDiffStats } from "./types";
 import { AIModel } from "@terragon/agent/types";
+import type { RepoFileLineRange } from "../utils/repo-file-link";
 
 export type UIMessage = UIUserMessage | UIAgentMessage | UISystemMessage;
 
@@ -122,6 +123,26 @@ export type UIPlanPart = {
   planText: string;
   title?: string;
   taskCount?: number;
+};
+
+/**
+ * Descriptor-internal part backing a synthesized repo-file preview artifact.
+ *
+ * This is NOT a persisted message part: it is never added to `UIPart`, the
+ * `DBPart` union in db-message.ts, or the `PART_REGISTRY` in
+ * parts/part-registry.ts, and it never flows through message-part.tsx dispatch.
+ * It exists only to populate `RepoFileArtifactDescriptor.part`, mirroring how
+ * `artifact-reference` synthesizes a `UIPlanPart` client-side. Content is
+ * loaded lazily by the renderer, so this part carries identity, not contents.
+ */
+export type UIRepoFilePart = {
+  type: "repo-file";
+  /** Normalized repo-relative path (no leading slash, no `./`, no `..`). */
+  path: string;
+  /** Ref/commit the path resolves against, when known. */
+  ref?: string;
+  /** Optional `#Lstart-Lend` line range parsed from the source link. */
+  lineRange?: RepoFileLineRange;
 };
 
 export type UIStructuredPlanPart = {

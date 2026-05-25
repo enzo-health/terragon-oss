@@ -1,5 +1,6 @@
 import type { BaseEvent } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
+import { createRepoFileArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
@@ -14,8 +15,8 @@ import {
 import {
   getArtifactReferenceDescriptor,
   getStableArtifactsForMessages,
-  preserveArtifactReferenceDescriptors,
-  upsertArtifactReferenceDescriptor,
+  preserveSynthesizedDescriptors,
+  upsertSynthesizedDescriptor,
 } from "./artifact-descriptors";
 import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
@@ -93,6 +94,18 @@ export function threadViewModelReducer(
         ...state,
         permissionMode: event.permissionMode,
         hasOptimisticPermissionMode: true,
+      };
+    case "repo-file.opened":
+      return {
+        ...state,
+        artifacts: upsertSynthesizedDescriptor(
+          state.artifacts,
+          createRepoFileArtifactDescriptor({
+            path: event.path,
+            ref: event.ref,
+            lineRange: event.lineRange,
+          }),
+        ),
       };
     default: {
       const exhaustive: never = event;
@@ -242,10 +255,7 @@ function applySnapshot(
     latestGitDiffTimestamp: snapshot.latestGitDiffTimestamp,
     artifactThread: snapshot.artifactThread,
     artifacts: shouldReplaceTranscript
-      ? preserveArtifactReferenceDescriptors(
-          state.artifacts,
-          snapshot.artifacts,
-        )
+      ? preserveSynthesizedDescriptors(state.artifacts, snapshot.artifacts)
       : getArtifactsForStateMessages(state, snapshot.artifactThread),
     sidePanel: shouldPreserveLocalTranscriptState
       ? state.sidePanel
@@ -329,7 +339,7 @@ function applyAgUiEvent(
   const runtimeActivities =
     nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
-  const artifacts = upsertArtifactReferenceDescriptor(
+  const artifacts = upsertSynthesizedDescriptor(
     transcript === state.transcript
       ? state.artifacts
       : getStableArtifactsForMessages({

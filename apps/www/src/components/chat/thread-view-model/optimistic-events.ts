@@ -1,5 +1,6 @@
 import type { DBUserMessage, ThreadStatus, UIMessage } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
+import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
 import { stableSerialize } from "./renderable-part-shape";
 import type { ThreadViewEvent, ThreadViewModelState } from "./types";
 
@@ -32,6 +33,23 @@ export function createOptimisticPermissionModeUpdatedEvent(
   return {
     type: "optimistic.permission-mode-updated",
     permissionMode,
+  };
+}
+
+export function createRepoFileOpenedEvent({
+  path,
+  ref,
+  lineRange,
+}: {
+  path: string;
+  ref?: string;
+  lineRange?: RepoFileLineRange;
+}): ThreadViewEvent {
+  return {
+    type: "repo-file.opened",
+    path,
+    ...(ref ? { ref } : {}),
+    ...(lineRange ? { lineRange } : {}),
   };
 }
 
