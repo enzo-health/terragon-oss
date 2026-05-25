@@ -5,8 +5,28 @@ import {
   getEnvironment,
   updateEnvironment,
   getOrCreateEnvironment,
+  isSnapshotBuildStale,
+  reapStaleBuildingSnapshots,
+  getReadySnapshot,
+  SNAPSHOT_BUILD_TIMEOUT_MS,
 } from "./environments";
+import type { EnvironmentSnapshot } from "../db/schema";
 import { createTestUser } from "./test-helpers";
+
+function buildSnapshot(
+  overrides: Partial<EnvironmentSnapshot> = {},
+): EnvironmentSnapshot {
+  return {
+    provider: "daytona",
+    size: "large",
+    snapshotName: "",
+    status: "building",
+    setupScriptHash: "setup-hash",
+    baseDockerfileHash: "base-hash",
+    builtAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
 
 describe("environments", () => {
   let db: DB;
@@ -203,6 +223,105 @@ exit 0`;
       });
 
       expect(originalEnvironment?.setupScript).toBeNull();
+    });
+  });
+
+  describe("snapshot staleness", () => {
+    const now = Date.parse("2026-05-25T20:00:00.000Z");
+
+    it("treats a fresh building entry as not stale", () => {
+      const fresh = buildSnapshot({
+        status: "building",
+        builtAt: new Date(now - 60_000).toISOString(),
+      });
+      expect(isSnapshotBuildStale(fresh, now)).toBe(false);
+    });
+
+    it("treats a building entry past the timeout as stale", () => {
+      const old = buildSnapshot({
+        status: "building",
+        builtAt: new Date(now - SNAPSHOT_BUILD_TIMEOUT_MS - 1).toISOString(),
+      });
+      expect(isSnapshotBuildStale(old, now)).toBe(true);
+    });
+
+    it("never treats ready/failed/stale entries as stale builds", () => {
+      for (const status of ["ready", "failed", "stale"] as const) {
+        const snapshot = buildSnapshot({
+          status,
+          builtAt: new Date(now - SNAPSHOT_BUILD_TIMEOUT_MS * 10).toISOString(),
+        });
+        expect(isSnapshotBuildStale(snapshot, now)).toBe(false);
+      }
+    });
+
+    it("treats an unparseable builtAt as stale", () => {
+      const broken = buildSnapshot({
+        status: "building",
+        builtAt: "not-a-date",
+      });
+      expect(isSnapshotBuildStale(broken, now)).toBe(true);
+    });
+
+    it("flips only stale building entries to failed, leaving others intact", async () => {
+      const staleLarge = buildSnapshot({
+        size: "large",
+        status: "building",
+        builtAt: new Date(now - SNAPSHOT_BUILD_TIMEOUT_MS - 1).toISOString(),
+      });
+      const readySmall = buildSnapshot({
+        size: "small",
+        status: "ready",
+        snapshotName: "repo-ready-small",
+        builtAt: new Date(now - 5_000).toISOString(),
+      });
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: { snapshots: [staleLarge, readySmall] },
+      });
+
+      const reaped = await reapStaleBuildingSnapshots({
+        db,
+        environmentId,
+        userId,
+        now,
+      });
+
+      const large = reaped.find((s) => s.size === "large");
+      const small = reaped.find((s) => s.size === "small");
+      expect(large?.status).toBe("failed");
+      expect(large?.error).toMatch(/timed out|interrupted/i);
+      expect(small?.status).toBe("ready");
+      // The ready snapshot remains resolvable after reaping.
+      expect(
+        getReadySnapshot({ snapshots: reaped }, "daytona", "small")
+          ?.snapshotName,
+      ).toBe("repo-ready-small");
+    });
+
+    it("leaves a fresh building entry untouched", async () => {
+      const freshBuilding = buildSnapshot({
+        size: "large",
+        status: "building",
+        builtAt: new Date(now - 60_000).toISOString(),
+      });
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: { snapshots: [freshBuilding] },
+      });
+
+      const reaped = await reapStaleBuildingSnapshots({
+        db,
+        environmentId,
+        userId,
+        now,
+      });
+
+      expect(reaped[0]?.status).toBe("building");
     });
   });
 
