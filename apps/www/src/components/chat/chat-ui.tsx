@@ -336,7 +336,10 @@ function ChatUIContent() {
     (href: string) => {
       const classified = classifyRepoFileLink(href);
       if (!classified) return;
-      const ref = thread.branchName ?? undefined;
+      // Mirror the server's ref-resolution rule (get-repo-file-content.ts):
+      // working branch when present, else base branch. Keeps the descriptor id
+      // and label consistent with the ref the content is actually read from.
+      const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
       dispatch(
         createRepoFileOpenedEvent({
           path: classified.path,
@@ -348,7 +351,12 @@ function ChatUIContent() {
         buildRepoFileArtifactId({ path: classified.path, ref }),
       );
     },
-    [dispatch, handleOpenArtifact, thread.branchName],
+    [
+      dispatch,
+      handleOpenArtifact,
+      thread.branchName,
+      thread.repoBaseBranchName,
+    ],
   );
   // Gate the producer on the feature flag: when off, the callback is undefined
   // end-to-end so in-repo links keep their default new-tab navigation.

@@ -349,6 +349,7 @@ function ActiveArtifactRenderer({
         <RepoFileArtifactRenderer
           repoFilePart={(descriptor as RepoFileArtifactDescriptor).part}
           threadId={thread.id}
+          onOpenRepoFile={onOpenRepoFile}
         />
       );
     case "media":
