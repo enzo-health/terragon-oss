@@ -67,6 +67,8 @@ export interface PartRegistryContext {
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   /** Optional opener used by anything that has a corresponding artifact. */
   onOpenArtifact?: (artifactId: string) => void;
+  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
+  onOpenRepoFile?: (href: string) => void;
 
   // Resolved before dispatch so renderers don't re-derive them ─────────────
   /** Resolved artifact descriptor for this specific part, if any. */
@@ -300,6 +302,7 @@ export const PART_REGISTRY: PartRegistry = {
     baseBranchName: ctx.baseBranchName,
     hasCheckpoint: ctx.hasCheckpoint,
     onOpenInArtifactWorkspace: ctx.onOpenPlanArtifact,
+    onOpenRepoFile: ctx.onOpenRepoFile,
   })),
 
   thinking: definePartEntry(ThinkingPart, (ctx, part) => ({

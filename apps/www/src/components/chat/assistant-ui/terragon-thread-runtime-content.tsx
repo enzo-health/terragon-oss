@@ -42,6 +42,7 @@ export type TerragonThreadRuntimeContentProps = {
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   toolProps: TerragonThreadContext["toolProps"];
@@ -72,6 +73,7 @@ export function TerragonThreadRuntimeContent({
   isAgentWorking,
   artifactDescriptors,
   onOpenArtifact,
+  onOpenRepoFile,
   redoDialogData,
   forkDialogData,
   toolProps,
@@ -179,6 +181,7 @@ export function TerragonThreadRuntimeContent({
       artifactDescriptors: stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -196,6 +199,7 @@ export function TerragonThreadRuntimeContent({
       stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -211,6 +215,7 @@ export function TerragonThreadRuntimeContent({
       artifactDescriptors: stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -221,6 +226,7 @@ export function TerragonThreadRuntimeContent({
       stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,

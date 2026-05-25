@@ -133,7 +133,7 @@ export const featureFlagsDefinitions = {
     defaultValue: false,
     enabledForPreview: false,
     description:
-      "Enables click-to-open affordances for in-repo file paths (in chat, markdown, tool output, and diffs) that open a file preview in the artifacts panel instead of navigating away.",
+      "Enables in-repo file preview: clicking links/file references that point to files inside the sandboxed repo opens a preview in the artifacts panel instead of navigating away (source files via the Pierre diff/code renderer, .md/.mdx via the streamdown markdown renderer). When disabled, links keep the existing new-tab behavior. NOTE: scoping this to the Bonaparte healthcare monorepo is an operational admin toggle (global default off, enabled per-user or globally via the admin overrides) — the flag system has NO per-repo mechanism, and this feature ships NO repo allowlist enforcement in code. Repo gating is operational, not code-enforced.",
   },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 

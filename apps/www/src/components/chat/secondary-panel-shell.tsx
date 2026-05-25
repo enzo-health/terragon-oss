@@ -2,6 +2,7 @@ import { DBMessage, ThreadInfoFull } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
   type PlanArtifactDescriptor,
+  type RepoFileArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import React, { useCallback, useRef } from "react";
@@ -17,6 +18,7 @@ import {
 } from "./secondary-panel-helpers";
 import { MediaArtifactRenderer } from "./secondary-panel-media";
 import { PlanArtifactRenderer } from "./secondary-panel-plan";
+import { RepoFileArtifactRenderer } from "./secondary-panel-repo-file";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import { TextFileArtifactRenderer } from "./secondary-panel-text-file";
 import type { PromptBoxRef } from "./thread-context";
@@ -328,6 +330,13 @@ function ActiveArtifactRenderer({
       return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
     case "file":
       return <TextFileArtifactRenderer textFilePart={descriptor.part} />;
+    case "repo-file":
+      return (
+        <RepoFileArtifactRenderer
+          repoFilePart={(descriptor as RepoFileArtifactDescriptor).part}
+          threadId={thread.id}
+        />
+      );
     case "media":
       return <MediaArtifactRenderer mediaPart={descriptor.part} />;
     case "plan":
