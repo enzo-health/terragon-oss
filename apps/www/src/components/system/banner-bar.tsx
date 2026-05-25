@@ -24,8 +24,7 @@ export function BannerBar({
         variant === "default" && "bg-muted text-muted-foreground border-border",
         variant === "warning" && "bg-warning/10 text-warning border-warning/30",
         variant === "error" && "bg-error/10 text-error border-error/30",
-        variant === "info" &&
-          "bg-sky-50 text-sky-900 border-sky-200 dark:bg-sky-900/20 dark:text-sky-100 dark:border-sky-800",
+        variant === "info" && "bg-info/10 text-info border-info/30",
         className,
       )}
     >
