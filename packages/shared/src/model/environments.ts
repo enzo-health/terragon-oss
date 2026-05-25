@@ -429,6 +429,67 @@ export async function updateEnvironmentSnapshot({
   });
 }
 
+// A snapshot build runs under Vercel `waitUntil` for 5–15 min. If the function
+// is killed mid-build, the `.catch` failure handler never runs and the entry is
+// stranded in `building` forever — `getReadySnapshot` ignores it, so every boot
+// pays full setup with no signal. Treat a `building` entry older than this as
+// dead and retryable.
+export const SNAPSHOT_BUILD_TIMEOUT_MS = 20 * 60 * 1000;
+
+export function isSnapshotBuildStale(
+  snapshot: EnvironmentSnapshot,
+  now: number,
+): boolean {
+  if (snapshot.status !== "building") {
+    return false;
+  }
+  const startedAt = Date.parse(snapshot.builtAt);
+  if (Number.isNaN(startedAt)) {
+    return true;
+  }
+  return now - startedAt > SNAPSHOT_BUILD_TIMEOUT_MS;
+}
+
+// Flip stale `building` entries to `failed` so they stop masking the need for a
+// rebuild and the UI reflects reality. Returns the resulting snapshot list
+// (unchanged reference when nothing was stale).
+export async function reapStaleBuildingSnapshots({
+  db,
+  environmentId,
+  userId,
+  now = Date.now(),
+}: {
+  db: DB;
+  environmentId: string;
+  userId: string;
+  now?: number;
+}): Promise<EnvironmentSnapshot[]> {
+  const environment = await getEnvironment({ db, environmentId, userId });
+  const snapshots = environment?.snapshots ?? [];
+  let changed = false;
+  const updated = snapshots.map((snapshot) => {
+    if (!isSnapshotBuildStale(snapshot, now)) {
+      return snapshot;
+    }
+    changed = true;
+    return {
+      ...snapshot,
+      status: "failed" as const,
+      error: "Snapshot build timed out or was interrupted",
+    };
+  });
+  if (!changed) {
+    return snapshots;
+  }
+  await updateEnvironment({
+    db,
+    userId,
+    environmentId,
+    updates: { snapshots: updated },
+  });
+  return updated;
+}
+
 export async function markSnapshotsStale({
   db,
   environmentId,

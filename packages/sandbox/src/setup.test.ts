@@ -4,6 +4,7 @@ import {
   setupSandboxOneTime,
   gitCloneRepo,
   setupSandboxEveryTime,
+  launchSetupScriptInBackground,
 } from "./setup";
 import { CreateSandboxOptions } from "./types";
 import { MockSession } from "./providers/mock-provider";
@@ -670,6 +671,133 @@ npm run build`;
 
       // installDaemon mock should still have been called
       expect(installDaemon).toHaveBeenCalled();
+    });
+  });
+
+  describe("launchSetupScriptInBackground", () => {
+    function setupSpies() {
+      const session = new MockSession("mock-sandbox");
+      const writes = new Map<string, string>();
+      const commands: Array<{ command: string; env?: Record<string, string> }> =
+        [];
+      vi.spyOn(session, "writeTextFile").mockImplementation(
+        async (path, content) => {
+          writes.set(path, content);
+        },
+      );
+      vi.spyOn(session, "runCommand").mockImplementation(
+        async (command, options) => {
+          commands.push({ command, env: options?.env });
+          return "";
+        },
+      );
+      return { session, writes, commands };
+    }
+
+    const SENTINEL = "/root/.terragon/setup-complete";
+    const RUNNER = "/tmp/terragon-bg-setup-runner.sh";
+    const SHIM = "/root/.terragon/bin/terragon-barrier-shim.sh";
+    const INSTALLER = "/tmp/terragon-bg-install-barrier.sh";
+
+    it("installs the barrier shim that waits on the sentinel then execs the real tool", async () => {
+      const { session, writes } = setupSpies();
+      await launchSetupScriptInBackground({
+        session,
+        options: {
+          environmentVariables: [],
+          githubAccessToken: "tok",
+          agentCredentials: null,
+          setupScript: null,
+        },
+      });
+
+      const shim = writes.get(SHIM);
+      expect(shim).toBeDefined();
+      expect(shim).toContain(`while [ ! -f ${SENTINEL} ]; do sleep 1; done`);
+      expect(shim).toContain('exec "$real" "$@"');
+      // Fails loudly when setup exited non-zero.
+      expect(shim).toContain('if [ "$code" != "0" ]; then');
+    });
+
+    it("symlinks pnpm/npm/yarn/node and prepends the bin dir to PATH", async () => {
+      const { session, writes } = setupSpies();
+      await launchSetupScriptInBackground({
+        session,
+        options: {
+          environmentVariables: [],
+          githubAccessToken: "tok",
+          agentCredentials: null,
+          setupScript: null,
+        },
+      });
+
+      const installer = writes.get(INSTALLER);
+      expect(installer).toBeDefined();
+      expect(installer).toContain("for tool in pnpm npm yarn node;");
+      expect(installer).toContain(`ln -sf ${SHIM} /root/.terragon/bin/$tool`);
+      expect(installer).toContain("profile.d/00-terragon-setup-barrier.sh");
+    });
+
+    it("runs the repo terragon-setup.sh and touches the sentinel on completion", async () => {
+      const { session, writes } = setupSpies();
+      await launchSetupScriptInBackground({
+        session,
+        options: {
+          environmentVariables: [],
+          githubAccessToken: "tok",
+          agentCredentials: null,
+          setupScript: null,
+        },
+      });
+
+      const runner = writes.get(RUNNER);
+      expect(runner).toBeDefined();
+      expect(runner).toContain("bash -x ./terragon-setup.sh");
+      expect(runner).toContain(
+        `echo "$code" > /root/.terragon/setup-exit-code`,
+      );
+      expect(runner).toContain(`touch ${SENTINEL}`);
+    });
+
+    it("launches the runner detached and returns without awaiting setup", async () => {
+      const { session, commands } = setupSpies();
+      await launchSetupScriptInBackground({
+        session,
+        options: {
+          environmentVariables: [{ key: "FOO", value: "bar" }],
+          githubAccessToken: "tok",
+          agentCredentials: null,
+          setupScript: null,
+        },
+      });
+
+      const launch = commands.find((c) => c.command.includes("nohup"));
+      expect(launch).toBeDefined();
+      expect(launch!.command).toContain(`nohup bash ${RUNNER}`);
+      // `&` detaches; the call returns immediately.
+      expect(launch!.command).toContain("&");
+      // Setup env (CI + user vars) is passed to the launching shell so the
+      // detached child inherits it.
+      expect(launch!.env?.CI).toBe("true");
+      expect(launch!.env?.FOO).toBe("bar");
+    });
+
+    it("runs a custom setup script when provided", async () => {
+      const { session, writes } = setupSpies();
+      await launchSetupScriptInBackground({
+        session,
+        options: {
+          environmentVariables: [],
+          githubAccessToken: "tok",
+          agentCredentials: null,
+          setupScript: "echo custom",
+        },
+      });
+
+      expect(writes.get("/tmp/terragon-setup-custom.sh")).toBe("echo custom");
+      expect(writes.get(RUNNER)).toContain(
+        "bash -x /tmp/terragon-setup-custom.sh",
+      );
     });
   });
 });

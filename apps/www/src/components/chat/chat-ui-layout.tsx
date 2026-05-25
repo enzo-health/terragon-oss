@@ -78,6 +78,8 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     lastUsedModel,
     handleOpenArtifact,
     onOpenRepoFile,
+    onOpenRepoTree,
+    activeRepoFilePath,
   } = viewModel;
 
   const {
@@ -266,6 +268,8 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 onOptimisticPermissionModeUpdate
               }
               onOpenRepoFile={onOpenRepoFile}
+              onOpenRepoTree={onOpenRepoTree}
+              activeRepoFilePath={activeRepoFilePath}
             />
           ) : null}
         </div>
@@ -323,6 +327,10 @@ export type ChatUIViewModelData = {
    * git-diff header, or git-diff file tree) as a dedicated repo-file artifact.
    */
   onOpenRepoFile?: (href: string) => void;
+  /** Opens the repo file tree as a singleton artifact tab. */
+  onOpenRepoTree?: () => void;
+  /** Path of the most recently opened repo file, highlighted in the tree. */
+  activeRepoFilePath?: string | null;
 };
 
 /**

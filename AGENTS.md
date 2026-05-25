@@ -231,7 +231,7 @@ The chat layer is in the middle of a multi-phase consolidation onto `@assistant-
 - **Development**: ngrok for local tunnel, sandbox provider configs
 - **Sandbox Providers**: `DAYTONA_API_KEY` for Daytona provider
 - **Optional Providers**: Gemini API key, Amp API key, OpenAI OAuth/ChatGPT auth.json
-- **Linear Agent**: `LINEAR_WEBHOOK_SECRET`, `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` (OAuth app credentials for the Linear Agent). `LINEAR_API_KEY` and `LINEAR_MENTION_HANDLE` are deprecated.
+- **Linear Agent**: `LINEAR_WEBHOOK_SECRET`, `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` (OAuth app credentials for the Linear Agent).
 
 ## Package Structure
 

@@ -10,7 +10,10 @@ import {
   UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
-import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
+import {
+  buildRepoFileArtifactId,
+  buildRepoTreeArtifactId,
+} from "@terragon/shared/db/artifact-descriptors";
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -53,6 +56,7 @@ import {
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
   createRepoFileOpenedEvent,
+  createRepoTreeOpenedEvent,
 } from "./thread-view-model/optimistic-events";
 import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
@@ -332,6 +336,11 @@ function ChatUIContent() {
   // one path every artifact flows through), then we focus its tab. The reducer
   // re-seeds from the snapshot on chat switch, so previews never leak across
   // chats without any manual reset here.
+  // The path of the most recently opened repo file. The file tree highlights
+  // it ("you are here") when the Files tab is shown.
+  const [activeRepoFilePath, setActiveRepoFilePath] = useState<string | null>(
+    null,
+  );
   const handleOpenRepoFile = useCallback(
     (href: string) => {
       const classified = classifyRepoFileLink(href);
@@ -340,6 +349,7 @@ function ChatUIContent() {
       // working branch when present, else base branch. Keeps the descriptor id
       // and label consistent with the ref the content is actually read from.
       const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
+      setActiveRepoFilePath(classified.path);
       dispatch(
         createRepoFileOpenedEvent({
           path: classified.path,
@@ -362,6 +372,22 @@ function ChatUIContent() {
   // end-to-end so in-repo links keep their default new-tab navigation.
   const onOpenRepoFile = repoFilePreviewEnabled
     ? handleOpenRepoFile
+    : undefined;
+
+  // Opens the repo file tree as a singleton artifact tab, resolving the ref the
+  // same way handleOpenRepoFile does so the tree and previews share a ref.
+  const handleOpenRepoTree = useCallback(() => {
+    const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
+    dispatch(createRepoTreeOpenedEvent({ ref }));
+    handleOpenArtifact(buildRepoTreeArtifactId({ ref }));
+  }, [
+    dispatch,
+    handleOpenArtifact,
+    thread.branchName,
+    thread.repoBaseBranchName,
+  ]);
+  const onOpenRepoTree = repoFilePreviewEnabled
+    ? handleOpenRepoTree
     : undefined;
 
   const toolProps = useMemo(
@@ -527,12 +553,16 @@ function ChatUIContent() {
       lastUsedModel,
       handleOpenArtifact,
       onOpenRepoFile,
+      onOpenRepoTree,
+      activeRepoFilePath,
     }),
     [
       artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
       onOpenRepoFile,
+      onOpenRepoTree,
+      activeRepoFilePath,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,

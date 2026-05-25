@@ -121,6 +121,10 @@ export type ThreadViewEvent =
       lineRange?: RepoFileLineRange;
     }
   | {
+      type: "repo-tree.opened";
+      ref?: string;
+    }
+  | {
       type: "server.refetch-reconciled";
       snapshot: ThreadViewSnapshot;
     };

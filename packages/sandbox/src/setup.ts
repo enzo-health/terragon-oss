@@ -281,6 +281,19 @@ export async function setupSandboxOneTime(
   if (options.skipSetupScript || options.snapshotTemplateId) {
     console.log("Skipping setup script (snapshot or explicit skip)");
     await daemonInstallAndProbe;
+  } else if (options.backgroundSetupScript) {
+    // Background mode: install the dependency barrier, then launch the setup
+    // script detached so the agent can dispatch immediately. Boot reaches
+    // `booting-done` once the daemon probe resolves — setup keeps running.
+    await options.onStatusUpdate({
+      sandboxId: session.sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "running-setup-script",
+    });
+    await Promise.all([
+      daemonInstallAndProbe,
+      launchSetupScriptInBackground({ session, options }),
+    ]);
   } else {
     // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
     // are fully independent — run them in parallel to hide the spawn latency.
@@ -303,6 +316,123 @@ export async function setupSandboxOneTime(
       }),
     ]);
   }
+}
+
+/**
+ * Launch the setup script detached inside the sandbox and install a dependency
+ * barrier, then return immediately so the agent can be dispatched while setup
+ * runs.
+ *
+ * Two artifacts make this safe:
+ *   - A sentinel (`<home>/.terragon/setup-complete`) plus an exit-code file,
+ *     written by the detached runner when setup finishes.
+ *   - PATH-shimmed `pnpm`/`npm`/`yarn`/`node` in `<home>/.terragon/bin` that
+ *     block until the sentinel exists, then exec the real binary (or fail loudly
+ *     if setup exited non-zero). The shim re-resolves the real binary by
+ *     dropping its own dir from PATH, so there is no infinite loop and nothing
+ *     is baked at a fixed path.
+ *
+ * NOTE: interception depends on the agent's shell picking up the prepended PATH
+ * (written to /etc/profile.d and ~/.bashrc). This is the part that must be
+ * verified against a live sandbox before enabling the `backgroundSetupScript`
+ * flag in production.
+ */
+export async function launchSetupScriptInBackground({
+  session,
+  options,
+}: {
+  session: ISandboxSession;
+  options: Pick<
+    CreateSandboxOptions,
+    | "environmentVariables"
+    | "githubAccessToken"
+    | "agentCredentials"
+    | "setupScript"
+  >;
+}): Promise<void> {
+  const stateDir = `/${session.homeDir}/.terragon`;
+  const binDir = `${stateDir}/bin`;
+  const sentinel = `${stateDir}/setup-complete`;
+  const exitCodeFile = `${stateDir}/setup-exit-code`;
+  const logFile = `${stateDir}/setup.log`;
+  const repoPath = `/${session.homeDir}/${session.repoDir}`;
+  const customScriptPath = "/tmp/terragon-setup-custom.sh";
+  const runnerPath = "/tmp/terragon-bg-setup-runner.sh";
+  const shimPath = `${binDir}/terragon-barrier-shim.sh`;
+  const installerPath = "/tmp/terragon-bg-install-barrier.sh";
+
+  const env = getEnv({
+    userEnv: options.environmentVariables ?? [],
+    githubAccessToken: options.githubAccessToken,
+    agentCredentials: options.agentCredentials,
+    overrides: { CI: "true", TERM: "xterm" },
+  });
+
+  const runSetupBlock = options.setupScript
+    ? `bash -x ${customScriptPath}`
+    : `if [ -f terragon-setup.sh ]; then chmod +x terragon-setup.sh && bash -x ./terragon-setup.sh; fi`;
+
+  const runner = [
+    "#!/usr/bin/env bash",
+    `mkdir -p ${stateDir}`,
+    `cd ${repoPath} || { echo 1 > ${exitCodeFile}; touch ${sentinel}; exit 1; }`,
+    runSetupBlock,
+    "code=$?",
+    `echo "$code" > ${exitCodeFile}`,
+    `touch ${sentinel}`,
+    "",
+  ].join("\n");
+
+  // A single shim file, symlinked per tool. `$0`'s basename names the tool;
+  // dropping our bin dir from PATH lets `command -v` find the genuine binary.
+  const shim = [
+    "#!/usr/bin/env bash",
+    `while [ ! -f ${sentinel} ]; do sleep 1; done`,
+    `code="$(cat ${exitCodeFile} 2>/dev/null || echo 0)"`,
+    'if [ "$code" != "0" ]; then',
+    `  echo "terragon: environment setup failed (exit $code); see ${logFile}" >&2`,
+    '  exit "$code"',
+    "fi",
+    'self="$(basename "$0")"',
+    `real="$(PATH="$(printf %s "$PATH" | tr ':' '\\n' | grep -vx '${binDir}' | paste -sd: -)" command -v "$self")"`,
+    'if [ -z "$real" ]; then',
+    '  echo "terragon: could not resolve real $self" >&2',
+    "  exit 127",
+    "fi",
+    'exec "$real" "$@"',
+    "",
+  ].join("\n");
+
+  const installer = [
+    "#!/usr/bin/env bash",
+    `mkdir -p ${binDir}`,
+    `chmod +x ${shimPath}`,
+    "for tool in pnpm npm yarn node; do",
+    `  ln -sf ${shimPath} ${binDir}/$tool`,
+    "done",
+    `echo 'export PATH=${binDir}:$PATH' > /etc/profile.d/00-terragon-setup-barrier.sh`,
+    `grep -qs 'terragon-setup-barrier' /${session.homeDir}/.bashrc 2>/dev/null || echo '. /etc/profile.d/00-terragon-setup-barrier.sh # terragon-setup-barrier' >> /${session.homeDir}/.bashrc`,
+    "",
+  ].join("\n");
+
+  if (options.setupScript) {
+    await session.writeTextFile(customScriptPath, options.setupScript);
+    await session.runCommand(`chmod +x ${customScriptPath}`);
+  }
+
+  // Install the barrier synchronously so the shims exist before the agent runs.
+  await session.runCommand(`mkdir -p ${binDir}`);
+  await session.writeTextFile(shimPath, shim);
+  await session.writeTextFile(installerPath, installer);
+  await session.runCommand(`bash ${installerPath}`);
+
+  // Launch setup detached. `nohup ... &` returns immediately; the runner keeps
+  // executing in the sandbox and writes the sentinel when done.
+  await session.writeTextFile(runnerPath, runner);
+  await session.runCommand(
+    `nohup bash ${runnerPath} > ${logFile} 2>&1 & echo "terragon background setup launched"`,
+    { env },
+  );
 }
 
 export async function gitCloneRepo(

@@ -129,10 +129,6 @@ export const env = envsafe(
 
     // Linear Integration
     LINEAR_WEBHOOK_SECRET: str({ allowEmpty: true, default: "" }),
-    // @deprecated — use OAuth app token via linearInstallation table instead
-    LINEAR_API_KEY: str({ allowEmpty: true, default: "" }),
-    // @deprecated — agent is now registered via OAuth and identified by actor=app
-    LINEAR_MENTION_HANDLE: str({ allowEmpty: true, default: "" }),
     // Linear OAuth app credentials (required for Linear Agent OAuth flow)
     LINEAR_CLIENT_ID: str({ allowEmpty: true, default: "" }),
     LINEAR_CLIENT_SECRET: str({ allowEmpty: true, default: "" }),

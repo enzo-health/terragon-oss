@@ -27,13 +27,15 @@ vi.mock("@/server-lib/linear-oauth", () => ({
 }));
 
 const mockCreateAgentActivity = vi.fn().mockResolvedValue({ success: true });
+const mockUpdateAgentSession = vi.fn().mockResolvedValue({ success: true });
 const mockLinearClientInstance = {
   createAgentActivity: mockCreateAgentActivity,
+  updateAgentSession: mockUpdateAgentSession,
 };
 
 /** Injectable factory for tests */
 const testClientFactory: LinearClientFactory = () =>
-  mockLinearClientInstance as any;
+  mockLinearClientInstance as unknown as import("@linear/sdk").LinearClient;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,6 +79,7 @@ function makeAssistantMessage(text: string) {
 describe("emitLinearActivitiesForDaemonEvent", () => {
   beforeEach(() => {
     mockCreateAgentActivity.mockClear();
+    mockUpdateAgentSession.mockClear();
   });
 
   it("skips gracefully when agentSessionId is missing (legacy fn-1 thread)", async () => {
@@ -107,6 +110,47 @@ describe("emitLinearActivitiesForDaemonEvent", () => {
         parameter: "Running tests on auth module",
       },
       ephemeral: true,
+    });
+  });
+
+  it("updates the Linear session plan from latest daemon plan message", async () => {
+    const meta = makeMeta({ agentSessionId: "session-plan" });
+    const messages = [
+      makeAssistantMessage("Planning"),
+      {
+        type: "codex-plan" as const,
+        session_id: "session-plan",
+        entries: [
+          {
+            content: "Inspect Linear webhook path",
+            priority: "high" as const,
+            status: "completed" as const,
+          },
+          {
+            content: "Patch prompted repo selection",
+            priority: "medium" as const,
+            status: "in_progress" as const,
+          },
+          {
+            content: "Run focused tests",
+            priority: "low" as const,
+            status: "pending" as const,
+          },
+        ],
+      },
+    ];
+
+    await emitLinearActivitiesForDaemonEvent(meta, messages, {
+      createClient: testClientFactory,
+    });
+
+    expect(mockCreateAgentActivity).not.toHaveBeenCalled();
+    expect(mockUpdateAgentSession).toHaveBeenCalledWith("session-plan", {
+      plan: [
+        { content: "Inspect Linear webhook path", status: "completed" },
+        { content: "Patch prompted repo selection", status: "inProgress" },
+        { content: "Run focused tests", status: "pending" },
+      ],
     });
   });
 

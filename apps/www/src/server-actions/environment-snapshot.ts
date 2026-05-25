@@ -7,27 +7,19 @@ import {
   getDefaultBranchForRepo,
 } from "@/lib/github";
 import { UserFacingError } from "@/lib/server-actions";
-import { waitUntil } from "@vercel/functions";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
+import { buildAndStoreEnvironmentSnapshot } from "@/server-lib/environment-snapshot-build";
 import { env } from "@terragon/env/apps-www";
 import {
   getEnvironment,
   getDecryptedEnvironmentVariables,
   getDecryptedMcpConfig,
-  hashEnvironmentVariables,
-  hashSnapshotValue,
   updateEnvironment,
-  updateEnvironmentSnapshot,
   getReadySnapshot,
 } from "@terragon/shared/model/environments";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 import type { SandboxSize } from "@terragon/types/sandbox";
-import {
-  buildRepoSnapshot,
-  deleteRepoSnapshot,
-  getSetupScriptHash,
-  getSnapshotBaseTemplateId,
-} from "@terragon/sandbox/snapshot-builder";
+import { deleteRepoSnapshot } from "@terragon/sandbox/snapshot-builder";
 
 export const buildEnvironmentSnapshot = userOnlyAction(
   async function buildEnvironmentSnapshot(
@@ -55,8 +47,6 @@ export const buildEnvironmentSnapshot = userOnlyAction(
     const setupScript =
       environment.setupScript ??
       (await getSetupScriptFromRepo({ db, userId, environmentId }));
-    const setupScriptHash = getSetupScriptHash(setupScript);
-    const baseDockerfileHash = getSnapshotBaseTemplateId(size);
     const [repositoryEnvironmentVariables, resolvedMcpConfig] =
       await Promise.all([
         getDecryptedEnvironmentVariables({
@@ -72,92 +62,23 @@ export const buildEnvironmentSnapshot = userOnlyAction(
           encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
         }),
       ]);
-    const environmentVariablesHash = hashEnvironmentVariables(
-      repositoryEnvironmentVariables,
-    );
-    const mcpConfigHash = hashSnapshotValue(resolvedMcpConfig);
-
-    // Set status to building immediately
-    const buildingEntry: EnvironmentSnapshot = {
-      provider: "daytona",
-      size,
-      snapshotName: "",
-      status: "building",
-      setupScriptHash,
-      baseDockerfileHash,
-      environmentVariablesHash,
-      mcpConfigHash,
-      builtAt: new Date().toISOString(),
-    };
-    await updateEnvironmentSnapshot({
-      db,
-      environmentId,
-      userId,
-      snapshot: buildingEntry,
-    });
-
     const defaultBranch = await getDefaultBranchForRepo({
       userId,
       repoFullName: environment.repoFullName,
     });
 
-    // Keep Vercel alive for the duration of the build (5–15 min)
-    waitUntil(
-      buildRepoSnapshot({
-        repoFullName: environment.repoFullName,
-        baseBranch: defaultBranch,
-        githubAccessToken,
-        setupScript,
-        environmentVariables: repositoryEnvironmentVariables,
-        size,
-        onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
-      })
-        .then(async ({ snapshotName }) => {
-          const readyEntry: EnvironmentSnapshot = {
-            provider: "daytona",
-            size,
-            snapshotName,
-            status: "ready",
-            setupScriptHash,
-            baseDockerfileHash,
-            environmentVariablesHash,
-            mcpConfigHash,
-            builtAt: new Date().toISOString(),
-          };
-          await updateEnvironmentSnapshot({
-            db,
-            environmentId,
-            userId,
-            snapshot: readyEntry,
-          });
-          console.log(
-            `[snapshot-build] Snapshot ready: ${snapshotName} for ${environment.repoFullName}`,
-          );
-        })
-        .catch(async (error) => {
-          console.error(`[snapshot-build] Failed:`, error);
-          const failedEntry: EnvironmentSnapshot = {
-            provider: "daytona",
-            size,
-            snapshotName: "",
-            status: "failed",
-            setupScriptHash,
-            baseDockerfileHash,
-            environmentVariablesHash,
-            mcpConfigHash,
-            error: error instanceof Error ? error.message : String(error),
-            builtAt: new Date().toISOString(),
-          };
-          await updateEnvironmentSnapshot({
-            db,
-            environmentId,
-            userId,
-            snapshot: failedEntry,
-          }).catch((e) =>
-            console.error("[snapshot-build] Failed to update status:", e),
-          );
-        }),
-    );
+    await buildAndStoreEnvironmentSnapshot({
+      db,
+      userId,
+      environmentId,
+      repoFullName: environment.repoFullName,
+      baseBranch: defaultBranch,
+      githubAccessToken,
+      setupScript,
+      size,
+      environmentVariables: repositoryEnvironmentVariables,
+      mcpConfig: resolvedMcpConfig,
+    });
   },
   { defaultErrorMessage: "Failed to build environment snapshot" },
 );
