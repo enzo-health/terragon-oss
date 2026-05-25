@@ -177,13 +177,43 @@ describe("getRepoFileContentAction", () => {
     }
   });
 
-  it("maps a 404 (unpushed/missing file) to a typed not-found error", async () => {
+  it("falls back to the base branch when the working branch 404s", async () => {
+    // The unpushed working branch 404s; the same path resolves on base.
+    getContent
+      .mockRejectedValueOnce({ status: 404 })
+      .mockResolvedValueOnce(blobResponse("from base\n"));
+    const result = await callAction({ threadId, path: "src/foo.ts" });
+    expect(result.status).toBe("ready");
+    if (result.status === "ready") {
+      expect(result.content).toBe("from base\n");
+      expect(result.ref).toBe("main");
+    }
+    expect(getContent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ ref: "feature/working-branch" }),
+    );
+    expect(getContent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ ref: "main" }),
+    );
+  });
+
+  it("maps a 404 on both working and base refs to a typed not-found error", async () => {
     getContent.mockRejectedValue({ status: 404 });
     const result = await callAction({
       threadId,
       path: "src/never-pushed.ts",
     });
     expect(result).toEqual({ status: "error", category: "not-found" });
+    // Both the working branch and base are tried before giving up.
+    expect(getContent).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry base when a non-404 GitHub error occurs", async () => {
+    getContent.mockRejectedValue({ status: 500 });
+    const result = await callAction({ threadId, path: "src/foo.ts" });
+    expect(result).toEqual({ status: "error", category: "github-error" });
+    expect(getContent).toHaveBeenCalledTimes(1);
   });
 
   it("authorizes a repo-visibility thread for a user with repo access", async () => {
