@@ -192,11 +192,11 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           threadChatStatus={threadChat.status}
                         />
                       </TerragonThreadErrorBoundary>
+                      <div
+                        ref={messagesEndRef}
+                        className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
+                      />
                     </div>
-                    <div
-                      ref={messagesEndRef}
-                      className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
-                    />
                   </ScrollArea>
                   {/* Scroll-to-bottom button floating above scroll area */}
                   <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">

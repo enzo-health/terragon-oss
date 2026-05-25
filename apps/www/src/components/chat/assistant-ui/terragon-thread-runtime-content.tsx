@@ -20,7 +20,9 @@ import type {
   RedoDialogData,
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
+import { NativeThread } from "./native-thread";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
   type TerragonMessageRenderContext,
@@ -95,6 +97,7 @@ export function TerragonThreadRuntimeContent({
   optimisticUserMessages = [],
   children,
 }: TerragonThreadRuntimeContentProps) {
+  const useNativeTranscript = useFeatureFlag("nativeChatTranscript");
   const transcript = useTerragonTranscript({
     chatAgent,
     optimisticUserMessages,
@@ -237,30 +240,34 @@ export function TerragonThreadRuntimeContent({
   return (
     <TerragonThreadProvider value={ctx}>
       <TerragonMessageRenderProvider value={messageRenderCtx}>
-        <TerragonTranscriptSurface
-          lifecycleMessages={lifecycleMessages}
-          isRuntimeHydrating={transcript.isRuntimeHydrating}
-          messages={messages}
-          latestAgentMessageIndex={transcript.latestAgentMessageIndex}
-          chatAgent={chatAgent}
-          error={error}
-          errorType={errorType}
-          errorInfo={errorInfo}
-          handleRetry={handleRetry}
-          isRetrying={isRetrying}
-          isReadOnly={isReadOnly}
-          reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
-          showWorkingMessage={baseShowWorking}
-          threadStatus={threadStatus}
-          bootingSubstatus={bootingSubstatus}
-          reattemptQueueAt={reattemptQueueAt}
-          metaSnapshot={metaSnapshot}
-          passiveWait={passiveWaitProp}
-          threadId={thread.id}
-          threadChatId={threadChatId}
-          scheduleAt={scheduleAt}
-          threadChatStatus={threadChatStatus}
-        />
+        {useNativeTranscript ? (
+          <NativeThread />
+        ) : (
+          <TerragonTranscriptSurface
+            lifecycleMessages={lifecycleMessages}
+            isRuntimeHydrating={transcript.isRuntimeHydrating}
+            messages={messages}
+            latestAgentMessageIndex={transcript.latestAgentMessageIndex}
+            chatAgent={chatAgent}
+            error={error}
+            errorType={errorType}
+            errorInfo={errorInfo}
+            handleRetry={handleRetry}
+            isRetrying={isRetrying}
+            isReadOnly={isReadOnly}
+            reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
+            showWorkingMessage={baseShowWorking}
+            threadStatus={threadStatus}
+            bootingSubstatus={bootingSubstatus}
+            reattemptQueueAt={reattemptQueueAt}
+            metaSnapshot={metaSnapshot}
+            passiveWait={passiveWaitProp}
+            threadId={thread.id}
+            threadChatId={threadChatId}
+            scheduleAt={scheduleAt}
+            threadChatStatus={threadChatStatus}
+          />
+        )}
       </TerragonMessageRenderProvider>
       {children}
     </TerragonThreadProvider>

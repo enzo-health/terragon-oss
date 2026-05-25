@@ -345,6 +345,13 @@ type AppServerRunContext = {
   /** Last full agent_message text by item id (for cumulative update dedupe). */
   agentMessageTextById: Map<string, string>;
   /**
+   * Accumulated reasoning text streamed as "thinking" deltas, by item id.
+   * Mirrors `agentMessageTextById`: on `item.completed` we flush any tail not
+   * yet streamed so the delta stream holds the complete reasoning, then the
+   * server suppresses the duplicate rich-part REASONING representation.
+   */
+  reasoningTextById: Map<string, string>;
+  /**
    * Most recent non-empty diff from `turn/diff/updated`. Held across
    * intermediate updates and flushed as a single `codex-diff` ClaudeMessage
    * when the turn completes, so N file edits produce ONE DBDiffPart.
@@ -1104,6 +1111,7 @@ export class TerragonDaemon {
       threadReadyPromise,
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
+      reasoningTextById: new Map<string, string>(),
       pendingTurnDiff: null,
       turnOutputMessageCount: 0,
       runtimeAdapterContract: resolveDaemonRuntimeAdapterContract(input),
@@ -1682,28 +1690,66 @@ export class TerragonDaemon {
             return;
           }
 
-          // Route commandExecution/outputDelta through the delta buffer as
-          // "text" kind so the client can stream command output progressively.
+          // On `item.completed` for an agent_message, flush any text the
+          // streaming deltas did not already cover — under the SAME item id —
+          // so the delta stream holds the complete text even when a message
+          // completes without prior `item.updated` deltas. We do NOT return:
+          // the event falls through to parseCodexLine so the DBAgentMessage is
+          // still persisted. That parsed message carries `_codexItemId`, which
+          // makes the canonical-event builder skip the duplicate
+          // `assistant-message` event — the delta stream is the single
+          // persisted/replayed representation, so a second one under a fresh
+          // id is exactly what stacked identical text in the transcript.
+          if (
+            threadEvent.type === "item.completed" &&
+            threadEvent.item &&
+            (threadEvent.item as Record<string, unknown>).type ===
+              "agent_message"
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item.id as string | undefined;
+            const messageText = item.text as string | undefined;
+            if (itemId && messageText) {
+              const streamedText =
+                context.agentMessageTextById.get(itemId) ?? "";
+              const remaining =
+                streamedText.length === 0
+                  ? messageText
+                  : messageText.startsWith(streamedText)
+                    ? messageText.slice(streamedText.length)
+                    : // Prior stream diverged from the final text — trust the
+                      // stream and do not append, to avoid double text.
+                      "";
+              if (remaining) {
+                context.agentMessageTextById.set(itemId, messageText);
+                this.enqueueDelta({
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                  messageId: itemId,
+                  partIndex: 0,
+                  kind: "text",
+                  text: remaining,
+                });
+              }
+            }
+            // Fall through to parseCodexLine for DBAgentMessage persistence.
+          }
+
+          // commandExecution/outputDelta carries live command output. We do
+          // NOT stream it as a "text" delta: the delta channel only renders as
+          // assistant text, so the command's stdout would surface as a raw
+          // standalone text blob next to the Bash tool card instead of inside
+          // it (the delta's messageId is the command item id, but a TEXT
+          // message under that id is a separate thing from the TOOL_CALL under
+          // the same id). The command's full output still lands in the Bash
+          // card via the `command_execution` completed -> tool_result path.
+          // Streaming it live INTO the card needs a tool-progress delta kind
+          // (TOOL_CALL_CHUNK), which the delta channel does not yet carry.
           if (
             threadEvent.type === "item.updated" &&
             notification.method === "item/commandExecution/outputDelta"
           ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const output = item?.aggregated_output as string | undefined;
-            if (itemId && output) {
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "text",
-                text: output,
-              });
-            }
-            // commandExecution/outputDelta is delta-only — don't pass to
-            // parseCodexLine since there's no full item to persist yet.
             return;
           }
 
@@ -1730,7 +1776,9 @@ export class TerragonDaemon {
             return;
           }
 
-          // Route reasoning deltas through the delta buffer as "thinking" kind.
+          // Route reasoning deltas through the delta buffer as "thinking" kind,
+          // accumulating per item id so the `item.completed` flush below can
+          // detect any tail the deltas did not cover.
           if (
             threadEvent.type === "item.updated" &&
             (notification.method === "item/reasoning/summaryTextDelta" ||
@@ -1741,6 +1789,8 @@ export class TerragonDaemon {
             const itemId = item?.id as string | undefined;
             const text = item?.text as string | undefined;
             if (itemId && text) {
+              const previous = context.reasoningTextById.get(itemId) ?? "";
+              context.reasoningTextById.set(itemId, previous + text);
               this.enqueueDelta({
                 threadId: input.threadId,
                 threadChatId: input.threadChatId,
@@ -1752,6 +1802,44 @@ export class TerragonDaemon {
               });
             }
             return;
+          }
+
+          // On `item.completed` for a reasoning item, flush any reasoning text
+          // the deltas did not already cover under the SAME item id, then fall
+          // through to parseCodexLine for the DBAgentMessage. The parsed message
+          // carries `_codexItemId`, which makes the server skip the duplicate
+          // rich-part REASONING representation keyed on the envelope-derived id
+          // — the delta stream is the single persisted/replayed representation.
+          if (
+            threadEvent.type === "item.completed" &&
+            threadEvent.item &&
+            (threadEvent.item as Record<string, unknown>).type === "reasoning"
+          ) {
+            const item = threadEvent.item as Record<string, unknown>;
+            const itemId = item.id as string | undefined;
+            const reasoningText = item.text as string | undefined;
+            if (itemId && reasoningText) {
+              const streamed = context.reasoningTextById.get(itemId) ?? "";
+              const remaining =
+                streamed.length === 0
+                  ? reasoningText
+                  : reasoningText.startsWith(streamed)
+                    ? reasoningText.slice(streamed.length)
+                    : "";
+              if (remaining) {
+                context.reasoningTextById.set(itemId, reasoningText);
+                this.enqueueDelta({
+                  threadId: input.threadId,
+                  threadChatId: input.threadChatId,
+                  token: input.token,
+                  messageId: itemId,
+                  partIndex: 0,
+                  kind: "thinking",
+                  text: remaining,
+                });
+              }
+            }
+            // Fall through to parseCodexLine for DBAgentMessage persistence.
           }
 
           // mcpToolCall/progress updates are delta-only — don't persist them
@@ -3319,9 +3407,18 @@ export class TerragonDaemon {
     const canonicalModel = this.toCanonicalModelOrNull(runState.model);
     for (const message of messages) {
       if (message.type === "assistant") {
+        // A Codex `agent_message` whose text already streamed as deltas under
+        // `_codexItemId` must NOT also emit a canonical `assistant-message`:
+        // that second representation lands in the replayed event log under a
+        // different id and renders the same text twice. Tool-use blocks below
+        // are unaffected — only the text emission is suppressed.
+        const codexStreamedTextItemId =
+          typeof message._codexItemId === "string"
+            ? message._codexItemId
+            : null;
         const content = message.message.content;
         if (typeof content === "string") {
-          if (content.length === 0) {
+          if (content.length === 0 || codexStreamedTextItemId) {
             continue;
           }
           const baseEvent = allocateBaseEvent();
@@ -3346,7 +3443,7 @@ export class TerragonDaemon {
           const blockType = readString(blockRecord, "type");
           if (blockType === "text") {
             const text = readString(blockRecord, "text");
-            if (!text || text.length === 0) {
+            if (!text || text.length === 0 || codexStreamedTextItemId) {
               continue;
             }
             const baseEvent = allocateBaseEvent();
