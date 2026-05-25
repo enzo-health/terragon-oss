@@ -71,20 +71,32 @@ function getStatusLabel({
   return labels[status] || status;
 }
 
+/** "sm" renders a compact glyph suitable for an overlay badge; "default"
+ * keeps the historical size used everywhere the indicator stands alone. */
+export type ThreadStatusIndicatorSize = "sm" | "default";
+
 export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
   thread,
   isOptimistic,
+  size = "default",
 }: {
   thread: Pick<ThreadInfo, "isUnread" | "threadChats" | "draftMessage">;
   isOptimistic?: boolean;
+  size?: ThreadStatusIndicatorSize;
 }) {
   // For optimistic threads, show creating state
   if (isOptimistic) {
+    const dotSize = size === "sm" ? "h-2 w-2" : "h-2.5 w-2.5";
     return (
       <div className="flex-shrink-0" title="Creating">
-        <span className="relative flex h-2.5 w-2.5">
+        <span className={cn("relative flex", dotSize)}>
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral/30 opacity-60" />
-          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-coral/50" />
+          <span
+            className={cn(
+              "relative inline-flex rounded-full bg-coral/50",
+              dotSize,
+            )}
+          />
         </span>
       </div>
     );
@@ -100,6 +112,7 @@ export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
       isDraft={!!thread.draftMessage}
       status={status}
       isError={isError}
+      size={size}
     />
   );
 });
@@ -110,12 +123,14 @@ function MinimalStatusIndicator({
   isError,
   status,
   className,
+  size = "default",
 }: {
   isUnread: boolean;
   isDraft: boolean;
   status: ThreadStatus;
   isError: boolean;
   className?: string;
+  size?: ThreadStatusIndicatorSize;
 }) {
   let minimalStatus = getMinimalStatus(status);
   // active should take precedence over unread
@@ -128,29 +143,47 @@ function MinimalStatusIndicator({
   }
 
   const strokeWidth = 2.5;
-  const size = "size-3.5";
+  const iconSize = size === "sm" ? "size-2.5" : "size-3.5";
+  const unreadDot = size === "sm" ? "w-1.5 h-1.5" : "w-2 h-2";
   const icons = {
-    draft: <File strokeWidth={2} className={cn("text-mid", size)} />,
+    draft: <File strokeWidth={2} className={cn("text-mid", iconSize)} />,
     scheduled: (
-      <Calendar strokeWidth={strokeWidth} className={cn("text-mid", size)} />
+      <Calendar
+        strokeWidth={strokeWidth}
+        className={cn("text-mid", iconSize)}
+      />
     ),
     pending: (
-      <Clock strokeWidth={strokeWidth} className={cn("text-warning", size)} />
+      <Clock
+        strokeWidth={strokeWidth}
+        className={cn("text-warning", iconSize)}
+      />
     ),
     active: (
       <CircleDashed
         strokeWidth={2}
-        className={cn("text-strong/60 animate-[spin_2s_linear_infinite]", size)}
+        className={cn(
+          "text-strong/60 animate-[spin_2s_linear_infinite]",
+          iconSize,
+        )}
       />
     ),
     finishing: (
-      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
+      <Check
+        strokeWidth={strokeWidth}
+        className={cn("text-success", iconSize)}
+      />
     ),
     complete: (
-      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
+      <Check
+        strokeWidth={strokeWidth}
+        className={cn("text-success", iconSize)}
+      />
     ),
-    error: <X strokeWidth={strokeWidth} className={cn("text-error", size)} />,
-    unread: <div className="w-2 h-2 rounded-full bg-info" />,
+    error: (
+      <X strokeWidth={strokeWidth} className={cn("text-error", iconSize)} />
+    ),
+    unread: <div className={cn("rounded-full bg-info", unreadDot)} />,
   };
   return (
     <div

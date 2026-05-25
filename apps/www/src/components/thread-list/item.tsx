@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ThreadInfo } from "@terragon/shared";
+import { ThreadInfo, GitDiffStats } from "@terragon/shared";
 import React, {
   memo,
   useMemo,
@@ -9,14 +9,13 @@ import React, {
   useCallback,
 } from "react";
 import { getThreadTitle } from "@/agent/thread-utils";
-import { PRStatusPill } from "../pr-status-pill";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ThreadStatusIndicator } from "../thread-status";
 import { ThreadMenuDropdown } from "../thread-menu-dropdown";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { WorkflowIcon, EllipsisVerticalIcon } from "lucide-react";
+import { WorkflowIcon, EllipsisVerticalIcon, GitBranch } from "lucide-react";
 import { Input } from "../ui/input";
 import { useUpdateThreadNameMutation } from "@/queries/thread-mutations";
 import { DraftTaskDialog } from "../chat/draft-task-dialog";
@@ -187,6 +186,58 @@ const CreatingIndicator = memo(function CreatingIndicator() {
     </span>
   );
 });
+
+/**
+ * Branch glyph with the thread status riding as a corner badge — the
+ * Superconductor-style leading icon. The badge's circular `bg-background` masks
+ * the branch strokes behind the status mark so it reads as a distinct pip.
+ */
+const ThreadBranchIcon = memo(function ThreadBranchIcon({
+  thread,
+  isOptimistic,
+}: {
+  thread: ThreadInfo;
+  isOptimistic: boolean;
+}) {
+  return (
+    <div className="relative flex h-4 w-4 flex-shrink-0 items-center justify-center">
+      <GitBranch strokeWidth={2} className="size-4 text-muted-foreground/70" />
+      <span className="absolute -bottom-1 -right-1 flex items-center justify-center rounded-full bg-background">
+        <ThreadStatusIndicator
+          thread={thread}
+          isOptimistic={isOptimistic}
+          size="sm"
+        />
+      </span>
+    </div>
+  );
+});
+
+/** Right-aligned `+adds -dels` change counter. Hidden when there is no diff. */
+const DiffStat = memo(function DiffStat({ stats }: { stats: GitDiffStats }) {
+  if (stats.additions === 0 && stats.deletions === 0) return null;
+  return (
+    <span className="flex flex-shrink-0 items-center gap-1.5 text-micro font-medium tabular-nums">
+      <span className="text-success">+{stats.additions}</span>
+      <span className="text-error">-{stats.deletions}</span>
+    </span>
+  );
+});
+
+/** Tailwind text color for the inline `#PR` ref, keyed off CI checks status so
+ * the subtitle keeps the pass/fail/pending signal the old pill carried. */
+function prChecksColorClass(thread: ThreadInfo): string {
+  switch (thread.prChecksStatus) {
+    case "success":
+      return "text-success";
+    case "failure":
+      return "text-error";
+    case "pending":
+      return "text-warning";
+    default:
+      return "";
+  }
+}
 
 /**
  * Global registry to track recently reconciled thread titles
@@ -422,14 +473,12 @@ export const ThreadListItem = memo(function ThreadListItem({
                   />
                 </div>
               )}
-              {/* Status indicator (hidden in selection mode) */}
+              {/* Branch glyph + status badge (hidden in selection mode) */}
               {(!isSelectionMode || isOptimisticThread) && (
-                <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
-                  <ThreadStatusIndicator
-                    thread={thread}
-                    isOptimistic={isOptimisticThread}
-                  />
-                </div>
+                <ThreadBranchIcon
+                  thread={thread}
+                  isOptimistic={isOptimisticThread}
+                />
               )}
               {isEditingName ? (
                 <InlineNameEditor
@@ -446,12 +495,38 @@ export const ThreadListItem = memo(function ThreadListItem({
                   )}
                   title={title}
                 >
-                  {title}
+                  {thread.branchName || title}
                 </p>
+              )}
+              {!isEditingName && thread.gitDiffStats && (
+                <DiffStat stats={thread.gitDiffStats} />
               )}
             </div>
             <div className="flex items-center justify-between gap-2.5">
               <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
+                {thread.githubPRNumber && (
+                  <>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex-shrink-0 tabular-nums hover:underline",
+                        prChecksColorClass(thread),
+                      )}
+                      title="View pull request"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.open(
+                          `https://github.com/${thread.githubRepoFullName}/pull/${thread.githubPRNumber}`,
+                          "_blank",
+                        );
+                      }}
+                    >
+                      #{thread.githubPRNumber}
+                    </button>
+                    <span className="flex-shrink-0 opacity-50">·</span>
+                  </>
+                )}
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
@@ -474,14 +549,6 @@ export const ThreadListItem = memo(function ThreadListItem({
                 {thread.automationId && (
                   <SmallAutomationIndicator
                     automationId={thread.automationId}
-                  />
-                )}
-                {thread.githubPRNumber && thread.prStatus && (
-                  <PRStatusPill
-                    status={thread.prStatus}
-                    checksStatus={thread.prChecksStatus}
-                    prNumber={thread.githubPRNumber}
-                    repoFullName={thread.githubRepoFullName}
                   />
                 )}
                 <div
