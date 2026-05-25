@@ -6,7 +6,6 @@ export type RuntimeResumePolicy = {
   historyLoadKey: string;
   historyMode: RuntimeHistoryMode;
   replayCursorAction: RuntimeReplayCursorAction;
-  resumeOnLoad: boolean;
 };
 
 export function resolveRuntimeResumePolicy({
@@ -29,6 +28,5 @@ export function resolveRuntimeResumePolicy({
         : baseHistoryLoadKey,
     historyMode,
     replayCursorAction: isAgentWorking ? "apply-history-last-seq" : "clear",
-    resumeOnLoad: isAgentWorking,
   };
 }

@@ -163,7 +163,9 @@ export function TerragonRuntimeSession({
     try {
       const history = await loadAgUiHistoryMessages();
       if (runtimeResumePolicy.replayCursorAction === "apply-history-last-seq") {
-        setReplayCursor({ fromSeq: history.lastSeq });
+        setReplayCursor(
+          history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
+        );
       } else {
         setReplayCursor(null);
       }

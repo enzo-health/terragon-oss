@@ -335,7 +335,7 @@ describe("useAgUiTransport", () => {
     const agent = requireAgent(captured.at(-1)!);
 
     await act(async () => {
-      getReplayCursorSetter()({ fromSeq: 42 });
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
     });
 
     expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42");
@@ -354,7 +354,7 @@ describe("useAgUiTransport", () => {
     const agent = requireAgent(captured.at(-1)!);
 
     await act(async () => {
-      getReplayCursorSetter()({ fromSeq: 42 });
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
     });
 
     await rerender({
@@ -379,7 +379,7 @@ describe("useAgUiTransport", () => {
     const agent = requireAgent(captured.at(-1)!);
 
     await act(async () => {
-      getReplayCursorSetter()({ fromSeq: 42 });
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
     });
     expect(agent.url).toBe(
       "/api/ag-ui/t1?threadChatId=c1&fromSeq=42&runId=run-xyz",
@@ -390,6 +390,25 @@ describe("useAgUiTransport", () => {
     });
 
     expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-xyz");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("serializes projection-aware history cursors", async () => {
+    const { captured, getReplayCursorSetter, root, container } =
+      await renderHarness({
+        args: { threadId: "t1", threadChatId: "c1", runId: null },
+      });
+    const agent = requireAgent(captured.at(-1)!);
+
+    await act(async () => {
+      getReplayCursorSetter()({ seq: 42, projectionIndex: 3 });
+    });
+
+    expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42%3A3");
 
     await act(async () => {
       root.unmount();

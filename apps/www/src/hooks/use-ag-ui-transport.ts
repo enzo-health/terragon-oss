@@ -4,10 +4,9 @@ import type { Message, State } from "@ag-ui/core";
 import { HttpAgent } from "@ag-ui/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { serializeAgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
+import type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 
-export type AgUiReplayCursor = {
-  fromSeq: number;
-};
+export type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 
 export type AgUiTransport = {
   agent: HttpAgent | null;
@@ -29,13 +28,7 @@ function syncAgentUrl({
 }): void {
   const query = new URLSearchParams({ threadChatId });
   if (replayCursor) {
-    query.set(
-      "fromSeq",
-      serializeAgUiReplayCursor({
-        seq: replayCursor.fromSeq,
-        projectionIndex: null,
-      }),
-    );
+    query.set("fromSeq", serializeAgUiReplayCursor(replayCursor));
   }
   if (runId) {
     query.set("runId", runId);

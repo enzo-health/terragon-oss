@@ -51,9 +51,11 @@ function runtime(append: ComposerSubmissionRuntime["append"]) {
 }
 
 describe("dbPartsToAssistantUiContent", () => {
-  it("converts rich text and images to assistant-ui content", () => {
+  it("converts text, rich text, mentions, and images to assistant-ui content", () => {
     const content = dbPartsToAssistantUiContent([
+      { type: "text", text: "plain" },
       { type: "rich-text", nodes: [{ type: "text", text: "hello" }] },
+      { type: "rich-text", nodes: [{ type: "mention", text: "src/app.ts" }] },
       {
         type: "image",
         mime_type: "image/png",
@@ -62,7 +64,9 @@ describe("dbPartsToAssistantUiContent", () => {
     ]);
 
     expect(content).toEqual([
+      { type: "text", text: "plain" },
       { type: "text", text: "hello" },
+      { type: "text", text: "@src/app.ts" },
       { type: "image", image: "https://example.com/image.png" },
     ]);
   });
@@ -109,9 +113,42 @@ describe("submitComposerMessage", () => {
     });
 
     expect(outcome).toEqual({ type: "runtime-append-started" });
-    expect(append).toHaveBeenCalledOnce();
+    expect(append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runConfig: {
+          custom: {
+            terragon: expect.objectContaining({
+              clientSubmissionId: expect.any(String),
+              intent: "append",
+            }),
+          },
+        },
+      }),
+    );
     expect(fallback).not.toHaveBeenCalled();
     expect(queue).not.toHaveBeenCalled();
+  });
+
+  it("falls back for draft or scheduled submit intents while runtime is present", async () => {
+    const append = vi.fn<ComposerSubmissionRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmissionCommand>();
+
+    const outcome = await submitComposerMessage({
+      ...submitArgs(),
+      saveAsDraft: true,
+      userMessage: richTextMessage("save"),
+      threadRuntime: runtime(append),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+    });
+
+    expect(outcome).toEqual({
+      type: "fallback-submitted",
+      reason: "unsupported-intent",
+    });
+    expect(fallback).toHaveBeenCalledOnce();
+    expect(append).not.toHaveBeenCalled();
   });
 
   it("queues active messages at the composer boundary", async () => {

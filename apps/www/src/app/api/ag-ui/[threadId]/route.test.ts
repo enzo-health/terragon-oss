@@ -268,6 +268,7 @@ function makeRunContext(
 function mockAgUiEventEnvelopesForThreadChat(
   events: BaseEvent[],
   seqs?: number[],
+  projectionIndexes?: Array<number | undefined>,
 ): void {
   let currentRunId: string | null = null;
   const envelopes = events.map((payload, index) => {
@@ -289,6 +290,7 @@ function mockAgUiEventEnvelopesForThreadChat(
       timestamp: String(index + 1),
       idempotencyKey: `event-${seq}`,
       payload,
+      projectionIndex: projectionIndexes?.[index],
     };
   });
   vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
@@ -563,6 +565,41 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 70,
+    });
+  });
+
+  it("returns a projection-aware history cursor when history ends on a projected row", async () => {
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "partial",
+        },
+      ],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [7], [1]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "partial",
+        },
+      ],
+      lastSeq: 7,
+      lastCursor: { seq: 7, projectionIndex: 1 },
     });
   });
 
@@ -3183,6 +3220,7 @@ describe("ag-ui SSE route", () => {
     // Falls through to SSE stream
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(getLatestRunIdForThreadChat).not.toHaveBeenCalled();
   });
 
   it("POST without body still opens SSE stream (back-compat)", async () => {
@@ -3246,6 +3284,41 @@ describe("ag-ui SSE route", () => {
     );
 
     expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with explicit append intent dispatches even when a stale fromSeq is present", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-append",
+      messages: [{ id: "msg-1", role: "user", content: "new prompt" }],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runConfig: {
+          terragon: {
+            intent: "append",
+          },
+        },
+      },
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=42",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      userId: "user-1",
+      body: expect.objectContaining({ messages: validBody.messages }),
+      isReplayMode: false,
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });

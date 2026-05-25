@@ -12,7 +12,6 @@ describe("resolveRuntimeResumePolicy", () => {
       historyLoadKey: "chat-1:active",
       historyMode: "active-resume",
       replayCursorAction: "apply-history-last-seq",
-      resumeOnLoad: true,
     });
   });
 
@@ -26,7 +25,6 @@ describe("resolveRuntimeResumePolicy", () => {
       historyLoadKey: "chat-1:idle",
       historyMode: "idle-finalized",
       replayCursorAction: "clear",
-      resumeOnLoad: false,
     });
   });
 

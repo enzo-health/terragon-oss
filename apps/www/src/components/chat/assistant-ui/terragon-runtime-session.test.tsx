@@ -398,17 +398,24 @@ describe("TerragonRuntimeSession", () => {
 
   it("applies the replay cursor before active runtime resume", async () => {
     const agent = makeAgent();
-    const setReplayCursor = vi.fn((cursor: { fromSeq: number } | null) => {
-      agent.url =
-        cursor === null
-          ? "/api/ag-ui/thread-abc?threadChatId=chat-xyz"
-          : `/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=${cursor.fromSeq}`;
-    });
+    const setReplayCursor = vi.fn(
+      (cursor: { seq: number; projectionIndex: number | null } | null) => {
+        agent.url =
+          cursor === null
+            ? "/api/ag-ui/thread-abc?threadChatId=chat-xyz"
+            : `/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=${cursor.seq}${
+                cursor.projectionIndex === null
+                  ? ""
+                  : `:${cursor.projectionIndex}`
+              }`;
+      },
+    );
     const loadAgUiHistoryMessages = vi.fn(async () => ({
       messages: [
         { id: "user-1", role: "user", content: "Resume" },
       ] satisfies AgUiMessage[],
       lastSeq: 42,
+      lastCursor: { seq: 42, projectionIndex: 1 },
     }));
 
     renderToStaticMarkup(
@@ -424,9 +431,12 @@ describe("TerragonRuntimeSession", () => {
     const repo = await opts.adapters?.history?.load();
 
     expect(loadAgUiHistoryMessages).toHaveBeenCalledOnce();
-    expect(setReplayCursor).toHaveBeenCalledWith({ fromSeq: 42 });
+    expect(setReplayCursor).toHaveBeenCalledWith({
+      seq: 42,
+      projectionIndex: 1,
+    });
     expect(agent.url).toBe(
-      "/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=42",
+      "/api/ag-ui/thread-abc?threadChatId=chat-xyz&fromSeq=42:1",
     );
     expect(repo?.unstable_resume).toBe(true);
   });

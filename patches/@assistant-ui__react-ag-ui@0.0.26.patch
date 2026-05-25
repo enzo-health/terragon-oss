@@ -1,5 +1,5 @@
 diff --git a/dist/runtime/AgUiThreadRuntimeCore.js b/dist/runtime/AgUiThreadRuntimeCore.js
-index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171f0a2cf83 100644
+index 6be0494188c486a567e9bb15942a463aaeb5cdbe..b29207256ec3781a7502e8360bb5169473994cd8 100644
 --- a/dist/runtime/AgUiThreadRuntimeCore.js
 +++ b/dist/runtime/AgUiThreadRuntimeCore.js
 @@ -8,6 +8,7 @@ export class AgUiThreadRuntimeCore {
@@ -77,7 +77,7 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
 +                }
                  const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
 -                await this.startRun(parentId, this.lastRunConfig);
-+                await this.startRun(parentId, this.lastRunConfig, false);
++                    await this.startRun(parentId, this.lastRunConfig, false, "resume");
              }
          })
              .catch((error) => {
@@ -123,7 +123,7 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
          this.resetHead(parentId);
          this.notifyUpdate();
          await this.startRun(parentId, config.runConfig);
-@@ -113,6 +150,7 @@ export class AgUiThreadRuntimeCore {
+@@ -113,10 +150,11 @@ export class AgUiThreadRuntimeCore {
          this.abortController.abort();
      }
      async resume(config) {
@@ -131,7 +131,12 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
          if (config.stream) {
              this.logger.debug?.("[agui] resume stream is not supported, falling back to regular run");
          }
-@@ -174,6 +212,7 @@ export class AgUiThreadRuntimeCore {
+-        await this.startRun(config.parentId, config.runConfig ?? this.lastRunConfig);
++        await this.startRun(config.parentId, config.runConfig ?? this.lastRunConfig, true, "resume");
+     }
+     findMessageIdForToolCall(toolCallId) {
+         let fallbackMessageId;
+@@ -174,11 +212,12 @@ export class AgUiThreadRuntimeCore {
              };
          });
          if (updated) {
@@ -139,6 +144,12 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
              this.notifyUpdate();
              if (shouldResume) {
                  this.persistAssistantHistory(options.messageId);
+                 if (!this.isRunningFlag) {
+-                    void this.startRun(options.messageId, this.lastRunConfig).catch((error) => {
++                    void this.startRun(options.messageId, this.lastRunConfig, true, "resume").catch((error) => {
+                         this.onError?.(error instanceof Error ? error : new Error(String(error)));
+                     });
+                 }
 @@ -187,7 +226,15 @@ export class AgUiThreadRuntimeCore {
      }
      applyExternalMessages(messages) {
@@ -156,20 +167,23 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
          this.recordedHistoryIds.clear();
          for (const message of this.messages) {
              this.recordedHistoryIds.add(message.id);
-@@ -198,7 +245,10 @@ export class AgUiThreadRuntimeCore {
+@@ -198,17 +245,33 @@ export class AgUiThreadRuntimeCore {
          this.stateSnapshot = state;
          this.notifyUpdate();
      }
 -    async startRun(parentId, runConfig) {
-+    async startRun(parentId, runConfig, waitForLoad = true) {
++    async startRun(parentId, runConfig, waitForLoad = true, intent = "append") {
 +        if (waitForLoad) {
 +            await this.waitForInitialLoad();
 +        }
          const normalizedRunConfig = runConfig ?? {};
          this.lastRunConfig = normalizedRunConfig;
          this.resetHead(parentId);
-@@ -208,7 +258,20 @@ export class AgUiThreadRuntimeCore {
-         const input = this.buildRunInput(runId, normalizedRunConfig, historicalMessages);
+         const historicalMessages = [...this.messages];
+         const runId = generateId();
+         this.pendingError = null;
+-        const input = this.buildRunInput(runId, normalizedRunConfig, historicalMessages);
++        const input = this.buildRunInput(runId, this.withRunIntent(normalizedRunConfig, intent), historicalMessages);
          const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
          let assistantMessageId;
 -        const ensureAssistant = () => {
@@ -199,7 +213,26 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
          });
          const dispatch = (event) => this.handleEvent(aggregator, event);
          const abortController = new AbortController();
-@@ -301,7 +364,13 @@ export class AgUiThreadRuntimeCore {
+@@ -289,6 +352,18 @@ export class AgUiThreadRuntimeCore {
+             },
+         };
+     }
++    withRunIntent(runConfig, intent) {
++        return {
++            ...runConfig,
++            custom: {
++                ...runConfig.custom,
++                terragon: {
++                    ...(runConfig.custom?.terragon ?? {}),
++                    intent,
++                },
++            },
++        };
++    }
+     setRunning(running) {
+         this.isRunningFlag = running;
+         this.notifyUpdate();
+@@ -301,7 +376,13 @@ export class AgUiThreadRuntimeCore {
      }
      insertAssistantPlaceholder() {
          const id = generateId();
@@ -214,7 +247,7 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
              id,
              role: "assistant",
              createdAt: new Date(),
-@@ -315,9 +384,6 @@ export class AgUiThreadRuntimeCore {
+@@ -315,9 +396,6 @@ export class AgUiThreadRuntimeCore {
                  custom: {},
              },
          };
@@ -224,7 +257,7 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
      }
      updateAssistantMessage(messageId, update) {
          let touched = false;
-@@ -408,6 +474,90 @@ export class AgUiThreadRuntimeCore {
+@@ -408,6 +486,90 @@ export class AgUiThreadRuntimeCore {
      toThreadMessage(message) {
          return fromThreadMessageLike(message, generateId(), FALLBACK_USER_STATUS);
      }
@@ -315,7 +348,7 @@ index 6be0494188c486a567e9bb15942a463aaeb5cdbe..011f316adcb715978e475c2bb88ca171
      resetHead(parentId) {
          if (!parentId) {
              if (this.messages.length) {
-@@ -423,6 +573,20 @@ export class AgUiThreadRuntimeCore {
+@@ -423,6 +585,20 @@ export class AgUiThreadRuntimeCore {
      isTerminalStatus(status) {
          return status?.type === "complete" || status?.type === "incomplete";
      }
@@ -555,9 +588,15 @@ index fae71ad368035e4521a3d1e8e2c0f0a3fc224fa3..a759b1f072feb3399cee172c6fcad05e
      ensureReasoningPart() {
          if (this.hasReasoningPart)
 diff --git a/dist/runtime/types.d.ts b/dist/runtime/types.d.ts
-index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..736b0d3a1a6456aa55c6b03d6d2fb6ef3b3fa140 100644
+index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..a3d0eb6121661a12ce3df05b5cfc6bc392601aa6 100644
 --- a/dist/runtime/types.d.ts
 +++ b/dist/runtime/types.d.ts
+@@ -1,4 +1,4 @@
+-import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
++import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, AppendMessage, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
+ import type { HttpAgent } from "@ag-ui/client";
+ import type { Logger } from "./logger.js";
+ import type { ReadonlyJSONValue } from "assistant-stream/utils";
 @@ -33,6 +33,8 @@ export type UseAgUiRuntimeOptions = {
      showThinking?: boolean;
      onError?: (e: Error) => void;
@@ -568,10 +607,10 @@ index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..736b0d3a1a6456aa55c6b03d6d2fb6ef
  };
  export type AgUiEvent = {
 diff --git a/dist/useAgUiRuntime.js b/dist/useAgUiRuntime.js
-index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834c7bee314 100644
+index 94956a06f6087da9f47c0086819786f92b0d8214..3aff94e6956e0a5540639c26d0e89f4c2c5d0cea 100644
 --- a/dist/useAgUiRuntime.js
 +++ b/dist/useAgUiRuntime.js
-@@ -16,6 +18,7 @@ export function useAgUiRuntime(options) {
+@@ -16,6 +16,7 @@ export function useAgUiRuntime(options) {
              agent: options.agent,
              logger,
              showThinking: options.showThinking ?? true,
@@ -587,7 +626,9 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834
          ...(options.onError && { onError: options.onError }),
          ...(options.onCancel && { onCancel: options.onCancel }),
          ...(historyAdapter && { history: historyAdapter }),
-@@ -136,5 +138,5 @@ export function useAgUiRuntime(options) {
+@@ -134,8 +136,8 @@ export function useAgUiRuntime(options) {
+         };
+     }, [core, runtime]);
      useEffect(() => {
 -        core.__internal_load();
 -    }, [core]);
@@ -597,7 +638,7 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834
  }
  //# sourceMappingURL=useAgUiRuntime.js.map
 diff --git a/src/runtime/AgUiThreadRuntimeCore.ts b/src/runtime/AgUiThreadRuntimeCore.ts
-index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e5598adc8b8 100644
+index 2da1a9ea15936338aa3e932eeff79c7b868046f4..bc77f78fd91a1a60a6b51491b9a7e77bc03c3a45 100644
 --- a/src/runtime/AgUiThreadRuntimeCore.ts
 +++ b/src/runtime/AgUiThreadRuntimeCore.ts
 @@ -35,6 +35,7 @@ type CoreOptions = {
@@ -692,7 +733,7 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
 +          }
            const parentId = repo.headId ?? messages.at(-1)?.id ?? null;
 -          await this.startRun(parentId, this.lastRunConfig);
-+          await this.startRun(parentId, this.lastRunConfig, false);
++          await this.startRun(parentId, this.lastRunConfig, false, "resume");
          }
        })
        .catch((error) => {
@@ -751,7 +792,16 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
      if (config.stream) {
        this.logger.debug?.(
          "[agui] resume stream is not supported, falling back to regular run",
-@@ -252,6 +297,7 @@ export class AgUiThreadRuntimeCore {
+@@ -186,6 +231,8 @@ export class AgUiThreadRuntimeCore {
+     await this.startRun(
+       config.parentId,
+       config.runConfig ?? this.lastRunConfig,
++      true,
++      "resume",
+     );
+   }
+ 
+@@ -252,19 +299,23 @@ export class AgUiThreadRuntimeCore {
      });
  
      if (updated) {
@@ -759,7 +809,30 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
        this.notifyUpdate();
  
        if (shouldResume) {
-@@ -272,7 +318,16 @@ export class AgUiThreadRuntimeCore {
+         this.persistAssistantHistory(options.messageId);
+ 
+         if (!this.isRunningFlag) {
+-          void this.startRun(options.messageId, this.lastRunConfig).catch(
+-            (error) => {
+-              this.onError?.(
+-                error instanceof Error ? error : new Error(String(error)),
+-              );
+-            },
+-          );
++          void this.startRun(
++            options.messageId,
++            this.lastRunConfig,
++            true,
++            "resume",
++          ).catch((error) => {
++            this.onError?.(
++              error instanceof Error ? error : new Error(String(error)),
++            );
++          });
+         }
+       }
+     }
+@@ -272,7 +323,16 @@ export class AgUiThreadRuntimeCore {
  
    applyExternalMessages(messages: readonly ThreadMessage[]): void {
      this.assistantHistoryParents.clear();
@@ -777,11 +850,12 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
      this.recordedHistoryIds.clear();
      for (const message of this.messages) {
        this.recordedHistoryIds.add(message.id);
-@@ -288,7 +343,12 @@ export class AgUiThreadRuntimeCore {
+@@ -288,7 +348,13 @@ export class AgUiThreadRuntimeCore {
    private async startRun(
      parentId: string | null,
      runConfig?: RunConfig,
 +    waitForLoad = true,
++    intent: "append" | "resume" = "append",
    ): Promise<void> {
 +    if (waitForLoad) {
 +      await this.waitForInitialLoad();
@@ -790,7 +864,13 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
      const normalizedRunConfig = runConfig ?? {};
      this.lastRunConfig = normalizedRunConfig;
      this.resetHead(parentId);
-@@ -303,7 +363,22 @@ export class AgUiThreadRuntimeCore {
+@@ -298,12 +364,27 @@ export class AgUiThreadRuntimeCore {
+     this.pendingError = null;
+     const input = this.buildRunInput(
+       runId,
+-      normalizedRunConfig,
++      this.withRunIntent(normalizedRunConfig, intent),
+       historicalMessages,
      );
      const assistantParentId = parentId ?? this.messages.at(-1)?.id ?? null;
      let assistantMessageId: string | undefined;
@@ -814,7 +894,7 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
        if (assistantMessageId) return assistantMessageId;
        const created = this.insertAssistantPlaceholder();
        assistantMessageId = created;
-@@ -314,7 +389,8 @@ export class AgUiThreadRuntimeCore {
+@@ -314,7 +395,8 @@ export class AgUiThreadRuntimeCore {
      const aggregator = new RunAggregator({
        showThinking: this.showThinking,
        logger: this.logger,
@@ -824,7 +904,32 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
      });
      const dispatch = (event: AgUiEvent) => this.handleEvent(aggregator, event);
  
-@@ -411,7 +487,14 @@ export class AgUiThreadRuntimeCore {
+@@ -397,6 +479,24 @@ export class AgUiThreadRuntimeCore {
+     };
+   }
+ 
++  private withRunIntent(
++    runConfig: RunConfig,
++    intent: "append" | "resume",
++  ): RunConfig {
++    return {
++      ...runConfig,
++      custom: {
++        ...runConfig.custom,
++        terragon: {
++          ...((runConfig.custom?.terragon as
++            | Record<string, unknown>
++            | undefined) ?? {}),
++          intent,
++        },
++      },
++    };
++  }
++
+   private setRunning(running: boolean) {
+     this.isRunningFlag = running;
+     this.notifyUpdate();
+@@ -411,7 +511,14 @@ export class AgUiThreadRuntimeCore {
  
    private insertAssistantPlaceholder(): string {
      const id = generateId();
@@ -840,7 +945,7 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
        id,
        role: "assistant",
        createdAt: new Date(),
-@@ -425,9 +508,6 @@ export class AgUiThreadRuntimeCore {
+@@ -425,9 +532,6 @@ export class AgUiThreadRuntimeCore {
          custom: {},
        },
      };
@@ -850,7 +955,7 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
    }
  
    private updateAssistantMessage(
-@@ -542,6 +622,125 @@ export class AgUiThreadRuntimeCore {
+@@ -542,6 +646,125 @@ export class AgUiThreadRuntimeCore {
      );
    }
  
@@ -976,7 +1081,7 @@ index 2da1a9ea15936338aa3e932eeff79c7b868046f4..254389be48ba03177d0eb3007af00e55
    private resetHead(parentId: string | null | undefined) {
      if (!parentId) {
        if (this.messages.length) {
-@@ -558,6 +757,22 @@ export class AgUiThreadRuntimeCore {
+@@ -558,6 +781,22 @@ export class AgUiThreadRuntimeCore {
      return status?.type === "complete" || status?.type === "incomplete";
    }
  
@@ -1239,10 +1344,18 @@ index 4f633601ac875109edfc5d7d13bcfd1d909f830c..4579dcbb6f881212e5297fa142e97f5c
  
    private ensureReasoningPart(): void {
 diff --git a/src/runtime/types.ts b/src/runtime/types.ts
-index ba0fda6ec2557b20276f2faec8a9395e54543425..c1257c3ac41bbf0d6b29d092f1cbab6e74faec84 100644
+index ba0fda6ec2557b20276f2faec8a9395e54543425..fe3b97b1ed094ad8a46b7b69acc3599b0a767b24 100644
 --- a/src/runtime/types.ts
 +++ b/src/runtime/types.ts
-@@ -44,6 +44,8 @@ export type UseAgUiRuntimeOptions = {
+@@ -2,6 +2,7 @@ import type {
+   AttachmentAdapter,
+   DictationAdapter,
+   FeedbackAdapter,
++  AppendMessage,
+   SpeechSynthesisAdapter,
+   ThreadHistoryAdapter,
+   ThreadMessage,
+@@ -44,6 +45,8 @@ export type UseAgUiRuntimeOptions = {
    showThinking?: boolean;
    onError?: (e: Error) => void;
    onCancel?: () => void;
@@ -1252,7 +1365,7 @@ index ba0fda6ec2557b20276f2faec8a9395e54543425..c1257c3ac41bbf0d6b29d092f1cbab6e
  };
  
 diff --git a/src/useAgUiRuntime.ts b/src/useAgUiRuntime.ts
-index df696bad4c76f279da5b362f26c48c26866adba3..c733de786f9474e2c920e75077d59d1acb05eb55 100644
+index df696bad4c76f279da5b362f26c48c26866adba3..df9fffd6bbd2d386d0c6d7ed1a616fc5320b0e05 100644
 --- a/src/useAgUiRuntime.ts
 +++ b/src/useAgUiRuntime.ts
 @@ -35,6 +35,7 @@ export function useAgUiRuntime(

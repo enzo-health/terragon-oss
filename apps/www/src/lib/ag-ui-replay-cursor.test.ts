@@ -72,7 +72,7 @@ describe("AG-UI replay cursor", () => {
     expect(shouldReplayEnvelope({ seq: 10 }, cursor)).toBe(true);
   });
 
-  it("classifies URL or Last-Event-ID cursor POSTs as resume before forwarded intent", () => {
+  it("lets explicit append intent win over a stale cursor", () => {
     const body = {
       forwardedProps: {
         runConfig: { terragon: { intent: "append" } },
@@ -81,9 +81,17 @@ describe("AG-UI replay cursor", () => {
 
     expect(
       classifyAgUiPostIntent({ lastEventId: null, fromSeq: "42", body }),
-    ).toBe("resume");
+    ).toBe("append");
     expect(
       classifyAgUiPostIntent({ lastEventId: "42", fromSeq: null, body }),
+    ).toBe("append");
+  });
+
+  it("classifies cursor-only POSTs as resume", () => {
+    const body = { forwardedProps: {} };
+
+    expect(
+      classifyAgUiPostIntent({ lastEventId: null, fromSeq: "42", body }),
     ).toBe("resume");
   });
 

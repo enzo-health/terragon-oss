@@ -842,11 +842,19 @@ export async function GET(
     });
     const includedCursor =
       history.lastSeqOffset >= 0
-        ? historyEntries[history.lastSeqOffset]?.seq
+        ? historyEntries[history.lastSeqOffset]
         : undefined;
     return NextResponse.json({
       messages,
-      lastSeq: includedCursor ?? -1,
+      lastSeq: includedCursor?.seq ?? -1,
+      lastCursor:
+        includedCursor?.seq != null &&
+        includedCursor.identity?.projectionIndex !== undefined
+          ? {
+              seq: includedCursor.seq,
+              projectionIndex: includedCursor.identity.projectionIndex,
+            }
+          : undefined,
     });
   }
 
@@ -871,7 +879,11 @@ export async function GET(
   //    live-tailing stream with no history — the first RUN_STARTED written by
   //    a new daemon-event will naturally be the first event on the wire.
   let resolvedRunId: string | null = runIdParam;
-  if (resolvedRunId === null && replayCursorSeq === null) {
+  if (
+    resolvedRunId === null &&
+    replayCursorSeq === null &&
+    request.method === "GET"
+  ) {
     try {
       resolvedRunId = await getLatestRunIdForThreadChat({
         db,

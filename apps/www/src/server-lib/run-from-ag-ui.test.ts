@@ -236,6 +236,33 @@ describe("runFollowUpFromAgUiInput", () => {
 
       expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
     });
+
+    it("dedupes sequential retries with the same clientSubmissionId", async () => {
+      const body = makeBody({
+        forwardedProps: {
+          runConfig: {
+            terragon: { clientSubmissionId: "submission-1" },
+          },
+        },
+      });
+      redisMocks.set
+        .mockResolvedValueOnce("OK")
+        .mockResolvedValueOnce("OK")
+        .mockResolvedValueOnce(null);
+
+      const first = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const second = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+
+      expect(first).toEqual({ runId: "run-xyz" });
+      expect(second).toEqual({ skipped: "duplicate-submission" });
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledOnce();
+      expect(redisMocks.set).toHaveBeenNthCalledWith(
+        1,
+        "dedupe:ag-ui-submission:chat-1:submission-1",
+        "1",
+        { nx: true, ex: 86400 },
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -243,7 +270,7 @@ describe("runFollowUpFromAgUiInput", () => {
   // -------------------------------------------------------------------------
 
   describe("metadata extraction", () => {
-    it("forwards selectedModel from compatibility forwardedProps.terragon", async () => {
+    it("ignores the legacy direct forwardedProps.terragon layout", async () => {
       const body = makeBody({
         forwardedProps: {
           terragon: { selectedModel: "sonnet" },
@@ -255,13 +282,13 @@ describe("runFollowUpFromAgUiInput", () => {
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({
-            model: "sonnet",
+            model: null,
           }),
         }),
       );
     });
 
-    it("sets model to null when selectedModel is not a canonical AIModel", async () => {
+    it("returns invalid-input when selectedModel is not a canonical AIModel", async () => {
       const body = makeBody({
         forwardedProps: {
           runConfig: {
@@ -270,13 +297,15 @@ describe("runFollowUpFromAgUiInput", () => {
         },
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
 
-      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.objectContaining({ model: null }),
-        }),
-      );
+      expect(result).toEqual({
+        error: {
+          kind: "invalid-input",
+          reason: "Invalid selectedModel: not-a-real-model",
+        },
+      });
+      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
     });
 
     it("sets model to null when forwardedProps is absent", async () => {
@@ -291,7 +320,7 @@ describe("runFollowUpFromAgUiInput", () => {
       );
     });
 
-    it("forwards permissionMode 'plan' from forwardedProps.terragon", async () => {
+    it("does not read permissionMode from legacy direct forwardedProps.terragon", async () => {
       const body = makeBody({
         forwardedProps: { terragon: { permissionMode: "plan" } },
       });
@@ -300,7 +329,9 @@ describe("runFollowUpFromAgUiInput", () => {
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.objectContaining({ permissionMode: "plan" }),
+          message: expect.not.objectContaining({
+            permissionMode: expect.anything(),
+          }),
         }),
       );
     });
@@ -324,7 +355,7 @@ describe("runFollowUpFromAgUiInput", () => {
     it("reads metadata from forwardedProps.runConfig.terragon (assistant-ui runtime layout)", async () => {
       // useThreadRuntime().append({ runConfig: { custom: { terragon: ... } } })
       // gets wrapped by @assistant-ui/react into forwardedProps.runConfig.terragon.
-      // The adapter must accept this layout in addition to the flat one.
+      // The adapter accepts the native assistant-ui forwarded layout.
       const body = makeBody({
         forwardedProps: {
           runConfig: {
@@ -375,7 +406,7 @@ describe("runFollowUpFromAgUiInput", () => {
   // -------------------------------------------------------------------------
 
   describe("image content conversion", () => {
-    it("converts a URL-source image InputContent to a DBImagePart", async () => {
+    it("rejects URL-source image InputContent", async () => {
       const body = makeBody({
         messages: [
           {
@@ -395,21 +426,16 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
 
-      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            parts: [
-              {
-                type: "image",
-                image_url: "https://example.com/photo.png",
-                mime_type: "image/png",
-              },
-            ],
-          }),
-        }),
-      );
+      expect(result).toEqual({
+        error: {
+          kind: "invalid-input",
+          reason:
+            "AG-UI URL image sources are not accepted; upload the image first",
+        },
+      });
+      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
     });
 
     it("converts a data-source image InputContent to a base64 data-URL DBImagePart", async () => {
@@ -449,7 +475,7 @@ describe("runFollowUpFromAgUiInput", () => {
       );
     });
 
-    it("converts mixed text + image content correctly", async () => {
+    it("rejects mixed text + URL image content instead of dropping the image", async () => {
       const body = makeBody({
         messages: [
           {
@@ -470,62 +496,16 @@ describe("runFollowUpFromAgUiInput", () => {
         ],
       });
 
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
+      const result = await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
 
-      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            parts: [
-              {
-                type: "rich-text",
-                nodes: [{ type: "text", text: "Look at this:" }],
-              },
-              {
-                type: "image",
-                image_url: "https://example.com/shot.jpg",
-                mime_type: "image/jpeg",
-              },
-            ],
-          }),
-        }),
-      );
-    });
-
-    it("uses image/jpeg as fallback mime_type when mimeType is absent on URL source", async () => {
-      const body = makeBody({
-        messages: [
-          {
-            id: "msg-img",
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: {
-                  type: "url",
-                  value: "https://example.com/photo",
-                  // mimeType intentionally omitted
-                },
-              },
-            ],
-          },
-        ],
+      expect(result).toEqual({
+        error: {
+          kind: "invalid-input",
+          reason:
+            "AG-UI URL image sources are not accepted; upload the image first",
+        },
       });
-
-      await runFollowUpFromAgUiInput({ ...BASE_ARGS, body });
-
-      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            parts: [
-              {
-                type: "image",
-                image_url: "https://example.com/photo",
-                mime_type: "image/jpeg",
-              },
-            ],
-          }),
-        }),
-      );
+      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
     });
   });
 

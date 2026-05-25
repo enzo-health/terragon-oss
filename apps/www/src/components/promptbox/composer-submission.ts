@@ -7,7 +7,10 @@ import type { TSubmitForm } from "./send-button";
 export type ComposerSubmissionOutcome =
   | { type: "runtime-append-started" }
   | { type: "queued-locally" }
-  | { type: "fallback-submitted"; reason: "no-runtime" | "unsupported-parts" }
+  | {
+      type: "fallback-submitted";
+      reason: "no-runtime" | "unsupported-parts" | "unsupported-intent";
+    }
   | { type: "validation-no-op"; reason: "empty-runtime-content" };
 
 export type ComposerSubmissionRuntime = {
@@ -63,6 +66,11 @@ export async function submitComposerMessage({
     scheduleAt,
   };
 
+  if (threadRuntime !== null && (saveAsDraft || scheduleAt !== null)) {
+    await submitFallback(commandArgs);
+    return { type: "fallback-submitted", reason: "unsupported-intent" };
+  }
+
   if (
     threadRuntime !== null &&
     isAgentWorking &&
@@ -75,15 +83,20 @@ export async function submitComposerMessage({
 
   const routing = getComposerRuntimeRouting(userMessage);
   if (threadRuntime !== null && routing.type === "runtime") {
-    await threadRuntime.append({
-      role: "user",
-      content: routing.content,
-      runConfig: {
-        custom: encodeTerragonAgUiRunConfig({
-          selectedModel: userMessage.model,
-          permissionMode: userMessage.permissionMode,
-        }),
-      },
+    void Promise.resolve(
+      threadRuntime.append({
+        role: "user",
+        content: routing.content,
+        runConfig: {
+          custom: encodeTerragonAgUiRunConfig({
+            selectedModel: userMessage.model,
+            permissionMode: userMessage.permissionMode,
+            clientSubmissionId: crypto.randomUUID(),
+          }),
+        },
+      }),
+    ).catch((error) => {
+      console.error("[composer-submission] runtime append failed", error);
     });
     return { type: "runtime-append-started" };
   }
@@ -134,6 +147,7 @@ export function dbPartsToAssistantUiContent(
       const text = part.nodes
         .map((node) => {
           if (typeof node === "string") return node;
+          if (node.type === "mention") return `@${node.text}`;
           if ("text" in node && typeof node.text === "string") return node.text;
           return "";
         })
@@ -141,6 +155,8 @@ export function dbPartsToAssistantUiContent(
       if (text.length > 0) {
         result.push({ type: "text", text });
       }
+    } else if (part.type === "text" && part.text.length > 0) {
+      result.push({ type: "text", text: part.text });
     } else if (part.type === "image") {
       result.push({ type: "image", image: part.image_url });
     }

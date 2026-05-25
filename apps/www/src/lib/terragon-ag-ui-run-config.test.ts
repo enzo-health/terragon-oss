@@ -41,6 +41,7 @@ describe("terragon AG-UI run config", () => {
 
     expect(decoded).toEqual({
       selectedModel: "gpt-5.4",
+      invalidSelectedModel: null,
       permissionMode: "allowAll",
       traceId: "trace-1",
       intent: "append",
@@ -48,15 +49,15 @@ describe("terragon AG-UI run config", () => {
     });
   });
 
-  it("keeps direct forwardedProps.terragon layout as compatibility-only input", () => {
+  it("does not accept the legacy direct forwardedProps.terragon layout", () => {
     expect(
       getTerragonRunConfigProps({
         terragon: { selectedModel: "sonnet" },
       }),
-    ).toEqual({ selectedModel: "sonnet" });
+    ).toBeNull();
   });
 
-  it("prefers runtime layout over compatibility direct layout", () => {
+  it("reads only the assistant-ui runtime layout when both layouts are present", () => {
     expect(
       decodeTerragonAgUiRunConfig({
         runConfig: {
@@ -66,6 +67,7 @@ describe("terragon AG-UI run config", () => {
       }),
     ).toEqual({
       selectedModel: "sonnet",
+      invalidSelectedModel: null,
       permissionMode: "plan",
       traceId: null,
       intent: "append",
@@ -73,11 +75,18 @@ describe("terragon AG-UI run config", () => {
     });
   });
 
-  it("rejects non-canonical models without casting", () => {
+  it("surfaces non-canonical models without casting", () => {
     expect(
       decodeTerragonAgUiRunConfig({
         runConfig: { terragon: { selectedModel: "claude-3-5-sonnet" } },
-      }).selectedModel,
-    ).toBeNull();
+      }),
+    ).toEqual({
+      selectedModel: null,
+      invalidSelectedModel: "claude-3-5-sonnet",
+      permissionMode: undefined,
+      traceId: null,
+      intent: "append",
+      clientSubmissionId: null,
+    });
   });
 });

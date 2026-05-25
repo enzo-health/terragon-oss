@@ -22,6 +22,7 @@ import { decodeTerragonAgUiRunConfig } from "@/lib/terragon-ag-ui-run-config";
 export type AgUiRunResult =
   | { runId: string }
   | { skipped: "replay-mode" }
+  | { skipped: "duplicate-submission" }
   | { error: AgUiRunError };
 
 export type AgUiRunError =
@@ -35,9 +36,17 @@ export type AgUiRunError =
 // ---------------------------------------------------------------------------
 
 const LOCK_TTL_SECONDS = 5;
+const SUBMISSION_DEDUPE_TTL_SECONDS = 60 * 60 * 24;
 
 function runLockKey(threadChatId: string): string {
   return `lock:run:${threadChatId}`;
+}
+
+function submissionDedupeKey(
+  threadChatId: string,
+  clientSubmissionId: string,
+): string {
+  return `dedupe:ag-ui-submission:${threadChatId}:${clientSubmissionId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +122,20 @@ function agUiUserContentToDbParts(
     }
   }
   return parts;
+}
+
+function validateAgUiUserContent(
+  content: AgUiUserMessage["content"],
+): string | null {
+  if (typeof content === "string") {
+    return null;
+  }
+  for (const item of content) {
+    if (item.type === "image" && item.source.type === "url") {
+      return "AG-UI URL image sources are not accepted; upload the image first";
+    }
+  }
+  return null;
 }
 
 // Narrowed type — only user-role messages
@@ -196,6 +219,36 @@ export async function runFollowUpFromAgUiInput(args: {
     return { error: { kind: "unauthorized" } };
   }
 
+  const {
+    selectedModel,
+    invalidSelectedModel,
+    permissionMode,
+    clientSubmissionId,
+  } = decodeTerragonAgUiRunConfig(body.forwardedProps);
+  if (invalidSelectedModel !== null) {
+    return {
+      error: {
+        kind: "invalid-input",
+        reason: `Invalid selectedModel: ${invalidSelectedModel}`,
+      },
+    };
+  }
+  const submissionKey =
+    clientSubmissionId !== null
+      ? submissionDedupeKey(threadChatId, clientSubmissionId)
+      : null;
+  if (submissionKey !== null) {
+    const claimedSubmission = await redis.set(submissionKey, "1", {
+      nx: true,
+      ex: SUBMISSION_DEDUPE_TTL_SECONDS,
+    });
+    if (claimedSubmission === null) {
+      return { skipped: "duplicate-submission" };
+    }
+  }
+
+  let dispatchedFollowUp = false;
+
   // 3. Acquire advisory lock (SET NX EX) to prevent double-dispatch on retry
   const lockKey = runLockKey(threadChatId);
   const acquired = await redis.set(lockKey, "1", {
@@ -204,6 +257,9 @@ export async function runFollowUpFromAgUiInput(args: {
   });
 
   if (acquired === null) {
+    if (submissionKey !== null) {
+      await redis.del(submissionKey);
+    }
     // Lock already held by another concurrent POST
     return { error: { kind: "lock-held" } };
   }
@@ -216,6 +272,17 @@ export async function runFollowUpFromAgUiInput(args: {
         error: {
           kind: "invalid-input",
           reason: "No user message found in body.messages",
+        },
+      };
+    }
+    const contentValidationError = validateAgUiUserContent(
+      agUiUserMessage.content,
+    );
+    if (contentValidationError !== null) {
+      return {
+        error: {
+          kind: "invalid-input",
+          reason: contentValidationError,
         },
       };
     }
@@ -232,9 +299,6 @@ export async function runFollowUpFromAgUiInput(args: {
     }
 
     // 6. Extract metadata
-    const { selectedModel, permissionMode } = decodeTerragonAgUiRunConfig(
-      body.forwardedProps,
-    );
     extractStateMetadata(body); // logs TODO for unsupported fields
 
     const message: DBUserMessage = {
@@ -252,6 +316,7 @@ export async function runFollowUpFromAgUiInput(args: {
       message,
       source: "www",
     });
+    dispatchedFollowUp = true;
 
     // 8. Return runId from DB.
     //
@@ -262,6 +327,9 @@ export async function runFollowUpFromAgUiInput(args: {
     const runId = await getLatestRunIdForThreadChat({ db, threadChatId });
     return { runId: runId ?? "" };
   } finally {
+    if (!dispatchedFollowUp && submissionKey !== null) {
+      await redis.del(submissionKey);
+    }
     // Always release the lock, even on error
     await redis.del(lockKey);
   }

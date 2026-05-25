@@ -5,6 +5,7 @@ export type TerragonAgUiPostIntent = "append" | "resume";
 
 export type TerragonAgUiRunConfig = {
   selectedModel: AIModel | null;
+  invalidSelectedModel: string | null;
   permissionMode: DBUserMessage["permissionMode"];
   traceId: string | null;
   intent: TerragonAgUiPostIntent;
@@ -48,12 +49,14 @@ export function decodeTerragonAgUiRunConfig(
   const traceIdValue = terragon?.["traceId"];
   const intentValue = terragon?.["intent"];
   const clientSubmissionIdValue = terragon?.["clientSubmissionId"];
+  const selectedModelParse =
+    typeof selectedModelValue === "string"
+      ? parseAIModel(selectedModelValue)
+      : { selectedModel: null, invalidSelectedModel: null };
 
   return {
-    selectedModel:
-      typeof selectedModelValue === "string"
-        ? parseAIModelOrNull(selectedModelValue)
-        : null,
+    selectedModel: selectedModelParse.selectedModel,
+    invalidSelectedModel: selectedModelParse.invalidSelectedModel,
     permissionMode:
       permissionModeValue === "plan" || permissionModeValue === "allowAll"
         ? permissionModeValue
@@ -83,13 +86,20 @@ export function getTerragonRunConfigProps(
     return runConfig["terragon"];
   }
 
-  const terragon = forwardedProps["terragon"];
-  return isRecord(terragon) ? terragon : null;
+  return null;
 }
 
-function parseAIModelOrNull(value: string): AIModel | null {
+function parseAIModel(value: string): {
+  selectedModel: AIModel | null;
+  invalidSelectedModel: string | null;
+} {
+  if (value.length === 0) {
+    return { selectedModel: null, invalidSelectedModel: null };
+  }
   const parsed = AIModelSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parsed.success
+    ? { selectedModel: parsed.data, invalidSelectedModel: null }
+    : { selectedModel: null, invalidSelectedModel: value };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
