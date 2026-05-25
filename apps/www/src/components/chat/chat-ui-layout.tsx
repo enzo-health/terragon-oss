@@ -77,6 +77,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     toolProps,
     lastUsedModel,
     handleOpenArtifact,
+    onOpenRepoFile,
   } = viewModel;
 
   const {
@@ -167,6 +168,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
+                          onOpenRepoFile={onOpenRepoFile}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -315,6 +317,7 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
 };
 
 /**

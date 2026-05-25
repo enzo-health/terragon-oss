@@ -67,6 +67,10 @@ export interface PartRegistryContext {
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   /** Optional opener used by anything that has a corresponding artifact. */
   onOpenArtifact?: (artifactId: string) => void;
+  /** Opens an in-repo file link (markdown/tool/diff path) in the artifact
+   *  workspace by classifying the href, upserting a `repo-file` descriptor via
+   *  the reducer, then selecting+opening it. Absent when the feature is off. */
+  onOpenRepoFile?: (href: string) => void;
 
   // Resolved before dispatch so renderers don't re-derive them ─────────────
   /** Resolved artifact descriptor for this specific part, if any. */

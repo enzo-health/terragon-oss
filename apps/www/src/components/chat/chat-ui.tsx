@@ -10,6 +10,8 @@ import {
   UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
+import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
@@ -19,6 +21,7 @@ import {
   selectScopedRunId,
   useCurrentRunId,
 } from "@/hooks/use-current-run-id";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
@@ -48,6 +51,7 @@ import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
+  createRepoFileOpenedEvent,
 } from "./thread-view-model/optimistic-events";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
@@ -306,6 +310,7 @@ function ChatUIContent() {
   });
 
   const dispatch = threadViewModel.dispatchThreadViewEvent;
+  const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const onOptimisticPermissionModeUpdate = useCallback(
     (mode: "allowAll" | "plan") =>
       dispatch(createOptimisticPermissionModeUpdatedEvent(mode)),
@@ -352,6 +357,21 @@ function ChatUIContent() {
       setIsSecondaryPanelOpen(true);
     },
     [setIsSecondaryPanelOpen],
+  );
+
+  const onOpenRepoFile = useCallback(
+    (href: string) => {
+      if (!isRepoFilePreviewEnabled) {
+        return;
+      }
+      const classified = classifyRepoFileLink(href);
+      if (!classified) {
+        return;
+      }
+      dispatch(createRepoFileOpenedEvent(classified));
+      handleOpenArtifact(buildRepoFileArtifactId({ path: classified.path }));
+    },
+    [isRepoFilePreviewEnabled, dispatch, handleOpenArtifact],
   );
 
   useAutoOpenPanelOnNewPlan({
@@ -480,11 +500,13 @@ function ChatUIContent() {
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
+      onOpenRepoFile,
     }),
     [
       artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
+      onOpenRepoFile,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,

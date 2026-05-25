@@ -28,6 +28,7 @@ export type TerragonThreadContext = {
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
@@ -61,6 +62,7 @@ export type TerragonMessageRenderContext = {
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;

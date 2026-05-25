@@ -16,6 +16,7 @@ import {
   getStableArtifactsForMessages,
   preserveArtifactReferenceDescriptors,
   upsertArtifactReferenceDescriptor,
+  upsertRepoFileDescriptor,
 } from "./artifact-descriptors";
 import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
@@ -94,6 +95,14 @@ export function threadViewModelReducer(
         permissionMode: event.permissionMode,
         hasOptimisticPermissionMode: true,
       };
+    case "repo-file.opened": {
+      const artifacts = upsertRepoFileDescriptor(state.artifacts, {
+        path: event.path,
+        ref: event.ref,
+        lineRange: event.lineRange,
+      });
+      return artifacts === state.artifacts ? state : { ...state, artifacts };
+    }
     default: {
       const exhaustive: never = event;
       return exhaustive;

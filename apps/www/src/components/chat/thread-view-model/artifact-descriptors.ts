@@ -1,7 +1,12 @@
 import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import {
+  type ArtifactDescriptor,
+  buildRepoFileArtifactId,
+  createRepoFileArtifactDescriptor,
+} from "@terragon/shared/db/artifact-descriptors";
+import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
 import { getArtifactDescriptorsForMessages } from "./snapshot-adapter";
 import { getObjectField, getStringField } from "./renderable-part-shape";
 import type { ThreadViewModelState } from "./types";
@@ -16,7 +21,7 @@ export function getStableArtifactsForMessages({
   artifactThread: ThreadViewModelState["artifactThread"];
 }): ThreadViewModelState["artifacts"] {
   const preservedReferenceDescriptors = previous.descriptors.filter(
-    (descriptor) => descriptor.origin.type === "artifact-reference",
+    isClientSynthesizedDescriptor,
   );
   const next = {
     descriptors: mergeArtifactDescriptors([
@@ -37,7 +42,7 @@ export function preserveArtifactReferenceDescriptors(
   snapshot: ThreadViewModelState["artifacts"],
 ): ThreadViewModelState["artifacts"] {
   const referenceDescriptors = current.descriptors.filter(
-    (descriptor) => descriptor.origin.type === "artifact-reference",
+    isClientSynthesizedDescriptor,
   );
   if (referenceDescriptors.length === 0) {
     return snapshot;
@@ -65,6 +70,41 @@ export function upsertArtifactReferenceDescriptor(
   return areArtifactDescriptorsStable(artifacts.descriptors, nextDescriptors)
     ? artifacts
     : { descriptors: nextDescriptors };
+}
+
+/**
+ * Reducer-owned upsert for a click-opened in-repo file preview. Mirrors
+ * `upsertArtifactReferenceDescriptor`: synthesizes the descriptor from the
+ * classified path/ref/lineRange and dedupes by the deterministic artifact id
+ * (normalized path + ref) so reopening the same file reuses the descriptor
+ * rather than creating a duplicate. Returns the existing artifacts reference
+ * unchanged when the descriptor already exists.
+ */
+export function upsertRepoFileDescriptor(
+  artifacts: ThreadViewModelState["artifacts"],
+  input: { path: string; ref?: string; lineRange?: RepoFileLineRange },
+): ThreadViewModelState["artifacts"] {
+  const id = buildRepoFileArtifactId({ path: input.path, ref: input.ref });
+  if (artifacts.descriptors.some((descriptor) => descriptor.id === id)) {
+    return artifacts;
+  }
+  return upsertArtifactReferenceDescriptor(
+    artifacts,
+    createRepoFileArtifactDescriptor(input),
+  );
+}
+
+/**
+ * Descriptors synthesized client-side (never message-derived) must survive
+ * snapshot rebuilds, since they have no source in the rehydrated transcript.
+ */
+function isClientSynthesizedDescriptor(
+  descriptor: ArtifactDescriptor,
+): boolean {
+  return (
+    descriptor.origin.type === "artifact-reference" ||
+    descriptor.origin.type === "repo-file"
+  );
 }
 
 function mergeArtifactDescriptors(

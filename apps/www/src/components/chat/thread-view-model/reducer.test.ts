@@ -823,6 +823,94 @@ describe("ThreadViewModel reducer", () => {
     ]);
   });
 
+  it("upserts a repo-file descriptor when a repo file is opened", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      lineRange: { start: 10, end: 20 },
+    });
+
+    const descriptors = projectThreadViewModel(state).artifacts.descriptors;
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({
+      id: "artifact:repo-file:working:src/foo.ts",
+      kind: "repo-file",
+      title: "foo.ts",
+      summary: "src/foo.ts",
+      origin: {
+        type: "repo-file",
+        path: "src/foo.ts",
+        lineRange: { start: 10, end: 20 },
+      },
+    });
+  });
+
+  it("reuses the existing repo-file descriptor when the same file is opened again", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+    });
+    const firstArtifacts = state.artifacts;
+
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+    });
+
+    expect(state.artifacts).toBe(firstArtifacts);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+  });
+
+  it("treats the same path under a different ref as a distinct repo-file descriptor", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+    });
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "abc123",
+    });
+
+    const ids = projectThreadViewModel(state)
+      .artifacts.descriptors.map((descriptor) => descriptor.id)
+      .sort();
+    expect(ids).toEqual([
+      "artifact:repo-file:abc123:src/foo.ts",
+      "artifact:repo-file:working:src/foo.ts",
+    ]);
+  });
+
+  it("preserves click-opened repo-file descriptors across snapshot hydration", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "docs/readme.md",
+    });
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([
+        {
+          type: "agent",
+          parent_tool_use_id: null,
+          parts: [{ type: "text", text: "durable text" }],
+        },
+      ]),
+    });
+
+    expect(projectThreadViewModel(state).artifacts.descriptors).toEqual([
+      expect.objectContaining({
+        id: "artifact:repo-file:working:docs/readme.md",
+        kind: "repo-file",
+        title: "readme.md",
+      }),
+    ]);
+  });
+
   it("dedupes persisted replay events across reconnect before refetch reconciliation", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
     const replayedEvents: BaseEvent[] = [
