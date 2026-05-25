@@ -1,7 +1,7 @@
 ---
 title: "refactor: Complete Assistant-UI and AG-UI Chat Cutover"
 type: refactor
-status: active
+status: completed
 date: 2026-05-24
 origin: docs/plans/2026-05-24-002-assistant-ui-ag-ui-architecture-shaping.md
 ---
