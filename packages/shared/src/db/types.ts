@@ -224,7 +224,8 @@ export type AgentRuntimeProvider =
   | "legacy-claude"
   | "legacy-gemini"
   | "legacy-amp"
-  | "legacy-opencode";
+  | "legacy-opencode"
+  | "legacy-droid";
 
 export type AgentRunProtocolVersion = 1 | 2;
 
