@@ -1,6 +1,5 @@
 "use server";
 
-import { cache } from "react";
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
 import { getThreadPageShellWithPermissions } from "@terragon/shared/model/thread-page";
@@ -206,11 +205,9 @@ async function loadRepoFileContent(
   }
 }
 
-export const getRepoFileContentAction = cache(
-  userOnlyAction(loadRepoFileContent, {
-    // The wrapper logs raw thrown errors, so we never throw across it after the
-    // initial auth check; loadRepoFileContent returns a typed result instead.
-    // A thrown UserFacingError below stays opaque (no PHI) if auth itself fails.
-    defaultErrorMessage: "Failed to load file preview",
-  }),
-);
+export const getRepoFileContentAction = userOnlyAction(loadRepoFileContent, {
+  // The wrapper logs raw thrown errors, so we never throw across it after the
+  // initial auth check; loadRepoFileContent returns a typed result instead.
+  // A thrown UserFacingError below stays opaque (no PHI) if auth itself fails.
+  defaultErrorMessage: "Failed to load file preview",
+});
