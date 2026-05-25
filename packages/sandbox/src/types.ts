@@ -42,6 +42,7 @@ export type CreateSandboxOptions = {
   skipSetupScript?: boolean; // Skip running terragon-setup.sh during sandbox setup
   snapshotTemplateId?: string; // Per-repo Daytona snapshot name to use instead of generic template
   setupScript?: string | null; // Custom setup script to override repository's terragon-setup.sh
+  backgroundSetupScript?: boolean; // Run the setup script detached + install a dependency barrier, so the agent dispatches without waiting for setup to finish
   fastResume?: boolean; // Fast resume mode - skips unnecessary setup steps that run everytime (claude credentials, daemon update, etc)
   publicUrl: string;
   featureFlags: FeatureFlags;
