@@ -34,6 +34,7 @@ import {
 import { type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  AllToolParts,
   DBMessage,
   ThreadPageChat,
   ThreadPageShell,
@@ -171,8 +172,12 @@ vi.mock("@/hooks/use-ag-ui-transport", () => ({
 }));
 
 // Collection hooks — return fixed snapshots; seed* functions are no-ops.
-const mockShellState: { current: ThreadPageShell | null } = { current: null };
-const mockChatState: { current: ThreadPageChat | null } = { current: null };
+const mockShellState = vi.hoisted((): { current: ThreadPageShell | null } => ({
+  current: null,
+}));
+const mockChatState = vi.hoisted((): { current: ThreadPageChat | null } => ({
+  current: null,
+}));
 
 vi.mock("@/collections/thread-shell-collection", () => ({
   seedShell: vi.fn(),
@@ -187,6 +192,59 @@ vi.mock("@/collections/thread-chat-collection", () => ({
   getThreadChatCollection: vi.fn(),
   applyChatPatchToCollection: vi.fn(),
 }));
+
+vi.mock("@/components/chat/thread-provider", async () => {
+  const React = await import("react");
+  type ThreadContextValue = {
+    threadId: string;
+    threadChatId: string;
+    isReadOnly: boolean;
+    shell: ThreadPageShell;
+    threadChat: ThreadPageChat;
+    threadChatSource: "collection";
+  };
+  const Context = React.createContext<ThreadContextValue | null>(null);
+  return {
+    ThreadProvider: ({
+      threadId,
+      isReadOnly,
+      children,
+    }: {
+      threadId: string;
+      isReadOnly: boolean;
+      children: React.ReactNode;
+    }) => {
+      const shell = mockShellState.current;
+      const threadChat = mockChatState.current;
+      if (!shell || !threadChat) {
+        return React.createElement("div", null, "Loading task...");
+      }
+      return React.createElement(
+        Context.Provider,
+        {
+          value: {
+            threadId,
+            threadChatId: shell.primaryThreadChatId,
+            isReadOnly,
+            shell,
+            threadChat,
+            threadChatSource: "collection",
+          },
+        },
+        children,
+      );
+    },
+    useThreadContext: () => {
+      const ctx = React.useContext(Context);
+      if (!ctx) {
+        throw new Error(
+          "useThreadContext must be used within <ThreadProvider/>",
+        );
+      }
+      return ctx;
+    },
+  };
+});
 
 vi.mock("@/collections/thread-transcript-collection", () => ({
   seedTranscript: vi.fn(),
@@ -319,6 +377,8 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 
 import * as threadContextModule from "@/components/chat/assistant-ui/thread-context";
 import ChatUI from "@/components/chat/chat-ui";
+import { getCachedTranscript } from "@/collections/thread-transcript-collection";
+import { ToolPart } from "@/components/chat/tool-part";
 
 // ---------------------------------------------------------------------------
 // Fixture factories.
@@ -505,9 +565,32 @@ function pushEvent(event: BaseEvent) {
   });
 }
 
+function mountToolPart(toolPart: AllToolParts): void {
+  mount(
+    createElement(ToolPart, {
+      toolPart,
+      threadId: THREAD_ID,
+      threadChatId: CHAT_ID,
+      messagesRef: { current: [] },
+      isReadOnly: true,
+      childThreads: [],
+      githubRepoFullName: "acme/app",
+      repoBaseBranchName: "main",
+      branchName: "feature/streaming",
+    }),
+  );
+}
+
 beforeEach(() => {
   resetCommitCounters();
   fakeAgentRegistry.clear();
+  vi.mocked(getCachedTranscript).mockImplementation(() => {
+    const projectedMessages = mockChatState.current?.projectedMessages ?? [];
+    return {
+      messages: dbMessagesToAgUiMessages(projectedMessages as DBMessage[]),
+      lastSeq: -1,
+    };
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => {
@@ -771,37 +854,15 @@ describe("ChatUI tool-call rendering polish", () => {
   it("clamps long tool prompts and shows a 'Show more' toggle", async () => {
     const longPrompt =
       "You are the PR-linking agent for the awaiting_pr_link phase. Follow repo instructions from AGENTS/CLAUDE conventions and produce a structured plan that covers every edge case, failure mode, retry budget, and observability hook for the downstream pipeline.";
-    const messages: DBMessage[] = [
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "spin up a subagent" }],
-      },
-      {
-        type: "tool-call",
-        id: "tc-long",
-        name: "codex-subagent",
-        parameters: { prompt: longPrompt },
-        parent_tool_use_id: null,
-        status: "completed",
-        startedAt: TS.toISOString(),
-        completedAt: TS.toISOString(),
-      },
-      {
-        type: "tool-result",
-        id: "tc-long",
-        is_error: false,
-        parent_tool_use_id: null,
-        result: "ok",
-      } as DBMessage,
-    ];
-
-    mockShellState.current = makeShell();
-    mockChatState.current = makeChat(messages);
-
-    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
-    await act(async () => {
-      await Promise.resolve();
+    mountToolPart({
+      type: "tool",
+      agent: "claudeCode",
+      id: "tc-long",
+      name: "codex-subagent",
+      parameters: { prompt: longPrompt },
+      status: "completed",
+      result: "ok",
+      parts: [],
     });
 
     const text = container?.textContent ?? "";
@@ -813,30 +874,14 @@ describe("ChatUI tool-call rendering polish", () => {
   });
 
   it("renders a tool-specific verb for pending tool calls", async () => {
-    const messages: DBMessage[] = [
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "look it up" }],
-      },
-      {
-        type: "tool-call",
-        id: "tc-pending-bash",
-        name: "Bash",
-        parameters: { command: "ls" },
-        parent_tool_use_id: null,
-        // No completedAt + no tool-result companion → renders pending.
-        status: "in_progress",
-        startedAt: TS.toISOString(),
-      },
-    ];
-
-    mockShellState.current = makeShell();
-    mockChatState.current = makeChat(messages);
-
-    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
-    await act(async () => {
-      await Promise.resolve();
+    mountToolPart({
+      type: "tool",
+      agent: "claudeCode",
+      id: "tc-pending-bash",
+      name: "Bash",
+      parameters: { command: "ls" },
+      status: "pending",
+      parts: [],
     });
 
     const text = container?.textContent ?? "";
@@ -852,37 +897,15 @@ describe("ChatUI tool-call rendering polish", () => {
       status: "linked",
       summary: "Linked the existing open draft PR.",
     });
-    const messages: DBMessage[] = [
-      {
-        type: "user",
-        model: null,
-        parts: [{ type: "text", text: "link the PR" }],
-      },
-      {
-        type: "tool-call",
-        id: "tc-json",
-        name: "codex-subagent",
-        parameters: { prompt: "link pr" },
-        parent_tool_use_id: null,
-        status: "completed",
-        startedAt: TS.toISOString(),
-        completedAt: TS.toISOString(),
-      },
-      {
-        type: "tool-result",
-        id: "tc-json",
-        is_error: false,
-        parent_tool_use_id: null,
-        result: jsonResult,
-      } as DBMessage,
-    ];
-
-    mockShellState.current = makeShell();
-    mockChatState.current = makeChat(messages);
-
-    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
-    await act(async () => {
-      await Promise.resolve();
+    mountToolPart({
+      type: "tool",
+      agent: "claudeCode",
+      id: "tc-json",
+      name: "codex-subagent",
+      parameters: { prompt: "link pr" },
+      status: "completed",
+      result: jsonResult,
+      parts: [],
     });
 
     const text = container?.textContent ?? "";
@@ -920,7 +943,8 @@ describe("ChatUI historical hydration contract", () => {
       await Promise.resolve();
     });
 
-    // Transcript should be empty, because no AG-UI seed is present.
+    // Runtime-owned transcript hydration may still show a loading placeholder,
+    // but legacy DB rows must not leak through as a fallback.
     expect(container?.textContent ?? "").not.toContain("first agent reply");
     expect(container?.textContent ?? "").not.toContain("second agent reply");
   });

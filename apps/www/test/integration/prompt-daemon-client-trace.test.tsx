@@ -281,7 +281,14 @@ describe("prompt to daemon to client trace", () => {
       runStarted: false,
       threadStatus: "complete",
     });
-    expect(messages).toEqual([]);
+    expect(messages).toEqual([
+      {
+        id: "assistant-trace-1",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [{ type: "text", text: assistantText }],
+      },
+    ]);
 
     const spanNames = traceSpans.map((span) => span.name);
     expect(spanNames).toEqual(
