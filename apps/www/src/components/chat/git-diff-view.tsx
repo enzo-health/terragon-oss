@@ -4,8 +4,8 @@ import React, { useEffect, useId, useMemo, useState } from "react";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { cn } from "@/lib/utils";
-import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FileTreeItem } from "./git-diff-file-tree-item";
+import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FilesChangedHeader } from "./git-diff-files-changed-header";
 import type { GitDiffViewProps } from "./git-diff-view.types";
 import {
@@ -14,8 +14,8 @@ import {
   computeDefaultExpanded,
 } from "./git-diff-view.utils";
 
-export { FilesChangedHeader } from "./git-diff-files-changed-header";
 export { FileDiffWrapper } from "./git-diff-file-wrapper";
+export { FilesChangedHeader } from "./git-diff-files-changed-header";
 
 export function GitDiffView({
   thread,
@@ -24,18 +24,12 @@ export function GitDiffView({
   threadChatId,
   threadMessages,
   onOpenRepoFile,
-  focusFilePath,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const fileTreeId = useId();
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [isWideScreen, setIsWideScreen] = useState(false);
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
-  const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
-  // Only route file-tree clicks to the open-repo-file flow when the flag is on
-  // AND a handler was provided; otherwise behavior is unchanged.
-  const treeOnOpenRepoFile =
-    isRepoFilePreviewEnabled && onOpenRepoFile ? onOpenRepoFile : undefined;
 
   const [viewMode, setViewMode] = useState<"split" | "unified">("unified");
   const [manuallySelectedMode, setManuallySelectedMode] = useState(false);
@@ -118,30 +112,6 @@ export function GitDiffView({
   useEffect(() => {
     setExpandedFolders(collectAllFolders(fileTree));
   }, [fileTree]);
-
-  // Scroll to (and expand) the diff for `focusFilePath` when it changes. Used
-  // by the repo-file preview flow: clicking a file path opens this artifact and
-  // lands on that file's diff. getElementById needs the row mounted, so we
-  // expand first and scroll on the next frame.
-  useEffect(() => {
-    if (!focusFilePath) {
-      return;
-    }
-    const targetIndex = diffInstances.findIndex(
-      (file) => file.fileName === focusFilePath,
-    );
-    if (targetIndex === -1) {
-      return;
-    }
-    setExpanded((prev) => ({ ...prev, [targetIndex]: true }));
-    setSelectedFile(targetIndex);
-    const frame = requestAnimationFrame(() => {
-      document
-        .getElementById(`file-diff-${targetIndex}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [focusFilePath, diffInstances]);
 
   const toggle = (idx: number) => {
     setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -305,7 +275,7 @@ export function GitDiffView({
                   onFileSelect={scrollToFile}
                   expandedFolders={expandedFolders}
                   onToggleFolder={toggleFolder}
-                  onOpenRepoFile={treeOnOpenRepoFile}
+                  onOpenRepoFile={onOpenRepoFile}
                 />
               ))}
             </div>
@@ -327,7 +297,7 @@ export function GitDiffView({
                   threadChatId={threadChatId}
                   threadMessages={threadMessages}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}
-                  onOpenRepoFile={treeOnOpenRepoFile}
+                  onOpenRepoFile={onOpenRepoFile}
                 />
               </div>
             ))}

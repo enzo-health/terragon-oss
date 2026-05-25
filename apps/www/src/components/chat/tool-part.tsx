@@ -1,41 +1,41 @@
-import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
-import { AllToolParts, type UIPart, type UIMessage } from "@terragon/shared";
+import { AllToolParts, type UIMessage, type UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { ReadTool } from "./tools/read-tool";
-import { WriteTool } from "./tools/write-tool";
-import { EditTool } from "./tools/edit-tool";
-import { MultiEditTool } from "./tools/multi-edit-tool";
-import { SearchTool } from "./tools/search-tool";
+import { ChildThreadInfo } from "@terragon/shared/db/types";
+import React, { memo, type ReactNode, useCallback, useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
+import { ImagePart } from "./image-part";
+import { PdfPart } from "./pdf-part";
+import { RichTextPart } from "./rich-text-part";
+import {
+  type ArtifactDescriptorLookup,
+  findArtifactDescriptorForPart,
+} from "./secondary-panel-helpers";
+import { TextFilePart } from "./text-file-part";
+import { PromptBoxRef } from "./thread-context";
 import { BashTool } from "./tools/bash-tool";
-import { LSTool } from "./tools/ls-tool";
-import { TodoReadTool, TodoWriteTool } from "./tools/todo-tool";
-import { NotebookEditTool, NotebookReadTool } from "./tools/notebook-tool";
-import { WebFetchTool, WebSearchTool } from "./tools/web-tool";
-import { TaskTool } from "./tools/task-tool";
-import { SuggestFollowupTaskTool } from "./tools/suggest-followup-task-tool";
-import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
-import { PermissionRequestTool } from "./tools/permission-request-tool";
-import { FileChangeTool } from "./tools/file-change-tool";
 import { DefaultTool } from "./tools/default-tool";
+import { EditTool } from "./tools/edit-tool";
+import { ExitPlanModeTool } from "./tools/exit-plan-mode-tool";
+import { FileChangeTool } from "./tools/file-change-tool";
+import { LSTool } from "./tools/ls-tool";
+import { MultiEditTool } from "./tools/multi-edit-tool";
+import { NotebookEditTool, NotebookReadTool } from "./tools/notebook-tool";
+import { PermissionRequestTool } from "./tools/permission-request-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
-import { getToolVerb } from "./tools/utils";
+import { ReadTool } from "./tools/read-tool";
+import { SearchTool } from "./tools/search-tool";
+import { SuggestFollowupTaskTool } from "./tools/suggest-followup-task-tool";
+import { TaskTool } from "./tools/task-tool";
+import { TodoReadTool, TodoWriteTool } from "./tools/todo-tool";
 import {
   isToolName,
   type ToolArgs,
   type ToolName,
 } from "./tools/tool-registry";
-import { Badge } from "@/components/ui/badge";
-import { RichTextPart } from "./rich-text-part";
-import { TextFilePart } from "./text-file-part";
-import { PdfPart } from "./pdf-part";
-import { ImagePart } from "./image-part";
-import {
-  findArtifactDescriptorForPart,
-  type ArtifactDescriptorLookup,
-} from "./secondary-panel-helpers";
-import { PromptBoxRef } from "./thread-context";
-import { ChildThreadInfo } from "@terragon/shared/db/types";
+import { getToolVerb } from "./tools/utils";
+import { WebFetchTool, WebSearchTool } from "./tools/web-tool";
+import { WriteTool } from "./tools/write-tool";
 
 /**
  * Sibling state needed by a subset of tool renderers (Task, ExitPlanMode,
@@ -61,12 +61,11 @@ export type ToolRenderContext = {
    * Opens an in-repo file path in the artifacts panel. Produced by
    * `handleOpenRepoFile` in `chat-ui.tsx` (maps the path to the working-tree
    * git-diff artifact and routes through `handleOpenArtifact`) and threaded in
-   * via `toolProps`. Renderers read it from `ctx`. Only wired when the
-   * `repoFilePreview` flag is on — see `repoFilePreviewEnabled`.
+   * via `toolProps`. Renderers read it from `ctx`. `undefined` when the
+   * `repoFilePreview` flag is off — the producer in `chat-ui.tsx` nulls it, so
+   * its presence alone gates the affordance.
    */
   onOpenRepoFile?: (filePath: string) => void;
-  /** Mirror of the `repoFilePreview` feature flag, resolved once at the host. */
-  repoFilePreviewEnabled: boolean;
   renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
 };
 
@@ -107,24 +106,12 @@ type ToolDispatchTable = { [N in ToolName]: ToolRenderer<N> };
  * Unknown tool names (not in `ToolName`) fall back to `renderUnknownTool` at
  * runtime.
  */
-/**
- * Resolves the in-repo file opener for a renderer, gated by the
- * `repoFilePreview` flag. Returns `undefined` when the flag is off OR no
- * opener is wired, so renderers fall back to their unchanged static behavior.
- * Centralized here so the flag gate lives in one place rather than in each of
- * the five file-output renderers.
- */
-const repoFileOpener = (
-  ctx: ToolRenderContext,
-): ((filePath: string) => void) | undefined =>
-  ctx.repoFilePreviewEnabled ? ctx.onOpenRepoFile : undefined;
-
 const TOOL_DISPATCH: ToolDispatchTable = {
   Read: (tp, ctx) => (
-    <ReadTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+    <ReadTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
   ),
   Write: (tp, ctx) => (
-    <WriteTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+    <WriteTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
   ),
   Edit: (tp, ctx) => {
     // Some Edit calls come without new/old_string (e.g. partial updates from
@@ -134,12 +121,12 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       "new_string" in tp.parameters &&
       "old_string" in tp.parameters
     ) {
-      return <EditTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />;
+      return <EditTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />;
     }
     return <DefaultTool toolPart={tp} />;
   },
   MultiEdit: (tp, ctx) => (
-    <MultiEditTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+    <MultiEditTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
   ),
   Grep: (tp) => <SearchTool toolPart={tp} />,
   Glob: (tp) => <SearchTool toolPart={tp} />,
@@ -193,7 +180,7 @@ const TOOL_DISPATCH: ToolDispatchTable = {
     />
   ),
   FileChange: (tp, ctx) => (
-    <FileChangeTool toolPart={tp} onOpenRepoFile={repoFileOpener(ctx)} />
+    <FileChangeTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
   ),
   // Codex MCPTool: rewrite name to `mcp__server__tool` then route to
   // DefaultTool. The daemon emits it pre-rewrite; this is the only place that
@@ -250,7 +237,6 @@ export type ToolPartProps = {
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   onOpenRepoFile?: (filePath: string) => void;
-  repoFilePreviewEnabled?: boolean;
 };
 
 export function renderToolPartContent(
@@ -418,7 +404,6 @@ const ToolPart = memo(function ToolPart({
   artifactDescriptorLookup,
   onOpenArtifact,
   onOpenRepoFile,
-  repoFilePreviewEnabled = false,
 }: ToolPartProps) {
   // Stable recursive renderer. Deps mirror the props compared by
   // `areToolPartPropsEqual` below — when those are referentially stable across
@@ -442,7 +427,6 @@ const ToolPart = memo(function ToolPart({
         artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
         onOpenRepoFile={onOpenRepoFile}
-        repoFilePreviewEnabled={repoFilePreviewEnabled}
       />
     ),
     [
@@ -460,7 +444,6 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptorLookup,
       onOpenArtifact,
       onOpenRepoFile,
-      repoFilePreviewEnabled,
       ToolPart,
     ],
   );
@@ -485,7 +468,6 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptorLookup,
       onOpenArtifact,
       onOpenRepoFile,
-      repoFilePreviewEnabled,
       renderChildToolPart,
     }),
     [
@@ -503,7 +485,6 @@ const ToolPart = memo(function ToolPart({
       artifactDescriptorLookup,
       onOpenArtifact,
       onOpenRepoFile,
-      repoFilePreviewEnabled,
       renderChildToolPart,
     ],
   );
@@ -532,8 +513,7 @@ function areToolPartPropsEqual(
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
-    prevProps.onOpenRepoFile !== nextProps.onOpenRepoFile ||
-    prevProps.repoFilePreviewEnabled !== nextProps.repoFilePreviewEnabled
+    prevProps.onOpenRepoFile !== nextProps.onOpenRepoFile
   ) {
     return false;
   }

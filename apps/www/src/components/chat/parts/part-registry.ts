@@ -5,7 +5,7 @@
  * the renderer's actual props. Keeping this registry exhaustive makes new part
  * variants fail type-checking until they have an explicit renderer decision.
  */
-import { createElement, type ComponentType, type ReactElement } from "react";
+
 import type {
   AllToolParts,
   DBAudioPart,
@@ -22,30 +22,30 @@ import type {
   UITextFilePart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
-
-import { TextPart } from "../text-part";
-import { ThinkingPart } from "../thinking-part";
+import { type ComponentType, createElement, type ReactElement } from "react";
+import { AudioPartView } from "../audio-part-view";
+import { AutoApprovalReviewCard } from "../auto-approval-review-card";
+import { DelegationItemCard } from "../delegation-item-card";
+import { DiffPartView } from "../diff-part";
 import { ImagePart } from "../image-part";
 import { PdfPart } from "../pdf-part";
-import { TextFilePart } from "../text-file-part";
-import { RichTextPart } from "../rich-text-part";
-import { AudioPartView } from "../audio-part-view";
-import { ResourceLinkView } from "../resource-link-view";
-import { TerminalPartView } from "../terminal-part-view";
-import { DiffPartView } from "../diff-part";
-import { AutoApprovalReviewCard } from "../auto-approval-review-card";
 import { PlanPartView } from "../plan-part";
+import { ResourceLinkView } from "../resource-link-view";
+import { RichTextPart } from "../rich-text-part";
+import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { ServerToolUseView } from "../server-tool-use-view";
-import { WebSearchResultView } from "../web-search-result-view";
-import { DelegationItemCard } from "../delegation-item-card";
+import { TerminalPartView } from "../terminal-part-view";
+import { TextFilePart } from "../text-file-part";
+import { TextPart } from "../text-part";
+import { ThinkingPart } from "../thinking-part";
 import { ToolPart, type ToolPartProps } from "../tool-part";
 import type {
-  UIPartExtended,
   UIDelegationPart,
   UIDelegationStubPart,
+  UIPartExtended,
   UIStructuredPlanPart,
 } from "../ui-parts-extended";
+import { WebSearchResultView } from "../web-search-result-view";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context
@@ -356,13 +356,11 @@ export const PART_REGISTRY: PartRegistry = {
   terminal: definePartEntry(TerminalPartView, (_ctx, part) => ({ part })),
 
   // The git-diff header file path becomes a clickable affordance (R4) only
-  // when the `repoFilePreview` flag is on and a producer is wired. Both ride
-  // on `toolProps`; gate here so a flag-off thread keeps the plain header.
+  // when an opener is wired. The producer in `chat-ui.tsx` nulls it when the
+  // `repoFilePreview` flag is off, so a flag-off thread keeps the plain header.
   diff: definePartEntry(DiffPartView, (ctx, part) => ({
     part,
-    onOpenRepoFile: ctx.toolProps.repoFilePreviewEnabled
-      ? ctx.toolProps.onOpenRepoFile
-      : undefined,
+    onOpenRepoFile: ctx.toolProps.onOpenRepoFile,
   })),
 
   "auto-approval-review": definePartEntry(

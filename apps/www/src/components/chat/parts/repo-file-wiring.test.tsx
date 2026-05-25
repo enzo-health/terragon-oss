@@ -13,14 +13,13 @@
  * the same entry point `message-part.tsx` uses — so the forwarding is covered.
  */
 
-import React, { type ReactNode } from "react";
-import { act } from "react";
+import React, { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIPartExtended } from "../ui-parts-extended";
 import {
-  renderPartFromRegistry,
   type PartRegistryContext,
+  renderPartFromRegistry,
 } from "./part-registry";
 
 const FILE_PATH = "src/components/button.tsx";
@@ -106,69 +105,37 @@ describe("repoFilePreview wiring through PART_REGISTRY", () => {
     vi.restoreAllMocks();
   });
 
-  it("tool entry forwards toolProps.onOpenRepoFile when the flag is on", () => {
+  it("tool entry forwards toolProps.onOpenRepoFile when an opener is wired", () => {
     const onOpenRepoFile = vi.fn();
-    mount(
-      renderPartFromRegistry(
-        makeCtx({ repoFilePreviewEnabled: true, onOpenRepoFile }),
-        readPart,
-      ),
-    );
+    mount(renderPartFromRegistry(makeCtx({ onOpenRepoFile }), readPart));
     expect(clickFirst("tool-arg-open-file")).toBe(true);
     expect(onOpenRepoFile).toHaveBeenCalledTimes(1);
     expect(onOpenRepoFile).toHaveBeenCalledWith(FILE_PATH);
   });
 
-  it("tool entry renders no affordance when the flag is off, even with an opener", () => {
-    const onOpenRepoFile = vi.fn();
+  it("tool entry renders no affordance when no opener is wired (flag off)", () => {
     mount(
-      renderPartFromRegistry(
-        makeCtx({ repoFilePreviewEnabled: false, onOpenRepoFile }),
-        readPart,
-      ),
-    );
-    expect(
-      container?.querySelector(`[data-testid="tool-arg-open-file"]`),
-    ).toBeNull();
-    expect(onOpenRepoFile).not.toHaveBeenCalled();
-  });
-
-  it("tool entry renders no affordance when the flag is on but no opener is wired", () => {
-    mount(
-      renderPartFromRegistry(
-        makeCtx({ repoFilePreviewEnabled: true, onOpenRepoFile: undefined }),
-        readPart,
-      ),
+      renderPartFromRegistry(makeCtx({ onOpenRepoFile: undefined }), readPart),
     );
     expect(
       container?.querySelector(`[data-testid="tool-arg-open-file"]`),
     ).toBeNull();
   });
 
-  it("diff entry forwards the opener to the git-diff header (R4) when the flag is on", () => {
+  it("diff entry forwards the opener to the git-diff header (R4) when an opener is wired", () => {
     const onOpenRepoFile = vi.fn();
-    mount(
-      renderPartFromRegistry(
-        makeCtx({ repoFilePreviewEnabled: true, onOpenRepoFile }),
-        diffPart,
-      ),
-    );
+    mount(renderPartFromRegistry(makeCtx({ onOpenRepoFile }), diffPart));
     expect(clickFirst("diff-header-open-file")).toBe(true);
     expect(onOpenRepoFile).toHaveBeenCalledTimes(1);
     expect(onOpenRepoFile).toHaveBeenCalledWith(FILE_PATH);
   });
 
-  it("diff entry renders a plain header when the flag is off", () => {
-    const onOpenRepoFile = vi.fn();
+  it("diff entry renders a plain header when no opener is wired (flag off)", () => {
     mount(
-      renderPartFromRegistry(
-        makeCtx({ repoFilePreviewEnabled: false, onOpenRepoFile }),
-        diffPart,
-      ),
+      renderPartFromRegistry(makeCtx({ onOpenRepoFile: undefined }), diffPart),
     );
     expect(
       container?.querySelector(`[data-testid="diff-header-open-file"]`),
     ).toBeNull();
-    expect(onOpenRepoFile).not.toHaveBeenCalled();
   });
 });

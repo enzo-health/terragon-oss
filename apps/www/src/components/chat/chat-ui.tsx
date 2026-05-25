@@ -10,35 +10,35 @@ import {
   UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
-import dynamic from "next/dynamic";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  type RepoFileArtifactDescriptor,
   createRepoFileArtifactDescriptor,
+  type RepoFileArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
+import dynamic from "next/dynamic";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import {
+  getCachedTranscript,
+  invalidateCachedTranscript,
+  seedTranscript,
+} from "@/collections/thread-transcript-collection";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
   useCurrentRunId,
 } from "@/hooks/use-current-run-id";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
-import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
+import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
-  getCachedTranscript,
-  invalidateCachedTranscript,
-  seedTranscript,
-} from "@/collections/thread-transcript-collection";
-import {
-  ChatUILayout,
   type ChatUICoreData,
   type ChatUIDialogData,
   type ChatUIErrorState,
+  ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
   type ChatUIScrollState,
@@ -50,24 +50,24 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
+import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
 } from "./thread-view-model/optimistic-events";
-import { ThreadProvider, useThreadContext } from "./thread-provider";
+import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
   useInvalidateCreditBalanceOnAgentIdle,
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
+import { useProductSidecars } from "./use-product-sidecars";
 import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import { useThreadViewModel } from "./use-ag-ui-messages";
-import { useProductSidecars } from "./use-product-sidecars";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -390,7 +390,6 @@ function ChatUIContent() {
       repoBaseBranchName: thread.repoBaseBranchName ?? "main",
       branchName: thread.branchName ?? null,
       onOptimisticPermissionModeUpdate,
-      repoFilePreviewEnabled,
       onOpenRepoFile,
     }),
     [
@@ -402,7 +401,6 @@ function ChatUIContent() {
       thread.repoBaseBranchName,
       threadViewModel.threadChatId,
       threadId,
-      repoFilePreviewEnabled,
       onOpenRepoFile,
     ],
   );

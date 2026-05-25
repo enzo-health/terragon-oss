@@ -1,10 +1,9 @@
 /* @vitest-environment jsdom */
 
-import React, { type ReactNode } from "react";
-import { act } from "react";
+import type { AllToolParts } from "@terragon/shared";
+import React, { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AllToolParts } from "@terragon/shared";
 import { renderToolPart, type ToolRenderContext } from "../tool-part";
 
 const FILE_PATH = "src/components/button.tsx";
@@ -90,7 +89,6 @@ function makeCtx(
     repoBaseBranchName: "main",
     branchName: "feature",
     artifactDescriptors: [],
-    repoFilePreviewEnabled: false,
     renderChildToolPart: () => null as ReactNode,
     ...overrides,
   };
@@ -154,39 +152,16 @@ describe("repo-file affordance in tool renderers", () => {
   ];
 
   for (const { name, part, testId } of fileToolCases) {
-    it(`${name}: routes click to ctx.onOpenRepoFile when flag on`, () => {
+    it(`${name}: routes click to ctx.onOpenRepoFile when an opener is wired`, () => {
       const onOpenRepoFile = vi.fn();
-      mount(
-        renderToolPart(
-          part,
-          makeCtx({ repoFilePreviewEnabled: true, onOpenRepoFile }),
-        ),
-      );
+      mount(renderToolPart(part, makeCtx({ onOpenRepoFile })));
       expect(clickFirst(testId)).toBe(true);
       expect(onOpenRepoFile).toHaveBeenCalledTimes(1);
       expect(onOpenRepoFile).toHaveBeenCalledWith(FILE_PATH);
     });
 
-    it(`${name}: no affordance when flag off (no-op)`, () => {
-      const onOpenRepoFile = vi.fn();
-      mount(
-        renderToolPart(
-          part,
-          makeCtx({ repoFilePreviewEnabled: false, onOpenRepoFile }),
-        ),
-      );
-      const el = container?.querySelector(`[data-testid="${testId}"]`);
-      expect(el).toBeNull();
-      expect(onOpenRepoFile).not.toHaveBeenCalled();
-    });
-
-    it(`${name}: no affordance when flag on but opener missing`, () => {
-      mount(
-        renderToolPart(
-          part,
-          makeCtx({ repoFilePreviewEnabled: true, onOpenRepoFile: undefined }),
-        ),
-      );
+    it(`${name}: no affordance when no opener is wired (flag off)`, () => {
+      mount(renderToolPart(part, makeCtx({ onOpenRepoFile: undefined })));
       const el = container?.querySelector(`[data-testid="${testId}"]`);
       expect(el).toBeNull();
     });
