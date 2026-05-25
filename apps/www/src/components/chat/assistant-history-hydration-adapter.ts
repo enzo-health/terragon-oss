@@ -27,10 +27,10 @@ type AgUiToolCall = NonNullable<
   Extract<AgUiMessage, { role: "assistant" }>["toolCalls"]
 >[number];
 type AgUiHistoryItem = AgUiMessage | TerragonCustomPartEvent;
-export type AgUiHistoryLoader = () =>
+export type AssistantHistoryHydrationLoader = () =>
   | readonly AgUiHistoryItem[]
   | Promise<readonly AgUiHistoryItem[]>;
-export type AgUiHistoryMode = "active-resume" | "idle-finalized";
+export type AssistantHistoryHydrationMode = "active-resume" | "idle-finalized";
 
 const HISTORY_CREATED_AT = new Date(0);
 const COMPLETE_STATUS = {
@@ -378,7 +378,7 @@ function finishUnresolvedToolCalls(messages: ThreadMessage[]): ThreadMessage[] {
   });
 }
 
-export function hydrateAssistantThreadMessages(
+export function hydrateAssistantHistoryMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
@@ -441,14 +441,14 @@ export function hydrateAssistantThreadMessages(
   return messages;
 }
 
-export function createAssistantHistoryAdapter(
-  loadAgUiMessages: AgUiHistoryLoader,
-  options: { mode?: AgUiHistoryMode } = {},
+export function createAssistantHistoryHydrationAdapter(
+  loadAgUiMessages: AssistantHistoryHydrationLoader,
+  options: { mode?: AssistantHistoryHydrationMode } = {},
 ): ThreadHistoryAdapter {
   return {
     load: async () => {
       const agUiMessages = await loadAgUiMessages();
-      const importedMessages = hydrateAssistantThreadMessages(agUiMessages);
+      const importedMessages = hydrateAssistantHistoryMessages(agUiMessages);
       const mode = options.mode ?? "active-resume";
       const messages =
         mode === "idle-finalized"

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hydrateAssistantThreadMessages } from "./ag-ui-history-to-assistant-thread";
+import { hydrateAssistantHistoryMessages } from "./assistant-history-hydration-adapter";
 import { toAgUiMessages } from "./terragon-ag-ui-conversions";
 
 describe("terragon AG UI conversions", () => {
   it("round-trips hydrated user file content into later AG UI run input", () => {
-    const hydrated = hydrateAssistantThreadMessages([
+    const hydrated = hydrateAssistantHistoryMessages([
       {
         id: "user-with-file",
         role: "user",

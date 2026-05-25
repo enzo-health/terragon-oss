@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { EventType } from "@ag-ui/core";
 import {
-  hydrateAssistantThreadMessages,
-  createAssistantHistoryAdapter,
-} from "./ag-ui-history-to-assistant-thread";
+  hydrateAssistantHistoryMessages,
+  createAssistantHistoryHydrationAdapter,
+} from "./assistant-history-hydration-adapter";
 import type { TerragonCustomPartEvent } from "./ag-ui-custom-parts";
 
-describe("hydrateAssistantThreadMessages", () => {
+describe("hydrateAssistantHistoryMessages", () => {
   it("projects failed durable tool results as failed tool-call parts", () => {
-    const messages = hydrateAssistantThreadMessages([
+    const messages = hydrateAssistantHistoryMessages([
       {
         id: "assistant-1",
         role: "assistant",
@@ -46,7 +46,7 @@ describe("hydrateAssistantThreadMessages", () => {
   });
 
   it("dedupes repeated history messages before hydrating the runtime", () => {
-    const messages = hydrateAssistantThreadMessages([
+    const messages = hydrateAssistantHistoryMessages([
       {
         id: "user-1",
         role: "user",
@@ -89,7 +89,7 @@ describe("hydrateAssistantThreadMessages", () => {
   });
 
   it("marks unresolved idle-finalized tool calls as errored", async () => {
-    const adapter = createAssistantHistoryAdapter(
+    const adapter = createAssistantHistoryHydrationAdapter(
       () => [
         {
           id: "assistant-1",
@@ -123,7 +123,7 @@ describe("hydrateAssistantThreadMessages", () => {
   });
 
   it("keeps unresolved active-resume tool calls pending", async () => {
-    const adapter = createAssistantHistoryAdapter(
+    const adapter = createAssistantHistoryHydrationAdapter(
       () => [
         {
           id: "assistant-1",
@@ -174,7 +174,7 @@ describe("hydrateAssistantThreadMessages", () => {
       },
     };
 
-    const messages = hydrateAssistantThreadMessages([event]);
+    const messages = hydrateAssistantHistoryMessages([event]);
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.id).toBe("assistant-live");
@@ -215,7 +215,7 @@ describe("hydrateAssistantThreadMessages", () => {
       },
     };
 
-    const messages = hydrateAssistantThreadMessages([event]);
+    const messages = hydrateAssistantHistoryMessages([event]);
 
     expect(messages).toEqual([]);
   });

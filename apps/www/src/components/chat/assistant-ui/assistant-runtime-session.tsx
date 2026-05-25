@@ -10,7 +10,7 @@ import type { AIAgent } from "@terragon/agent/types";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
-import { createAssistantHistoryAdapter } from "../ag-ui-history-to-assistant-thread";
+import { createAssistantHistoryHydrationAdapter } from "../assistant-history-hydration-adapter";
 import { resolveRuntimeResumePolicy } from "./runtime-resume-policy";
 
 class AssistantHistoryLoadError extends Error {
@@ -208,7 +208,7 @@ export function AssistantRuntimeSession({
 
   const history = useMemo(
     () =>
-      createAssistantHistoryAdapter(
+      createAssistantHistoryHydrationAdapter(
         async () => {
           try {
             return await loadHistoryMessages();
