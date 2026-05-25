@@ -58,16 +58,31 @@ export type ToolRenderContext = {
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
   /**
-   * Opens an in-repo file path in the artifacts panel. Produced by
-   * `handleOpenRepoFile` in `chat-ui.tsx` (maps the path to the working-tree
-   * git-diff artifact and routes through `handleOpenArtifact`) and threaded in
-   * via `toolProps`. Renderers read it from `ctx`. `undefined` when the
-   * `repoFilePreview` flag is off — the producer in `chat-ui.tsx` nulls it, so
-   * its presence alone gates the affordance.
+   * Opens an in-repo file path in the artifacts panel. `handleOpenRepoFile` in
+   * `chat-ui.tsx` classifies the path and dispatches a `repo-file.opened` event
+   * so the reducer synthesizes the artifact descriptor. `undefined` when the
+   * `repoFilePreview` flag is off — its presence alone gates the affordance.
+   * Renderers with a single `file_path` arg should use `repoFileArgClick`
+   * rather than reading this directly.
    */
   onOpenRepoFile?: (filePath: string) => void;
   renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
 };
+
+/**
+ * Resolves the click handler for a tool whose `toolArg` is a single in-repo
+ * file path (Read/Write/Edit/MultiEdit). Returns `undefined` when the affordance
+ * is gated off or the path is missing, so the derivation lives here once instead
+ * of being duplicated across each renderer.
+ */
+function repoFileArgClick(
+  ctx: ToolRenderContext,
+  filePath: string | undefined,
+): (() => void) | undefined {
+  return ctx.onOpenRepoFile && filePath
+    ? () => ctx.onOpenRepoFile?.(filePath)
+    : undefined;
+}
 
 /**
  * Per-name tool variant. For tool names present as a discriminated arm in
@@ -108,10 +123,16 @@ type ToolDispatchTable = { [N in ToolName]: ToolRenderer<N> };
  */
 const TOOL_DISPATCH: ToolDispatchTable = {
   Read: (tp, ctx) => (
-    <ReadTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
+    <ReadTool
+      toolPart={tp}
+      onToolArgClick={repoFileArgClick(ctx, tp.parameters.file_path)}
+    />
   ),
   Write: (tp, ctx) => (
-    <WriteTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
+    <WriteTool
+      toolPart={tp}
+      onToolArgClick={repoFileArgClick(ctx, tp.parameters.file_path)}
+    />
   ),
   Edit: (tp, ctx) => {
     // Some Edit calls come without new/old_string (e.g. partial updates from
@@ -121,12 +142,20 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       "new_string" in tp.parameters &&
       "old_string" in tp.parameters
     ) {
-      return <EditTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />;
+      return (
+        <EditTool
+          toolPart={tp}
+          onToolArgClick={repoFileArgClick(ctx, tp.parameters.file_path)}
+        />
+      );
     }
     return <DefaultTool toolPart={tp} />;
   },
   MultiEdit: (tp, ctx) => (
-    <MultiEditTool toolPart={tp} onOpenRepoFile={ctx.onOpenRepoFile} />
+    <MultiEditTool
+      toolPart={tp}
+      onToolArgClick={repoFileArgClick(ctx, tp.parameters.file_path)}
+    />
   ),
   Grep: (tp) => <SearchTool toolPart={tp} />,
   Glob: (tp) => <SearchTool toolPart={tp} />,

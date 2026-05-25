@@ -13,12 +13,11 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function WriteTool({
   toolPart,
-  onOpenRepoFile,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "Write" }>;
-  onOpenRepoFile?: (filePath: string) => void;
+  onToolArgClick?: () => void;
 }) {
-  const filePath = toolPart.parameters.file_path;
   return (
     <GenericToolPart
       toolName="Write"
@@ -27,9 +26,7 @@ export function WriteTool({
         excludeKeys: ["content"],
       })}
       toolStatus={toolPart.status}
-      onToolArgClick={
-        onOpenRepoFile && filePath ? () => onOpenRepoFile(filePath) : undefined
-      }
+      onToolArgClick={onToolArgClick}
     >
       <WriteToolContent toolPart={toolPart} />
     </GenericToolPart>

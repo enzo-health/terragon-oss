@@ -1,5 +1,6 @@
 import type { BaseEvent } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
+import { createRepoFileArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
@@ -93,6 +94,18 @@ export function threadViewModelReducer(
         ...state,
         permissionMode: event.permissionMode,
         hasOptimisticPermissionMode: true,
+      };
+    case "repo-file.opened":
+      return {
+        ...state,
+        artifacts: upsertArtifactReferenceDescriptor(
+          state.artifacts,
+          createRepoFileArtifactDescriptor({
+            path: event.path,
+            ref: event.ref,
+            lineRange: event.lineRange,
+          }),
+        ),
       };
     default: {
       const exhaustive: never = event;

@@ -6,6 +6,19 @@ import { getArtifactDescriptorsForMessages } from "./snapshot-adapter";
 import { getObjectField, getStringField } from "./renderable-part-shape";
 import type { ThreadViewModelState } from "./types";
 
+/**
+ * Descriptors synthesized from client intent (a clicked artifact reference or
+ * in-repo file link) rather than derived from the message transcript. They have
+ * no source in `getArtifactDescriptorsForMessages`, so they must be carried
+ * across every snapshot/message rebuild or they vanish on the next event.
+ */
+function isSynthesizedDescriptor(descriptor: ArtifactDescriptor): boolean {
+  return (
+    descriptor.origin.type === "artifact-reference" ||
+    descriptor.origin.type === "repo-file"
+  );
+}
+
 export function getStableArtifactsForMessages({
   previous,
   messages,
@@ -16,7 +29,7 @@ export function getStableArtifactsForMessages({
   artifactThread: ThreadViewModelState["artifactThread"];
 }): ThreadViewModelState["artifacts"] {
   const preservedReferenceDescriptors = previous.descriptors.filter(
-    (descriptor) => descriptor.origin.type === "artifact-reference",
+    isSynthesizedDescriptor,
   );
   const next = {
     descriptors: mergeArtifactDescriptors([
@@ -37,7 +50,7 @@ export function preserveArtifactReferenceDescriptors(
   snapshot: ThreadViewModelState["artifacts"],
 ): ThreadViewModelState["artifacts"] {
   const referenceDescriptors = current.descriptors.filter(
-    (descriptor) => descriptor.origin.type === "artifact-reference",
+    isSynthesizedDescriptor,
   );
   if (referenceDescriptors.length === 0) {
     return snapshot;

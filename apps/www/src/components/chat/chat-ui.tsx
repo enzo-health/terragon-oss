@@ -10,10 +10,7 @@ import {
   UIMessage,
   UIUserMessage,
 } from "@terragon/shared";
-import {
-  createRepoFileArtifactDescriptor,
-  type RepoFileArtifactDescriptor,
-} from "@terragon/shared/db/artifact-descriptors";
+import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -55,6 +52,7 @@ import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
+  createRepoFileOpenedEvent,
 } from "./thread-view-model/optimistic-events";
 import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
@@ -146,11 +144,6 @@ function ChatUIContent() {
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  // Repo-file artifacts are synthesized on demand from clicked in-repo links;
-  // they are never persisted, so they live here rather than in the view model.
-  const [repoFileArtifacts, setRepoFileArtifacts] = useState<
-    RepoFileArtifactDescriptor[]
-  >([]);
   const [submittedOptimisticUserState, setSubmittedOptimisticUserState] =
     useState<{ threadChatId: string; messages: UIUserMessage[] }>(() => ({
       threadChatId,
@@ -301,15 +294,6 @@ function ChatUIContent() {
   const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
-  // Merge on-demand repo-file previews with the view-model's persisted
-  // descriptors so the artifacts panel can resolve a clicked file's tab.
-  const mergedArtifactDescriptors = useMemo(
-    () =>
-      repoFileArtifacts.length === 0
-        ? artifactDescriptors
-        : [...artifactDescriptors, ...repoFileArtifacts],
-    [artifactDescriptors, repoFileArtifacts],
-  );
   const shouldAutoRenderSecondaryPanel =
     platform === "desktop" &&
     shouldAutoOpenSecondaryPanel &&
@@ -341,36 +325,30 @@ function ChatUIContent() {
     [setIsSecondaryPanelOpen],
   );
 
-  // Reset synthesized repo-file tabs when switching chats so a previous chat's
-  // file previews (resolved against that chat's branch) never leak across.
-  // threadChatId is the intended trigger, not a value read inside the effect.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset-on-switch trigger
-  useEffect(() => {
-    setRepoFileArtifacts([]);
-  }, [threadChatId]);
-
   // Producer for every file-path affordance (markdown links, Read/Write/Edit/
   // MultiEdit/FileChange renderers, the git-diff header and file tree). A
-  // clicked in-repo path is classified and synthesized into a dedicated
-  // repo-file artifact (basename title, repo-relative-path summary) that opens
-  // in the artifacts panel via the shared `handleOpenArtifact` chain.
+  // clicked in-repo path is classified and dispatched as a `repo-file.opened`
+  // event; the reducer synthesizes the descriptor into `state.artifacts` (the
+  // one path every artifact flows through), then we focus its tab. The reducer
+  // re-seeds from the snapshot on chat switch, so previews never leak across
+  // chats without any manual reset here.
   const handleOpenRepoFile = useCallback(
     (href: string) => {
       const classified = classifyRepoFileLink(href);
       if (!classified) return;
-      const descriptor = createRepoFileArtifactDescriptor({
-        path: classified.path,
-        ref: thread.branchName ?? undefined,
-        lineRange: classified.lineRange,
-      });
-      setRepoFileArtifacts((current) =>
-        current.some((existing) => existing.id === descriptor.id)
-          ? current
-          : [...current, descriptor],
+      const ref = thread.branchName ?? undefined;
+      dispatch(
+        createRepoFileOpenedEvent({
+          path: classified.path,
+          ref,
+          lineRange: classified.lineRange,
+        }),
       );
-      handleOpenArtifact(descriptor.id);
+      handleOpenArtifact(
+        buildRepoFileArtifactId({ path: classified.path, ref }),
+      );
     },
-    [handleOpenArtifact, thread.branchName],
+    [dispatch, handleOpenArtifact, thread.branchName],
   );
   // Gate the producer on the feature flag: when off, the callback is undefined
   // end-to-end so in-repo links keep their default new-tab navigation.
@@ -534,7 +512,7 @@ function ChatUIContent() {
       loadAgUiHistoryMessages,
       queuedMessages,
       optimisticUserMessages: submittedOptimisticUserMessages,
-      artifactDescriptors: mergedArtifactDescriptors,
+      artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
       toolProps,
@@ -543,7 +521,7 @@ function ChatUIContent() {
       onOpenRepoFile,
     }),
     [
-      mergedArtifactDescriptors,
+      artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
       onOpenRepoFile,

@@ -13,12 +13,11 @@ import { formatToolParameters } from "./utils";
 
 export function MultiEditTool({
   toolPart,
-  onOpenRepoFile,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "MultiEdit" }>;
-  onOpenRepoFile?: (filePath: string) => void;
+  onToolArgClick?: () => void;
 }) {
-  const filePath = toolPart.parameters.file_path;
   return (
     <GenericToolPart
       toolName="MultiEdit"
@@ -32,9 +31,7 @@ export function MultiEditTool({
         },
       )}
       toolStatus={toolPart.status}
-      onToolArgClick={
-        onOpenRepoFile && filePath ? () => onOpenRepoFile(filePath) : undefined
-      }
+      onToolArgClick={onToolArgClick}
     >
       <ToolPartMultiEditResult toolPart={toolPart} />
     </GenericToolPart>
