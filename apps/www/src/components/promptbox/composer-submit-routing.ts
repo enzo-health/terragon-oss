@@ -87,20 +87,16 @@ export async function routeComposerSubmit({
 
   const routing = classifyComposerSubmitRoute(userMessage);
   if (threadRuntime !== null && routing.type === "runtime") {
-    void Promise.resolve(
-      threadRuntime.append({
-        role: "user",
-        content: routing.content,
-        runConfig: {
-          custom: encodeRunMetadata({
-            selectedModel: userMessage.model,
-            permissionMode: userMessage.permissionMode,
-            clientSubmissionId: crypto.randomUUID(),
-          }),
-        },
-      }),
-    ).catch((error) => {
-      console.error("[composer-submit-routing] runtime append failed", error);
+    await threadRuntime.append({
+      role: "user",
+      content: routing.content,
+      runConfig: {
+        custom: encodeRunMetadata({
+          selectedModel: userMessage.model,
+          permissionMode: userMessage.permissionMode,
+          clientSubmissionId: crypto.randomUUID(),
+        }),
+      },
     });
     return { type: "runtime-append-started" };
   }

@@ -634,7 +634,7 @@ index 2da1a9e..f0c82db 100644
    private _loadPromise: Promise<void> | undefined;
 +  private _loadKey: string | undefined;
 +  private loadGeneration = 0;
- 
+
    constructor(options: CoreOptions) {
      this.agent = options.agent;
      this.logger = options.logger;
@@ -646,7 +646,7 @@ index 2da1a9e..f0c82db 100644
      this.history = options.history;
 @@ -75,12 +82,21 @@ export class AgUiThreadRuntimeCore {
    }
- 
+
    updateOptions(options: Omit<CoreOptions, "notifyUpdate">) {
 +    const loadSourceChanged = this.agent !== options.agent;
      this.agent = options.agent;
@@ -664,26 +664,26 @@ index 2da1a9e..f0c82db 100644
 +      this._isLoading = false;
 +    }
    }
- 
+
    attachRuntime(runtime: AssistantRuntime) {
 @@ -107,33 +123,56 @@ export class AgUiThreadRuntimeCore {
      return this._isLoading;
    }
- 
+
 -  __internal_load(): Promise<void> {
 -    if (this._loadPromise) return this._loadPromise;
 +  __internal_load(loadKey = "default"): Promise<void> {
 +    if (this._loadPromise && this._loadKey === loadKey) {
 +      return this._loadPromise;
 +    }
- 
+
 +    const generation = this.loadGeneration + 1;
 +    this.loadGeneration = generation;
      const promise = this.history?.load() ?? Promise.resolve(null);
- 
+
 +    this._loadKey = loadKey;
      this._isLoading = true;
- 
+
 +    let loadFailed = false;
      this._loadPromise = promise
        .then(async (repo) => {
@@ -691,10 +691,10 @@ index 2da1a9e..f0c82db 100644
 +          return;
 +        }
          if (!repo) return;
- 
+
          const messages = repo.messages.map((item) => item.message);
          this.applyExternalMessages(messages);
- 
+
          if (repo.unstable_resume) {
 +          if (generation !== this.loadGeneration || this._loadKey !== loadKey) {
 +            return;
@@ -725,10 +725,10 @@ index 2da1a9e..f0c82db 100644
 +        }
          this.notifyUpdate();
        });
- 
+
 @@ -142,6 +181,8 @@ export class AgUiThreadRuntimeCore {
    }
- 
+
    async append(message: AppendMessage): Promise<void> {
 +    await this.waitForInitialLoad();
 +
@@ -736,13 +736,13 @@ index 2da1a9e..f0c82db 100644
      if (message.sourceId) {
        this.messages = this.messages.filter(
 @@ -152,6 +193,7 @@ export class AgUiThreadRuntimeCore {
- 
+
      const threadMessage = this.toThreadMessage(message);
      this.messages = [...this.messages, threadMessage];
 +    this.hasLocalRuntimeMutations = true;
      this.notifyUpdate();
      this.recordHistoryEntry(message.parentId ?? null, threadMessage);
- 
+
 @@ -167,6 +209,7 @@ export class AgUiThreadRuntimeCore {
      parentId: string | null,
      config: { runConfig?: RunConfig } = {},
@@ -753,7 +753,7 @@ index 2da1a9e..f0c82db 100644
      await this.startRun(parentId, config.runConfig);
 @@ -178,6 +221,8 @@ export class AgUiThreadRuntimeCore {
    }
- 
+
    async resume(config: ResumeRunConfig): Promise<void> {
 +    await this.waitForInitialLoad();
 +
@@ -762,14 +762,14 @@ index 2da1a9e..f0c82db 100644
          "[agui] resume stream is not supported, falling back to regular run",
 @@ -252,19 +297,18 @@ export class AgUiThreadRuntimeCore {
      });
- 
+
      if (updated) {
 +      this.hasLocalRuntimeMutations = true;
        this.notifyUpdate();
- 
+
        if (shouldResume) {
          this.persistAssistantHistory(options.messageId);
- 
+
          if (!this.isRunningFlag) {
 -          void this.startRun(options.messageId, this.lastRunConfig).catch(
 -            (error) => {
@@ -787,7 +787,7 @@ index 2da1a9e..f0c82db 100644
        }
      }
 @@ -272,7 +316,16 @@ export class AgUiThreadRuntimeCore {
- 
+
    applyExternalMessages(messages: readonly ThreadMessage[]): void {
      this.assistantHistoryParents.clear();
 -    this.messages = [...messages];
@@ -850,9 +850,9 @@ index 2da1a9e..f0c82db 100644
 +        this.updateAssistantMessage(ensureAssistant(targetMessageId), update),
      });
      const dispatch = (event: AgUiEvent) => this.handleEvent(aggregator, event);
- 
+
 @@ -411,7 +485,14 @@ export class AgUiThreadRuntimeCore {
- 
+
    private insertAssistantPlaceholder(): string {
      const id = generateId();
 -    const assistant: ThreadAssistantMessage = {
@@ -875,12 +875,12 @@ index 2da1a9e..f0c82db 100644
 -    this.notifyUpdate();
 -    return id;
    }
- 
+
    private updateAssistantMessage(
 @@ -542,6 +620,125 @@ export class AgUiThreadRuntimeCore {
      );
    }
- 
+
 +  private replaceAllMessages(messages: readonly ThreadMessage[]): void {
 +    this.messages = this.dedupeMessages(messages);
 +  }
@@ -1006,7 +1006,7 @@ index 2da1a9e..f0c82db 100644
 @@ -558,6 +755,22 @@ export class AgUiThreadRuntimeCore {
      return status?.type === "complete" || status?.type === "incomplete";
    }
- 
+
 +  private async waitForInitialLoad(): Promise<void> {
 +    if (!this._isLoading || !this._loadPromise) return;
 +    await this._loadPromise;
@@ -1033,13 +1033,13 @@ index 4f63360..4579dcb 100644
 @@ -8,7 +8,10 @@ import type {
  import type { AgUiEvent } from "../types";
  import type { Logger } from "../logger";
- 
+
 -type Emit = (update: ChatModelRunResult) => void;
 +type Emit = (
 +  update: ChatModelRunResult,
 +  targetMessageId: string | undefined,
 +) => void;
- 
+
  type ToolCallState = {
    toolCallId: string;
 @@ -53,6 +56,7 @@ export class RunAggregator {
@@ -1047,7 +1047,7 @@ index 4f63360..4579dcb 100644
    private hasReasoningPart = false;
    private textPartCounter = 0;
 +  private lastTargetMessageId: string | undefined;
- 
+
    constructor(options: RunAggregatorOptions) {
      this.emitUpdate = options.emit;
 @@ -71,8 +75,9 @@ export class RunAggregator {
@@ -1084,7 +1084,7 @@ index 4f63360..4579dcb 100644
 +        this.emit(this.lastTargetMessageId);
          break;
        }
- 
+
 @@ -106,7 +111,7 @@ export class RunAggregator {
          if (id) {
            this.markTextPartTouched(id);
@@ -1113,7 +1113,7 @@ index 4f63360..4579dcb 100644
 +        this.emit(targetMessageId);
          break;
        }
- 
+
 @@ -150,18 +158,18 @@ export class RunAggregator {
            event.toolCallName,
            event.parentMessageId,
@@ -1144,7 +1144,7 @@ index 4f63360..4579dcb 100644
 +        this.emit(this.targetMessageIdForToolCall(event.toolCallId));
          break;
        }
- 
+
 @@ -193,6 +201,11 @@ export class RunAggregator {
      const id = messageId ?? this.generateTextKey();
      this.ensureTextPart(id);
@@ -1156,7 +1156,7 @@ index 4f63360..4579dcb 100644
 +    }
      return id;
    }
- 
+
 @@ -200,6 +213,7 @@ export class RunAggregator {
      if (messageId) {
        this.ensureTextPart(messageId);
@@ -1164,7 +1164,7 @@ index 4f63360..4579dcb 100644
 +      this.lastTargetMessageId = messageId;
        return messageId;
      }
- 
+
 @@ -210,6 +224,7 @@ export class RunAggregator {
      const generated = this.generateTextKey();
      this.ensureTextPart(generated);
@@ -1172,11 +1172,11 @@ index 4f63360..4579dcb 100644
 +    this.lastTargetMessageId = undefined;
      return generated;
    }
- 
+
 @@ -238,6 +253,10 @@ export class RunAggregator {
      entry.touched = true;
    }
- 
+
 +  private targetMessageIdForText(id: string): string | undefined {
 +    return id === this.activeTextMessageId ? this.lastTargetMessageId : id;
 +  }
@@ -1210,7 +1210,7 @@ index 4f63360..4579dcb 100644
      }
      this.toolCalls.set(id, state);
    }
- 
+
 +  private targetMessageIdForToolCall(
 +    id: string | undefined,
 +  ): string | undefined {
@@ -1228,11 +1228,11 @@ index 4f63360..4579dcb 100644
 @@ -315,7 +353,7 @@ export class RunAggregator {
      }
    }
- 
+
 -  private emit(): void {
 +  private emit(targetMessageId: string | undefined): void {
      const snapshot: ThreadAssistantMessagePart[] = [];
- 
+
      for (const part of this.partOrder) {
 @@ -359,26 +397,26 @@ export class RunAggregator {
        content: snapshot,
@@ -1241,7 +1241,7 @@ index 4f63360..4579dcb 100644
 -    this.emitUpdate(result);
 +    this.emitUpdate(result, targetMessageId);
    }
- 
+
    private handleReasoningStart(): void {
      if (!this.showThinking) return;
      this.reasoningActive = true;
@@ -1249,7 +1249,7 @@ index 4f63360..4579dcb 100644
 -    this.emit();
 +    this.emit(this.lastTargetMessageId);
    }
- 
+
    private handleReasoningContent(delta: string): void {
      if (!this.showThinking || !delta) return;
      this.reasoningBuffer += delta;
@@ -1257,13 +1257,13 @@ index 4f63360..4579dcb 100644
 -    this.emit();
 +    this.emit(this.lastTargetMessageId);
    }
- 
+
    private handleReasoningEnd(): void {
      if (!this.showThinking) return;
 -    this.emit();
 +    this.emit(this.lastTargetMessageId);
    }
- 
+
    private ensureReasoningPart(): void {
 diff --git a/src/runtime/types.ts b/src/runtime/types.ts
 index ba0fda6..fe3b97b 100644
@@ -1285,7 +1285,7 @@ index ba0fda6..fe3b97b 100644
 +  externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
    adapters?: UseAgUiRuntimeAdapters;
  };
- 
+
 diff --git a/src/useAgUiRuntime.ts b/src/useAgUiRuntime.ts
 index df696ba..df9fffd 100644
 --- a/src/useAgUiRuntime.ts
@@ -1308,12 +1308,12 @@ index df696ba..df9fffd 100644
      ...(historyAdapter && { history: historyAdapter }),
 @@ -184,8 +186,8 @@ export function useAgUiRuntime(
    }, [core, runtime]);
- 
+
    useEffect(() => {
 -    core.__internal_load();
 -  }, [core]);
 +    core.__internal_load(options.historyLoadKey);
 +  }, [core, options.historyLoadKey]);
- 
+
    return runtime;
  }

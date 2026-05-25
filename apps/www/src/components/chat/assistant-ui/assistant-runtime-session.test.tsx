@@ -158,8 +158,8 @@ describe("AssistantRuntimeSession", () => {
     const opts = lastRuntimeOptions();
     expect(opts.agent).toBe(agent);
     expect(opts.showThinking).toBe(false);
-    expect(opts.historyLoadKey).toBe("chat-xyz:active");
-    expect(opts.externalMessagesStrategy).toBe("merge-after-local-mutations");
+    expect(opts).not.toHaveProperty("historyLoadKey");
+    expect(opts).not.toHaveProperty("externalMessagesStrategy");
     expect(opts.adapters?.history).toBeDefined();
   });
 
@@ -321,8 +321,7 @@ describe("AssistantRuntimeSession", () => {
       });
 
       await vi.waitFor(() => {
-        const latestOpts = useAgUiRuntimeSpy.mock.calls.at(-1)?.[0];
-        expect(latestOpts?.historyLoadKey).toBe("chat-xyz:active:retry-1");
+        expect(useAgUiRuntimeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
       });
     } finally {
       mounted.unmount();

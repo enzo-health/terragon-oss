@@ -16,11 +16,8 @@ import type {
 } from "./thread-view-model/types";
 
 type UseThreadViewModelArgs = {
-  agent: HttpAgent | null;
   snapshot: ThreadViewSnapshot;
-  projectEvent?: (
-    event: ThreadViewEventForAgUi,
-  ) => ThreadViewEventForAgUi | null;
+  includeTranscriptMessages?: boolean;
 };
 
 export type ThreadViewModelController = ThreadViewModel & {
@@ -36,22 +33,18 @@ type UseAgUiSidecarRouterArgs = {
   onStatusOrTerminalEvent?: () => void;
 };
 
-export function createThreadViewEventFromAgUiEvent(
+export function createProductSidecarThreadViewEvent(
   event: ThreadViewEventForAgUi,
-  options?: { projectTranscript?: boolean },
 ): ThreadViewEvent {
-  const projectTranscript = options?.projectTranscript;
   if (isRuntimeLifecycleEvent(event)) {
     return {
       type: "runtime.event",
       event,
-      ...(projectTranscript !== undefined ? { projectTranscript } : {}),
     };
   }
   return {
     type: "ag-ui.event",
     event,
-    ...(projectTranscript !== undefined ? { projectTranscript } : {}),
   };
 }
 
@@ -86,9 +79,7 @@ export function useAgUiSidecarRouter({
         }
         try {
           dispatchRef.current(
-            createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: false,
-            }),
+            createProductSidecarThreadViewEvent(projectedEvent),
           );
         } catch {
           // Malformed projection events are quarantined by the reducer; keep the
@@ -103,9 +94,8 @@ export function useAgUiSidecarRouter({
 }
 
 export function useThreadViewModel({
-  agent,
   snapshot,
-  projectEvent,
+  includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
   const projectedTraceKeysRef = useRef<Set<string>>(new Set());
   const [state, dispatch] = useReducer(
@@ -118,40 +108,14 @@ export function useThreadViewModel({
     dispatch({ type: "snapshot.hydrated", snapshot });
   }, [snapshot]);
 
-  useEffect(() => {
-    if (!agent) return;
-
-    const subscription = agent.subscribe({
-      onEvent: ({ event }) => {
-        recordAgUiEventReceipt(event);
-        const projectedEvent = projectEvent ? projectEvent(event) : event;
-        if (!projectedEvent) {
-          return;
-        }
-        try {
-          dispatch(
-            createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: false,
-            }),
-          );
-        } catch {
-          // Malformed projection events are quarantined by the reducer; keep the
-          // subscription healthy if a future event shape still slips through.
-        }
-      },
-    });
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [agent, projectEvent]);
-
-  const viewModel = useMemo(
-    () => ({
-      ...projectThreadViewModel(state, { includeTranscriptMessages: false }),
+  const viewModel = useMemo(() => {
+    const projected = projectThreadViewModel(state);
+    return {
+      ...projected,
+      messages: includeTranscriptMessages ? projected.messages : [],
       dispatchThreadViewEvent: dispatch,
-    }),
-    [state],
-  );
+    };
+  }, [includeTranscriptMessages, state]);
 
   useEffect(() => {
     const runId = viewModel.lifecycle.runId;

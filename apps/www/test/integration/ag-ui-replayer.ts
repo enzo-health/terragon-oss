@@ -29,7 +29,10 @@ import type {
   ThreadViewRuntimeActivities,
   ThreadViewRuntimeState,
 } from "../../src/components/chat/thread-view-model/types";
-import { useThreadViewModel } from "../../src/components/chat/use-ag-ui-messages";
+import {
+  useAgUiSidecarRouter,
+  useThreadViewModel,
+} from "../../src/components/chat/use-ag-ui-messages";
 
 // ---------------------------------------------------------------------------
 // Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
@@ -232,8 +235,11 @@ function Harness({
     [agentKind, initialMessages],
   );
   const viewModel = useThreadViewModel({
-    agent,
     snapshot,
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
   });
   onProjection({
     messages: viewModel.messages,

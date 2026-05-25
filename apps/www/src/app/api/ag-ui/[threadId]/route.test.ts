@@ -3214,7 +3214,6 @@ describe("ag-ui SSE route", () => {
       threadChatId: "chat-1",
       userId: "user-1",
       body: expect.objectContaining({ messages: validBody.messages }),
-      isReplayMode: false,
     });
 
     // Falls through to SSE stream
@@ -3317,7 +3316,6 @@ describe("ag-ui SSE route", () => {
       threadChatId: "chat-1",
       userId: "user-1",
       body: expect.objectContaining({ messages: validBody.messages }),
-      isReplayMode: false,
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");

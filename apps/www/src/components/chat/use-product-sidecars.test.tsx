@@ -165,7 +165,6 @@ describe("useProductSidecars", () => {
 
     expect(dispatchThreadViewEvent).toHaveBeenCalledWith({
       type: "ag-ui.event",
-      projectTranscript: false,
       event: expect.objectContaining({
         type: EventType.CUSTOM,
         name: "artifact-reference",
@@ -173,7 +172,6 @@ describe("useProductSidecars", () => {
     });
     expect(dispatchThreadViewEvent).toHaveBeenCalledWith({
       type: "ag-ui.event",
-      projectTranscript: false,
       event: expect.objectContaining({
         type: EventType.CUSTOM,
         name: "thread.status_changed",
@@ -229,7 +227,6 @@ describe("useProductSidecars", () => {
 
     expect(dispatchThreadViewEvent).toHaveBeenCalledWith({
       type: "ag-ui.event",
-      projectTranscript: false,
       event: expect.objectContaining({
         type: EventType.CUSTOM,
         name: "thread.token_usage_updated",
@@ -237,14 +234,12 @@ describe("useProductSidecars", () => {
     });
     expect(dispatchThreadViewEvent).toHaveBeenCalledWith({
       type: "ag-ui.event",
-      projectTranscript: false,
       event: expect.objectContaining({
         type: EventType.STATE_SNAPSHOT,
       }),
     });
     expect(dispatchThreadViewEvent).toHaveBeenCalledWith({
       type: "ag-ui.event",
-      projectTranscript: false,
       event: expect.objectContaining({
         type: EventType.ACTIVITY_SNAPSHOT,
       }),

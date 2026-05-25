@@ -14,13 +14,11 @@ import { withFollowUpSubmissionGuard } from "@/server-lib/ag-ui/follow-up-submis
 
 export type FollowUpCommandResult =
   | { runId: string }
-  | { skipped: "replay-mode" }
   | { skipped: "duplicate-submission" }
   | { error: FollowUpCommandError };
 
 export type FollowUpCommandError =
   | { kind: "unauthorized" }
-  | { kind: "thread-not-found" }
   | { kind: "lock-held" } // another POST already in flight
   | { kind: "invalid-input"; reason: string };
 
@@ -77,20 +75,10 @@ export async function dispatchFollowUpFromAppend(args: {
   threadChatId: string;
   userId: string;
   body: RunAgentInput;
-  /**
-   * Set when the request comes from the integration harness in replay mode.
-   * Skips followUp invocation — no DB writes, no lock, no dispatch.
-   */
-  isReplayMode: boolean;
 }): Promise<FollowUpCommandResult> {
-  const { threadId, threadChatId, userId, body, isReplayMode } = args;
+  const { threadId, threadChatId, userId, body } = args;
 
-  // 1. Replay-mode bypass
-  if (isReplayMode) {
-    return { skipped: "replay-mode" };
-  }
-
-  // 2. Validate ownership
+  // 1. Validate ownership
   const threadChat = await getThreadChat({
     db,
     threadId,
@@ -120,7 +108,7 @@ export async function dispatchFollowUpFromAppend(args: {
     };
   }
 
-  // 3. Extract the new user message
+  // 2. Extract the new user message
   const agUiUserMessage = extractUserMessage(body);
   if (agUiUserMessage === null) {
     return {

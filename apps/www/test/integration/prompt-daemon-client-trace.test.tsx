@@ -267,7 +267,6 @@ describe("prompt to daemon to client trace", () => {
       body: expect.objectContaining({
         messages: [{ id: "user-trace-1", role: "user", content: prompt }],
       }),
-      isReplayMode: false,
     });
 
     const receivedEvents = await readReplayBurst(response, daemonEvents.length);

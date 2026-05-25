@@ -275,9 +275,10 @@ function assistantMessage(
 
 function upsertAssistantMessage(params: {
   messages: ThreadMessage[];
+  messageIds: Set<string>;
   message: Extract<AgUiMessage, { role: "assistant" }>;
 }): void {
-  const { messages, message } = params;
+  const { messages, messageIds, message } = params;
   const incoming = assistantMessage(message);
   const existingIndex = messages.findIndex(
     (candidate) =>
@@ -285,12 +286,14 @@ function upsertAssistantMessage(params: {
   );
   if (existingIndex === -1) {
     messages.push(incoming);
+    messageIds.add(incoming.id);
     return;
   }
 
   const existing = messages[existingIndex];
   if (!existing || existing.role !== "assistant") {
     messages.push(incoming);
+    messageIds.add(incoming.id);
     return;
   }
 
@@ -299,10 +302,6 @@ function upsertAssistantMessage(params: {
     content: [...existing.content, ...incoming.content],
     status: incoming.status,
   };
-}
-
-function hasMessageId(messages: readonly ThreadMessage[], messageId: string) {
-  return messages.some((message) => message.id === messageId);
 }
 
 function applyToolResult(params: {
@@ -382,6 +381,7 @@ export function hydrateAssistantHistoryMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
+  const messageIds = new Set<string>();
 
   for (const item of agUiMessages) {
     if (!isAgUiMessage(item)) {
@@ -400,19 +400,21 @@ export function hydrateAssistantHistoryMessages(
     const message = item;
     switch (message.role) {
       case "user":
-        if (hasMessageId(messages, message.id)) {
+        if (messageIds.has(message.id)) {
           break;
         }
         messages.push(userMessage(message));
+        messageIds.add(message.id);
         break;
       case "system":
-        if (hasMessageId(messages, message.id)) {
+        if (messageIds.has(message.id)) {
           break;
         }
         messages.push(systemMessage(message));
+        messageIds.add(message.id);
         break;
       case "assistant":
-        upsertAssistantMessage({ messages, message });
+        upsertAssistantMessage({ messages, messageIds, message });
         break;
       case "tool":
         if (!applyToolResult({ messages, message })) {
@@ -430,6 +432,7 @@ export function hydrateAssistantHistoryMessages(
               ],
             }),
           );
+          messageIds.add(`${message.id}:assistant`);
           applyToolResult({ messages, message });
         }
         break;

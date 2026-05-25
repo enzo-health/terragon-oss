@@ -1,8 +1,8 @@
 # Refactor AG-UI Runtime Session and Transcript Projection
 
-**Type:** refactor  
-**Status:** completed  
-**Date:** 2026-05-24  
+**Type:** refactor
+**Status:** completed
+**Date:** 2026-05-24
 **Owner:** Terragon chat runtime
 
 ## Summary

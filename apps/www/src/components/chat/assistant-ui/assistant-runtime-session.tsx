@@ -93,6 +93,40 @@ function resolveThreadRuntimeErrorProps({
   return {};
 }
 
+function AssistantRuntimeBoundary({
+  runtimeKey,
+  runtimeOptions,
+  children,
+}: {
+  runtimeKey: string;
+  runtimeOptions: UseAgUiRuntimeOptions;
+  children: React.ReactNode;
+}) {
+  return (
+    <AssistantRuntimeProviderBoundary
+      key={runtimeKey}
+      runtimeOptions={runtimeOptions}
+    >
+      {children}
+    </AssistantRuntimeProviderBoundary>
+  );
+}
+
+function AssistantRuntimeProviderBoundary({
+  runtimeOptions,
+  children,
+}: {
+  runtimeOptions: UseAgUiRuntimeOptions;
+  children: React.ReactNode;
+}) {
+  const runtime = useAgUiRuntime(runtimeOptions);
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  );
+}
+
 export type AssistantRuntimeSessionProps = {
   agent: HttpAgent;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
@@ -243,21 +277,10 @@ export function AssistantRuntimeSession({
       adapters: {
         history,
       },
-      historyLoadKey: runtimeResumePolicy.historyLoadKey,
-      externalMessagesStrategy: "merge-after-local-mutations",
     }),
-    [
-      agent,
-      handleRuntimeError,
-      history,
-      showThinking,
-      runtimeResumePolicy.historyLoadKey,
-      threadId,
-      threadChatId,
-    ],
+    [agent, handleRuntimeError, history, showThinking, threadId, threadChatId],
   );
 
-  const runtime = useAgUiRuntime(runtimeOptions);
   const resolvedErrorProps = resolveThreadRuntimeErrorProps({
     callerError,
     callerErrorType,
@@ -267,7 +290,10 @@ export function AssistantRuntimeSession({
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeBoundary
+      runtimeKey={runtimeResumePolicy.historyLoadKey}
+      runtimeOptions={runtimeOptions}
+    >
       {children({
         errorInfo: resolvedErrorProps.errorInfo,
         errorType: resolvedErrorProps.errorType,
@@ -277,6 +303,6 @@ export function AssistantRuntimeSession({
             : undefined,
         isRetrying: historyLoadError || runtimeError ? false : undefined,
       })}
-    </AssistantRuntimeProvider>
+    </AssistantRuntimeBoundary>
   );
 }

@@ -15,7 +15,7 @@ import {
 } from "./thread-view-model/reducer";
 import { createEmptyThreadViewSnapshot } from "./thread-view-model/snapshot-adapter";
 import {
-  createThreadViewEventFromAgUiEvent,
+  createProductSidecarThreadViewEvent,
   createThreadViewSidecarEventProjector,
   type ThreadViewEventForAgUi,
   useAgUiSidecarRouter,
@@ -85,8 +85,12 @@ function SidecarHarness({
     [],
   );
   const viewModel = useThreadViewModel({
-    agent,
     snapshot,
+    includeTranscriptMessages: false,
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
     projectEvent,
   });
   onMessages(viewModel.messages);
@@ -121,8 +125,8 @@ function RoutedSidecarHarness({
     [],
   );
   const viewModel = useThreadViewModel({
-    agent: null,
     snapshot,
+    includeTranscriptMessages: false,
   });
   useAgUiSidecarRouter({
     agent,
@@ -229,28 +233,29 @@ describe("useThreadViewModel sidecar projection", () => {
       agent: "claudeCode",
       initialMessages: [],
     });
+    const projector = createThreadViewSidecarEventProjector();
     let state = createInitialThreadViewModelState(initialSnapshot);
 
     state = threadViewModelReducer(state, {
       type: "runtime.event",
-      projectTranscript: false,
       event: {
         type: EventType.RUN_STARTED,
         runId: "run-1",
       } as BaseEvent,
     });
+    const transcriptEvent = projector({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "agent-1",
+      delta: "token",
+    } as BaseEvent);
+    if (transcriptEvent) {
+      state = threadViewModelReducer(state, {
+        type: "ag-ui.event",
+        event: transcriptEvent,
+      });
+    }
     state = threadViewModelReducer(state, {
       type: "ag-ui.event",
-      projectTranscript: false,
-      event: {
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: "agent-1",
-        delta: "token",
-      } as BaseEvent,
-    });
-    state = threadViewModelReducer(state, {
-      type: "ag-ui.event",
-      projectTranscript: false,
       event: {
         type: EventType.CUSTOM,
         name: "artifact-reference",
@@ -378,18 +383,18 @@ describe("useThreadViewModel sidecar projection", () => {
 
   it("routes run lifecycle events through the runtime event input", () => {
     expect(
-      createThreadViewEventFromAgUiEvent({
+      createProductSidecarThreadViewEvent({
         type: EventType.RUN_STARTED,
         runId: "run-1",
       } as BaseEvent),
     ).toMatchObject({ type: "runtime.event" });
     expect(
-      createThreadViewEventFromAgUiEvent({
+      createProductSidecarThreadViewEvent({
         type: EventType.RUN_FINISHED,
       } as BaseEvent),
     ).toMatchObject({ type: "runtime.event" });
     expect(
-      createThreadViewEventFromAgUiEvent({
+      createProductSidecarThreadViewEvent({
         type: EventType.TEXT_MESSAGE_START,
         messageId: "m1",
       } as BaseEvent),

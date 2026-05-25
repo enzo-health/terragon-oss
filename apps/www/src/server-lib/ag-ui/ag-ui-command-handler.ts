@@ -68,7 +68,6 @@ export async function handleAgUiPostCommand(args: {
     threadChatId,
     userId,
     body,
-    isReplayMode: false,
   });
   const resultKind =
     "error" in result
@@ -96,13 +95,6 @@ export async function handleAgUiPostCommand(args: {
   const { error } = result;
   if (error.kind === "unauthorized") {
     return { type: "response", status: 403, body: { error: "Forbidden" } };
-  }
-  if (error.kind === "thread-not-found") {
-    return {
-      type: "response",
-      status: 404,
-      body: { error: "Thread not found" },
-    };
   }
   if (error.kind === "lock-held") {
     return {

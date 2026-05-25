@@ -77,7 +77,6 @@ const BASE_ARGS = {
   threadChatId: "chat-1",
   userId: "user-1",
   body: makeBody(),
-  isReplayMode: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,34 +92,6 @@ describe("dispatchFollowUpFromAppend", () => {
     redisMocks.del.mockResolvedValue(1);
     followUpMocks.followUpInternal.mockResolvedValue(undefined);
     agentEventMocks.getLatestRunIdForThreadChat.mockResolvedValue("run-xyz");
-  });
-
-  // -------------------------------------------------------------------------
-  // Replay-mode bypass
-  // -------------------------------------------------------------------------
-
-  describe("replay-mode bypass", () => {
-    it("returns { skipped: 'replay-mode' } immediately", async () => {
-      const result = await dispatchFollowUpFromAppend({
-        ...BASE_ARGS,
-        isReplayMode: true,
-      });
-
-      expect(result).toEqual({ skipped: "replay-mode" });
-    });
-
-    it("does NOT call followUpInternal in replay mode", async () => {
-      await dispatchFollowUpFromAppend({ ...BASE_ARGS, isReplayMode: true });
-
-      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
-    });
-
-    it("does NOT acquire the Redis lock in replay mode", async () => {
-      await dispatchFollowUpFromAppend({ ...BASE_ARGS, isReplayMode: true });
-
-      expect(redisMocks.set).not.toHaveBeenCalled();
-      expect(redisMocks.del).not.toHaveBeenCalled();
-    });
   });
 
   // -------------------------------------------------------------------------

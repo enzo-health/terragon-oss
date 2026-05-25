@@ -253,25 +253,25 @@ apps/www/src/app/api/ag-ui/[threadId]/route.ts
 
 Module ownership:
 
-- `apps/www/src/server-lib/ag-ui/ag-ui-request-contract.ts`  
+- `apps/www/src/server-lib/ag-ui/ag-ui-request-contract.ts`
   Request DTOs, typed route errors, status mapping helpers.
 
-- `apps/www/src/server-lib/ag-ui/ag-ui-command-handler.ts`  
+- `apps/www/src/server-lib/ag-ui/ag-ui-command-handler.ts`
   POST semantics, `RunAgentInputSchema`, replay-mode skip, append vs resume classification, trace spans, `runFollowUpFromAgUiInput()` result mapping.
 
-- `apps/www/src/server-lib/ag-ui/thread-history-projector.ts`  
+- `apps/www/src/server-lib/ag-ui/thread-history-projector.ts`
   History JSON endpoint, durable event load, terminal filtering, native history extraction, DB user-message backfill, history cursor selection.
 
-- `apps/www/src/server-lib/ag-ui/stream-replay-planner.ts`  
+- `apps/www/src/server-lib/ag-ui/stream-replay-planner.ts`
   Durable replay semantics: delayed `RUN_STARTED`, duplicate `RUN_STARTED` drop, projection-aware cursor filtering, terminal filtering, replay close reason.
 
-- `apps/www/src/server-lib/ag-ui/thread-event-live-tail.ts`  
+- `apps/www/src/server-lib/ag-ui/thread-event-live-tail.ts`
   Redis stream cursor capture, XREAD polling, live overlap dedupe, durable catch-up after idle/error.
 
-- `apps/www/src/server-lib/ag-ui/terminal-event-synthesizer.ts`  
+- `apps/www/src/server-lib/ag-ui/terminal-event-synthesizer.ts`
   Durable terminal fallback from run status when terminal AG-UI rows are missing.
 
-- `apps/www/src/server-lib/ag-ui/ag-ui-sse-writer.ts`  
+- `apps/www/src/server-lib/ag-ui/ag-ui-sse-writer.ts`
   SSE byte protocol only: frame encoding, comments, keepalive, headers, close diagnostics.
 
 ### Client Target

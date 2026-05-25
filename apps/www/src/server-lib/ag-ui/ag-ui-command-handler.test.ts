@@ -53,6 +53,7 @@ const BASE_ARGS = {
   threadId: "thread-1",
   threadChatId: "chat-1",
   userId: "user-1",
+  isReplayMode: false,
 };
 
 describe("handleAgUiPostCommand", () => {
@@ -79,7 +80,6 @@ describe("handleAgUiPostCommand", () => {
     const result = await handleAgUiPostCommand({
       ...BASE_ARGS,
       request: makeRequest("http://localhost/api/ag-ui/thread-1"),
-      isReplayMode: false,
     });
 
     expect(result).toEqual({ type: "open-stream" });
@@ -93,14 +93,14 @@ describe("handleAgUiPostCommand", () => {
     const result = await handleAgUiPostCommand({
       ...BASE_ARGS,
       request,
-      isReplayMode: false,
     });
 
     expect(result).toEqual({ type: "open-stream" });
     expect(followUpMocks.dispatchFollowUpFromAppend).toHaveBeenCalledWith({
-      ...BASE_ARGS,
+      threadId: BASE_ARGS.threadId,
+      threadChatId: BASE_ARGS.threadChatId,
+      userId: BASE_ARGS.userId,
       body: expect.objectContaining({ runId: "run-1" }),
-      isReplayMode: false,
     });
   });
 
@@ -113,7 +113,6 @@ describe("handleAgUiPostCommand", () => {
     const result = await handleAgUiPostCommand({
       ...BASE_ARGS,
       request,
-      isReplayMode: false,
     });
 
     expect(result).toEqual({ type: "open-stream" });
@@ -136,7 +135,6 @@ describe("handleAgUiPostCommand", () => {
     await handleAgUiPostCommand({
       ...BASE_ARGS,
       request,
-      isReplayMode: false,
     });
 
     expect(followUpMocks.dispatchFollowUpFromAppend).toHaveBeenCalledOnce();
@@ -150,7 +148,6 @@ describe("handleAgUiPostCommand", () => {
     const result = await handleAgUiPostCommand({
       ...BASE_ARGS,
       request: makeRequest("http://localhost/api/ag-ui/thread-1", makeBody()),
-      isReplayMode: false,
     });
 
     expect(result).toEqual({

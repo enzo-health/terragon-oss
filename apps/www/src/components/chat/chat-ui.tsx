@@ -277,8 +277,8 @@ function ChatUIContent() {
   }, [observedRunId, threadChat.id, threadId]);
 
   const threadViewModel = useThreadViewModel({
-    agent: null,
     snapshot: threadViewSnapshot,
+    includeTranscriptMessages: false,
   });
   useProductSidecars({
     agent,

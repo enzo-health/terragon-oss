@@ -43,7 +43,6 @@ export function applyOptimisticUserSubmit(
     message: event.message,
     id: `user-optimistic-${state.threadChatId}-${state.dbMessages.length}`,
   });
-
   const duplicate = state.transcript.messages.some((message) =>
     isSameUserMessage(message, uiMessage),
   );
