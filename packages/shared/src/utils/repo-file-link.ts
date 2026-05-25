@@ -37,6 +37,30 @@ function hasUriScheme(href: string): boolean {
   return false;
 }
 
+/**
+ * Absolute path the repo is cloned to inside every sandbox. Agents routinely
+ * emit absolute paths (`/root/repo/apps/foo.ts`) in markdown links and tool
+ * output, so we map that sandbox-absolute form back to the repo-relative path
+ * GitHub `getContent` expects. Mirrors the clone target in
+ * `packages/sandbox/src/snapshot-builder.ts` (homeDir `root` + repoDir `repo`);
+ * inlined as a literal to keep this util free of sandbox coupling.
+ */
+const SANDBOX_REPO_ROOT = "/root/repo";
+
+/**
+ * Map a sandbox-absolute path under the repo clone root to its repo-relative
+ * form. `/root/repo/apps/foo.ts` → `/apps/foo.ts`; `/root/repo` (the bare root)
+ * → ``. Any other input passes through unchanged so the generic
+ * leading-slash/`.` normalization below still applies.
+ */
+function stripSandboxRepoRoot(rawPath: string): string {
+  if (rawPath === SANDBOX_REPO_ROOT) return "";
+  if (rawPath.startsWith(`${SANDBOX_REPO_ROOT}/`)) {
+    return rawPath.slice(SANDBOX_REPO_ROOT.length);
+  }
+  return rawPath;
+}
+
 function parseLineAnchor(anchor: string): RepoFileLineRange | undefined {
   // Accept `L12` or `L12-L34` (also tolerates `L12-34`), case-insensitive.
   const match = /^L(\d+)(?:-L?(\d+))?$/i.exec(anchor);
@@ -63,9 +87,12 @@ function parseLineAnchor(anchor: string): RepoFileLineRange | undefined {
 function normalizeRepoPath(rawPath: string): string | null {
   if (rawPath.length === 0) return null;
 
-  // Strip a single leading slash (workspace-root-absolute → relative) and a
+  // Map a sandbox-absolute path (`/root/repo/...`) to repo-relative first, then
+  // strip a single leading slash (workspace-root-absolute → relative) and a
   // leading `./`.
-  let path = rawPath.replace(/^\/+/, "").replace(/^\.\//, "");
+  let path = stripSandboxRepoRoot(rawPath)
+    .replace(/^\/+/, "")
+    .replace(/^\.\//, "");
 
   const segments = path.split("/");
   const normalized: string[] = [];

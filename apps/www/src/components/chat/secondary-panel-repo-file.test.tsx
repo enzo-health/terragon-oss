@@ -241,6 +241,85 @@ describe("RepoFileArtifactRenderer content + fetch flow", () => {
     );
   });
 
+  it("renders a clickable directory listing and opens an entry on click", async () => {
+    getRepoFileContentAction.mockResolvedValue({
+      success: true,
+      data: {
+        status: "directory",
+        path: "src/web",
+        ref: "feature",
+        entries: [
+          { type: "dir", name: "routers", path: "src/web/routers" },
+          { type: "file", name: "index.ts", path: "src/web/index.ts" },
+        ],
+      },
+    });
+    const onOpenRepoFile = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <RepoFileArtifactRenderer
+          repoFilePart={{ type: "repo-file", path: "src/web" }}
+          threadId="thread-1"
+          onOpenRepoFile={onOpenRepoFile}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const labels = buttons.map((b) => b.textContent?.trim());
+    // Parent (..), the directory, then the file, in that order.
+    expect(labels).toEqual(["..", "routers", "index.ts"]);
+
+    const routersButton = buttons.find((b) =>
+      b.textContent?.includes("routers"),
+    );
+    await act(async () => {
+      routersButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenRepoFile).toHaveBeenCalledWith("src/web/routers");
+
+    const upButton = buttons[0];
+    await act(async () => {
+      upButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // ".." resolves to the repo-relative parent of src/web.
+    expect(onOpenRepoFile).toHaveBeenCalledWith("src");
+  });
+
+  it("omits the up-one entry for a top-level directory", async () => {
+    getRepoFileContentAction.mockResolvedValue({
+      success: true,
+      data: {
+        status: "directory",
+        path: "apps",
+        ref: "feature",
+        entries: [{ type: "dir", name: "www", path: "apps/www" }],
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <RepoFileArtifactRenderer
+          repoFilePart={{ type: "repo-file", path: "apps" }}
+          threadId="thread-1"
+          onOpenRepoFile={vi.fn()}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const labels = Array.from(container.querySelectorAll("button")).map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(labels).toEqual(["www"]);
+  });
+
   it("ignores a resolved result after the component unmounts (abort)", async () => {
     let resolve: ((value: unknown) => void) | undefined;
     getRepoFileContentAction.mockReturnValue(

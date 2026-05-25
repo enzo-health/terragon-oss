@@ -5,7 +5,7 @@ import {
   isMarkdownFile,
   type RepoFileLineRange,
 } from "@terragon/shared/utils/repo-file-link";
-import { Code2, FileText } from "lucide-react";
+import { Code2, CornerLeftUp, FileText, Folder } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import {
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import {
   type GetRepoFileContentResult,
   getRepoFileContentAction,
+  type RepoDirectoryEntry,
 } from "@/server-actions/get-repo-file-content";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 
@@ -28,7 +29,90 @@ import { ArtifactWorkspaceState } from "./secondary-panel-state";
 type RepoFilePreviewState =
   | { status: "loading" }
   | { status: "ready"; content: string }
+  | { status: "directory"; entries: RepoDirectoryEntry[] }
   | { status: "error"; message: string };
+
+/**
+ * Repo-relative parent of a directory path, or null at the top level. A
+ * top-level dir's parent is the repo root, which the classifier rejects as a
+ * non-file, so we omit the up-one entry rather than offer a dead link.
+ */
+function parentDirPath(path: string): string | null {
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash <= 0) return null;
+  return path.slice(0, lastSlash);
+}
+
+function RepoDirectoryListing({
+  path,
+  entries,
+  onOpenRepoFile,
+}: {
+  path: string;
+  entries: RepoDirectoryEntry[];
+  onOpenRepoFile?: (href: string) => void;
+}) {
+  const parent = parentDirPath(path);
+  const rows: { key: string; label: string; href: string; isDir: boolean }[] = [
+    ...(parent !== null
+      ? [{ key: "..", label: "..", href: parent, isDir: true }]
+      : []),
+    ...entries.map((entry) => ({
+      key: entry.path,
+      label: entry.name,
+      href: entry.path,
+      isDir: entry.type === "dir",
+    })),
+  ];
+
+  if (rows.length === 0) {
+    return (
+      <ArtifactWorkspaceState
+        variant="empty"
+        title="Empty directory"
+        description="This directory has no previewable entries."
+      />
+    );
+  }
+
+  return (
+    <ul className="flex flex-col text-sm" aria-label={`Contents of ${path}`}>
+      {rows.map((row) => {
+        const Icon = row.isDir ? Folder : FileText;
+        const isUp = row.key === "..";
+        return (
+          <li key={row.key}>
+            <button
+              type="button"
+              disabled={!onOpenRepoFile}
+              onClick={() => onOpenRepoFile?.(row.href)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded px-2 py-1 text-left transition-colors",
+                onOpenRepoFile
+                  ? "hover:bg-muted/60"
+                  : "cursor-default opacity-70",
+              )}
+            >
+              {isUp ? (
+                <CornerLeftUp className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <Icon
+                  className={cn(
+                    "size-4 shrink-0",
+                    row.isDir ? "text-sky-500" : "text-muted-foreground",
+                  )}
+                />
+              )}
+              <span className={cn("truncate", row.isDir && "font-medium")}>
+                {row.label}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 /** Metadata carried on the line-range highlight annotation. */
 interface RepoFileAnnotationMetadata {
@@ -115,6 +199,10 @@ export function RepoFileArtifactRenderer({
             status: "error",
             message: describeErrorCategory(result.category),
           });
+          return;
+        }
+        if (result.status === "directory") {
+          setState({ status: "directory", entries: result.entries });
           return;
         }
         setState({ status: "ready", content: result.content });
@@ -220,6 +308,13 @@ export function RepoFileArtifactRenderer({
             variant="error"
             title="Preview unavailable"
             description={state.message}
+          />
+        )}
+        {state.status === "directory" && (
+          <RepoDirectoryListing
+            path={path}
+            entries={state.entries}
+            onOpenRepoFile={onOpenRepoFile}
           />
         )}
         {state.status === "ready" &&

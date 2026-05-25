@@ -151,6 +151,32 @@ describe("getRepoFileContentAction", () => {
     expect(getContent).not.toHaveBeenCalled();
   });
 
+  it("returns a sorted directory listing, dropping symlinks/submodules", async () => {
+    getContent.mockResolvedValue({
+      data: [
+        { type: "file", name: "Zebra.ts", path: "src/Zebra.ts" },
+        { type: "dir", name: "utils", path: "src/utils" },
+        { type: "file", name: "apple.ts", path: "src/apple.ts" },
+        { type: "dir", name: "Api", path: "src/Api" },
+        { type: "symlink", name: "link", path: "src/link" },
+        { type: "submodule", name: "vendor", path: "src/vendor" },
+      ],
+    });
+    const result = await callAction({ threadId, path: "src" });
+    expect(result.status).toBe("directory");
+    if (result.status === "directory") {
+      expect(result.path).toBe("src");
+      // Directories first (case-insensitive alpha), then files (same), with
+      // symlink and submodule entries dropped.
+      expect(result.entries).toEqual([
+        { type: "dir", name: "Api", path: "src/Api" },
+        { type: "dir", name: "utils", path: "src/utils" },
+        { type: "file", name: "apple.ts", path: "src/apple.ts" },
+        { type: "file", name: "Zebra.ts", path: "src/Zebra.ts" },
+      ]);
+    }
+  });
+
   it("maps a 404 (unpushed/missing file) to a typed not-found error", async () => {
     getContent.mockRejectedValue({ status: 404 });
     const result = await callAction({
