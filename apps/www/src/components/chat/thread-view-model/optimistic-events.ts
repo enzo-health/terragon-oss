@@ -53,6 +53,17 @@ export function createRepoFileOpenedEvent({
   };
 }
 
+export function createRepoTreeOpenedEvent({
+  ref,
+}: {
+  ref?: string;
+}): ThreadViewEvent {
+  return {
+    type: "repo-tree.opened",
+    ...(ref ? { ref } : {}),
+  };
+}
+
 export function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,

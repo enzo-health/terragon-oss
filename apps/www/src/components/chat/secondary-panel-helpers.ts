@@ -2,6 +2,7 @@ import {
   type UIGitDiffPart,
   type UIPart,
   type UIRepoFilePart,
+  type UIRepoTreePart,
   type UIStructuredPlanPart,
 } from "@terragon/shared";
 import {
@@ -33,7 +34,8 @@ export type ArtifactWorkspaceComparablePart =
   | UIPart
   | UIGitDiffPart
   | UIStructuredPlanPart
-  | UIRepoFilePart;
+  | UIRepoFilePart
+  | UIRepoTreePart;
 
 type ArtifactDescriptorMatch = Pick<ArtifactDescriptor, "id" | "part">;
 
@@ -245,6 +247,8 @@ function getArtifactSourceLabel(origin: ArtifactDescriptorOrigin) {
       return "Runtime artifact";
     case "repo-file":
       return "Repo file";
+    case "repo-tree":
+      return "Repo files";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;
@@ -270,6 +274,8 @@ function getArtifactResponseActionLabel(origin: ArtifactDescriptorOrigin) {
       return origin.lineRange
         ? `Lines ${origin.lineRange.start}-${origin.lineRange.end}`
         : "File";
+    case "repo-tree":
+      return "Files";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;

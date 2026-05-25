@@ -1,6 +1,9 @@
 import type { BaseEvent } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
-import { createRepoFileArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import {
+  createRepoFileArtifactDescriptor,
+  createRepoTreeArtifactDescriptor,
+} from "@terragon/shared/db/artifact-descriptors";
 import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
@@ -105,6 +108,14 @@ export function threadViewModelReducer(
             ref: event.ref,
             lineRange: event.lineRange,
           }),
+        ),
+      };
+    case "repo-tree.opened":
+      return {
+        ...state,
+        artifacts: upsertSynthesizedDescriptor(
+          state.artifacts,
+          createRepoTreeArtifactDescriptor({ ref: event.ref }),
         ),
       };
     default: {

@@ -8,6 +8,7 @@ import type {
   UIPdfPart,
   UIPlanPart,
   UIRepoFilePart,
+  UIRepoTreePart,
   UIRichTextPart,
   UIStructuredPlanPart,
   UITextFilePart,
@@ -25,7 +26,8 @@ export type ArtifactDescriptorKind =
   | "file"
   | "media"
   | "plan"
-  | "repo-file";
+  | "repo-file"
+  | "repo-tree";
 
 export type ArtifactDescriptorStatus = "ready";
 
@@ -43,7 +45,8 @@ export type ArtifactDescriptorPart =
   | UIGitDiffPart
   | MessageArtifactPart
   | ExitPlanModeToolPart
-  | UIRepoFilePart;
+  | UIRepoFilePart
+  | UIRepoTreePart;
 
 type ToolCallOrigin = {
   id: string;
@@ -98,6 +101,12 @@ export type ArtifactDescriptorOrigin =
       /** Optional `#Lstart-Lend` line range parsed from the source link. */
       lineRange?: RepoFileLineRange;
       fingerprint: string;
+    }
+  | {
+      type: "repo-tree";
+      /** Ref/commit the tree is read against, when known. */
+      ref?: string;
+      fingerprint: string;
     };
 
 type MessageArtifactOrigin = Extract<
@@ -149,13 +158,19 @@ export type RepoFileArtifactDescriptor = BaseArtifactDescriptor<
   UIRepoFilePart
 >;
 
+export type RepoTreeArtifactDescriptor = BaseArtifactDescriptor<
+  "repo-tree",
+  UIRepoTreePart
+>;
+
 export type ArtifactDescriptor =
   | GitDiffArtifactDescriptor
   | DocumentArtifactDescriptor
   | FileArtifactDescriptor
   | MediaArtifactDescriptor
   | PlanArtifactDescriptor
-  | RepoFileArtifactDescriptor;
+  | RepoFileArtifactDescriptor
+  | RepoTreeArtifactDescriptor;
 
 export type ArtifactDescriptorThreadInput = {
   id: string;
@@ -619,6 +634,43 @@ export function createRepoFileArtifactDescriptor({
 function getRepoFileBasename(path: string): string {
   const segments = path.split("/");
   return segments[segments.length - 1] || path;
+}
+
+/**
+ * Stable id for the repo-tree artifact. There is one tree per ref, so the id is
+ * keyed by ref alone — re-opening focuses the existing tab rather than spawning
+ * duplicates. `working` stands in for "no ref / current working tree".
+ */
+export function buildRepoTreeArtifactId({ ref }: { ref?: string }): string {
+  return `artifact:repo-tree:${ref ?? "working"}`;
+}
+
+/**
+ * Builds the synthesized repo-tree artifact descriptor. Like the repo-file
+ * descriptor, it carries identity (the ref) rather than data; the renderer
+ * fetches the listing. Title is "Files"; summary is the ref when known.
+ */
+export function createRepoTreeArtifactDescriptor({
+  ref,
+}: {
+  ref?: string;
+}): RepoTreeArtifactDescriptor {
+  return {
+    id: buildRepoTreeArtifactId({ ref }),
+    kind: "repo-tree",
+    title: "Files",
+    status: "ready",
+    part: {
+      type: "repo-tree",
+      ...(ref ? { ref } : {}),
+    },
+    origin: {
+      type: "repo-tree",
+      ...(ref ? { ref } : {}),
+      fingerprint: shortHash({ ref: ref ?? null }),
+    },
+    ...(ref ? { summary: ref } : {}),
+  };
 }
 
 function buildSystemGitDiffArtifactBaseId({

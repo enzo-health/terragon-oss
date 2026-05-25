@@ -1,6 +1,9 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
-import { buildRepoFileArtifactId } from "@terragon/shared/db/artifact-descriptors";
+import {
+  buildRepoFileArtifactId,
+  buildRepoTreeArtifactId,
+} from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -334,6 +337,54 @@ describe("ThreadViewModel reducer", () => {
       ref: "other-branch",
     });
     expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(2);
+  });
+
+  it("opens a single repo-tree descriptor, deduped by ref", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "feature-branch",
+    });
+    const opened = projectThreadViewModel(state).artifacts.descriptors;
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      id: buildRepoTreeArtifactId({ ref: "feature-branch" }),
+      kind: "repo-tree",
+      title: "Files",
+    });
+
+    // Re-opening the same ref focuses the existing tab, not a duplicate.
+    const before = state.artifacts;
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "feature-branch",
+    });
+    expect(state.artifacts).toBe(before);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+
+    // A different ref is a distinct tree.
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "other-branch",
+    });
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(2);
+  });
+
+  it("preserves an opened repo-tree descriptor across snapshot hydration", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      { type: "repo-tree.opened", ref: "feature-branch" },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")]),
+    });
+
+    expect(
+      projectThreadViewModel(state).artifacts.descriptors.map((d) => d.id),
+    ).toContain(buildRepoTreeArtifactId({ ref: "feature-branch" }));
   });
 
   it("preserves an opened repo-file descriptor across snapshot hydration", () => {
