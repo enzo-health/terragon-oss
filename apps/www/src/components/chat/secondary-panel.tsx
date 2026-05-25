@@ -12,6 +12,7 @@ import React, {
 import { usePlatform } from "@/hooks/use-platform";
 import { useResizablePanel } from "@/hooks/use-resizable-panel";
 import { cn } from "@/lib/utils";
+import type { RepoFileFocus } from "./git-diff-view.types";
 import { useSecondaryPanel } from "./hooks";
 import {
   ARTIFACT_WORKSPACE_PANEL_ID,
@@ -24,16 +25,16 @@ import type { PromptBoxRef } from "./thread-context";
 
 // Re-exports preserved for external importers and tests.
 export {
+  ARTIFACT_WORKSPACE_PANEL_ID,
+  type ArtifactDescriptorLookup,
+  type ArtifactWorkspaceItemSummary,
+  type ArtifactWorkspaceStatus,
   createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
   resolveRepoFileTarget,
-  ARTIFACT_WORKSPACE_PANEL_ID,
-  type ArtifactDescriptorLookup,
-  type ArtifactWorkspaceItemSummary,
-  type ArtifactWorkspaceStatus,
 } from "./secondary-panel-helpers";
 
 const SECONDARY_PANEL_MIN_WIDTH = 300;
@@ -55,7 +56,7 @@ export function SecondaryPanel({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
-  repoFileFocusPath = null,
+  repoFileFocus = null,
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
@@ -67,8 +68,8 @@ export function SecondaryPanel({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
-  onOpenRepoFile?: (path: string) => void;
-  repoFileFocusPath?: string | null;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
+  repoFileFocus?: RepoFileFocus | null;
 }) {
   const platform = usePlatform();
   const {
@@ -200,7 +201,7 @@ export function SecondaryPanel({
         promptBoxRef={promptBoxRef}
         onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
         onOpenRepoFile={onOpenRepoFile}
-        repoFileFocusPath={repoFileFocusPath}
+        repoFileFocus={repoFileFocus}
       />
     );
   }
@@ -264,7 +265,7 @@ export function SecondaryPanel({
           promptBoxRef={promptBoxRef}
           onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
           onOpenRepoFile={onOpenRepoFile}
-          repoFileFocusPath={repoFileFocusPath}
+          repoFileFocus={repoFileFocus}
         />
       </div>
     </>

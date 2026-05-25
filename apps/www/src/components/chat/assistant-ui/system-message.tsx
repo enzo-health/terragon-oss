@@ -1,9 +1,9 @@
 "use client";
 
-import { memo } from "react";
-import { useTerragonThread } from "./thread-context";
-import { ChatMessage } from "../chat-message";
 import type { UIMessage } from "@terragon/shared";
+import { memo } from "react";
+import { ChatMessage } from "../chat-message";
+import { useTerragonThread } from "./thread-context";
 
 /**
  * Renders a system message (git-diff, stop, etc.) within the assistant-ui thread.
@@ -37,6 +37,7 @@ export const TerragonSystemMessage = memo(function TerragonSystemMessage({
         artifactDescriptors={ctx.artifactDescriptors}
         artifactDescriptorLookup={ctx.artifactDescriptorLookup}
         onOpenArtifact={ctx.onOpenArtifact}
+        onOpenRepoFile={ctx.onOpenRepoFile}
         planOccurrences={ctx.planOccurrences}
       />
     </div>

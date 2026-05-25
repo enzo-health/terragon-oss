@@ -4,8 +4,8 @@ import React, { useEffect, useId, useMemo, useState } from "react";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { cn } from "@/lib/utils";
-import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FileTreeItem } from "./git-diff-file-tree-item";
+import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FilesChangedHeader } from "./git-diff-files-changed-header";
 import type { GitDiffViewProps } from "./git-diff-view.types";
 import {
@@ -14,8 +14,8 @@ import {
   computeDefaultExpanded,
 } from "./git-diff-view.utils";
 
-export { FilesChangedHeader } from "./git-diff-files-changed-header";
 export { FileDiffWrapper } from "./git-diff-file-wrapper";
+export { FilesChangedHeader } from "./git-diff-files-changed-header";
 
 export function GitDiffView({
   thread,
@@ -24,7 +24,7 @@ export function GitDiffView({
   threadChatId,
   threadMessages,
   onOpenRepoFile,
-  focusFilePath,
+  focusFile,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const fileTreeId = useId();
@@ -119,20 +119,36 @@ export function GitDiffView({
     setExpandedFolders(collectAllFolders(fileTree));
   }, [fileTree]);
 
-  // Scroll to (and expand) the diff for `focusFilePath` when it changes. Used
-  // by the repo-file preview flow: clicking a file path opens this artifact and
-  // lands on that file's diff. getElementById needs the row mounted, so we
-  // expand first and scroll on the next frame.
+  // Scroll to (and expand) the diff for `focusFile.path` when its `nonce`
+  // changes. Used by the repo-file preview flow: clicking a file path opens this
+  // artifact and lands on that file's diff. getElementById needs the row
+  // mounted, so we expand first and scroll on the next frame.
+  //
+  // `diffInstances` is a dependency because the target row must be mounted, but
+  // it is re-derived from the live working tree on every agent edit. Without a
+  // guard the effect would re-fire on each edit and yank the view back to the
+  // focused file, fighting the user's manual scroll. The ref makes focus
+  // one-shot per `nonce`: it fires once the file is found and won't refire on
+  // later `diffInstances` churn. Keying on `nonce` (not the path) lets a repeat
+  // click on the same file re-focus it.
+  const focusPath = focusFile?.path ?? null;
+  const focusNonce = focusFile?.nonce ?? null;
+  const handledFocusNonceRef = React.useRef<number | null>(null);
   useEffect(() => {
-    if (!focusFilePath) {
+    if (!focusPath || focusNonce === null) {
+      handledFocusNonceRef.current = null;
+      return;
+    }
+    if (handledFocusNonceRef.current === focusNonce) {
       return;
     }
     const targetIndex = diffInstances.findIndex(
-      (file) => file.fileName === focusFilePath,
+      (file) => file.fileName === focusPath,
     );
     if (targetIndex === -1) {
       return;
     }
+    handledFocusNonceRef.current = focusNonce;
     setExpanded((prev) => ({ ...prev, [targetIndex]: true }));
     setSelectedFile(targetIndex);
     const frame = requestAnimationFrame(() => {
@@ -141,7 +157,7 @@ export function GitDiffView({
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusFilePath, diffInstances]);
+  }, [focusPath, focusNonce, diffInstances]);
 
   const toggle = (idx: number) => {
     setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));

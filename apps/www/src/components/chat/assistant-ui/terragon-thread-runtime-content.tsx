@@ -5,21 +5,21 @@ import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
   ThreadInfoFull,
   ThreadStatus,
-  UIUserMessage,
   UISystemMessage,
+  UIUserMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { createArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { useEffect, useMemo, useState } from "react";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isSandboxErrorType } from "../chat-error";
-import { useScrollToHashMessageOnce } from "../use-chat-effects";
 import type {
   ForkDialogData,
   MessagePartRenderProps,
   RedoDialogData,
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
+import { createArtifactDescriptorLookup } from "../secondary-panel-helpers";
+import { useScrollToHashMessageOnce } from "../use-chat-effects";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
@@ -28,11 +28,11 @@ import {
   type TerragonThreadContext,
   TerragonThreadProvider,
 } from "./thread-context";
+import { useTerragonTranscript } from "./use-terragon-transcript";
 import {
   getWorkingFooterFreshness,
   shouldSuppressPreStartLifecycleFooter,
 } from "./working-footer-freshness";
-import { useTerragonTranscript } from "./use-terragon-transcript";
 
 export type TerragonThreadRuntimeContentProps = {
   lifecycleMessages: UISystemMessage[];
@@ -42,6 +42,7 @@ export type TerragonThreadRuntimeContentProps = {
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   toolProps: TerragonThreadContext["toolProps"];
@@ -72,6 +73,7 @@ export function TerragonThreadRuntimeContent({
   isAgentWorking,
   artifactDescriptors,
   onOpenArtifact,
+  onOpenRepoFile,
   redoDialogData,
   forkDialogData,
   toolProps,
@@ -179,6 +181,7 @@ export function TerragonThreadRuntimeContent({
       artifactDescriptors: stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -196,6 +199,7 @@ export function TerragonThreadRuntimeContent({
       stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,

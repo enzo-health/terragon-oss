@@ -1,8 +1,9 @@
-import React from "react";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
 import type { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ReactNode } from "react";
+import React from "react";
+import { describe, expect, it, vi } from "vitest";
+import { ImagePart } from "./image-part";
 import {
   createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
@@ -11,7 +12,6 @@ import {
   resolveActiveArtifactId,
   resolveRepoFileTarget,
 } from "./secondary-panel";
-import { ImagePart } from "./image-part";
 import { renderToolPartContent } from "./tool-part";
 
 describe("secondary-panel artifact shell helpers", () => {
@@ -365,16 +365,79 @@ describe("resolveRepoFileTarget (repo-file preview open flow)", () => {
     });
   });
 
-  it("falls back to the working-tree diff even when the path is not detected in any diff text", () => {
+  it("prefers the owning artifact over the working tree when both contain the path", () => {
+    // Inline (chat-transcript) diffs pass the clicked part's own artifact id as
+    // `preferArtifactId`. When that checkpoint contains the path, it must win
+    // over the live working-tree diff that also contains it.
+    const checkpointWithSharedPath = {
+      ...checkpointDescriptor,
+      part: {
+        type: "git-diff" as const,
+        diff: "diff --git a/src/foo.ts b/src/foo.ts\n@@ -1 +1 @@\n-old\n+new",
+      },
+    };
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [workingTreeDescriptor, checkpointWithSharedPath],
+        path: "src/foo.ts",
+        preferArtifactId: checkpointWithSharedPath.id,
+      }),
+    ).toEqual({
+      artifactId: checkpointWithSharedPath.id,
+      filePath: "src/foo.ts",
+    });
+  });
+
+  it("ignores preferArtifactId when that artifact does not contain the path", () => {
+    // The preferred checkpoint only has src/bar.ts; clicking src/foo.ts must
+    // fall through to the working tree rather than opening a diff without it.
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [workingTreeDescriptor, checkpointDescriptor],
+        path: "src/foo.ts",
+        preferArtifactId: checkpointDescriptor.id,
+      }),
+    ).toEqual({
+      artifactId: workingTreeDescriptor.id,
+      filePath: "src/foo.ts",
+    });
+  });
+
+  it("returns null when the path is not a parsed file in any diff", () => {
+    // The resolver matches parsed `fileName`s exactly (same as the panel's
+    // focus effect), so a path that no diff actually contains resolves to
+    // nothing rather than opening an artifact the panel can't focus.
     expect(
       resolveRepoFileTarget({
         artifacts: [checkpointDescriptor, workingTreeDescriptor],
         path: "src/never-seen.ts",
       }),
-    ).toEqual({
-      artifactId: "artifact:thread:thread-1:git-diff",
-      filePath: "src/never-seen.ts",
-    });
+    ).toBeNull();
+  });
+
+  it("does not false-positive on substring or prefix-overlapping paths", () => {
+    // `src/foo.ts` must not match `src/foo.ts.bak`; exact parsed-filename
+    // matching prevents the old `diff.includes(path)` substring bug.
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [
+          {
+            id: "artifact:thread:thread-1:git-diff",
+            kind: "git-diff" as const,
+            part: {
+              type: "git-diff" as const,
+              diff: "diff --git a/src/foo.ts.bak b/src/foo.ts.bak\n@@ -1 +1 @@\n-a\n+b",
+            },
+            origin: {
+              type: "thread" as const,
+              threadId: "thread-1",
+              field: "gitDiff" as const,
+            },
+          },
+        ],
+        path: "src/foo.ts",
+      }),
+    ).toBeNull();
   });
 
   it("resolves to an id that actually exists in the artifact list (no dead-end)", () => {

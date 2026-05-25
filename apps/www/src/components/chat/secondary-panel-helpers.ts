@@ -8,6 +8,7 @@ import {
   type ArtifactDescriptorOrigin,
   getArtifactDescriptors,
 } from "@terragon/shared/db/artifact-descriptors";
+import { parseMultiFileDiff } from "@/lib/git-diff";
 
 export const ARTIFACT_WORKSPACE_PANEL_ID = "artifact-workspace-panel";
 
@@ -139,23 +140,34 @@ export function findArtifactDescriptorForPart({
  * file path opens the git-diff artifact that contains it and lets the caller
  * scroll to that file.
  *
- * Resolution order:
- * 1. The working-tree git-diff artifact (origin `thread`/`gitDiff`) whose diff
- *    text contains the path. This is the live "Current changes" surface.
- * 2. Any other git-diff artifact (e.g. a diff checkpoint) whose diff contains
- *    the path.
- * 3. The working-tree git-diff artifact even if the path is not detected in its
- *    text (defensive: diff path-prefix forms like `a/`/`b/` can vary).
+ * A file "belongs to" an artifact when the artifact's diff parses to a
+ * `ParsedDiffFile` whose `fileName` exactly equals the path. This is the same
+ * structured match the focus effect in `GitDiffView` uses
+ * (`file.fileName === focusFile.path`), so the artifact we open is guaranteed to
+ * contain a row the panel can scroll to — no substring false-positives (e.g.
+ * `src/foo.ts` matching `src/foo.ts.bak` or a path inside an import line).
  *
- * Returns `null` when no git-diff artifact exists, so callers can no-op instead
- * of falling back to an unrelated artifact (which would open the wrong thing).
+ * Resolution order:
+ * 1. `preferArtifactId`, when supplied and that git-diff artifact contains the
+ *    file. Inline (chat-transcript) diffs pass the id of the artifact the user
+ *    actually clicked so an older checkpoint diff opens that checkpoint — not
+ *    the live working tree.
+ * 2. The working-tree git-diff artifact (origin `thread`/`gitDiff`) that
+ *    contains the file. This is the live "Current changes" surface.
+ * 3. Any other git-diff artifact (e.g. a diff checkpoint) that contains the
+ *    file.
+ *
+ * Returns `null` when no git-diff artifact contains the file, so callers can
+ * no-op instead of opening an artifact the panel can't focus the path within.
  */
 export function resolveRepoFileTarget({
   artifacts,
   path,
+  preferArtifactId,
 }: {
   artifacts: Array<Pick<ArtifactDescriptor, "id" | "kind" | "part" | "origin">>;
   path: string;
+  preferArtifactId?: string;
 }): { artifactId: string; filePath: string } | null {
   if (!path) {
     return null;
@@ -176,9 +188,29 @@ export function resolveRepoFileTarget({
   const diffContainsPath = (
     artifact: (typeof gitDiffArtifacts)[number],
   ): boolean => {
-    const diff = artifact.part.type === "git-diff" ? artifact.part.diff : "";
-    return typeof diff === "string" && diff.includes(path);
+    if (artifact.part.type !== "git-diff") {
+      return false;
+    }
+    const diff = artifact.part.diff;
+    if (typeof diff !== "string" || diff === "too-large") {
+      return false;
+    }
+    try {
+      return parseMultiFileDiff(diff).some((file) => file.fileName === path);
+    } catch {
+      return false;
+    }
   };
+
+  if (preferArtifactId) {
+    const preferred = gitDiffArtifacts.find(
+      (artifact) =>
+        artifact.id === preferArtifactId && diffContainsPath(artifact),
+    );
+    if (preferred) {
+      return { artifactId: preferred.id, filePath: path };
+    }
+  }
 
   const workingTreeWithPath = gitDiffArtifacts.find(
     (artifact) => isWorkingTree(artifact) && diffContainsPath(artifact),
@@ -190,11 +222,6 @@ export function resolveRepoFileTarget({
   const anyWithPath = gitDiffArtifacts.find(diffContainsPath);
   if (anyWithPath) {
     return { artifactId: anyWithPath.id, filePath: path };
-  }
-
-  const workingTree = gitDiffArtifacts.find(isWorkingTree);
-  if (workingTree) {
-    return { artifactId: workingTree.id, filePath: path };
   }
 
   return null;

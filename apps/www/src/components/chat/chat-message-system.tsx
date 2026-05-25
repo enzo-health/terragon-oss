@@ -1,16 +1,15 @@
 "use client";
 
-import React from "react";
-import { useState } from "react";
 import {
   ThreadInfoFull,
   UIGitDiffPart,
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
+import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import { GitDiffPart } from "./git-diff-part";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 
 export function SystemMessage({
   message,
@@ -19,6 +18,7 @@ export function SystemMessage({
   artifactDescriptors,
   artifactDescriptorLookup,
   onOpenArtifact,
+  onOpenRepoFile,
 }: {
   message: UISystemMessage;
   thread: ThreadInfoFull | null;
@@ -26,6 +26,7 @@ export function SystemMessage({
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const getLabel = () => {
@@ -106,6 +107,7 @@ export function SystemMessage({
           artifactDescriptors={artifactDescriptors}
           artifactDescriptorLookup={artifactDescriptorLookup}
           onOpenArtifact={onOpenArtifact}
+          onOpenRepoFile={onOpenRepoFile}
         />
       </div>
     );

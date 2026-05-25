@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
+import React from "react";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "./git-diff-view.types";
 import {
@@ -27,7 +27,7 @@ export function FileTreeItem({
   // When provided, activating a leaf file routes its repo-relative path to the
   // s3 open-repo-file flow instead of scrolling/selecting in place. Absent =>
   // unchanged behavior (flag off).
-  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
 }) {
   const isFolder = node.type === "folder";
   const isExpanded = expandedFolders.has(node.path);

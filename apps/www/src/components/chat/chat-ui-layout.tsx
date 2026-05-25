@@ -7,21 +7,22 @@ import {
   ThreadErrorMessage,
   ThreadInfoFull,
 } from "@terragon/shared";
+import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
+import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
-import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
 import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
-import type { ThreadPageChat } from "@terragon/shared/db/types";
+import type { RepoFileFocus } from "./git-diff-view.types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
 
 const TerminalPanel = dynamic(
@@ -99,7 +100,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     setShowTerminal,
     shouldRenderSecondaryPanel,
     platform,
-    repoFileFocusPath,
+    repoFileFocus,
   } = panelState;
 
   const { redoDialogData, forkDialogData } = dialogData;
@@ -169,6 +170,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
+                          onOpenRepoFile={onOpenRepoFile}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -266,7 +268,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 onOptimisticPermissionModeUpdate
               }
               onOpenRepoFile={onOpenRepoFile}
-              repoFileFocusPath={repoFileFocusPath}
+              repoFileFocus={repoFileFocus}
             />
           ) : null}
         </div>
@@ -319,7 +321,7 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
-  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
 };
 
 /**
@@ -352,8 +354,8 @@ export type ChatUIPanelState = {
   setShowTerminal: (show: boolean) => void;
   shouldRenderSecondaryPanel: boolean;
   platform: "unknown" | "mobile" | "desktop";
-  /** Repo-relative path the git-diff panel should scroll to when it opens. */
-  repoFileFocusPath: string | null;
+  /** Repo file the git-diff panel should scroll to when it opens. */
+  repoFileFocus: RepoFileFocus | null;
 };
 
 /**

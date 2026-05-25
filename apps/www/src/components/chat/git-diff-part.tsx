@@ -1,8 +1,7 @@
-import { memo, useState, useMemo } from "react";
-import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { ThreadInfoFull } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { UIGitDiffPart } from "@terragon/shared/db/ui-messages";
+import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
 import {
   ChevronRight,
   ChevronsDownUp,
@@ -10,12 +9,13 @@ import {
   ExternalLink,
   FileDiff,
 } from "lucide-react";
-import { parseGitDiffStats } from "@terragon/shared/utils/git-diff";
-import { cn } from "@/lib/utils";
+import { memo, useMemo, useState } from "react";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { parseMultiFileDiff } from "@/lib/git-diff";
+import { cn } from "@/lib/utils";
 import { FileDiffWrapper } from "./git-diff-view";
 import { useSecondaryPanel } from "./hooks";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 import { findArtifactDescriptorForPart } from "./secondary-panel-helpers";
 
 interface GitDiffPartProps {
@@ -23,6 +23,7 @@ interface GitDiffPartProps {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
   thread?: ThreadInfoFull | null;
   isLatest?: boolean;
 }
@@ -32,6 +33,7 @@ export const GitDiffPart = memo(function GitDiffPart({
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact,
+  onOpenRepoFile,
   thread = null,
   isLatest = false,
 }: GitDiffPartProps) {
@@ -83,6 +85,20 @@ export const GitDiffPart = memo(function GitDiffPart({
     },
   );
 
+  // Inline (chat transcript) diff headers get the same open-file affordance as
+  // the file-tree path: the per-file Open button routes the clicked path
+  // through `onOpenRepoFile`. We pass this part's own owning artifact id as the
+  // preferred target so an older checkpoint/system-message diff opens *that*
+  // checkpoint focused on the path — not the live working-tree diff that the
+  // resolver would otherwise prefer. Gated on the flag so behavior is unchanged
+  // when off.
+  const inlineOnOpenRepoFile = useMemo(() => {
+    if (!isRepoFilePreviewEnabled || !onOpenRepoFile) {
+      return undefined;
+    }
+    return (path: string) => onOpenRepoFile(path, artifactDescriptor?.id);
+  }, [isRepoFilePreviewEnabled, onOpenRepoFile, artifactDescriptor?.id]);
+
   if (!diffStats) {
     return null;
   }
@@ -99,15 +115,6 @@ export const GitDiffPart = memo(function GitDiffPart({
       setIsSecondaryPanelOpen(true);
     }
   };
-
-  // Inline (chat transcript) diff headers get the same open-file affordance as
-  // the artifacts-panel diff: when the repo-file-preview flag is on and this
-  // diff maps to a real artifact, the per-file Open button routes to the same
-  // panel-open flow used by the "Open in side panel" button above.
-  const inlineOnOpenRepoFile =
-    isRepoFilePreviewEnabled && artifactDescriptor && onOpenArtifact
-      ? () => onOpenArtifact(artifactDescriptor.id)
-      : undefined;
 
   const toggleFile = (idx: number) => {
     setExpandedFiles((prev) => ({ ...prev, [idx]: !prev[idx] }));

@@ -2,6 +2,17 @@ import type { DBMessage } from "@terragon/shared";
 import { ThreadInfoFull, type UIGitDiffPart } from "@terragon/shared";
 import type { FileChangeType, ParsedDiffFile } from "@/lib/git-diff";
 
+/**
+ * Drives the git-diff focus effect off a monotonic `nonce` rather than the bare
+ * path. Re-focusing the same file (e.g. clicking file A again after scrolling
+ * away) keeps `path` identical but bumps `nonce`, so the focus effect still
+ * re-runs instead of short-circuiting on an unchanged string.
+ */
+export interface RepoFileFocus {
+  path: string;
+  nonce: number;
+}
+
 export interface GitDiffViewProps {
   thread: ThreadInfoFull;
   mode?: "split" | "unified";
@@ -12,13 +23,13 @@ export interface GitDiffViewProps {
   // s3 open-repo-file flow. When provided and the `repoFilePreview` flag is on,
   // clicking a file path in the tree opens it in the artifacts panel instead of
   // scrolling to the inline diff.
-  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
   /**
    * When set, the view scrolls to (and expands) the diff for this
-   * repo-relative path when it changes. Used by the repo-file preview flow so
-   * clicking a file path lands on that file's diff in the panel.
+   * repo-relative path when the `nonce` changes. Used by the repo-file preview
+   * flow so clicking a file path lands on that file's diff in the panel.
    */
-  focusFilePath?: string | null;
+  focusFile?: RepoFileFocus | null;
 }
 
 export interface FileTreeNode {
@@ -46,7 +57,7 @@ export interface FileDiffWrapperProps {
   // When provided, renders an "open file" affordance in the diff header that
   // routes the file's repo-relative path to the open-repo-file flow. Absent =>
   // header only toggles expand/collapse (unchanged behavior).
-  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
 }
 
 export interface CommentWidgetData {

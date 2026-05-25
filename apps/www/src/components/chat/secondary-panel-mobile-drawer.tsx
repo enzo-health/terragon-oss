@@ -7,6 +7,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { cn } from "@/lib/utils";
+import type { RepoFileFocus } from "./git-diff-view.types";
 import { type ArtifactWorkspaceItem } from "./secondary-panel-helpers";
 import { SecondaryPanelContent } from "./secondary-panel-shell";
 import type { PromptBoxRef } from "./thread-context";
@@ -34,7 +35,7 @@ export function MobileArtifactDrawer({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
-  repoFileFocusPath = null,
+  repoFileFocus = null,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -48,8 +49,8 @@ export function MobileArtifactDrawer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
-  onOpenRepoFile?: (path: string) => void;
-  repoFileFocusPath?: string | null;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
+  repoFileFocus?: RepoFileFocus | null;
 }) {
   const [activeSnap, setActiveSnap] = useState<number | string | null>(
     MOBILE_DRAWER_DEFAULT_SNAP,
@@ -124,7 +125,7 @@ export function MobileArtifactDrawer({
             promptBoxRef={promptBoxRef}
             onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
             onOpenRepoFile={onOpenRepoFile}
-            repoFileFocusPath={repoFileFocusPath}
+            repoFileFocus={repoFileFocus}
           />
         </div>
         {showScrollFade && (

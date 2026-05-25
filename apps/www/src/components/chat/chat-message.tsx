@@ -1,12 +1,9 @@
 "use client";
 
-import React, { memo, useMemo } from "react";
-import { UIMessage, UIPart, ThreadInfoFull } from "@terragon/shared";
+import { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
-import { MessagePart } from "./message-part";
+import React, { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { MessageToolbar } from "./chat-message-toolbar";
 import {
   DEFAULT_MESSAGE_PART_PROPS,
   ForkDialogData,
@@ -14,10 +11,13 @@ import {
   RedoDialogData,
 } from "./chat-message.types";
 import { buildPlanOccurrenceMap, groupParts } from "./chat-message.utils";
-import { ImageGroup } from "./chat-message-image-group";
 import { AgentMetaFooter } from "./chat-message-agent-meta-footer";
-import { SystemMessage } from "./chat-message-system";
 import { CollapsibleAgentActivityGroup } from "./chat-message-collapsible-activity";
+import { ImageGroup } from "./chat-message-image-group";
+import { SystemMessage } from "./chat-message-system";
+import { MessageToolbar } from "./chat-message-toolbar";
+import { MessagePart } from "./message-part";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 
 type ChatMessageProps = {
   message: UIMessage;
@@ -38,6 +38,7 @@ type ChatMessageProps = {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
   /** Thread-global plan occurrence map (from ChatMessages). */
   planOccurrences?: Map<UIPart, number>;
 };
@@ -74,6 +75,7 @@ export const ChatMessage = memo(function ChatMessage({
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact = () => {},
+  onOpenRepoFile,
   planOccurrences: planOccurrencesProp,
 }: ChatMessageProps) {
   // Prefer thread-global occurrences from parent; fall back to per-message.
@@ -105,6 +107,7 @@ export const ChatMessage = memo(function ChatMessage({
         artifactDescriptors={artifactDescriptors}
         artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
+        onOpenRepoFile={onOpenRepoFile}
       />
     );
   }

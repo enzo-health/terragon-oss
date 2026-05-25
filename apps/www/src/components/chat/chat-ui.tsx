@@ -13,57 +13,58 @@ import {
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import {
+  getCachedTranscript,
+  invalidateCachedTranscript,
+  seedTranscript,
+} from "@/collections/thread-transcript-collection";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
   useCurrentRunId,
 } from "@/hooks/use-current-run-id";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
-import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
+import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
-  getCachedTranscript,
-  invalidateCachedTranscript,
-  seedTranscript,
-} from "@/collections/thread-transcript-collection";
-import {
-  ChatUILayout,
   type ChatUICoreData,
   type ChatUIDialogData,
   type ChatUIErrorState,
+  ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
   type ChatUIScrollState,
   type ChatUIViewModelData,
 } from "./chat-ui-layout";
+import type { RepoFileFocus } from "./git-diff-view.types";
 import {
   useMarkChatAsRead,
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
+import { resolveRepoFileTarget } from "./secondary-panel-helpers";
+import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
 } from "./thread-view-model/optimistic-events";
-import { resolveRepoFileTarget } from "./secondary-panel-helpers";
-import { ThreadProvider, useThreadContext } from "./thread-provider";
+import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
   useInvalidateCreditBalanceOnAgentIdle,
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
+import { useProductSidecars } from "./use-product-sidecars";
 import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import { useThreadViewModel } from "./use-ag-ui-messages";
-import { useProductSidecars } from "./use-product-sidecars";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -357,8 +358,9 @@ function ChatUIContent() {
   );
 
   const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
-  // The git-diff panel scrolls to this path when it opens via onOpenRepoFile.
-  const [repoFileFocusPath, setRepoFileFocusPath] = useState<string | null>(
+  // The git-diff panel scrolls to this file when it opens via onOpenRepoFile.
+  // Carries a `nonce` so re-opening the same path still re-triggers the scroll.
+  const [repoFileFocus, setRepoFileFocus] = useState<RepoFileFocus | null>(
     null,
   );
   // Routes a repo-relative file path (e.g. from the git-diff file tree/headers)
@@ -368,18 +370,22 @@ function ChatUIContent() {
   // scroll to the file. If no git-diff artifact exists we no-op rather than
   // open an unrelated artifact. Gated on the flag so behavior is unchanged off.
   const onOpenRepoFile = useCallback(
-    (path: string) => {
+    (path: string, preferArtifactId?: string) => {
       if (!isRepoFilePreviewEnabled || !path) {
         return;
       }
       const target = resolveRepoFileTarget({
         artifacts: artifactDescriptors,
         path,
+        preferArtifactId,
       });
       if (!target) {
         return;
       }
-      setRepoFileFocusPath(target.filePath);
+      setRepoFileFocus((prev) => ({
+        path: target.filePath,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
       handleOpenArtifact(target.artifactId);
     },
     [isRepoFilePreviewEnabled, artifactDescriptors, handleOpenArtifact],
@@ -557,12 +563,12 @@ function ChatUIContent() {
       setShowTerminal,
       shouldRenderSecondaryPanel,
       platform,
-      repoFileFocusPath,
+      repoFileFocus,
     }),
     [
       activeArtifactId,
       platform,
-      repoFileFocusPath,
+      repoFileFocus,
       shouldRenderSecondaryPanel,
       showTerminal,
     ],

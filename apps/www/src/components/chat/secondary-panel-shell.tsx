@@ -8,6 +8,7 @@ import React, { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GitDiffView } from "./git-diff-view";
+import type { RepoFileFocus } from "./git-diff-view.types";
 import { DocumentArtifactRenderer } from "./secondary-panel-document";
 import {
   ARTIFACT_WORKSPACE_PANEL_ID,
@@ -35,7 +36,7 @@ export function SecondaryPanelContent({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
-  repoFileFocusPath = null,
+  repoFileFocus = null,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -49,8 +50,8 @@ export function SecondaryPanelContent({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
-  onOpenRepoFile?: (path: string) => void;
-  repoFileFocusPath?: string | null;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
+  repoFileFocus?: RepoFileFocus | null;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -67,7 +68,7 @@ export function SecondaryPanelContent({
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
       onOpenRepoFile={onOpenRepoFile}
-      repoFileFocusPath={repoFileFocusPath}
+      repoFileFocus={repoFileFocus}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -91,7 +92,7 @@ function ArtifactWorkspaceShell({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
-  repoFileFocusPath = null,
+  repoFileFocus = null,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -106,8 +107,8 @@ function ArtifactWorkspaceShell({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
-  onOpenRepoFile?: (path: string) => void;
-  repoFileFocusPath?: string | null;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
+  repoFileFocus?: RepoFileFocus | null;
   emptyState: {
     title: string;
     description: string;
@@ -307,7 +308,7 @@ function ArtifactWorkspaceShell({
                 onOptimisticPermissionModeUpdate
               }
               onOpenRepoFile={onOpenRepoFile}
-              repoFileFocusPath={repoFileFocusPath}
+              repoFileFocus={repoFileFocus}
             />
           </div>
         )}
@@ -325,7 +326,7 @@ function ActiveArtifactRenderer({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
-  repoFileFocusPath,
+  repoFileFocus,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -334,8 +335,8 @@ function ActiveArtifactRenderer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
-  onOpenRepoFile?: (path: string) => void;
-  repoFileFocusPath?: string | null;
+  onOpenRepoFile?: (path: string, preferArtifactId?: string) => void;
+  repoFileFocus?: RepoFileFocus | null;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
@@ -344,7 +345,7 @@ function ActiveArtifactRenderer({
           thread={thread}
           diffPart={descriptor.part}
           onOpenRepoFile={onOpenRepoFile}
-          focusFilePath={repoFileFocusPath}
+          focusFile={repoFileFocus}
         />
       );
     case "document":
