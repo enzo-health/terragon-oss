@@ -204,7 +204,7 @@ async function getThreadsInner({
     .from(schema.thread)
     .limit(limit)
     .offset(offset)
-    .orderBy(desc(schema.thread.updatedAt))
+    .orderBy(desc(schema.thread.updatedAt), desc(schema.thread.id))
     .leftJoin(
       schema.threadVisibility,
       eq(schema.threadVisibility.threadId, schema.thread.id),

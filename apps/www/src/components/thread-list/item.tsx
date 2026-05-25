@@ -355,7 +355,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           "relative group",
           "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isReconciling && "reconciliation-flash",
-          isSelected && "ring-2 ring-primary/30 rounded-lg",
+          isSelected && "ring-2 ring-primary/30 rounded-md",
         )}
         style={{
           contentVisibility: "auto",
@@ -369,7 +369,7 @@ export const ThreadListItem = memo(function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-lg transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1.5 md:py-1 relative pr-9 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            "block rounded-md transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1 relative pr-8 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             pathname === `/task/${thread.id}` && !isSelectionMode
               ? "bg-primary/[0.10] border-primary/25"
               : "hover:bg-accent/60 border-transparent",
@@ -439,7 +439,7 @@ export const ThreadListItem = memo(function ThreadListItem({
               ) : (
                 <p
                   className={cn(
-                    "text-sm flex-1 truncate font-medium tracking-[-0.01em] leading-snug",
+                    "text-[13px] flex-1 truncate font-medium leading-snug",
                     isOptimisticThread
                       ? "text-muted-foreground"
                       : "text-foreground",
@@ -450,7 +450,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                 </p>
               )}
             </div>
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-2.5">
               <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
                 <span
                   className="flex-shrink-0"
@@ -470,7 +470,7 @@ export const ThreadListItem = memo(function ThreadListItem({
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 {thread.automationId && (
                   <SmallAutomationIndicator
                     automationId={thread.automationId}

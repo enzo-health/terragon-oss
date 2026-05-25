@@ -1,3 +1,5 @@
+import { decodeRunMetadata, getRunMetadataProps } from "./run-metadata";
+
 export type AgentTraceAttribute = boolean | number | string | null;
 
 export type AgentTraceSpanName =
@@ -79,23 +81,13 @@ function isAgentTraceActive(): boolean {
 export function getTraceIdFromAgUiForwardedProps(
   forwardedProps: unknown,
 ): string | null {
-  const terragon = getTerragonProps(forwardedProps);
-  const traceId = terragon?.["traceId"];
-  return typeof traceId === "string" && traceId.length > 0 ? traceId : null;
+  return decodeRunMetadata(forwardedProps).traceId;
 }
 
 export function getTerragonProps(
   forwardedProps: unknown,
 ): Record<string, unknown> | null {
-  if (!isRecord(forwardedProps)) {
-    return null;
-  }
-  const runConfig = forwardedProps["runConfig"];
-  if (isRecord(runConfig) && isRecord(runConfig["terragon"])) {
-    return runConfig["terragon"];
-  }
-  const terragon = forwardedProps["terragon"];
-  return isRecord(terragon) ? terragon : null;
+  return getRunMetadataProps(forwardedProps);
 }
 
 function recordBrowserPerformanceMark(span: AgentTraceSpan): void {

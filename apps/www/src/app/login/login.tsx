@@ -55,25 +55,25 @@ export default function Login({
 
   return (
     <div className="min-h-[100dvh] w-full bg-canvas flex items-center justify-center">
-      <div className="flex flex-col p-8 items-center justify-center w-full max-w-md">
-        <div className="w-full space-y-10 bg-raised p-12 rounded-[1.25rem] shadow-card">
-          <div className="flex flex-col items-center text-center space-y-5">
+      <div className="flex w-full max-w-sm flex-col items-center justify-center p-6">
+        <div className="w-full rounded-lg bg-raised p-8 shadow-card">
+          <div className="flex flex-col items-center text-center gap-4">
             <Wordmark showLogo showText size="lg" />
-            <div className="space-y-2 pt-3">
-              <h1 className="text-display font-display font-[300] tracking-tight leading-tight text-strong">
+            <div className="flex flex-col gap-1.5 pt-1">
+              <h1 className="text-title font-semibold leading-tight text-strong">
                 Sign in
               </h1>
-              <p className="text-lead font-sans text-mid">
+              <p className="text-sm font-sans text-mid">
                 Welcome back. Continue to Terragon.
               </p>
             </div>
           </div>
 
-          <div className="space-y-5">
+          <div className="mt-8 flex flex-col gap-4">
             <Button
               variant="default"
               size="lg"
-              className="w-full h-12 rounded-full relative font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
+              className="relative h-10 w-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
               onClick={handleGithubSignIn}
               disabled={isLoading}
             >
@@ -89,14 +89,14 @@ export default function Login({
                     alt="GitHub"
                     width={20}
                     height={20}
-                    className="hidden dark:block absolute left-6"
+                    className="absolute left-4 hidden dark:block"
                   />
                   <Image
                     src="https://cdn.terragonlabs.com/github-mark-white-Ue4J.svg"
                     alt="GitHub"
                     width={20}
                     height={20}
-                    className="block dark:hidden absolute left-6"
+                    className="absolute left-4 block dark:hidden"
                   />
                   Continue with GitHub
                 </>
@@ -106,7 +106,7 @@ export default function Login({
               <Button
                 variant="outline"
                 size="lg"
-                className="w-full h-12 rounded-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
+                className="h-10 w-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
                 onClick={handleDevLogin}
                 disabled={isLoading}
               >

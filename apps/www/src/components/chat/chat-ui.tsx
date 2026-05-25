@@ -14,7 +14,6 @@ import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
-import { useThreadQueryInvalidationScheduler } from "@/hooks/use-ag-ui-query-invalidator";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
@@ -61,11 +60,8 @@ import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import {
-  createThreadViewSidecarEventProjector,
-  useAgUiSidecarRouter,
-  useThreadViewModel,
-} from "./use-ag-ui-messages";
+import { useThreadViewModel } from "./use-ag-ui-messages";
+import { useProductSidecars } from "./use-product-sidecars";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -252,11 +248,12 @@ function ChatUIContent() {
     seedTranscript({ threadId, threadChatId, result: fresh });
     return fresh;
   }, [threadChatId, threadId]);
-  const agent = useAgUiTransport({
+  const agUiTransport = useAgUiTransport({
     threadId,
     threadChatId,
     runId: capturedRunId,
   });
+  const agent = agUiTransport.agent;
   const observedRunId = useCurrentRunId(agent);
   useEffect(() => {
     // Pin the captured runId to the latest RUN_STARTED on the current
@@ -279,29 +276,15 @@ function ChatUIContent() {
     });
   }, [observedRunId, threadChat.id, threadId]);
 
-  const projectThreadViewEvent = useMemo(
-    () =>
-      createThreadViewSidecarEventProjector({
-        includeTranscriptEvents: false,
-      }),
-    [],
-  );
   const threadViewModel = useThreadViewModel({
-    agent: null,
     snapshot: threadViewSnapshot,
     includeTranscriptMessages: false,
   });
-  const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
+  useProductSidecars({
+    agent,
     threadId,
     threadChatId,
-    enabled: Boolean(agent),
-  });
-  useAgUiSidecarRouter({
-    agent,
     dispatchThreadViewEvent: threadViewModel.dispatchThreadViewEvent,
-    projectEvent: projectThreadViewEvent,
-    includeTranscriptMessages: false,
-    onStatusOrTerminalEvent: scheduleThreadQueryInvalidation,
   });
   const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
@@ -469,6 +452,7 @@ function ChatUIContent() {
             threadChat,
             thread,
             threadWithViewModelStatus,
+            setReplayCursor: agUiTransport.setReplayCursor,
           }
         : null,
     [
@@ -480,6 +464,7 @@ function ChatUIContent() {
       threadChatId,
       threadId,
       threadWithViewModelStatus,
+      agUiTransport.setReplayCursor,
     ],
   );
 

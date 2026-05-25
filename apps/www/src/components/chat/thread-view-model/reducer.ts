@@ -21,7 +21,6 @@ import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
   applyLifecycleEvent,
   applyMetaEvent,
-  extractThreadLifecycleMessages,
   getQuarantineEntry,
   mergeMetaSnapshot,
   splitThreadLifecycleMessages,
@@ -80,11 +79,7 @@ export function threadViewModelReducer(
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
     case "runtime.event":
-      return applyAgUiEvent(
-        state,
-        event.event,
-        event.projectTranscript ?? true,
-      );
+      return applyAgUiEvent(state, event.event);
     case "optimistic.user-submitted":
       return applyOptimisticUserSubmit(state, event);
     case "optimistic.queued-messages-updated":
@@ -108,19 +103,10 @@ export function threadViewModelReducer(
 
 export function projectThreadViewModel(
   state: ThreadViewModelState,
-  options?: { includeTranscriptMessages?: boolean },
 ): ThreadViewModel {
-  const includeTranscriptMessages = options?.includeTranscriptMessages ?? true;
-  const splitMessages = includeTranscriptMessages
-    ? splitThreadLifecycleMessages(
-        collapseHydrationReplayTextDuplicates(state.transcript.messages),
-      )
-    : {
-        transcriptMessages: [],
-        lifecycleMessages: extractThreadLifecycleMessages(
-          state.transcript.messages,
-        ),
-      };
+  const splitMessages = splitThreadLifecycleMessages(
+    collapseHydrationReplayTextDuplicates(state.transcript.messages),
+  );
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
@@ -292,7 +278,6 @@ function applySnapshot(
 function applyAgUiEvent(
   state: ThreadViewModelState,
   event: BaseEvent,
-  projectTranscript: boolean,
 ): ThreadViewModelState {
   const dedupeKey = getAgUiEventDedupeKey(event);
   if (dedupeKey && state.seenEventKeys.has(dedupeKey)) {
@@ -338,30 +323,22 @@ function applyAgUiEvent(
 
   const meta = applyMetaEvent(state.meta, event);
   const lifecycle = applyLifecycleEvent(state.lifecycle, event);
-  const transcript = projectTranscript
-    ? agUiMessagesReducer(state.transcript, event)
-    : state.transcript;
+  const transcript = agUiMessagesReducer(state.transcript, event);
   const runtimeState =
     nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
   const runtimeActivities =
     nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
-  const artifacts =
+  const artifacts = upsertArtifactReferenceDescriptor(
     transcript === state.transcript
-      ? upsertArtifactReferenceDescriptor(
-          state.artifacts,
-          artifactReferenceDescriptor,
-        )
-      : upsertArtifactReferenceDescriptor(
-          getStableArtifactsForMessages({
-            previous: state.artifacts,
-            messages: collapseHydrationReplayTextDuplicates(
-              transcript.messages,
-            ),
-            artifactThread: state.artifactThread,
-          }),
-          artifactReferenceDescriptor,
-        );
+      ? state.artifacts
+      : getStableArtifactsForMessages({
+          previous: state.artifacts,
+          messages: collapseHydrationReplayTextDuplicates(transcript.messages),
+          artifactThread: state.artifactThread,
+        }),
+    artifactReferenceDescriptor,
+  );
   if (
     transcript === state.transcript &&
     artifacts === state.artifacts &&
@@ -386,9 +363,8 @@ function applyAgUiEvent(
     threadStatus: lifecycle.threadStatus,
     seenEventKeys,
     seenEventOrder,
-    hasLiveTranscriptEvents: projectTranscript
-      ? transcript !== state.transcript || state.hasLiveTranscriptEvents
-      : state.hasLiveTranscriptEvents,
+    hasLiveTranscriptEvents:
+      transcript !== state.transcript || state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents:
       lifecycle !== state.lifecycle || state.hasLiveLifecycleEvents,
   };

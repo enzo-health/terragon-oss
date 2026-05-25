@@ -141,7 +141,7 @@ function AutomationsList({
   return (
     <>
       {hasReachedLimit && (
-        <Alert className="mb-4 bg-warning/10 text-warning border-none rounded-2xl">
+        <Alert className="mb-3 bg-warning/10 text-warning border-none rounded-lg">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="text-warning">
             You have reached the active automation limit. To create another,
@@ -150,10 +150,10 @@ function AutomationsList({
         </Alert>
       )}
       {automations?.length === 0 && (
-        <div className="flex flex-col gap-6">
-          <div className="rounded-[1.25rem] bg-card p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
-            <h3 className="text-sm font-semibold mb-2">About automations</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">
+        <div className="flex flex-col gap-4">
+          <div className="rounded-lg bg-card p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <h3 className="text-sm font-semibold mb-1.5">About automations</h3>
+            <p className="text-sm text-muted-foreground leading-normal">
               Automations are saved prompts that run automatically in response
               to a trigger. Schedules, GitHub pull requests, issues, and
               mentions are supported.
@@ -162,13 +162,13 @@ function AutomationsList({
               href={`${publicDocsUrl()}/docs/automations`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-3 inline-block text-sm text-coral hover:underline"
+              className="mt-2 inline-block text-sm text-coral hover:underline"
             >
               Learn more
             </Link>
           </div>
-          <div className="space-y-2">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-[36px] bg-canvas z-9 py-1">
+          <div className="flex flex-col gap-2">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-8 bg-canvas z-9 py-1">
               Suggested automations
             </h3>
             <RecommendedAutomations
@@ -177,7 +177,7 @@ function AutomationsList({
           </div>
         </div>
       )}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {automations?.map((automation) => (
           <AutomationItem
             key={automation.id}

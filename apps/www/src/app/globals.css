@@ -87,8 +87,8 @@
      --font-outfit / --font-merriweather / --font-jetbrains-mono CSS
      variables are produced by next/font/google in layout.tsx. */
   --font-sans:
-    var(--font-outfit, "Outfit"), var(--font-geist, ui-sans-serif), "Inter",
-    system-ui, sans-serif;
+    var(--font-geist, ui-sans-serif), var(--font-outfit, "Outfit"), system-ui,
+    sans-serif;
   --font-serif: var(--font-merriweather, "Merriweather"), ui-serif, serif;
   --font-mono:
     var(--font-jetbrains-mono, "JetBrains Mono"),
@@ -98,7 +98,7 @@
     var(--font-merriweather, "Merriweather"), "Tiempos Headline", "EB Garamond",
     Garamond, "Times New Roman", serif;
 
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --tracking-normal: 0rem;
   --spacing: 0.25rem;
 
@@ -109,16 +109,16 @@
   --shadow-spread: 0px;
   --shadow-opacity: 0.05;
   --shadow-color: #000000;
-  --shadow-2xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
-  --shadow-xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
+  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.025);
+  --shadow-xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.025);
   --shadow-sm:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 1px 1px -1px hsl(0 0% 0% / 0.04);
   --shadow-base:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 1px 1px -1px hsl(0 0% 0% / 0.04);
   --shadow-md:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 2px 4px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 2px 4px -2px hsl(0 0% 0% / 0.04);
   --shadow-lg:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 4px 6px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 4px 8px -4px hsl(0 0% 0% / 0.05);
   --shadow-xl:
     0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 8px 10px -1px hsl(0 0% 0% / 0.05);
   --shadow-2xl: 0px 1px 4px 0px hsl(0 0% 0% / 0.13);
@@ -127,10 +127,10 @@
   --shadow-inset-edge: rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
   --shadow-outline-ring: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px;
   --shadow-card:
-    rgba(0, 0, 0, 0.025) 0px 1px 2px, rgba(0, 0, 0, 0.03) 0px 2px 6px,
+    rgba(0, 0, 0, 0.02) 0px 1px 2px, rgba(0, 0, 0, 0.025) 0px 2px 4px,
     rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
   --shadow-warm-lift:
-    rgba(78, 50, 23, 0.03) 0px 4px 12px,
+    rgba(78, 50, 23, 0.025) 0px 2px 6px,
     rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
 
   /* Diff colors — domain convention (red/green) regardless of theme */

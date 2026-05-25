@@ -386,13 +386,17 @@ describe("usePromptBox runtime routing", () => {
     mocks.useThreadRuntimeReturn = null;
   });
 
-  it("uses runtime.append when queueing is enabled and the agent is active", async () => {
+  it("queues at the composer boundary when queueing is enabled and the agent is active", async () => {
     mocks.appendFn.mockReset();
     mocks.useThreadRuntimeReturn = { append: mocks.appendFn };
 
     const submittedMessages: DBUserMessage[] = [];
+    const queuedMessages: DBUserMessage[] = [];
     const handleSubmit: HandleSubmit = async ({ userMessage }) => {
       submittedMessages.push(userMessage);
+    };
+    const handleQueueMessage: HandleSubmit = async ({ userMessage }) => {
+      queuedMessages.push(userMessage);
     };
 
     const container = document.createElement("div");
@@ -411,6 +415,7 @@ describe("usePromptBox runtime routing", () => {
         initialSelectedModel: selectedModel,
         handleStop: async () => {},
         handleSubmit,
+        handleQueueMessage,
         typeahead,
         clearContentOnSubmit: false,
         clearContentBeforeSubmit: false,
@@ -436,7 +441,8 @@ describe("usePromptBox runtime routing", () => {
     });
 
     expect(submittedMessages).toHaveLength(0);
-    expect(mocks.appendFn).toHaveBeenCalledOnce();
+    expect(queuedMessages).toHaveLength(1);
+    expect(mocks.appendFn).not.toHaveBeenCalled();
 
     act(() => {
       root.unmount();

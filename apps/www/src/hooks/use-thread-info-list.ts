@@ -9,6 +9,24 @@ import { ThreadInfo } from "@terragon/shared/db/types";
 import { useRef, useEffect, useMemo } from "react";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 
+export function dedupeThreadInfoList(
+  threads: readonly ThreadInfo[],
+): ThreadInfo[] {
+  const seenThreadIds = new Set<string>();
+  const dedupedThreads: ThreadInfo[] = [];
+
+  for (const thread of threads) {
+    if (seenThreadIds.has(thread.id)) {
+      continue;
+    }
+
+    seenThreadIds.add(thread.id);
+    dedupedThreads.push(thread);
+  }
+
+  return dedupedThreads;
+}
+
 /**
  * Reactive thread list: React Query fetches, TanStack DB stores + filters reactively.
  *
@@ -27,7 +45,7 @@ export function useThreadInfoList(filters: {
     isError,
   } = useInfiniteThreadList({ archived, automationId });
   const threads = useMemo(
-    () => data?.pages.flatMap((page) => page) ?? [],
+    () => dedupeThreadInfoList(data?.pages.flatMap((page) => page) ?? []),
     [data],
   );
 
@@ -51,7 +69,9 @@ export function useThreadInfoList(filters: {
     [archived, automationId, collection],
   );
 
-  const collectionThreads = (result.data ?? []) as ThreadInfo[];
+  const collectionThreads = dedupeThreadInfoList(
+    (result.data ?? []) as ThreadInfo[],
+  );
   const displayThreads =
     collectionThreads.length > 0 ? collectionThreads : threads;
 

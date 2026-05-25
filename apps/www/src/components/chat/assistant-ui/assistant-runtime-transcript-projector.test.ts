@@ -5,7 +5,7 @@ import type {
 import type { AIAgent } from "@terragon/agent/types";
 import { getArtifactDescriptors } from "@terragon/shared/db/artifact-descriptors";
 import { describe, expect, it } from "vitest";
-import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
+import { createAssistantRuntimeTranscriptProjector } from "./assistant-runtime-transcript-projector";
 
 const createdAt = new Date(0);
 const projectRuntimeTranscriptMessages = ({
@@ -15,10 +15,26 @@ const projectRuntimeTranscriptMessages = ({
   runtimeMessages: readonly ThreadMessage[];
   agent: AIAgent;
 }) =>
-  createRuntimeTranscriptProjector()({
+  createAssistantRuntimeTranscriptProjector()({
     runtimeMessages,
     agent,
   });
+
+function terragonRuntimeDataPart(
+  name: string,
+  data: unknown,
+): ThreadAssistantMessagePart {
+  return {
+    type: "data",
+    name,
+    data: {
+      name,
+      messageId: "assistant-1",
+      partIndex: 0,
+      data,
+    },
+  };
+}
 
 describe("projectRuntimeTranscriptMessages", () => {
   it("uses runtime messages when they project to Terragon UI messages", () => {
@@ -215,6 +231,86 @@ describe("projectRuntimeTranscriptMessages", () => {
     ]);
   });
 
+  it("projects product-only Terragon data parts through the runtime transcript", () => {
+    const runtimeMessages: ThreadMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        createdAt,
+        content: [
+          terragonRuntimeDataPart("terragon.audio", {
+            type: "audio",
+            mimeType: "audio/wav",
+            uri: "https://example.com/audio.wav",
+          }),
+          terragonRuntimeDataPart("terragon.resource-link", {
+            type: "resource-link",
+            uri: "https://example.com/report.pdf",
+            name: "report.pdf",
+            title: "Report",
+          }),
+          terragonRuntimeDataPart("terragon.auto-approval-review", {
+            type: "auto-approval-review",
+            reviewId: "review-1",
+            targetItemId: "item-1",
+            riskLevel: "low",
+            action: "edit file",
+            decision: "approved",
+            status: "approved",
+          }),
+          terragonRuntimeDataPart("terragon.delegation", {
+            type: "delegation",
+            delegationId: "delegation-1",
+            tool: "spawn",
+            status: "running",
+            model: null,
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["thread-2"],
+            prompt: "Review this",
+            delegatedModel: "codex",
+            agentsStates: { "thread-2": "running" },
+          }),
+        ],
+        status: { type: "complete", reason: "unknown" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+
+    const projection = projectRuntimeTranscriptMessages({
+      runtimeMessages,
+      agent: "codex",
+    });
+
+    expect(projection.messages[0]).toMatchObject({
+      id: "assistant-1",
+      role: "agent",
+      agent: "codex",
+      parts: [
+        { type: "audio", uri: "https://example.com/audio.wav" },
+        {
+          type: "resource-link",
+          uri: "https://example.com/report.pdf",
+        },
+        {
+          type: "auto-approval-review",
+          reviewId: "review-1",
+          status: "approved",
+        },
+        {
+          type: "delegation",
+          delegationId: "delegation-1",
+          status: "running",
+        },
+      ],
+    });
+  });
+
   it("rejects unwrapped Terragon data payloads", () => {
     const runtimeMessages: ThreadMessage[] = [
       {
@@ -386,7 +482,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 
   it("reprojects a runtime tool when its artifact changes", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const baseMessage: ThreadMessage = {
       id: "assistant-1",
       role: "assistant",
@@ -508,7 +604,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 
   it("reprojects a pending tool when it completes with a null result", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const assistantMessage: ThreadMessage = {
       id: "assistant-1",
       role: "assistant",
@@ -660,7 +756,7 @@ describe("projectRuntimeTranscriptMessages", () => {
   });
 });
 
-describe("createRuntimeTranscriptProjector", () => {
+describe("createAssistantRuntimeTranscriptProjector", () => {
   it("keeps the mutable tail message responsive while reusing stable history", () => {
     const userMessage: ThreadMessage = {
       id: "user-1",
@@ -684,7 +780,7 @@ describe("createRuntimeTranscriptProjector", () => {
         custom: {},
       },
     };
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const first = projector({
       runtimeMessages: [userMessage, assistantMessage],
       agent: "codex",
@@ -718,7 +814,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("detects long text edits with unchanged prefix, suffix, and length", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const firstText = `${"a".repeat(48)}${"b".repeat(120)}${"z".repeat(96)}`;
     const secondText = `${"a".repeat(48)}${"c".repeat(120)}${"z".repeat(96)}`;
     const assistantMessage: ThreadMessage = {
@@ -756,7 +852,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("reprojects an immutable non-tail rich part update without touching stable neighbors", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",
@@ -859,7 +955,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("updates only the compact tail projection for large streaming histories", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const history: ThreadMessage[] = Array.from({ length: 500 }, (_, index) =>
       index % 2 === 0
         ? {
@@ -926,7 +1022,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("skips deep snapshot work for unchanged suffix messages", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     let argsReadCount = 0;
     const args = Object.defineProperty(
       {} as { readonly command: string },
@@ -994,7 +1090,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("re-projects only the runtime message that changed by reference", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",
@@ -1055,7 +1151,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("reuses unchanged sibling parts when one active message part changes", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const textPart: ThreadAssistantMessagePart = {
       type: "text",
       text: "Checking",
@@ -1144,7 +1240,7 @@ describe("createRuntimeTranscriptProjector", () => {
   });
 
   it("re-projects a non-tail message changed after a tail update", () => {
-    const projector = createRuntimeTranscriptProjector();
+    const projector = createAssistantRuntimeTranscriptProjector();
     const userMessage: ThreadMessage = {
       id: "user-1",
       role: "user",

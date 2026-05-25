@@ -1,13 +1,6 @@
-import {
-  type BaseEvent,
-  EventType,
-  type Message,
-  type MessagesSnapshotEvent,
-  RunAgentInputSchema,
-} from "@ag-ui/core";
+import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import type { DBMessage } from "@terragon/shared";
-import * as schema from "@terragon/shared/db/schema";
 import {
   type AgUiEventEnvelope,
   agUiStreamKey,
@@ -17,14 +10,14 @@ import {
   isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
 import {
-  getTerragonProps,
-  getTraceIdFromAgUiForwardedProps,
-  recordAgentTraceSpan,
-} from "@/lib/agent-trace";
+  replayQueryAfterSeq,
+  resolveAgUiReplayCursor,
+  shouldReplayEnvelope,
+} from "@/lib/ag-ui-replay-cursor";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import {
@@ -33,7 +26,26 @@ import {
   getDurableAgUiHistoryItemsFromEvents,
 } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
-import { runFollowUpFromAgUiInput } from "@/server-lib/run-from-ag-ui";
+import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
+import {
+  buildResumeRunStartedEvent,
+  dropEventsAfterTerminalUntilNextRun,
+  getReplayDedupeKey,
+  getReplayEntryRunId,
+  isTerminalRunEventType,
+  sseIdForReplayEntry,
+  splitHistoryOnlyPrefix,
+  toReplayEntries,
+  toReplayEntriesWithoutTerminalFilter,
+  type ReplayEntry,
+} from "@/server-lib/ag-ui/ag-ui-replay-planner";
+import {
+  getStringEventField,
+  isValidKnownAgUiEvent,
+  parseStreamEntries,
+  type ReplayIdentity,
+} from "@/server-lib/ag-ui/ag-ui-stream-entry";
+import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,44 +74,8 @@ const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
 const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
 
 const ENCODER = new TextEncoder();
-const AG_UI_EVENT_TYPES: ReadonlySet<unknown> = new Set(
-  Object.values(EventType),
-);
-
-type AgUiStreamEntry = {
-  id: string;
-  seq: number | null;
-  event: BaseEvent | null;
-  identity?: ReplayIdentity;
-};
-
-type ReplayEntry = {
-  seq: number | null;
-  event: BaseEvent;
-  identity?: ReplayIdentity;
-};
-
-type ReplayIdentity = {
-  runId?: string;
-  eventId?: string;
-  idempotencyKey?: string;
-  seq?: number;
-  projectionIndex?: number;
-  projectionCount?: number;
-};
-
-type ReplayCursor = {
-  seq: number;
-  projectionIndex: number | null;
-};
 
 type AgUiUserMessage = Extract<Message, { role: "user" }>;
-type TerragonPostIntent = "append" | "resume";
-
-function readTerragonPostIntent(forwardedProps: unknown): TerragonPostIntent {
-  const terragon = getTerragonProps(forwardedProps);
-  return terragon?.["intent"] === "resume" ? "resume" : "append";
-}
 
 function isAgUiUserMessage(
   item: DurableAgUiHistoryItem,
@@ -207,92 +183,6 @@ function agUiUserMessageSignature(message: AgUiUserMessage): string {
   return agUiMessageContentText(message.content);
 }
 
-function stableSerialize(value: unknown): string {
-  if (value === null || value === undefined) {
-    return String(value);
-  }
-  if (typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>).sort(
-    ([a], [b]) => a.localeCompare(b),
-  );
-  const serializedEntries = entries.map(
-    ([key, entryValue]) =>
-      `${JSON.stringify(key)}:${stableSerialize(entryValue)}`,
-  );
-  return `{${serializedEntries.join(",")}}`;
-}
-
-const NO_STRUCTURAL_DEDUPE_EVENT_TYPES = new Set<string>([
-  EventType.TEXT_MESSAGE_CONTENT,
-  EventType.REASONING_MESSAGE_CONTENT,
-  EventType.TOOL_CALL_ARGS,
-]);
-
-function getStringEventField(event: BaseEvent, field: string): string | null {
-  const value = Reflect.get(event, field);
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function getIntegerEventField(event: BaseEvent, field: string): number | null {
-  const value = Reflect.get(event, field);
-  return typeof value === "number" && Number.isSafeInteger(value)
-    ? value
-    : null;
-}
-
-function getReplayDedupeKey(
-  event: BaseEvent,
-  identity?: ReplayIdentity,
-): string | null {
-  const runId = identity?.runId ?? getStringEventField(event, "runId");
-  if (
-    runId &&
-    (event.type === EventType.RUN_STARTED ||
-      event.type === EventType.RUN_FINISHED ||
-      event.type === EventType.RUN_ERROR)
-  ) {
-    return `run-lifecycle:${runId}:${event.type}`;
-  }
-
-  const eventId = identity?.eventId ?? getStringEventField(event, "eventId");
-  if (runId && eventId) {
-    return `run-event:${runId}:${eventId}`;
-  }
-  if (eventId) {
-    return `event:${eventId}`;
-  }
-
-  const idempotencyKey =
-    identity?.idempotencyKey ?? getStringEventField(event, "idempotencyKey");
-  if (runId && idempotencyKey) {
-    return `run-idempotency:${runId}:${idempotencyKey}`;
-  }
-  if (idempotencyKey) {
-    return `idempotency:${idempotencyKey}`;
-  }
-
-  const seq = identity?.seq ?? getIntegerEventField(event, "seq");
-  if (runId && seq !== null) {
-    return `run-seq:${runId}:${seq}`;
-  }
-
-  const messageId = getStringEventField(event, "messageId");
-  const deltaSeq = getIntegerEventField(event, "deltaSeq");
-  if (messageId && deltaSeq !== null) {
-    return `message-delta:${event.type}:${messageId}:${deltaSeq}`;
-  }
-
-  if (NO_STRUCTURAL_DEDUPE_EVENT_TYPES.has(event.type)) {
-    return null;
-  }
-  return `event:${stableSerialize(event)}`;
-}
-
 const STREAM_LOG_PREFIX = "[ag-ui][stream]";
 const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
 const XREAD_ERROR_LOG_EVERY_N = 20;
@@ -341,209 +231,6 @@ function emitStreamDiagnostic(
   });
 }
 
-function isTerminalRunEventType(type: BaseEvent["type"]): boolean {
-  return type === EventType.RUN_FINISHED || type === EventType.RUN_ERROR;
-}
-
-function isAgUiBaseEvent(value: unknown): value is BaseEvent {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  return AG_UI_EVENT_TYPES.has(Reflect.get(value, "type"));
-}
-
-function readStringField(value: object, field: string): string | null {
-  const candidate = Reflect.get(value, field);
-  return typeof candidate === "string" && candidate.length > 0
-    ? candidate
-    : null;
-}
-
-function isValidKnownAgUiEvent(value: unknown): value is BaseEvent {
-  if (!isAgUiBaseEvent(value)) {
-    return false;
-  }
-
-  switch (value.type) {
-    case EventType.RUN_STARTED:
-    case EventType.RUN_FINISHED:
-      return (
-        readStringField(value, "threadId") !== null &&
-        readStringField(value, "runId") !== null
-      );
-    case EventType.RUN_ERROR:
-      return readStringField(value, "message") !== null;
-    case EventType.TEXT_MESSAGE_START:
-    case EventType.REASONING_MESSAGE_START:
-      return (
-        readStringField(value, "messageId") !== null &&
-        readStringField(value, "role") !== null
-      );
-    case EventType.TEXT_MESSAGE_CONTENT:
-    case EventType.TEXT_MESSAGE_CHUNK:
-    case EventType.REASONING_MESSAGE_CONTENT:
-    case EventType.REASONING_MESSAGE_CHUNK:
-      return (
-        readStringField(value, "messageId") !== null &&
-        typeof Reflect.get(value, "delta") === "string"
-      );
-    case EventType.TEXT_MESSAGE_END:
-    case EventType.REASONING_MESSAGE_END:
-      return readStringField(value, "messageId") !== null;
-    case EventType.TOOL_CALL_START:
-      return (
-        readStringField(value, "toolCallId") !== null &&
-        readStringField(value, "toolCallName") !== null
-      );
-    case EventType.TOOL_CALL_ARGS:
-    case EventType.TOOL_CALL_CHUNK:
-      return (
-        readStringField(value, "toolCallId") !== null &&
-        typeof Reflect.get(value, "delta") === "string"
-      );
-    case EventType.TOOL_CALL_END:
-      return readStringField(value, "toolCallId") !== null;
-    case EventType.TOOL_CALL_RESULT:
-      return (
-        readStringField(value, "toolCallId") !== null &&
-        readStringField(value, "messageId") !== null &&
-        Reflect.has(value, "content")
-      );
-    case EventType.CUSTOM:
-      return (
-        readStringField(value, "name") !== null && Reflect.has(value, "value")
-      );
-    default:
-      return true;
-  }
-}
-
-function readNumberField(value: object, field: string): number | null {
-  const candidate = Reflect.get(value, field);
-  return Number.isSafeInteger(candidate) ? candidate : null;
-}
-
-function readStringFieldOrUndefined(
-  value: object,
-  field: string,
-): string | undefined {
-  const candidate = Reflect.get(value, field);
-  return typeof candidate === "string" && candidate.length > 0
-    ? candidate
-    : undefined;
-}
-
-function parseStreamPayload(value: unknown): {
-  seq: number | null;
-  event: BaseEvent | null;
-  identity?: ReplayIdentity;
-} {
-  if (isValidKnownAgUiEvent(value)) {
-    return { seq: null, event: value };
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { seq: null, event: null };
-  }
-
-  const seq = readNumberField(value, "seq");
-  const payload = Reflect.get(value, "payload");
-  if (isValidKnownAgUiEvent(payload)) {
-    const projectionIndex = readNumberField(value, "projectionIndex");
-    const projectionCount = readNumberField(value, "projectionCount");
-    return {
-      seq,
-      event: payload,
-      identity: {
-        runId: readStringFieldOrUndefined(value, "runId"),
-        eventId: readStringFieldOrUndefined(value, "eventId"),
-        idempotencyKey: readStringFieldOrUndefined(value, "idempotencyKey"),
-        ...(projectionIndex !== null ? { projectionIndex } : {}),
-        ...(projectionCount !== null ? { projectionCount } : {}),
-        ...(seq !== null ? { seq } : {}),
-      },
-    };
-  }
-
-  const event = Reflect.get(value, "event");
-  if (isValidKnownAgUiEvent(event)) {
-    return { seq, event };
-  }
-
-  return { seq, event: null };
-}
-
-function parseStreamEntries(raw: unknown): AgUiStreamEntry[] {
-  // XREAD shape: [ [streamKey, [ [id, [field, value, ...]], ... ]] ] or null.
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return [];
-  }
-  const firstStream = raw[0];
-  if (!Array.isArray(firstStream) || firstStream.length < 2) {
-    return [];
-  }
-  const rawEntries = firstStream[1];
-  if (!Array.isArray(rawEntries)) {
-    return [];
-  }
-
-  const entries: AgUiStreamEntry[] = [];
-  for (const entry of rawEntries) {
-    if (!Array.isArray(entry) || entry.length < 2) {
-      continue;
-    }
-    const [id, rawFields] = entry;
-    if (typeof id !== "string") {
-      continue;
-    }
-    const serialized = readEventField(rawFields);
-    if (serialized == null) {
-      entries.push({ id, seq: null, event: null });
-      continue;
-    }
-    try {
-      const parsed: unknown = JSON.parse(serialized);
-      const payload = parseStreamPayload(parsed);
-      entries.push({
-        id,
-        seq: payload.seq,
-        event: payload.event,
-        ...(payload.identity ? { identity: payload.identity } : {}),
-      });
-    } catch (err) {
-      console.warn("[ag-ui] malformed stream entry", { id, err });
-      entries.push({ id, seq: null, event: null });
-    }
-  }
-  return entries;
-}
-
-function readEventField(rawFields: unknown): string | null {
-  if (!Array.isArray(rawFields)) {
-    // Upstash sometimes returns an object shape already parsed.
-    if (rawFields && typeof rawFields === "object") {
-      const envelope = Reflect.get(rawFields, "envelope");
-      if (typeof envelope === "string") {
-        return envelope;
-      }
-      const value = Reflect.get(rawFields, "event");
-      return typeof value === "string" ? value : null;
-    }
-    return null;
-  }
-  for (let i = 0; i < rawFields.length; i += 2) {
-    if (rawFields[i] === "envelope" && typeof rawFields[i + 1] === "string") {
-      return rawFields[i + 1] as string;
-    }
-  }
-  for (let i = 0; i < rawFields.length; i += 2) {
-    if (rawFields[i] === "event" && typeof rawFields[i + 1] === "string") {
-      return rawFields[i + 1] as string;
-    }
-  }
-  return null;
-}
-
 function encodeSseEvent(event: BaseEvent, id?: string): Uint8Array {
   const idLine = id ? `id: ${id}\n` : "";
   return ENCODER.encode(`${idLine}data: ${JSON.stringify(event)}\n\n`);
@@ -551,272 +238,6 @@ function encodeSseEvent(event: BaseEvent, id?: string): Uint8Array {
 
 function encodeSseComment(comment: string): Uint8Array {
   return ENCODER.encode(`: ${comment}\n\n`);
-}
-
-function parseReplayCursor(value: string | null): ReplayCursor | null {
-  if (value === null || value.trim().length === 0) {
-    return null;
-  }
-  const trimmed = value.trim();
-  const normalized = trimmed.startsWith("seq:")
-    ? trimmed.slice("seq:".length)
-    : trimmed;
-  const [seqValue, projectionIndexValue] = normalized.split(":");
-  const seq = Number(seqValue);
-  if (!Number.isSafeInteger(seq) || seq < -1) {
-    return null;
-  }
-  if (projectionIndexValue === undefined) {
-    return { seq, projectionIndex: null };
-  }
-  const projectionIndex = Number(projectionIndexValue);
-  return Number.isSafeInteger(projectionIndex) && projectionIndex >= 0
-    ? { seq, projectionIndex }
-    : null;
-}
-
-function resolveReplayCursor(request: NextRequest): ReplayCursor | null {
-  const lastEventId = parseReplayCursor(request.headers.get("last-event-id"));
-  if (lastEventId !== null) {
-    return lastEventId;
-  }
-  return parseReplayCursor(request.nextUrl.searchParams.get("fromSeq"));
-}
-
-function replayQueryAfterSeq(cursor: ReplayCursor | null): number | undefined {
-  if (cursor === null) {
-    return undefined;
-  }
-  return cursor.projectionIndex === null ? cursor.seq : cursor.seq - 1;
-}
-
-function shouldReplayEnvelope(
-  entry: Pick<AgUiEventEnvelope, "seq" | "projectionIndex">,
-  cursor: ReplayCursor | null,
-): boolean {
-  if (cursor === null) {
-    return true;
-  }
-  if (entry.seq > cursor.seq) {
-    return true;
-  }
-  if (entry.seq < cursor.seq || cursor.projectionIndex === null) {
-    return false;
-  }
-  return (entry.projectionIndex ?? 0) > cursor.projectionIndex;
-}
-
-function toReplayEntries(
-  envelopes: AgUiEventEnvelope[],
-  cursor: ReplayCursor | null,
-): ReplayEntry[] {
-  return dropEventsAfterTerminalUntilNextRun(
-    repairDelayedRunStartedOrdering(
-      envelopes
-        .filter((entry) => shouldReplayEnvelope(entry, cursor))
-        .map((entry) => ({
-          seq: entry.seq,
-          event: entry.payload,
-          identity: {
-            runId: entry.runId,
-            eventId: entry.eventId,
-            idempotencyKey: entry.idempotencyKey,
-            seq: entry.seq,
-            projectionIndex: entry.projectionIndex,
-            projectionCount: entry.projectionCount,
-          },
-        })),
-    ),
-    { keepInterRunUserAndSystemSnapshots: false },
-  );
-}
-
-function getReplayEntryRunId(entry: ReplayEntry): string | null {
-  return entry.identity?.runId ?? getStringEventField(entry.event, "runId");
-}
-
-function repairDelayedRunStartedOrdering(
-  entries: ReplayEntry[],
-): ReplayEntry[] {
-  const repaired: ReplayEntry[] = [];
-  let index = 0;
-
-  while (index < entries.length) {
-    const runId = getReplayEntryRunId(entries[index]!);
-    if (runId === null) {
-      repaired.push(entries[index]!);
-      index += 1;
-      continue;
-    }
-
-    const runEntries: ReplayEntry[] = [];
-    while (
-      index < entries.length &&
-      getReplayEntryRunId(entries[index]!) === runId
-    ) {
-      runEntries.push(entries[index]!);
-      index += 1;
-    }
-    repaired.push(...repairSingleRunStartedOrdering(runEntries));
-  }
-
-  return repaired;
-}
-
-function repairSingleRunStartedOrdering(entries: ReplayEntry[]): ReplayEntry[] {
-  const firstRunStartedIndex = entries.findIndex(
-    (entry) => entry.event.type === EventType.RUN_STARTED,
-  );
-  if (firstRunStartedIndex <= 0) {
-    return firstRunStartedIndex === 0
-      ? dropDuplicateRunStarted(entries)
-      : entries;
-  }
-
-  const leadingSnapshots: ReplayEntry[] = [];
-  let firstNonSnapshotIndex = 0;
-  while (
-    firstNonSnapshotIndex < entries.length &&
-    entries[firstNonSnapshotIndex]!.event.type === EventType.MESSAGES_SNAPSHOT
-  ) {
-    leadingSnapshots.push(entries[firstNonSnapshotIndex]!);
-    firstNonSnapshotIndex += 1;
-  }
-
-  const firstRunStarted = entries[firstRunStartedIndex]!;
-  const rest = entries.filter(
-    (entry, entryIndex) =>
-      entryIndex >= firstNonSnapshotIndex &&
-      entry.event.type !== EventType.RUN_STARTED,
-  );
-
-  return [...leadingSnapshots, firstRunStarted, ...rest];
-}
-
-function dropDuplicateRunStarted(entries: ReplayEntry[]): ReplayEntry[] {
-  let hasRunStarted = false;
-  return entries.filter((entry) => {
-    if (entry.event.type !== EventType.RUN_STARTED) {
-      return true;
-    }
-    if (hasRunStarted) {
-      return false;
-    }
-    hasRunStarted = true;
-    return true;
-  });
-}
-
-function toReplayEntriesWithoutTerminalFilter(
-  envelopes: AgUiEventEnvelope[],
-  cursor: ReplayCursor | null,
-): ReplayEntry[] {
-  return repairDelayedRunStartedOrdering(
-    envelopes
-      .filter((entry) => shouldReplayEnvelope(entry, cursor))
-      .map((entry) => ({
-        seq: entry.seq,
-        event: entry.payload,
-        identity: {
-          runId: entry.runId,
-          eventId: entry.eventId,
-          idempotencyKey: entry.idempotencyKey,
-          seq: entry.seq,
-          projectionIndex: entry.projectionIndex,
-          projectionCount: entry.projectionCount,
-        },
-      })),
-  );
-}
-
-function dropEventsAfterTerminalUntilNextRun(
-  entries: ReplayEntry[],
-  options: { keepInterRunUserAndSystemSnapshots: boolean } = {
-    keepInterRunUserAndSystemSnapshots: false,
-  },
-): ReplayEntry[] {
-  const filtered: ReplayEntry[] = [];
-  let sawTerminal = false;
-
-  for (const entry of entries) {
-    if (entry.event.type === EventType.RUN_STARTED) {
-      sawTerminal = false;
-      filtered.push(entry);
-      continue;
-    }
-    if (sawTerminal) {
-      if (
-        options.keepInterRunUserAndSystemSnapshots &&
-        isUserOrSystemMessagesSnapshot(entry.event)
-      ) {
-        filtered.push(entry);
-      }
-      continue;
-    }
-    filtered.push(entry);
-    if (isTerminalRunEventType(entry.event.type)) {
-      sawTerminal = true;
-    }
-  }
-
-  return filtered;
-}
-
-function isUserOrSystemMessagesSnapshot(event: BaseEvent): boolean {
-  if (event.type !== EventType.MESSAGES_SNAPSHOT) {
-    return false;
-  }
-  const { messages } = event as MessagesSnapshotEvent;
-  return (
-    messages.length > 0 &&
-    messages.every(
-      (message) => message.role === "user" || message.role === "system",
-    )
-  );
-}
-
-function splitHistoryOnlyPrefix(envelopes: AgUiEventEnvelope[]): {
-  historyOnlyLastSeq: number | null;
-  replayEnvelopes: AgUiEventEnvelope[];
-} {
-  const firstRunEventIndex = envelopes.findIndex(
-    (entry) => entry.payload.type !== EventType.MESSAGES_SNAPSHOT,
-  );
-  if (firstRunEventIndex <= 0) {
-    return { historyOnlyLastSeq: null, replayEnvelopes: envelopes };
-  }
-  const lastHistoryOnlyEnvelope = envelopes[firstRunEventIndex - 1];
-  return {
-    historyOnlyLastSeq: lastHistoryOnlyEnvelope?.seq ?? null,
-    replayEnvelopes: envelopes.slice(firstRunEventIndex),
-  };
-}
-
-function sseIdForReplayEntry(
-  seq: number | null,
-  identity?: ReplayIdentity,
-): string | undefined {
-  if (seq === null) {
-    return undefined;
-  }
-  if (identity?.projectionCount !== undefined && identity.projectionCount > 1) {
-    return `${seq}:${identity.projectionIndex ?? 0}`;
-  }
-  return String(seq);
-}
-
-function buildResumeRunStartedEvent({
-  threadId,
-  runId,
-}: {
-  threadId: string;
-  runId: string;
-}): BaseEvent {
-  return {
-    type: EventType.RUN_STARTED,
-    threadId,
-    runId,
-  };
 }
 
 /**
@@ -856,7 +277,10 @@ export async function GET(
   const { threadId } = await context.params;
   const threadChatId = request.nextUrl.searchParams.get("threadChatId");
   const runIdParam = request.nextUrl.searchParams.get("runId");
-  const replayCursor = resolveReplayCursor(request);
+  const replayCursor = resolveAgUiReplayCursor({
+    lastEventId: request.headers.get("last-event-id"),
+    fromSeq: request.nextUrl.searchParams.get("fromSeq"),
+  });
   const replayCursorSeq = replayCursor?.seq ?? null;
   const shouldFrameRunAgentResume = request.method === "POST";
 
@@ -871,23 +295,13 @@ export async function GET(
   // threadChatId belongs to that same thread. Without the join a caller
   // who owns thread-A could pass threadChatId pointing at someone else's
   // chat. Return 404 on mismatch to avoid leaking existence.
-  const ownership = await db
-    .select({
-      id: schema.threadChat.id,
-      messages: schema.threadChat.messages,
-    })
-    .from(schema.threadChat)
-    .innerJoin(schema.thread, eq(schema.threadChat.threadId, schema.thread.id))
-    .where(
-      and(
-        eq(schema.threadChat.id, threadChatId),
-        eq(schema.thread.id, threadId),
-        eq(schema.thread.userId, session.user.id),
-      ),
-    )
-    .limit(1);
+  const ownership = await authorizeAgUiThreadChat({
+    threadId,
+    threadChatId,
+    userId: session.user.id,
+  });
 
-  if (ownership.length === 0) {
+  if (ownership === null) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -904,15 +318,23 @@ export async function GET(
     const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
     const messages = mergeMissingDbUserMessagesIntoHistory({
       historyItems: history.items,
-      dbMessages: ownership[0]?.messages ?? [],
+      dbMessages: ownership.messages,
     });
     const includedCursor =
       history.lastSeqOffset >= 0
-        ? historyEntries[history.lastSeqOffset]?.seq
+        ? historyEntries[history.lastSeqOffset]
         : undefined;
     return NextResponse.json({
       messages,
-      lastSeq: includedCursor ?? -1,
+      lastSeq: includedCursor?.seq ?? -1,
+      lastCursor:
+        includedCursor?.seq != null &&
+        includedCursor.identity?.projectionIndex !== undefined
+          ? {
+              seq: includedCursor.seq,
+              projectionIndex: includedCursor.identity.projectionIndex,
+            }
+          : undefined,
     });
   }
 
@@ -937,7 +359,11 @@ export async function GET(
   //    live-tailing stream with no history — the first RUN_STARTED written by
   //    a new daemon-event will naturally be the first event on the wire.
   let resolvedRunId: string | null = runIdParam;
-  if (resolvedRunId === null && replayCursorSeq === null) {
+  if (
+    resolvedRunId === null &&
+    replayCursorSeq === null &&
+    request.method === "GET"
+  ) {
     try {
       resolvedRunId = await getLatestRunIdForThreadChat({
         db,
@@ -1823,7 +1249,7 @@ export async function GET(
 
 // POST: client-initiated runs.
 // HttpAgent POSTs RunAgentInput; we extract the new user message + metadata,
-// call followUp() via runFollowUpFromAgUiInput, then fall through to the SSE
+// call followUp() via dispatchFollowUpFromAppend, then fall through to the SSE
 // stream machinery shared with GET. The advisory lock in the adapter holds
 // the dedup invariant (see ADR docs/plans/2026-04-30-runtime-owns-writes-adr.md).
 //
@@ -1855,93 +1281,20 @@ export async function POST(
   // 4. Detect replay mode via header X-Terragon-Test-Replay (any truthy value)
   const isReplayMode = !!request.headers.get("X-Terragon-Test-Replay");
 
-  // 5. Parse the request body as RunAgentInput (skip in replay mode)
-  if (!isReplayMode) {
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      // Body parse failure — no body or non-JSON; fall through to SSE stream
-      rawBody = null;
-    }
-
-    const parsed =
-      rawBody != null
-        ? RunAgentInputSchema.safeParse(rawBody)
-        : { success: false as const };
-
-    // 6. If body parsed successfully, call the adapter for new appends.
-    // Active history resumes use AG-UI POST only to open the SSE stream; they
-    // must not replay the last user message back into the follow-up queue.
-    if (parsed.success) {
-      const traceId =
-        getTraceIdFromAgUiForwardedProps(parsed.data.forwardedProps) ??
-        parsed.data.runId;
-      recordAgentTraceSpan({
-        traceId,
-        name: "server.agui.post.received",
-        attributes: {
-          threadId,
-          threadChatId,
-          runId: parsed.data.runId,
-        },
-      });
-      const intent = readTerragonPostIntent(parsed.data.forwardedProps);
-      if (intent === "append") {
-        const followUpStartedAtMs = Date.now();
-        const result = await runFollowUpFromAgUiInput({
-          threadId,
-          threadChatId,
-          userId,
-          body: parsed.data,
-          isReplayMode: false,
-        });
-        const resultKind =
-          "error" in result
-            ? result.error.kind
-            : "runId" in result
-              ? "dispatched"
-              : result.skipped;
-        recordAgentTraceSpan({
-          traceId,
-          name: "server.agui.followup.dispatched",
-          startedAtMs: followUpStartedAtMs,
-          endedAtMs: Date.now(),
-          attributes: {
-            threadId,
-            threadChatId,
-            runId: "runId" in result ? result.runId : parsed.data.runId,
-            result: resultKind,
-          },
-        });
-
-        if ("error" in result) {
-          const { error } = result;
-          if (error.kind === "unauthorized") {
-            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-          }
-          if (error.kind === "thread-not-found") {
-            return NextResponse.json(
-              { error: "Thread not found" },
-              { status: 404 },
-            );
-          }
-          if (error.kind === "lock-held") {
-            return NextResponse.json(
-              { error: "Run already in progress" },
-              { status: 409 },
-            );
-          }
-          if (error.kind === "invalid-input") {
-            return NextResponse.json({ error: error.reason }, { status: 400 });
-          }
-        }
-        // { runId } or { skipped } — fall through to SSE stream
-      }
-    }
-    // Body absent or parse failed — fall through to SSE stream (back-compat)
+  // 5. Dispatch new append POSTs; resume/back-compat requests fall through to SSE.
+  const commandResult = await handleAgUiPostCommand({
+    request,
+    threadId,
+    threadChatId,
+    userId,
+    isReplayMode,
+  });
+  if (commandResult.type === "response") {
+    return NextResponse.json(commandResult.body, {
+      status: commandResult.status,
+    });
   }
 
-  // 7. Fall through: open the SSE stream via the existing GET handler
+  // 6. Fall through: open the SSE stream via the existing GET handler
   return GET(request, ctx);
 }

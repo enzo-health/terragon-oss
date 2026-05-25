@@ -33,7 +33,8 @@
   },
   "pnpm": {
     "patchedDependencies": {
-      "e2b": "patches/e2b.patch"
+      "e2b": "patches/e2b.patch",
+      "@assistant-ui/react-ag-ui@0.0.26": "patches/@assistant-ui__react-ag-ui@0.0.26.patch"
     },
     "overrides": {
       "ai": "^5.0.59",

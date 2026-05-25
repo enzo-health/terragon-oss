@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
+import { createThreadViewSidecarEventProjector } from "../use-ag-ui-messages";
 import {
   createThreadViewSnapshot,
   selectThreadViewDbMessages,
@@ -159,6 +160,7 @@ describe("ThreadViewModel reducer", () => {
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "native-msg-1",
+      role: "assistant",
     });
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_CONTENT,
@@ -189,6 +191,7 @@ describe("ThreadViewModel reducer", () => {
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "msg_abc123",
+      role: "assistant",
     });
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_CONTENT,
@@ -867,6 +870,42 @@ describe("ThreadViewModel reducer", () => {
       role: "agent",
       parts: [{ type: "text", text: "hello world" }],
     });
+  });
+
+  it("keeps transcript state stable when product sidecars receive transcript events", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    const initialTranscript = state.transcript;
+    const projector = createThreadViewSidecarEventProjector();
+    const transcriptEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "token",
+      } as BaseEvent,
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "agent-1:reasoning",
+        delta: "thought",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+      } as BaseEvent,
+    ];
+
+    for (const event of transcriptEvents) {
+      const projected = projector(event);
+      if (projected) {
+        state = threadViewModelReducer(state, {
+          type: "ag-ui.event",
+          event: projected,
+        });
+      }
+    }
+
+    expect(state.transcript).toBe(initialTranscript);
+    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 });
 

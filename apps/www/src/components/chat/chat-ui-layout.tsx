@@ -1,12 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
-import type { AppendMessage } from "@assistant-ui/react";
-import {
-  AIModelSchema,
-  type AIAgent,
-  type AIModel,
-} from "@terragon/agent/types";
+import type { AIAgent } from "@terragon/agent/types";
 import {
   DBUserMessage,
   ThreadErrorMessage,
@@ -14,40 +9,20 @@ import {
 } from "@terragon/shared";
 import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
-import React, { useCallback } from "react";
+import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  convertToPlainText,
-  getLastUserMessageModel,
-} from "@/lib/db-message-helpers";
+import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
-import { stopThread } from "@/server-actions/stop-thread";
-import { queueFollowUp } from "@/server-actions/follow-up";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import {
-  TerragonThreadErrorBoundary,
-  TerragonThreadRuntimeFrame,
-} from "./assistant-ui/terragon-thread";
+import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
+import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
-import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
-
-type ChatRuntimeQueueParams = {
-  forceScrollToBottom: () => void;
-  isAgentCurrentlyWorking: boolean;
-  onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
-  queueWriteRef: React.MutableRefObject<Promise<void>>;
-  queuedMessagesRef: React.MutableRefObject<DBUserMessage[] | null>;
-  reconcileActiveChatFromServer: () => Promise<unknown>;
-  setError: (error: string | null) => void;
-  threadChatId: string;
-  threadId: string;
-  queueFollowUpAction?: typeof queueFollowUp;
-};
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -58,149 +33,6 @@ const SecondaryPanel = dynamic(
   () => import("./secondary-panel").then((mod) => mod.SecondaryPanel),
   { ssr: false },
 );
-
-type TerragonComposerRunConfig = {
-  selectedModel: AIModel | null;
-  permissionMode: "allowAll" | "plan";
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readTerragonComposerRunConfig(
-  message: AppendMessage,
-): TerragonComposerRunConfig {
-  const fallback: TerragonComposerRunConfig = {
-    selectedModel: null,
-    permissionMode: "allowAll",
-  };
-  const custom = message.runConfig?.custom;
-  if (!isRecord(custom)) {
-    return fallback;
-  }
-  const terragon = custom.terragon;
-  if (!isRecord(terragon)) {
-    return fallback;
-  }
-  const selectedModelResult = AIModelSchema.safeParse(terragon.selectedModel);
-  return {
-    selectedModel: selectedModelResult.success
-      ? selectedModelResult.data
-      : null,
-    permissionMode:
-      terragon.permissionMode === "plan" ? "plan" : fallback.permissionMode,
-  };
-}
-
-function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
-  const config = readTerragonComposerRunConfig(message);
-  const attachmentParts: DBUserMessage["parts"][number][] = [];
-  const richTextNodes: Extract<
-    DBUserMessage["parts"][number],
-    { type: "rich-text" }
-  >["nodes"] = [];
-
-  if (message.role !== "user") {
-    throw new Error(`Cannot queue non-user message: ${message.role}`);
-  }
-
-  for (const part of message.content) {
-    if (part.type === "text") {
-      richTextNodes.push({ type: "text", text: part.text });
-    } else if (part.type === "image") {
-      if (typeof part.image === "string") {
-        attachmentParts.push({
-          type: "image",
-          image_url: part.image,
-          mime_type: "image/png",
-        });
-      }
-    }
-  }
-
-  return {
-    type: "user",
-    model: config.selectedModel,
-    parts: [{ type: "rich-text", nodes: richTextNodes }, ...attachmentParts],
-    timestamp: new Date().toISOString(),
-    permissionMode: config.permissionMode,
-  };
-}
-
-export function createChatRuntimeQueue({
-  forceScrollToBottom,
-  isAgentCurrentlyWorking,
-  onOptimisticQueuedMessagesUpdate,
-  queueFollowUpAction = queueFollowUp,
-  queueWriteRef,
-  queuedMessagesRef,
-  reconcileActiveChatFromServer,
-  setError,
-  threadChatId,
-  threadId,
-}: ChatRuntimeQueueParams): {
-  shouldQueue: (message: AppendMessage) => boolean;
-  enqueue: (message: AppendMessage) => Promise<void>;
-} {
-  const clientSubmissionIds = new WeakMap<AppendMessage, string>();
-  const clientSubmissionIdFor = (message: AppendMessage): string => {
-    if (typeof message.sourceId === "string" && message.sourceId.length > 0) {
-      return message.sourceId;
-    }
-    const existing = clientSubmissionIds.get(message);
-    if (existing) {
-      return existing;
-    }
-    const next = crypto.randomUUID();
-    clientSubmissionIds.set(message, next);
-    return next;
-  };
-
-  return {
-    shouldQueue: (message: AppendMessage) =>
-      message.role === "user" && isAgentCurrentlyWorking,
-    enqueue: async (message: AppendMessage) => {
-      const userMessage = appendMessageToDbUserMessage(message);
-      const plainText = convertToPlainText({ message: userMessage });
-      if (plainText.length === 0) {
-        return;
-      }
-      const queuedUserMessage = {
-        clientSubmissionId: clientSubmissionIdFor(message),
-        message: userMessage,
-      };
-      forceScrollToBottom();
-      setError(null);
-      const write = queueWriteRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          const baseQueuedMessages = queuedMessagesRef.current ?? [];
-          const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
-            queuedUserMessage,
-          ]);
-          if (nextMessages === baseQueuedMessages) {
-            return;
-          }
-          queuedMessagesRef.current = nextMessages;
-          onOptimisticQueuedMessagesUpdate(nextMessages);
-          const result = await queueFollowUpAction({
-            threadId,
-            threadChatId,
-            messages: nextMessages,
-          });
-          if (!result.success) {
-            setError(result.errorMessage);
-            await reconcileActiveChatFromServer();
-            return;
-          }
-          await reconcileActiveChatFromServer();
-        });
-      queueWriteRef.current = write.catch(() => undefined);
-      await write;
-    },
-  };
-}
 
 /**
  * Pure presentation: composes the chat header, scroll-area transcript, prompt
@@ -278,43 +110,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = optimisticHandlers;
 
   const { error, setError, isRetrying, handleRetry } = errorState;
-  const queuedMessagesRef = React.useRef(queuedMessages);
-  const queueWriteRef = React.useRef<Promise<void>>(Promise.resolve());
-
-  React.useEffect(() => {
-    queuedMessagesRef.current = queuedMessages;
-  }, [queuedMessages]);
-
-  const handleCancel = useCallback(async () => {
-    await stopThread({
-      threadId: thread.id,
-      threadChatId: threadChat.id,
-    });
-  }, [thread.id, threadChat.id]);
-
-  const runtimeQueue = React.useMemo(
-    () =>
-      createChatRuntimeQueue({
-        forceScrollToBottom,
-        isAgentCurrentlyWorking,
-        onOptimisticQueuedMessagesUpdate,
-        queueWriteRef,
-        queuedMessagesRef,
-        reconcileActiveChatFromServer,
-        setError,
-        threadId: thread.id,
-        threadChatId: threadChat.id,
-      }),
-    [
-      forceScrollToBottom,
-      isAgentCurrentlyWorking,
-      onOptimisticQueuedMessagesUpdate,
-      reconcileActiveChatFromServer,
-      setError,
-      thread.id,
-      threadChat.id,
-    ],
-  );
 
   return (
     <AgUiAgentProvider agent={agent}>
@@ -330,18 +125,17 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           githubSummary={threadViewModel.githubSummary}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
-          <TerragonThreadRuntimeFrame
+          <AssistantRuntimeSession
             agent={agent}
             loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-            onCancel={handleCancel}
             chatAgent={chatAgent}
             isAgentWorking={isAgentCurrentlyWorking}
             threadId={thread.id}
             threadChatId={threadChat.id}
+            setReplayCursor={coreData.setReplayCursor}
             callerError={error || threadChat.errorMessageInfo || undefined}
             callerErrorType={threadChat.errorMessage || undefined}
             callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
-            runtimeQueue={runtimeQueue}
           >
             {(runtimeProps) => (
               <div className="flex-1 flex flex-col overflow-hidden">
@@ -373,7 +167,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
-                          onCancel={handleCancel}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -455,7 +248,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 )}
               </div>
             )}
-          </TerragonThreadRuntimeFrame>
+          </AssistantRuntimeSession>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
               thread={threadWithViewModelStatus}
@@ -500,6 +293,7 @@ export type ChatUICoreData = {
   threadChat: ThreadPageChat;
   thread: ThreadInfoFull;
   threadWithViewModelStatus: ThreadInfoFull;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
 };
 
 /**

@@ -27,9 +27,10 @@ type AgUiToolCall = NonNullable<
   Extract<AgUiMessage, { role: "assistant" }>["toolCalls"]
 >[number];
 type AgUiHistoryItem = AgUiMessage | TerragonCustomPartEvent;
-export type AgUiHistoryLoader = () =>
+export type AssistantHistoryHydrationLoader = () =>
   | readonly AgUiHistoryItem[]
   | Promise<readonly AgUiHistoryItem[]>;
+export type AssistantHistoryHydrationMode = "active-resume" | "idle-finalized";
 
 const HISTORY_CREATED_AT = new Date(0);
 const COMPLETE_STATUS = {
@@ -274,9 +275,10 @@ function assistantMessage(
 
 function upsertAssistantMessage(params: {
   messages: ThreadMessage[];
+  messageIds: Set<string>;
   message: Extract<AgUiMessage, { role: "assistant" }>;
 }): void {
-  const { messages, message } = params;
+  const { messages, messageIds, message } = params;
   const incoming = assistantMessage(message);
   const existingIndex = messages.findIndex(
     (candidate) =>
@@ -284,12 +286,14 @@ function upsertAssistantMessage(params: {
   );
   if (existingIndex === -1) {
     messages.push(incoming);
+    messageIds.add(incoming.id);
     return;
   }
 
   const existing = messages[existingIndex];
   if (!existing || existing.role !== "assistant") {
     messages.push(incoming);
+    messageIds.add(incoming.id);
     return;
   }
 
@@ -373,10 +377,11 @@ function finishUnresolvedToolCalls(messages: ThreadMessage[]): ThreadMessage[] {
   });
 }
 
-export function agUiMessagesToThreadMessages(
+export function hydrateAssistantHistoryMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
+  const messageIds = new Set<string>();
 
   for (const item of agUiMessages) {
     if (!isAgUiMessage(item)) {
@@ -395,13 +400,21 @@ export function agUiMessagesToThreadMessages(
     const message = item;
     switch (message.role) {
       case "user":
+        if (messageIds.has(message.id)) {
+          break;
+        }
         messages.push(userMessage(message));
+        messageIds.add(message.id);
         break;
       case "system":
+        if (messageIds.has(message.id)) {
+          break;
+        }
         messages.push(systemMessage(message));
+        messageIds.add(message.id);
         break;
       case "assistant":
-        upsertAssistantMessage({ messages, message });
+        upsertAssistantMessage({ messages, messageIds, message });
         break;
       case "tool":
         if (!applyToolResult({ messages, message })) {
@@ -419,6 +432,7 @@ export function agUiMessagesToThreadMessages(
               ],
             }),
           );
+          messageIds.add(`${message.id}:assistant`);
           applyToolResult({ messages, message });
         }
         break;
@@ -430,16 +444,17 @@ export function agUiMessagesToThreadMessages(
   return messages;
 }
 
-export function createAgUiHistoryAdapter(
-  loadAgUiMessages: AgUiHistoryLoader,
-  options: { resumeOnLoad?: boolean } = {},
+export function createAssistantHistoryHydrationAdapter(
+  loadAgUiMessages: AssistantHistoryHydrationLoader,
+  options: { mode?: AssistantHistoryHydrationMode } = {},
 ): ThreadHistoryAdapter {
   return {
     load: async () => {
       const agUiMessages = await loadAgUiMessages();
-      const importedMessages = agUiMessagesToThreadMessages(agUiMessages);
+      const importedMessages = hydrateAssistantHistoryMessages(agUiMessages);
+      const mode = options.mode ?? "active-resume";
       const messages =
-        options.resumeOnLoad === false
+        mode === "idle-finalized"
           ? finishUnresolvedToolCalls(importedMessages)
           : importedMessages;
       return {
@@ -448,7 +463,7 @@ export function createAgUiHistoryAdapter(
           message,
         })),
         headId: messages.at(-1)?.id ?? null,
-        unstable_resume: options.resumeOnLoad ?? true,
+        unstable_resume: mode === "active-resume",
       };
     },
     append: async () => {},

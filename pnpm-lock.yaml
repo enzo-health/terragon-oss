@@ -24,6 +24,9 @@ overrides:
   '@types/react': ^19.1.8
 
 patchedDependencies:
+  '@assistant-ui/react-ag-ui@0.0.26':
+    hash: f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a
+    path: patches/@assistant-ui__react-ag-ui@0.0.26.patch
   e2b:
     hash: b610d3be3c7d8bc730e67a9fdea4af7a56e880bdb2064d5b0ec78742dfbf5c0c
     path: patches/e2b.patch
@@ -241,7 +244,7 @@ importers:
         version: 0.12.24(@types/react-dom@19.1.6(@types/react@19.1.8))(@types/react@19.1.8)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
       '@assistant-ui/react-ag-ui':
         specifier: 0.0.26
-        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
+        version: 0.0.26(patch_hash=f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a)(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
       '@aws-sdk/client-s3':
         specifier: ^3.803.0
         version: 3.820.0
@@ -11564,7 +11567,7 @@ snapshots:
       react: 19.1.2
       zustand: 5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
 
-  '@assistant-ui/react-ag-ui@0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
+  '@assistant-ui/react-ag-ui@0.0.26(patch_hash=f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a)(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
     dependencies:
       '@ag-ui/client': 0.0.52
       '@assistant-ui/core': 0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))

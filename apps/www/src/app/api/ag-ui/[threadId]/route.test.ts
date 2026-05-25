@@ -77,11 +77,11 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
 }));
 
 const adapterMock = vi.hoisted(() => ({
-  runFollowUpFromAgUiInput: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  dispatchFollowUpFromAppend: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock("@/server-lib/run-from-ag-ui", () => ({
-  runFollowUpFromAgUiInput: adapterMock.runFollowUpFromAgUiInput,
+vi.mock("@/server-lib/follow-up-command", () => ({
+  dispatchFollowUpFromAppend: adapterMock.dispatchFollowUpFromAppend,
 }));
 
 // ---------------------------------------------------------------------------
@@ -268,6 +268,7 @@ function makeRunContext(
 function mockAgUiEventEnvelopesForThreadChat(
   events: BaseEvent[],
   seqs?: number[],
+  projectionIndexes?: Array<number | undefined>,
 ): void {
   let currentRunId: string | null = null;
   const envelopes = events.map((payload, index) => {
@@ -289,6 +290,7 @@ function mockAgUiEventEnvelopesForThreadChat(
       timestamp: String(index + 1),
       idempotencyKey: `event-${seq}`,
       payload,
+      projectionIndex: projectionIndexes?.[index],
     };
   });
   vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
@@ -327,7 +329,7 @@ describe("ag-ui SSE route", () => {
     redisMocks.xread.mockReset();
     redisMocks.xrevrange.mockReset();
     // Default adapter result: success with a runId
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       runId: "run-new",
     });
     vi.mocked(getSessionOrNull).mockResolvedValue({
@@ -563,6 +565,41 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 70,
+    });
+  });
+
+  it("returns a projection-aware history cursor when history ends on a projected row", async () => {
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "partial",
+        },
+      ],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [7], [1]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "partial",
+        },
+      ],
+      lastSeq: 7,
+      lastCursor: { seq: 7, projectionIndex: 1 },
     });
   });
 
@@ -3172,17 +3209,17 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter was called with the right args
-    expect(adapterMock.runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+    expect(adapterMock.dispatchFollowUpFromAppend).toHaveBeenCalledWith({
       threadId: "thread-1",
       threadChatId: "chat-1",
       userId: "user-1",
       body: expect.objectContaining({ messages: validBody.messages }),
-      isReplayMode: false,
     });
 
     // Falls through to SSE stream
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(getLatestRunIdForThreadChat).not.toHaveBeenCalled();
   });
 
   it("POST without body still opens SSE stream (back-compat)", async () => {
@@ -3195,7 +3232,7 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter NOT called when body is absent
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
 
     // SSE stream still opens
     expect(response.status).toBe(200);
@@ -3221,21 +3258,20 @@ describe("ag-ui SSE route", () => {
     );
 
     // Adapter NOT called in replay mode
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
 
     // SSE stream opens
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
-  it("POST resume intent opens SSE stream without dispatching a duplicate follow-up", async () => {
+  it("POST with fromSeq opens SSE stream without dispatching a duplicate follow-up", async () => {
     const validBody = {
       threadId: "thread-1",
       runId: "run-resume",
       messages: [{ id: "msg-1", role: "user", content: "already running" }],
       tools: [],
       context: [],
-      forwardedProps: { runConfig: { terragon: { intent: "resume" } } },
     };
 
     const response = await POST(
@@ -3246,13 +3282,99 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-1"),
     );
 
-    expect(adapterMock.runFollowUpFromAgUiInput).not.toHaveBeenCalled();
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with explicit append intent dispatches even when a stale fromSeq is present", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-append",
+      messages: [{ id: "msg-1", role: "user", content: "new prompt" }],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runConfig: {
+          terragon: {
+            intent: "append",
+          },
+        },
+      },
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&fromSeq=42",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.dispatchFollowUpFromAppend).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      userId: "user-1",
+      body: expect.objectContaining({ messages: validBody.messages }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with Last-Event-ID opens SSE stream without dispatching a duplicate follow-up", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-resume",
+      messages: [{ id: "msg-1", role: "user", content: "already running" }],
+      tools: [],
+      context: [],
+    };
+
+    const response = await POST(
+      makePostRequestWithHeaders(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+        { "Last-Event-ID": "42" },
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("POST with typed resume intent opens SSE stream without dispatching a duplicate follow-up", async () => {
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-resume",
+      messages: [{ id: "msg-1", role: "user", content: "already running" }],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runConfig: {
+          terragon: {
+            intent: "resume",
+          },
+        },
+      },
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
   it("POST with adapter returning lock-held returns 409", async () => {
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       error: { kind: "lock-held" },
     });
 
@@ -3276,7 +3398,7 @@ describe("ag-ui SSE route", () => {
   });
 
   it("POST with adapter returning unauthorized returns 403", async () => {
-    adapterMock.runFollowUpFromAgUiInput.mockResolvedValue({
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
       error: { kind: "unauthorized" },
     });
 

@@ -25,14 +25,14 @@ export default async function TaskListLayout({
   }
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-2 md:pr-2 md:pl-1">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0 md:py-1.5 md:pr-1.5 md:pl-0.5">
         {/* Outer frame: canvas-toned (was bg-card, which made every inner
             child render on cream-strong and made surfaces inside —
             especially the prompt box, which also uses bg-card — invisible
             against their parent. The hairline border + rounded corners
             still produce the framed-card look without flooding the inside
             with cream-strong. */}
-        <div className="flex min-h-0 flex-1 overflow-hidden bg-background transition-[border-radius,box-shadow] duration-200 md:rounded-[10px] md:border md:border-hairline md:shadow-sm">
+        <div className="flex min-h-0 flex-1 overflow-hidden bg-background transition-[border-radius,box-shadow] duration-200 md:rounded-lg md:border md:border-hairline md:shadow-xs">
           {userId ? (
             <Suspense fallback={<ThreadListSidebarFallback />}>
               <ThreadListSidebar />
@@ -57,12 +57,12 @@ function ThreadListSidebarFallback() {
       style={{ width: "251px" }}
     >
       <div className="flex h-full w-full flex-col overflow-hidden">
-        <div className="h-[52px] px-2.5 py-1.5" />
-        <div className="space-y-3 px-4 py-4">
+        <div className="h-12 px-2 py-1" />
+        <div className="flex flex-col gap-2 px-3 py-3">
           <div className="h-3 w-20 rounded bg-muted" />
-          <div className="h-12 rounded-lg bg-muted/70" />
-          <div className="h-12 rounded-lg bg-muted/50" />
-          <div className="h-12 rounded-lg bg-muted/40" />
+          <div className="h-10 rounded-md bg-muted/70" />
+          <div className="h-10 rounded-md bg-muted/50" />
+          <div className="h-10 rounded-md bg-muted/40" />
         </div>
       </div>
     </div>
