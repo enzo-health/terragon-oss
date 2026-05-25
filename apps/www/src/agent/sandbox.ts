@@ -794,6 +794,7 @@ async function getOrCreateSandboxForThread({
       // Local docker sandboxes can OOM on monorepo `pnpm install` during first
       // boot; skip setup script by default in local dev unless explicitly needed.
       skipSetupScript: thread.skipSetup || shouldAutoSkipSetupInLocalDocker,
+      backgroundSetupScript: !!userFeatureFlags.backgroundSetupScript,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,
       publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,
