@@ -114,7 +114,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
 
   return (
     <AgUiAgentProvider agent={agent}>
-      <div className="flex flex-col h-full w-full">
+      <div className="@container/pane flex flex-col h-full w-full">
         <ChatHeader
           thread={threadWithViewModelStatus}
           threadAgent={chatAgent}
@@ -139,7 +139,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
             callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
           >
             {(runtimeProps) => (
-              <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+              <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
                 <div className="relative flex-1 overflow-hidden">
                   <ScrollArea
                     ref={scrollAreaRef}

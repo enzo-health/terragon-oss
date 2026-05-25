@@ -290,6 +290,13 @@
 
 @theme inline {
   --breakpoint-xs: 30rem;
+  /* Fluid scale: rem + vw so it still responds to browser zoom; max <= 2.5x
+     min keeps it within WCAG 1.4.4. Body stays in the 15-16px readable band;
+     titles and gutters scale a little more. */
+  --text-fluid-sm: clamp(0.8125rem, 0.79rem + 0.11vw, 0.875rem);
+  --text-fluid-base: clamp(0.9375rem, 0.91rem + 0.18vw, 1rem);
+  --text-fluid-title: clamp(1rem, 0.95rem + 0.28vw, 1.0625rem);
+  --space-fluid-edge: clamp(1rem, 0.85rem + 0.7vw, 1.5rem);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -508,9 +515,13 @@
   }
 
   /* Clear the home indicator / browser bottom chrome on mobile, not only in
-     PWA standalone mode. env() resolves to 0 where there's no inset. */
+     PWA standalone mode, and lift above the on-screen keyboard on platforms
+     where it overlays rather than resizes the viewport (older iOS Safari).
+     Both env() and --keyboard-inset resolve to 0 when not applicable. */
   .chat-prompt-box {
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(
+      0.5rem + env(safe-area-inset-bottom) + var(--keyboard-inset, 0px)
+    );
   }
 
   @media (display-mode: standalone) {

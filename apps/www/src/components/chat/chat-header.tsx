@@ -118,7 +118,7 @@ export const ChatHeader = memo(function ChatHeader({
         role={isMobile ? "button" : undefined}
         tabIndex={isMobile && onHeaderClick ? 0 : undefined}
         aria-label={isMobile ? "Open task details" : undefined}
-        className={`relative z-10 flex min-h-14 w-full items-center justify-between gap-4 overflow-hidden px-4 md:px-6 ${headerClassName} ${headerSurfaceClassName}`}
+        className={`relative z-10 flex min-h-14 w-full items-center justify-between gap-4 overflow-hidden px-[var(--space-fluid-edge)] ${headerClassName} ${headerSurfaceClassName}`}
         onClick={isMobile ? onHeaderClick : undefined}
         onKeyDown={
           isMobile && onHeaderClick
@@ -158,7 +158,7 @@ export const ChatHeader = memo(function ChatHeader({
                   onBlur={handleSave}
                   onKeyDown={handleKeyDown}
                   aria-label="Edit task name"
-                  className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[15px] font-sans font-semibold tracking-[-0.01em] focus-visible:ring-1 focus-visible:ring-ring md:text-[17px]"
+                  className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[length:var(--text-fluid-title)] font-sans font-semibold tracking-[-0.01em] focus-visible:ring-1 focus-visible:ring-ring"
                   placeholder={getThreadTitle(thread)}
                   style={{ minWidth: "150px" }}
                   autoComplete="off"
@@ -167,11 +167,11 @@ export const ChatHeader = memo(function ChatHeader({
                   spellCheck={false}
                 />
               ) : (
-                <span className="truncate font-sans text-[15px] font-semibold leading-tight tracking-[-0.01em] text-foreground md:text-[17px]">
+                <span className="truncate font-sans text-[length:var(--text-fluid-title)] font-semibold leading-tight tracking-[-0.01em] text-foreground">
                   {getThreadTitle(thread)}
                 </span>
               )}
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="hidden items-center gap-2 flex-shrink-0 @xl/pane:flex">
                 <div className="flex items-center opacity-70">
                   <ThreadAgentIcon thread={thread} />
                 </div>
@@ -187,11 +187,21 @@ export const ChatHeader = memo(function ChatHeader({
             </div>
             {/* metadata */}
             <div className="flex h-5 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px]">
-              <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/80">
+              <span className="truncate font-medium text-foreground/80 @xl/pane:flex-shrink-0 @xl/pane:whitespace-nowrap">
                 {thread.githubRepoFullName}
               </span>
+              {githubSummary.githubPRNumber && githubSummary.prStatus && (
+                <span className="flex-shrink-0 @xl/pane:hidden">
+                  <PRStatusPill
+                    checksStatus={githubSummary.prChecksStatus}
+                    status={githubSummary.prStatus}
+                    prNumber={githubSummary.githubPRNumber}
+                    repoFullName={githubSummary.githubRepoFullName}
+                  />
+                </span>
+              )}
               {thread.branchName && thread.repoBaseBranchName && (
-                <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden sm:inline-flex">
+                <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden @xl/pane:inline-flex">
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
@@ -252,7 +262,7 @@ export const ChatHeader = memo(function ChatHeader({
                 )}
                 {thread.archived && <Pill label="Archived" />}
               </span>
-              <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="hidden flex-shrink-0 items-center gap-1.5 @xl/pane:flex">
                 <UsageChip tokenUsage={metaSnapshot.tokenUsage} />
                 <RateLimitChip rateLimits={metaSnapshot.rateLimits} />
                 <ModelRoutingChip modelReroute={metaSnapshot.modelReroute} />
