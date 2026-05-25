@@ -20,15 +20,23 @@ export type RunMetadataInput = {
   clientSubmissionId?: string | null;
 };
 
+export type EncodedRunMetadata = {
+  terragon: {
+    selectedModel: AIModel | null;
+    permissionMode: DBUserMessage["permissionMode"] | null;
+    traceId: string | null;
+    intent: RunPostIntent;
+    clientSubmissionId: string | null;
+  };
+};
+
 export function encodeRunMetadata({
   selectedModel,
   permissionMode,
   traceId,
   intent,
   clientSubmissionId,
-}: RunMetadataInput): {
-  terragon: Record<string, string | null>;
-} {
+}: RunMetadataInput): EncodedRunMetadata {
   return {
     terragon: {
       selectedModel,

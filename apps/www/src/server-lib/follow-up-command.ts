@@ -1,19 +1,12 @@
-import type {
-  InputContent,
-  Message as AgUiMessage,
-  RunAgentInput,
-} from "@ag-ui/core";
-import type {
-  DBUserMessage,
-  DBRichTextPart,
-  DBImagePart,
-} from "@terragon/shared";
+import type { Message as AgUiMessage, RunAgentInput } from "@ag-ui/core";
+import type { DBUserMessage } from "@terragon/shared";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { getLatestRunIdForThreadChat } from "@terragon/shared/model/agent-event-log";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { followUpInternal } from "@/server-lib/follow-up";
 import { decodeRunMetadata } from "@/lib/run-metadata";
+import { agUiUserContentToDbParts } from "@/lib/user-message-content";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -47,95 +40,6 @@ function submissionDedupeKey(
   clientSubmissionId: string,
 ): string {
   return `dedupe:ag-ui-submission:${threadChatId}:${clientSubmissionId}`;
-}
-
-// ---------------------------------------------------------------------------
-// AG-UI → DBUserMessage part conversion
-// ---------------------------------------------------------------------------
-
-/**
- * Convert a single AG-UI InputContent item to a DBUserMessage part.
- * Returns null for content types that have no DB equivalent.
- */
-function inputContentToDbPart(
-  content: InputContent,
-): DBImagePart | DBRichTextPart | null {
-  if (content.type === "text") {
-    return {
-      type: "rich-text",
-      nodes: [{ type: "text", text: content.text }],
-    } satisfies DBRichTextPart;
-  }
-
-  if (content.type === "image") {
-    const source = content.source;
-    if (source.type === "url") {
-      return {
-        type: "image",
-        image_url: source.value,
-        mime_type: source.mimeType ?? "image/jpeg",
-      } satisfies DBImagePart;
-    }
-    if (source.type === "data") {
-      // data-URL encoded: embed as a base64 data URL for the image part
-      const dataUrl = `data:${source.mimeType};base64,${source.value}`;
-      return {
-        type: "image",
-        image_url: dataUrl,
-        mime_type: source.mimeType,
-      } satisfies DBImagePart;
-    }
-    return null;
-  }
-
-  // binary, audio, video, document — no DB equivalent yet
-  return null;
-}
-
-/**
- * Convert an AG-UI user message's content to DBUserMessage parts.
- *
- * AG-UI user messages carry content as either a plain string or an array of
- * InputContent items. This is the inverse of buildUserContent() in
- * terragon-ag-ui-conversions.ts.
- */
-function agUiUserContentToDbParts(
-  content: AgUiUserMessage["content"],
-): DBUserMessage["parts"] {
-  if (typeof content === "string") {
-    if (content.length === 0) {
-      return [];
-    }
-    return [
-      {
-        type: "rich-text",
-        nodes: [{ type: "text", text: content }],
-      },
-    ];
-  }
-
-  const parts: DBUserMessage["parts"] = [];
-  for (const item of content) {
-    const part = inputContentToDbPart(item);
-    if (part !== null) {
-      parts.push(part);
-    }
-  }
-  return parts;
-}
-
-function validateAgUiUserContent(
-  content: AgUiUserMessage["content"],
-): string | null {
-  if (typeof content === "string") {
-    return null;
-  }
-  for (const item of content) {
-    if (item.type === "image" && item.source.type === "url") {
-      return "AG-UI URL image sources are not accepted; upload the image first";
-    }
-  }
-  return null;
 }
 
 // Narrowed type — only user-role messages
@@ -275,20 +179,18 @@ export async function dispatchFollowUpFromAppend(args: {
         },
       };
     }
-    const contentValidationError = validateAgUiUserContent(
-      agUiUserMessage.content,
-    );
-    if (contentValidationError !== null) {
+    const partsResult = agUiUserContentToDbParts(agUiUserMessage.content);
+    if (partsResult.type === "unsupported") {
       return {
         error: {
           kind: "invalid-input",
-          reason: contentValidationError,
+          reason: partsResult.reason,
         },
       };
     }
 
     // 5. Map AG-UI message → DBUserMessage
-    const parts = agUiUserContentToDbParts(agUiUserMessage.content);
+    const { parts } = partsResult;
     if (parts.length === 0) {
       return {
         error: {

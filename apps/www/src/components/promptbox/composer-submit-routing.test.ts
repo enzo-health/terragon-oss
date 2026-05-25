@@ -1,8 +1,8 @@
 import type { AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 import { describe, expect, it, vi } from "vitest";
+import { dbUserPartsToAssistantContent } from "@/lib/user-message-content";
 import {
-  toAssistantUserContent,
   classifyComposerSubmitRoute,
   routeComposerSubmit,
   type ComposerSubmitCommand,
@@ -18,6 +18,20 @@ function richTextMessage(text: string): DBUserMessage {
     model,
     parts: [{ type: "rich-text", nodes: [{ type: "text", text }] }],
     permissionMode: "allowAll",
+  };
+}
+
+function imageMessage(): DBUserMessage {
+  return {
+    type: "user",
+    model,
+    parts: [
+      {
+        type: "image",
+        mime_type: "image/png",
+        image_url: "https://example.com/image.png",
+      },
+    ],
   };
 }
 
@@ -50,9 +64,9 @@ function runtime(append: ComposerSubmitRuntime["append"]) {
   return { append } satisfies ComposerSubmitRuntime;
 }
 
-describe("toAssistantUserContent", () => {
+describe("dbUserPartsToAssistantContent", () => {
   it("converts text, rich text, mentions, and images to assistant-ui content", () => {
-    const content = toAssistantUserContent([
+    const content = dbUserPartsToAssistantContent([
       { type: "text", text: "plain" },
       { type: "rich-text", nodes: [{ type: "text", text: "hello" }] },
       { type: "rich-text", nodes: [{ type: "mention", text: "src/app.ts" }] },
@@ -77,6 +91,15 @@ describe("classifyComposerSubmitRoute", () => {
     const routing = classifyComposerSubmitRoute(richTextMessage("ship it"));
 
     expect(routing.type).toBe("runtime");
+  });
+
+  it("routes image messages through runtime append", () => {
+    const routing = classifyComposerSubmitRoute(imageMessage());
+
+    expect(routing).toEqual({
+      type: "runtime",
+      content: [{ type: "image", image: "https://example.com/image.png" }],
+    });
   });
 
   it("routes mixed supported and unsupported attachment messages to fallback", () => {
@@ -191,6 +214,28 @@ describe("routeComposerSubmit", () => {
     });
     expect(fallback).toHaveBeenCalledOnce();
     expect(append).not.toHaveBeenCalled();
+  });
+
+  it("starts runtime append for image messages", async () => {
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      userMessage: imageMessage(),
+      threadRuntime: runtime(append),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+    });
+
+    expect(outcome).toEqual({ type: "runtime-append-started" });
+    expect(append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: [{ type: "image", image: "https://example.com/image.png" }],
+      }),
+    );
+    expect(fallback).not.toHaveBeenCalled();
   });
 
   it("uses fallback submit when no runtime exists", async () => {

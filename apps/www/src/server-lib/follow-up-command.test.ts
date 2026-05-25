@@ -406,7 +406,7 @@ describe("dispatchFollowUpFromAppend", () => {
   // -------------------------------------------------------------------------
 
   describe("image content conversion", () => {
-    it("rejects URL-source image InputContent", async () => {
+    it("converts URL-source image InputContent to a DBImagePart", async () => {
       const body = makeBody({
         messages: [
           {
@@ -426,16 +426,21 @@ describe("dispatchFollowUpFromAppend", () => {
         ],
       });
 
-      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
-      expect(result).toEqual({
-        error: {
-          kind: "invalid-input",
-          reason:
-            "AG-UI URL image sources are not accepted; upload the image first",
-        },
-      });
-      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({
+            parts: [
+              {
+                type: "image",
+                image_url: "https://example.com/photo.png",
+                mime_type: "image/png",
+              },
+            ],
+          }),
+        }),
+      );
     });
 
     it("converts a data-source image InputContent to a base64 data-URL DBImagePart", async () => {
@@ -475,7 +480,7 @@ describe("dispatchFollowUpFromAppend", () => {
       );
     });
 
-    it("rejects mixed text + URL image content instead of dropping the image", async () => {
+    it("converts mixed text + URL image content without dropping the image", async () => {
       const body = makeBody({
         messages: [
           {
@@ -496,16 +501,25 @@ describe("dispatchFollowUpFromAppend", () => {
         ],
       });
 
-      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
-      expect(result).toEqual({
-        error: {
-          kind: "invalid-input",
-          reason:
-            "AG-UI URL image sources are not accepted; upload the image first",
-        },
-      });
-      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({
+            parts: [
+              {
+                type: "rich-text",
+                nodes: [{ type: "text", text: "Look at this:" }],
+              },
+              {
+                type: "image",
+                image_url: "https://example.com/shot.jpg",
+                mime_type: "image/jpeg",
+              },
+            ],
+          }),
+        }),
+      );
     });
   });
 

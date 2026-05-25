@@ -1,7 +1,11 @@
 import type { SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
 import type { ThreadUserMessagePart } from "@assistant-ui/react";
-import { encodeRunMetadata } from "@/lib/run-metadata";
+import { encodeRunMetadata, type EncodedRunMetadata } from "@/lib/run-metadata";
+import {
+  dbUserMessageHasUnsupportedAssistantContent,
+  dbUserPartsToAssistantContent,
+} from "@/lib/user-message-content";
 import type { TSubmitForm } from "./send-button";
 
 export type ComposerSubmitRouteOutcome =
@@ -17,7 +21,7 @@ export type ComposerSubmitRuntime = {
   append: (message: {
     role: "user";
     content: ThreadUserMessagePart[];
-    runConfig: { custom: ReturnType<typeof encodeRunMetadata> };
+    runConfig: { custom: EncodedRunMetadata };
   }) => Promise<void> | void;
 };
 
@@ -122,44 +126,12 @@ type ComposerSubmitRoute =
 export function classifyComposerSubmitRoute(
   userMessage: DBUserMessage,
 ): ComposerSubmitRoute {
-  if (hasUnsupportedRuntimeParts(userMessage)) {
+  if (dbUserMessageHasUnsupportedAssistantContent(userMessage)) {
     return { type: "unsupported-parts" };
   }
 
-  const content = toAssistantUserContent(userMessage.parts);
+  const content = dbUserPartsToAssistantContent(userMessage.parts);
   return content.length > 0
     ? { type: "runtime", content }
     : { type: "empty-runtime-content" };
-}
-
-function hasUnsupportedRuntimeParts(userMessage: DBUserMessage): boolean {
-  return userMessage.parts.some(
-    (part) => part.type === "pdf" || part.type === "text-file",
-  );
-}
-
-export function toAssistantUserContent(
-  parts: DBUserMessage["parts"],
-): ThreadUserMessagePart[] {
-  const result: ThreadUserMessagePart[] = [];
-  for (const part of parts) {
-    if (part.type === "rich-text") {
-      const text = part.nodes
-        .map((node) => {
-          if (typeof node === "string") return node;
-          if (node.type === "mention") return `@${node.text}`;
-          if ("text" in node && typeof node.text === "string") return node.text;
-          return "";
-        })
-        .join("");
-      if (text.length > 0) {
-        result.push({ type: "text", text });
-      }
-    } else if (part.type === "text" && part.text.length > 0) {
-      result.push({ type: "text", text: part.text });
-    } else if (part.type === "image") {
-      result.push({ type: "image", image: part.image_url });
-    }
-  }
-  return result;
 }
