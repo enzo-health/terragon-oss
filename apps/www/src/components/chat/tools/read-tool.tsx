@@ -13,9 +13,12 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function ReadTool({
   toolPart,
+  onOpenRepoFile,
 }: {
   toolPart: Extract<AllToolParts, { name: "Read" }>;
+  onOpenRepoFile?: (filePath: string) => void;
 }) {
+  const filePath = toolPart.parameters.file_path;
   return (
     <GenericToolPart
       toolName="Read"
@@ -23,6 +26,9 @@ export function ReadTool({
         keyOrder: ["file_path", "offset", "limit"],
       })}
       toolStatus={toolPart.status}
+      onToolArgClick={
+        onOpenRepoFile && filePath ? () => onOpenRepoFile(filePath) : undefined
+      }
     >
       <ReadToolContent toolPart={toolPart} />
     </GenericToolPart>

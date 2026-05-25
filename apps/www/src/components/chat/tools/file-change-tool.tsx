@@ -79,28 +79,41 @@ export function diffPartFromFileChangeResult(
 
 export function FileChangeTool({
   toolPart,
+  onOpenRepoFile,
 }: {
   toolPart: Extract<AllToolParts, { name: "FileChange" }>;
+  onOpenRepoFile?: (filePath: string) => void;
 }) {
   const files = toolPart.parameters?.files ?? [];
   const toolArg =
     files.length === 1 ? basename(files[0]!.path) : `${files.length} files`;
+  const singleFilePath = files.length === 1 ? files[0]!.path : null;
 
   return (
     <GenericToolPart
       toolName="FileChange"
       toolArg={toolArg}
       toolStatus={toolPart.status}
+      onToolArgClick={
+        onOpenRepoFile && singleFilePath
+          ? () => onOpenRepoFile(singleFilePath)
+          : undefined
+      }
     >
-      <FileChangeToolContent toolPart={toolPart} />
+      <FileChangeToolContent
+        toolPart={toolPart}
+        onOpenRepoFile={onOpenRepoFile}
+      />
     </GenericToolPart>
   );
 }
 
 function FileChangeToolContent({
   toolPart,
+  onOpenRepoFile,
 }: {
   toolPart: Extract<AllToolParts, { name: "FileChange" }>;
+  onOpenRepoFile?: (filePath: string) => void;
 }) {
   if (toolPart.status === "pending") {
     return (
@@ -122,7 +135,7 @@ function FileChangeToolContent({
     return (
       <GenericToolPartContent toolStatus={toolPart.status}>
         <GenericToolPartContentRow index={0} className="pr-2">
-          <DiffPartView part={diffPart} />
+          <DiffPartView part={diffPart} onOpenRepoFile={onOpenRepoFile} />
         </GenericToolPartContentRow>
       </GenericToolPartContent>
     );
@@ -132,10 +145,25 @@ function FileChangeToolContent({
     <GenericToolPartContent toolStatus={toolPart.status}>
       {files.map((file, i) => (
         <GenericToolPartContentRow key={file.path} index={i}>
-          <span className="flex items-center gap-1.5" title={file.path}>
-            {getFileIcon(file.action)}
-            <span className="font-mono truncate">{basename(file.path)}</span>
-          </span>
+          {onOpenRepoFile ? (
+            <button
+              type="button"
+              onClick={() => onOpenRepoFile(file.path)}
+              title={file.path}
+              data-testid="file-change-open-file"
+              className="flex items-center gap-1.5 bg-transparent border-0 p-0 cursor-pointer text-left"
+            >
+              {getFileIcon(file.action)}
+              <span className="font-mono truncate underline decoration-dotted underline-offset-2 hover:decoration-solid">
+                {basename(file.path)}
+              </span>
+            </button>
+          ) : (
+            <span className="flex items-center gap-1.5" title={file.path}>
+              {getFileIcon(file.action)}
+              <span className="font-mono truncate">{basename(file.path)}</span>
+            </span>
+          )}
         </GenericToolPartContentRow>
       ))}
     </GenericToolPartContent>

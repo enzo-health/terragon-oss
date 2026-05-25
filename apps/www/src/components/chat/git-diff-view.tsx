@@ -4,8 +4,8 @@ import React, { useEffect, useId, useMemo, useState } from "react";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { parseMultiFileDiff } from "@/lib/git-diff";
 import { cn } from "@/lib/utils";
-import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FileTreeItem } from "./git-diff-file-tree-item";
+import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FilesChangedHeader } from "./git-diff-files-changed-header";
 import type { GitDiffViewProps } from "./git-diff-view.types";
 import {
@@ -14,8 +14,8 @@ import {
   computeDefaultExpanded,
 } from "./git-diff-view.utils";
 
-export { FilesChangedHeader } from "./git-diff-files-changed-header";
 export { FileDiffWrapper } from "./git-diff-file-wrapper";
+export { FilesChangedHeader } from "./git-diff-files-changed-header";
 
 export function GitDiffView({
   thread,
@@ -23,6 +23,7 @@ export function GitDiffView({
   diffPart,
   threadChatId,
   threadMessages,
+  onOpenRepoFile,
 }: GitDiffViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const fileTreeId = useId();
@@ -274,6 +275,7 @@ export function GitDiffView({
                   onFileSelect={scrollToFile}
                   expandedFolders={expandedFolders}
                   onToggleFolder={toggleFolder}
+                  onOpenRepoFile={onOpenRepoFile}
                 />
               ))}
             </div>
@@ -295,6 +297,7 @@ export function GitDiffView({
                   threadChatId={threadChatId}
                   threadMessages={threadMessages}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}
+                  onOpenRepoFile={onOpenRepoFile}
                 />
               </div>
             ))}

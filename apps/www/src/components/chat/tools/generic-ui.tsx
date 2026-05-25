@@ -51,6 +51,7 @@ export function GenericToolPart({
   children,
   toolColor,
   toolArgSuffix,
+  onToolArgClick,
 }: {
   toolName: React.ReactNode;
   toolArg: string | null;
@@ -58,6 +59,14 @@ export function GenericToolPart({
   children: React.ReactNode;
   toolColor?: string;
   toolArgSuffix?: React.ReactNode;
+  /**
+   * When provided, the `toolArg` (the file path) renders as a clickable
+   * affordance that opens the file in the artifacts panel. Absent → the arg
+   * renders as static text (unchanged behavior). Gated upstream by the
+   * `repoFilePreview` flag at the dispatch site, so this is only set when the
+   * flag is on.
+   */
+  onToolArgClick?: () => void;
 }) {
   const colorClass = getAgentColorClass(toolColor);
   const isLongArg = !!toolArg && toolArg.length > LONG_TOOL_ARG_CHARS;
@@ -114,6 +123,15 @@ export function GenericToolPart({
             <span className="!text-foreground font-semibold">(</span>
             {isLongArg ? (
               <LongToolArg text={toolArg} />
+            ) : onToolArgClick ? (
+              <button
+                type="button"
+                onClick={onToolArgClick}
+                className="!text-foreground font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid cursor-pointer bg-transparent border-0 p-0 font-inherit"
+                data-testid="tool-arg-open-file"
+              >
+                {toolArg}
+              </button>
             ) : (
               <span className="!text-foreground font-medium">{toolArg}</span>
             )}

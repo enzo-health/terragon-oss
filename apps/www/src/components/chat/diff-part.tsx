@@ -8,6 +8,13 @@ export interface DiffPartViewProps {
   part: DBDiffPart;
   onAccept?: () => void;
   onReject?: () => void;
+  /**
+   * When supplied, the diff header file path becomes a clickable affordance
+   * that opens the file in the artifacts panel (R4). Gated by the
+   * `repoFilePreview` flag at the producer in `chat-ui.tsx`; left undefined
+   * when the flag is off so the header stays a plain expand toggle.
+   */
+  onOpenRepoFile?: (filePath: string) => void;
 }
 
 function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
@@ -48,27 +55,54 @@ function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
   }
 }
 
-export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
+export function DiffPartView({
+  part,
+  onAccept,
+  onReject,
+  onOpenRepoFile,
+}: DiffPartViewProps) {
   const [expanded, setExpanded] = useState(false);
   const diffContent = part.unifiedDiff || buildSimpleDiff(part);
+  const canOpenRepoFile = Boolean(onOpenRepoFile && part.filePath);
 
   return (
     <div className="rounded-lg border border-border text-sm overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/40">
-        <button
-          type="button"
-          className="flex items-center gap-1.5 font-mono text-xs font-medium truncate hover:text-foreground transition-colors text-left"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <ChevronRight
-            className={cn(
-              "size-3 shrink-0 transition-transform duration-200 ease-[var(--ease-standard)]",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className="truncate">{part.filePath}</span>
-        </button>
+        <div className="flex items-center gap-1.5 min-w-0 font-mono text-xs font-medium">
+          <button
+            type="button"
+            aria-label={expanded ? "Collapse diff" : "Expand diff"}
+            className="shrink-0 hover:text-foreground transition-colors"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <ChevronRight
+              className={cn(
+                "size-3 shrink-0 transition-transform duration-200 ease-[var(--ease-standard)]",
+                expanded && "rotate-90",
+              )}
+            />
+          </button>
+          {canOpenRepoFile ? (
+            <button
+              type="button"
+              title={part.filePath}
+              data-testid="diff-header-open-file"
+              className="truncate text-left cursor-pointer underline decoration-dotted underline-offset-2 hover:decoration-solid hover:text-foreground transition-colors"
+              onClick={() => onOpenRepoFile?.(part.filePath)}
+            >
+              {part.filePath}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="truncate text-left hover:text-foreground transition-colors"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {part.filePath}
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={part.status} />
           {part.status === "pending" && (onAccept || onReject) && (
