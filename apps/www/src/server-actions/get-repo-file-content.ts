@@ -1,13 +1,13 @@
 "use server";
 
-import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getThreadPageShellWithPermissions } from "@terragon/shared/model/thread-page";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import type { Octokit } from "octokit";
-import { getHasRepoPermissionsForUser } from "./get-thread";
-import { getOctokitForUserOrThrow, parseRepoFullName } from "@/lib/github";
+import {
+  RepoAccessError,
+  resolveRepoAccess,
+  fetchWithRefCascade,
+} from "./repo-access";
 
 /** The `repos.getContent` response body: a file/symlink/submodule object, or a
  * directory's entry array. Derived from the SDK so the directory branch is
@@ -108,25 +108,14 @@ function parseDirectoryListing(
   return entries;
 }
 
-function isHttpStatusError(error: unknown): error is { status: number } {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    typeof (error as { status: unknown }).status === "number"
-  );
-}
-
 /**
  * Authenticated content-loading action for the in-repo file preview.
  *
  * Authorization and content sourcing are entirely server-derived:
- *  - The user is authorized against the thread/repo via
- *    getThreadPageShellWithPermissions (allowAdmin: false), exactly mirroring
- *    get-thread-page-diff.ts. The client supplies only the threadId and the
- *    clicked path — NEVER a repoFullName or ref.
- *  - repoFullName and the git ref are taken from the server-resolved thread.
- *  - The repoFilePreview feature flag is re-checked server-side.
+ *  - Authz, the repoFilePreview flag re-check, and repoFullName + ref-candidate
+ *    resolution all run in resolveRepoAccess (repo-access.ts). The client
+ *    supplies only the threadId and the clicked path — NEVER a repoFullName or
+ *    ref.
  *  - The path is re-normalized with the shared classifier, rejecting any `..`
  *    traversal so a request can never escape the workspace root.
  *
@@ -164,30 +153,13 @@ async function loadRepoFileContent(
   },
 ): Promise<GetRepoFileContentResult> {
   try {
-    // Authorize against the thread/repo and resolve repoFullName + ref entirely
-    // server-side BEFORE evaluating any thread-scoped state. Mirrors
-    // get-thread-page-diff.ts permission checks. Running authz first ensures the
-    // feature flag is never evaluated for a threadId the caller cannot access.
-    const shell = await getThreadPageShellWithPermissions({
-      db,
+    // Authorize, re-check the flag, and resolve repoFullName + ref candidates
+    // entirely server-side. resolveRepoAccess throws RepoAccessError, whose
+    // "unauthorized"/"feature-disabled" categories are a subset of ours.
+    const { octokit, owner, repo, refCandidates } = await resolveRepoAccess(
+      userId,
       threadId,
-      userId,
-      allowAdmin: false,
-      getHasRepoPermissions: async (repoFullName) =>
-        getHasRepoPermissionsForUser({ userId, repoFullName }),
-    });
-    if (!shell) {
-      throw new RepoFileContentError("unauthorized");
-    }
-
-    const flagEnabled = await getFeatureFlagForUser({
-      db,
-      userId,
-      flagName: "repoFilePreview",
-    });
-    if (!flagEnabled) {
-      throw new RepoFileContentError("feature-disabled");
-    }
+    );
 
     // Re-validate + normalize the path SERVER-SIDE. Rejects traversal (`..`),
     // external/dangerous schemes, and empty inputs. We only keep the path; the
@@ -197,45 +169,18 @@ async function loadRepoFileContent(
       throw new RepoFileContentError("invalid-path");
     }
 
-    // REF-RESOLUTION RULE: try the working branch first, then the base branch
-    // (NOT NULL) on a 404. A read-only/exploration thread is assigned a
-    // `branchName` that is never pushed (no commits), so getContent 404s against
-    // it for every path even though the file exists on base — the cascade
-    // resolves those from base. The base candidate is dropped when it equals the
-    // working ref so we never fetch the same ref twice. The repo's GitHub
-    // default branch is still never used; only the thread's own base branch.
-    const refCandidates =
-      shell.branchName && shell.branchName !== shell.repoBaseBranchName
-        ? [shell.branchName, shell.repoBaseBranchName]
-        : [shell.repoBaseBranchName];
-
-    const [owner, repo] = parseRepoFullName(shell.githubRepoFullName);
-    const octokit = await getOctokitForUserOrThrow({ userId });
-
-    let data: GetContentData | undefined;
-    let resolvedRef: string | undefined;
-    for (const candidate of refCandidates) {
-      try {
-        const response = await octokit.rest.repos.getContent({
-          owner,
-          repo,
-          path: classified.path,
-          ref: candidate,
-        });
-        data = response.data;
-        resolvedRef = candidate;
-        break;
-      } catch (error) {
-        // A 404 means the path is absent on this ref; try the next candidate.
-        // Any other status is a hard GitHub failure and short-circuits.
-        if (isHttpStatusError(error) && error.status === 404) continue;
-        throw new RepoFileContentError("github-error");
-      }
-    }
-    if (data === undefined || resolvedRef === undefined) {
-      throw new RepoFileContentError("not-found");
-    }
-    const ref = resolvedRef;
+    const { data, ref } = await fetchWithRefCascade(
+      refCandidates,
+      async (candidate) =>
+        (
+          await octokit.rest.repos.getContent({
+            owner,
+            repo,
+            path: classified.path,
+            ref: candidate,
+          })
+        ).data,
+    );
 
     // A directory comes back as an array of entries; return a browsable listing
     // so each child opens through the same in-repo flow when clicked.
@@ -276,8 +221,12 @@ async function loadRepoFileContent(
       ref,
     };
   } catch (error) {
+    // Both error types carry an opaque category; RepoAccessError's categories
+    // are a subset of ours, so this is effectively identity.
     const category: RepoFileContentErrorCategory =
-      error instanceof RepoFileContentError ? error.category : "github-error";
+      error instanceof RepoFileContentError || error instanceof RepoAccessError
+        ? error.category
+        : "github-error";
     // Only the opaque category is logged — never the path, repo, ref, or
     // contents — so no PHI reaches telemetry.
     console.warn("[getRepoFileContentAction] load failed", { category });
