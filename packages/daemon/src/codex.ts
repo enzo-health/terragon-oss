@@ -1288,6 +1288,10 @@ export function parseCodexItem({
         },
         parent_tool_use_id: parentToolUseId,
         session_id: "",
+        // The daemon streams this reasoning as "thinking" deltas under
+        // `item.id`; tagging lets the server skip the duplicate rich-part
+        // REASONING representation keyed on a different (envelope-derived) id.
+        _codexItemId: item.id,
       });
       return messages;
     }
@@ -1324,6 +1328,10 @@ export function parseCodexItem({
         },
         parent_tool_use_id: parentToolUseId,
         session_id: "",
+        // The daemon streams this text as deltas under `item.id`; tagging the
+        // message lets the canonical-event builder skip a duplicate
+        // `assistant-message` event keyed on a different id.
+        _codexItemId: item.id,
       });
       return messages;
     }

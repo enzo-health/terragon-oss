@@ -1237,6 +1237,45 @@ describe("daemon-event route", () => {
     expect(partTypes).toContain("thinking");
   });
 
+  it("skips rich-part events for Codex messages already streamed as deltas", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-codex-reasoning",
+        runId: "run-1",
+        seq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "thinking",
+                  thinking: "streamed reasoning",
+                  signature: "codex-synthetic-signature",
+                },
+              ],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+            // Already streamed + persisted as thinking deltas under this id.
+            _codexItemId: "msg_reasoning_1",
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // The delta stream owns this reasoning; no duplicate rich-part emission.
+    expect(
+      agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
+    ).not.toHaveBeenCalled();
+  });
+
   it("fails closed when native-runtime rich-part persistence fails", async () => {
     agUiPublisherMocks.dbAgentMessagePartsToAgUiRows.mockReturnValueOnce([
       {

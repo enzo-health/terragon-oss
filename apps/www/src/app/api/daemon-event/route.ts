@@ -1585,9 +1585,19 @@ export async function POST(request: Request) {
     const richPartInputs: AssistantMessagePartsInput[] = [];
     let messageIndex = 0;
     for (const claudeMessage of messages) {
+      // Codex messages tagged with `_codexItemId` (agent text, reasoning) are
+      // already streamed and persisted as deltas under that stable item id.
+      // Emitting a second rich-part representation here — keyed on the
+      // envelope-derived id — is what rendered the same content twice. Skip
+      // them: the delta stream is the single persisted/replayed representation.
+      const isCodexDeltaStreamed =
+        claudeMessage.type === "assistant" &&
+        typeof (claudeMessage as { _codexItemId?: unknown })._codexItemId ===
+          "string";
       for (const dbMsg of toDBMessage(claudeMessage)) {
         const currentIndex = messageIndex++;
         if (dbMsg.type !== "agent") continue;
+        if (isCodexDeltaStreamed) continue;
         // DBAgentMessage parts never contain tool-use/tool-result — those
         // are separate top-level DBMessage variants. The mapper's skip set
         // is a superset; here we only need to filter out pure-text parts.

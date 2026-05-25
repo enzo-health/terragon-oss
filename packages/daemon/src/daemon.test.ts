@@ -693,6 +693,62 @@ describe("daemon", () => {
     ]);
   });
 
+  it("suppresses the canonical assistant-message for Codex text already streamed as deltas", async () => {
+    type DaemonInternals = {
+      initializeDaemonEventRunStateForNewRun: (params: {
+        input: DaemonMessageClaude;
+      }) => void;
+      sendMessagesToAPI: (input: {
+        messages: ClaudeMessage[];
+        entryCount: number;
+        timezone: string;
+        token: string;
+        threadId: string;
+        threadChatId: string;
+      }) => Promise<unknown>;
+    };
+    const internals = daemon as unknown as DaemonInternals;
+    const canonicalInput: DaemonMessageClaude = {
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5.4",
+      transportMode: "acp",
+      protocolVersion: 2,
+      runId: "run-codex-delta-streamed",
+    };
+    internals.initializeDaemonEventRunStateForNewRun({ input: canonicalInput });
+
+    await internals.sendMessagesToAPI({
+      messages: [
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Streamed via deltas" }],
+          },
+          parent_tool_use_id: null,
+          session_id: "session-1",
+          // Tagged: the daemon already streamed this text as deltas under the
+          // Codex item id, so the canonical event would be a duplicate.
+          _codexItemId: "msg_abc123",
+        },
+      ],
+      entryCount: 1,
+      timezone: "UTC",
+      token: canonicalInput.token,
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+    });
+
+    const payload = serverPostMock.mock.calls[0]?.[0] as {
+      canonicalEvents?: Array<{ type: string }>;
+    };
+    // Only run-started — no assistant-message duplicate of the delta stream.
+    expect(payload.canonicalEvents).toEqual([
+      expect.objectContaining({ type: "run-started" }),
+    ]);
+  });
+
   it("drains meta events into the outbound daemon-event POST alongside messages", async () => {
     type MetaBufferEntry = {
       metaEvent: ThreadMetaEvent;

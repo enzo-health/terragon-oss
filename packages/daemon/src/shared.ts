@@ -185,6 +185,16 @@ export type ClaudeMessage =
       message: Anthropic.MessageParam; // from Anthropic SDK
       parent_tool_use_id: string | null;
       session_id: string;
+      /**
+       * Codex source item id (`msg_<hex>`) when this assistant message came
+       * from a Codex `agent_message` item whose text already streamed as
+       * deltas under the same id. Its presence tells the canonical-event
+       * builder to suppress a duplicate `assistant-message` event: the delta
+       * stream is the single persisted/replayed representation, so emitting a
+       * second one under a fresh id is what stacked identical text in the
+       * transcript. Absent for Claude/ACP messages.
+       */
+      _codexItemId?: string;
     }
 
   // A user message
