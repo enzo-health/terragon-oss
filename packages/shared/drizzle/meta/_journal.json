@@ -281,6 +281,13 @@
       "when": 1777507200000,
       "tag": "0039_drop_delivery_loop_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1777593600000,
+      "tag": "0040_linear_installation_app_user_id",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { UserFacingError } from "@/lib/server-actions";
 import {
+  getLinearAccountForUserAndOrg,
   getLinearInstallationForOrg,
   disconnectLinearAccountAndSettings,
   upsertLinearSettings,
@@ -179,6 +180,14 @@ export const updateLinearSettings = userOnlyAction(
     },
   ): Promise<void> {
     await assertLinearEnabled(userId);
+    const account = await getLinearAccountForUserAndOrg({
+      db,
+      userId,
+      organizationId,
+    });
+    if (!account) {
+      throw new UserFacingError("Linear account is not linked");
+    }
     await upsertLinearSettings({ db, userId, organizationId, settings });
   },
   { defaultErrorMessage: "Failed to update Linear settings" },

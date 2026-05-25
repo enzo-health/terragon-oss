@@ -3,11 +3,15 @@ import { eq } from "drizzle-orm";
 import {
   getLinearAccountConnectUrl as getLinearAccountConnectUrlAction,
   uninstallLinearWorkspace as uninstallLinearWorkspaceAction,
+  updateLinearSettings as updateLinearSettingsAction,
 } from "./linear";
 import { db } from "@/lib/db";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { mockLoggedInUser, mockLoggedOutUser } from "@/test-helpers/mock-next";
-import { upsertLinearInstallation } from "@terragon/shared/model/linear";
+import {
+  upsertLinearAccount,
+  upsertLinearInstallation,
+} from "@terragon/shared/model/linear";
 import {
   setUserFeatureFlagOverride,
   upsertFeatureFlag,
@@ -25,6 +29,12 @@ const uninstallLinearWorkspace = async (args: { organizationId: string }) => {
 
 const getLinearAccountConnectUrl = async () => {
   return unwrapResult(await getLinearAccountConnectUrlAction());
+};
+
+const updateLinearSettings = async (
+  args: Parameters<typeof updateLinearSettingsAction>[0],
+) => {
+  return unwrapResult(await updateLinearSettingsAction(args));
 };
 
 // Helper to create a linear installation for a given installer user
@@ -237,5 +247,61 @@ describe("getLinearAccountConnectUrl", () => {
     await mockLoggedOutUser();
 
     await expect(getLinearAccountConnectUrl()).rejects.toThrow("Unauthorized");
+  });
+});
+
+describe("updateLinearSettings", () => {
+  let user: User;
+  let session: Session;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const result = await createTestUser({ db });
+    user = result.user;
+    session = result.session;
+    await enableLinearFeatureFlag(user.id);
+    await mockLoggedInUser(session);
+  });
+
+  it("rejects settings writes for Linear organizations the user has not linked", async () => {
+    await expect(
+      updateLinearSettings({
+        organizationId: "unlinked-org",
+        settings: {
+          defaultRepoFullName: "owner/repo",
+          defaultModel: "sonnet",
+        },
+      }),
+    ).rejects.toThrow("Linear account is not linked");
+  });
+
+  it("updates settings for a linked Linear account", async () => {
+    await upsertLinearAccount({
+      db,
+      userId: user.id,
+      organizationId: "linked-org",
+      account: {
+        linearUserId: "linear-user-1",
+        linearUserName: "Linear User",
+        linearUserEmail: "linear@example.com",
+      },
+    });
+
+    await expect(
+      updateLinearSettings({
+        organizationId: "linked-org",
+        settings: {
+          defaultRepoFullName: "owner/repo",
+          defaultModel: "sonnet",
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    const settings = await db.query.linearSettings.findFirst({
+      where: (table, { eq: equals }) =>
+        equals(table.organizationId, "linked-org"),
+    });
+    expect(settings?.userId).toBe(user.id);
+    expect(settings?.defaultRepoFullName).toBe("owner/repo");
   });
 });

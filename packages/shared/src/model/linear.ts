@@ -45,6 +45,24 @@ export async function getLinearAccounts({
   return result;
 }
 
+export async function getLinearAccountForUserAndOrg({
+  db,
+  userId,
+  organizationId,
+}: {
+  db: DB;
+  userId: string;
+  organizationId: string;
+}): Promise<LinearAccount | null> {
+  const result = await db.query.linearAccount.findFirst({
+    where: and(
+      eq(schema.linearAccount.userId, userId),
+      eq(schema.linearAccount.organizationId, organizationId),
+    ),
+  });
+  return result || null;
+}
+
 export async function getLinearAccountsWithSettings({
   db,
   userId,
@@ -286,6 +304,9 @@ export async function upsertLinearInstallation({
       target: [schema.linearInstallation.organizationId],
       set: {
         organizationName: installation.organizationName,
+        ...(installation.appUserId !== undefined
+          ? { appUserId: installation.appUserId }
+          : {}),
         accessTokenEncrypted: installation.accessTokenEncrypted,
         refreshTokenEncrypted: installation.refreshTokenEncrypted,
         tokenExpiresAt: installation.tokenExpiresAt,

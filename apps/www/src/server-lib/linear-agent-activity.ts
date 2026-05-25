@@ -229,6 +229,170 @@ function extractLastAssistantText(messages: ClaudeMessage[]): string | null {
   return null;
 }
 
+function extractLatestAgentPlan(
+  messages: ClaudeMessage[],
+): AgentPlanStep[] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.type !== "acp-plan" && message.type !== "codex-plan") {
+      continue;
+    }
+
+    return message.entries.map((entry) => ({
+      content: entry.content,
+      status:
+        entry.status === "in_progress"
+          ? "inProgress"
+          : entry.status === "completed"
+            ? "completed"
+            : "pending",
+    }));
+  }
+  return null;
+}
+
+type LinearDaemonActivityUpdate =
+  | { type: "action"; summary: string }
+  | { type: "plan"; plan: AgentPlanStep[] }
+  | { type: "response"; body: string }
+  | { type: "error"; body: string };
+
+function buildTerminalActivityUpdate({
+  messages,
+  isDone,
+  isError,
+  customErrorMessage,
+  costUsd,
+}: {
+  messages: ClaudeMessage[];
+  isDone: boolean;
+  isError: boolean;
+  customErrorMessage?: string | null;
+  costUsd?: number;
+}): LinearDaemonActivityUpdate | null {
+  if (isDone && !isError) {
+    let body = extractLastAssistantText(messages) ?? "Task completed.";
+    if (costUsd && costUsd > 0) {
+      body += ` (cost: $${costUsd.toFixed(4)})`;
+    }
+    return { type: "response", body };
+  }
+
+  if (isError) {
+    return {
+      type: "error",
+      body: customErrorMessage?.trim() || "Agent encountered an error.",
+    };
+  }
+
+  return null;
+}
+
+function buildNonTerminalActivityUpdate({
+  agentSessionId,
+  messages,
+  now,
+}: {
+  agentSessionId: string;
+  messages: ClaudeMessage[];
+  now: number;
+}): LinearDaemonActivityUpdate | null {
+  const plan = extractLatestAgentPlan(messages);
+  if (plan) {
+    return { type: "plan", plan };
+  }
+
+  const lastEmit = lastActionEmitMap.get(agentSessionId);
+  if (lastEmit !== undefined && now - lastEmit < ACTION_THROTTLE_MS) {
+    return null;
+  }
+
+  const summary = extractLastAssistantText(messages);
+  if (!summary) {
+    return null;
+  }
+
+  lastActionEmitMap.set(agentSessionId, now);
+  return { type: "action", summary };
+}
+
+async function getLinearActivityAccessToken({
+  organizationId,
+  updateType,
+}: {
+  organizationId: string;
+  updateType: LinearDaemonActivityUpdate["type"];
+}): Promise<string | null> {
+  try {
+    const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
+    if (tokenResult.status !== "ok") {
+      console.warn(
+        "[linear-agent-activity] Skipping Linear activity: token not available",
+        { organizationId, updateType, status: tokenResult.status },
+      );
+      return null;
+    }
+    return tokenResult.accessToken;
+  } catch (error) {
+    console.error(
+      "[linear-agent-activity] Token refresh failed, skipping Linear activity",
+      { organizationId, updateType, error },
+    );
+    return null;
+  }
+}
+
+async function emitDaemonActivityUpdate({
+  update,
+  agentSessionId,
+  accessToken,
+  createClient,
+}: {
+  update: LinearDaemonActivityUpdate;
+  agentSessionId: string;
+  accessToken: string;
+  createClient: LinearClientFactory;
+}): Promise<void> {
+  switch (update.type) {
+    case "action":
+      await emitAgentActivity({
+        agentSessionId,
+        accessToken,
+        content: {
+          type: "action",
+          action: "Working",
+          parameter: update.summary,
+        },
+        ephemeral: true,
+        createClient,
+      });
+      return;
+    case "plan":
+      await updateAgentSession({
+        sessionId: agentSessionId,
+        accessToken,
+        plan: update.plan,
+        createClient,
+      });
+      return;
+    case "response":
+      await emitAgentActivity({
+        agentSessionId,
+        accessToken,
+        content: { type: "response", body: update.body },
+        createClient,
+      });
+      return;
+    case "error":
+      await emitAgentActivity({
+        agentSessionId,
+        accessToken,
+        content: { type: "error", body: update.body },
+        createClient,
+      });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -283,109 +447,36 @@ export async function emitLinearActivitiesForDaemonEvent(
   const isDone = opts?.isDone ?? false;
   const isError = opts?.isError ?? false;
 
-  // For non-terminal action events, do all cheap checks BEFORE the token refresh
-  // to avoid unnecessary DB reads on throttled/empty batches.
-  if (!isDone && !isError) {
-    // Check throttle first (cheap in-memory lookup)
-    const now = nowFn();
-    const lastEmit = lastActionEmitMap.get(agentSessionId);
-    if (lastEmit !== undefined && now - lastEmit < ACTION_THROTTLE_MS) {
-      // Throttled — skip this batch without hitting the DB
-      return;
-    }
-
-    // Check for assistant text (cheap CPU work)
-    const summary = extractLastAssistantText(messages);
-    if (!summary) {
-      // No assistant text in this batch — nothing useful to emit
-      return;
-    }
-
-    // Reserve the throttle slot BEFORE the first await so concurrent invocations
-    // for the same session can't both pass the throttle check. Worst case: if the
-    // emission fails below, the slot is "wasted" for up to 30s — acceptable tradeoff
-    // vs. allowing duplicate emissions.
-    lastActionEmitMap.set(agentSessionId, now);
-
-    // Refresh token and emit
-    let accessToken: string;
-    try {
-      const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
-      if (tokenResult.status !== "ok") {
-        console.warn(
-          "[linear-agent-activity] Skipping activity: token not available",
-          { organizationId, status: tokenResult.status },
-        );
-        return;
-      }
-      accessToken = tokenResult.accessToken;
-    } catch (error) {
-      console.error(
-        "[linear-agent-activity] Token refresh failed, skipping activity",
-        { organizationId, error },
-      );
-      return;
-    }
-
-    await emitAgentActivity({
+  const update =
+    buildTerminalActivityUpdate({
+      messages,
+      isDone,
+      isError,
+      customErrorMessage: opts?.customErrorMessage,
+      costUsd: opts?.costUsd,
+    }) ??
+    buildNonTerminalActivityUpdate({
       agentSessionId,
-      accessToken,
-      content: { type: "action", action: "Working", parameter: summary },
-      ephemeral: true,
-      createClient,
+      messages,
+      now: nowFn(),
     });
+
+  if (!update) {
     return;
   }
 
-  // Terminal events (response or error) — always emit, bypass throttle.
-  // Refresh token for terminal events too.
-  let accessToken: string;
-  try {
-    const tokenResult = await refreshLinearTokenIfNeeded(organizationId, db);
-    if (tokenResult.status !== "ok") {
-      console.warn(
-        "[linear-agent-activity] Skipping terminal activity: token not available",
-        { organizationId, status: tokenResult.status },
-      );
-      return;
-    }
-    accessToken = tokenResult.accessToken;
-  } catch (error) {
-    console.error(
-      "[linear-agent-activity] Token refresh failed for terminal activity",
-      { organizationId, error },
-    );
+  const accessToken = await getLinearActivityAccessToken({
+    organizationId,
+    updateType: update.type,
+  });
+  if (!accessToken) {
     return;
   }
 
-  if (isDone && !isError) {
-    // Build a brief result summary
-    const lastText = extractLastAssistantText(messages);
-    let body = "Task completed.";
-    if (lastText) {
-      body = lastText;
-    }
-    if (opts?.costUsd && opts.costUsd > 0) {
-      body += ` (cost: $${opts.costUsd.toFixed(4)})`;
-    }
-
-    await emitAgentActivity({
-      agentSessionId,
-      accessToken,
-      content: { type: "response", body },
-      createClient,
-    });
-    return;
-  }
-
-  if (isError) {
-    const errorMsg =
-      opts?.customErrorMessage?.trim() || "Agent encountered an error.";
-    await emitAgentActivity({
-      agentSessionId,
-      accessToken,
-      content: { type: "error", body: errorMsg },
-      createClient,
-    });
-  }
+  await emitDaemonActivityUpdate({
+    update,
+    agentSessionId,
+    accessToken,
+    createClient,
+  });
 }

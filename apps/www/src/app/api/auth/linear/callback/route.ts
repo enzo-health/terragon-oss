@@ -288,10 +288,15 @@ export async function GET(request: NextRequest) {
 
   let organizationId: string;
   let organizationName: string;
+  let appUserId: string;
   try {
-    const org = await linearClient.organization;
+    const [org, viewer] = await Promise.all([
+      linearClient.organization,
+      linearClient.viewer,
+    ]);
     organizationId = org.id;
     organizationName = org.name;
+    appUserId = viewer.id;
   } catch (err) {
     console.error("Linear org fetch error:", err);
     redirect(
@@ -305,6 +310,7 @@ export async function GET(request: NextRequest) {
     installation: {
       organizationId,
       organizationName,
+      appUserId,
       accessTokenEncrypted: encryptValue(
         tokenData.access_token,
         env.ENCRYPTION_MASTER_KEY,

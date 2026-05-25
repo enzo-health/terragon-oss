@@ -1125,6 +1125,7 @@ export const linearInstallation = pgTable(
       .primaryKey(),
     organizationId: text("organization_id").notNull().unique(), // Linear workspace/org ID
     organizationName: text("organization_name").notNull(),
+    appUserId: text("app_user_id"), // Linear app actor user ID for this workspace install
     accessTokenEncrypted: text("access_token_encrypted").notNull(),
     refreshTokenEncrypted: text("refresh_token_encrypted"), // nullable — some installs may not receive refresh token
     tokenExpiresAt: timestamp("token_expires_at", { mode: "date" }),
