@@ -1,6 +1,9 @@
-import React from "react";
+/* @vitest-environment jsdom */
+
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MarkdownRenderer,
   splitStreamingMarkdownContent,
@@ -91,5 +94,90 @@ describe("MarkdownRenderer code rendering", () => {
 
     expect(html).toContain("[&amp;&gt;*:last-child]:mb-2");
     expect(html).toContain("Still streaming");
+  });
+});
+
+describe("MarkdownRenderer link interception", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  function mount(content: string, onOpenFile?: (href: string) => void) {
+    act(() => {
+      root.render(
+        <MarkdownRenderer content={content} onOpenFile={onOpenFile} />,
+      );
+    });
+  }
+
+  function clickFirstAnchor(): boolean {
+    const anchor = container.querySelector("a");
+    if (!anchor) throw new Error("expected a rendered anchor");
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
+    anchor.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+
+  it("calls onOpenFile and prevents default for an in-repo file href", () => {
+    // Streamdown's `rehype-harden` pass only lets path-relative hrefs
+    // (`/`, `./`, `../`) reach the custom `a` renderer and rewrites them to a
+    // workspace-root-absolute form; `classifyRepoFileLink` normalizes that.
+    const onOpenFile = vi.fn();
+    mount("See [config](./src/config.ts#L12-L34) for details.", onOpenFile);
+
+    const defaultPrevented = clickFirstAnchor();
+
+    expect(onOpenFile).toHaveBeenCalledTimes(1);
+    expect(onOpenFile).toHaveBeenCalledWith("/src/config.ts#L12-L34");
+    expect(defaultPrevented).toBe(true);
+  });
+
+  it("falls back to a new-tab anchor when onOpenFile is absent", () => {
+    mount("See [config](./src/config.ts) for details.");
+
+    const anchor = container.querySelector("a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(anchor?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(clickFirstAnchor()).toBe(false);
+  });
+
+  it("keeps external hrefs as new-tab even when onOpenFile is provided", () => {
+    const onOpenFile = vi.fn();
+    mount("See [docs](https://example.com/page) for details.", onOpenFile);
+
+    const anchor = container.querySelector("a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(clickFirstAnchor()).toBe(false);
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rewritten github.com citation link as new-tab", () => {
+    // convertCitationsToGitHubLinks rewrites 【F:...】 into an absolute
+    // github.com blob URL. Those classify as external (https scheme), so they
+    // intentionally keep new-tab behavior — coordinating citations with the
+    // in-panel preview is a documented follow-up, not part of this slice.
+    const onOpenFile = vi.fn();
+    mount(
+      "See [src/foo.ts:L1-L6](https://github.com/acme/repo/blob/main/src/foo.ts#L1-L6).",
+      onOpenFile,
+    );
+
+    const anchor = container.querySelector("a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(clickFirstAnchor()).toBe(false);
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 });

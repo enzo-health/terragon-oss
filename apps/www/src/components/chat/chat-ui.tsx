@@ -12,7 +12,13 @@ import {
 } from "@terragon/shared";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type RepoFileArtifactDescriptor,
+  createRepoFileArtifactDescriptor,
+} from "@terragon/shared/db/artifact-descriptors";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import { isAgentWorking } from "@/agent/thread-status";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
@@ -139,6 +145,11 @@ function ChatUIContent() {
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  // Repo-file artifacts are synthesized on demand from clicked in-repo links;
+  // they are never persisted, so they live here rather than in the view model.
+  const [repoFileArtifacts, setRepoFileArtifacts] = useState<
+    RepoFileArtifactDescriptor[]
+  >([]);
   const [submittedOptimisticUserState, setSubmittedOptimisticUserState] =
     useState<{ threadChatId: string; messages: UIUserMessage[] }>(() => ({
       threadChatId,
@@ -289,6 +300,15 @@ function ChatUIContent() {
   const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
+  // Merge on-demand repo-file previews with the view-model's persisted
+  // descriptors so the artifacts panel can resolve a clicked file's tab.
+  const mergedArtifactDescriptors = useMemo(
+    () =>
+      repoFileArtifacts.length === 0
+        ? artifactDescriptors
+        : [...artifactDescriptors, ...repoFileArtifacts],
+    [artifactDescriptors, repoFileArtifacts],
+  );
   const shouldAutoRenderSecondaryPanel =
     platform === "desktop" &&
     shouldAutoOpenSecondaryPanel &&
@@ -353,6 +373,37 @@ function ChatUIContent() {
     },
     [setIsSecondaryPanelOpen],
   );
+
+  const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
+  // Reset synthesized repo-file tabs when switching chats so a previous chat's
+  // file previews (resolved against that chat's branch) never leak across.
+  useEffect(() => {
+    setRepoFileArtifacts([]);
+  }, [threadChatId]);
+
+  const handleOpenRepoFile = useCallback(
+    (href: string) => {
+      const classified = classifyRepoFileLink(href);
+      if (!classified) return;
+      const descriptor = createRepoFileArtifactDescriptor({
+        path: classified.path,
+        ref: thread.branchName ?? undefined,
+        lineRange: classified.lineRange,
+      });
+      setRepoFileArtifacts((current) =>
+        current.some((existing) => existing.id === descriptor.id)
+          ? current
+          : [...current, descriptor],
+      );
+      handleOpenArtifact(descriptor.id);
+    },
+    [handleOpenArtifact, thread.branchName],
+  );
+  // Gate the producer on the feature flag: when off, the callback is undefined
+  // end-to-end so in-repo links keep their default new-tab navigation.
+  const onOpenRepoFile = isRepoFilePreviewEnabled
+    ? handleOpenRepoFile
+    : undefined;
 
   useAutoOpenPanelOnNewPlan({
     artifactDescriptors,
@@ -474,20 +525,22 @@ function ChatUIContent() {
       loadAgUiHistoryMessages,
       queuedMessages,
       optimisticUserMessages: submittedOptimisticUserMessages,
-      artifactDescriptors,
+      artifactDescriptors: mergedArtifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
+      onOpenRepoFile,
     }),
     [
-      artifactDescriptors,
+      mergedArtifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
+      onOpenRepoFile,
       queuedMessages,
       submittedOptimisticUserMessages,
       threadViewModel,

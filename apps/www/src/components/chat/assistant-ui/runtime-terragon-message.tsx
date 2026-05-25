@@ -181,6 +181,7 @@ const RuntimeMessagePart = memo(function RuntimeMessagePart({
       artifactDescriptors={ctx.artifactDescriptors}
       artifactDescriptorLookup={ctx.artifactDescriptorLookup}
       onOpenArtifact={ctx.onOpenArtifact}
+      onOpenRepoFile={ctx.onOpenRepoFile}
       planOccurrenceIndex={ctx.planOccurrences.get(part)}
     />
   );
