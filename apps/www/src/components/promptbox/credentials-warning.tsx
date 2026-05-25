@@ -46,7 +46,7 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
       case "droid":
         return {
           message: "Droid credentials not configured",
-          linkText: null,
+          linkText: "Configure Droid",
         };
       default:
         const _exhaustiveCheck: never = selectedAgent;

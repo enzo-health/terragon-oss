@@ -81,7 +81,7 @@ export const allAgentsAtom = atom<AIAgent[]>((get) => {
       case "gemini":
         return featureFlags.geminiAgent;
       case "droid":
-        return false;
+        return featureFlags.droidAgent;
       default:
         const _exhaustiveCheck: never = agent;
         console.warn("Unknown agent", _exhaustiveCheck);

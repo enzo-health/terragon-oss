@@ -195,6 +195,25 @@ function ChatContent({
         />
       );
     }
+    case "missing-droid-credentials": {
+      return (
+        <ChatErrorContents
+          header="Droid API key required"
+          body={
+            <>
+              Please add your Droid API key to continue. Go to{" "}
+              <Link
+                href="/settings/agent#agent-providers"
+                className="underline"
+              >
+                settings
+              </Link>{" "}
+              to add your API key.
+            </>
+          }
+        />
+      );
+    }
     case "chatgpt-sub-required": {
       return (
         <ChatErrorContents

@@ -13,6 +13,7 @@ import {
   AddCodexCredentialDialog,
   AddAmpCredentialDialog,
   AddGeminiCredentialDialog,
+  AddDroidCredentialDialog,
 } from "@/components/credentials/add-credential-dialog";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -139,6 +140,17 @@ function AgentProvidersSection() {
       )}
       {selectedAgent === "gemini" && (
         <AddGeminiCredentialDialog
+          open={credentialDialogOpen}
+          onOpenChange={(open) => {
+            setCredentialDialogOpen(open);
+            if (!open) {
+              setSelectedAgent(null);
+            }
+          }}
+        />
+      )}
+      {selectedAgent === "droid" && (
+        <AddDroidCredentialDialog
           open={credentialDialogOpen}
           onOpenChange={(open) => {
             setCredentialDialogOpen(open);

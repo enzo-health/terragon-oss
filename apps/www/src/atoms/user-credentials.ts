@@ -52,7 +52,7 @@ export function useCredentialInfoForAgent(
       hasCredentials = false;
       break;
     case "droid":
-      hasCredentials = false;
+      hasCredentials = credentials.hasDroid;
       break;
     default:
       const _exhaustiveCheck: never = agent;
