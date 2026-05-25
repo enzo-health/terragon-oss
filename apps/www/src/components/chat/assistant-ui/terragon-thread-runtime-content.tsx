@@ -241,7 +241,7 @@ export function TerragonThreadRuntimeContent({
     <TerragonThreadProvider value={ctx}>
       <TerragonMessageRenderProvider value={messageRenderCtx}>
         {useNativeTranscript ? (
-          <NativeThread agent={chatAgent} />
+          <NativeThread />
         ) : (
           <TerragonTranscriptSurface
             lifecycleMessages={lifecycleMessages}
