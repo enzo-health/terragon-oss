@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ThreadPageChat } from "@terragon/shared";
+import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
 
 describe("thread-chat-collection", () => {
   it("does not let stale query seeds overwrite fresher collection chats", async () => {
@@ -81,6 +82,97 @@ describe("thread-chat-collection", () => {
     expect(stored?.status).toBe("complete");
     expect(stored?.messageSeq).toBe(3);
     expect(stored?.patchVersion).toBe(0);
+  });
+
+  it("lets durable refetch seeds enrich the transcript at the same messageSeq after metadata patches", async () => {
+    vi.resetModules();
+
+    const { seedChat, getThreadChatCollection } = await import(
+      "./thread-chat-collection"
+    );
+
+    async function waitForReady(timeoutMs = 500) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const c = getThreadChatCollection();
+        if (c.status === "ready") return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      throw new Error("Timed out waiting for chat collection to be ready");
+    }
+
+    seedChat(
+      makeChat({
+        status: "working",
+        projectedMessages: [],
+        messageCount: 0,
+        messageSeq: 2,
+        patchVersion: 5,
+        updatedAt: new Date("2026-03-09T00:00:05.000Z"),
+      }),
+    );
+    await waitForReady();
+    seedChat(
+      makeChat({
+        status: "working",
+        isCanonicalProjection: true,
+        projectedMessages: [
+          {
+            type: "user",
+            model: null,
+            parts: [{ type: "text", text: "hello" }],
+          },
+          {
+            type: "agent",
+            parent_tool_use_id: null,
+            parts: [{ type: "text", text: "hi" }],
+          },
+        ],
+        messageCount: 2,
+        messageSeq: 2,
+        patchVersion: 0,
+        updatedAt: new Date("2026-03-09T00:00:10.000Z"),
+      }),
+    );
+
+    const c = getThreadChatCollection();
+    const stored = c.state.get("thread-1:chat-1") as ThreadPageChat | undefined;
+    expect(stored?.isCanonicalProjection).toBe(true);
+    expect(stored?.projectedMessages).toHaveLength(2);
+    expect(stored?.updatedAt).toEqual(new Date("2026-03-09T00:00:10.000Z"));
+  });
+
+  it("invalidates when a realtime chat patch arrives before the chat row is seeded", async () => {
+    vi.resetModules();
+
+    const { applyChatPatchToCollection, getThreadChatCollection } =
+      await import("./thread-chat-collection");
+
+    async function waitForReady(timeoutMs = 500) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const c = getThreadChatCollection();
+        if (c.status === "ready") return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      throw new Error("Timed out waiting for chat collection to be ready");
+    }
+
+    await waitForReady();
+
+    const result = applyChatPatchToCollection({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      op: "upsert",
+      messageSeq: 2,
+      patchVersion: 2,
+      chat: {
+        status: "working",
+        updatedAt: "2026-03-09T00:00:10.000Z",
+      },
+    } as BroadcastThreadPatch);
+
+    expect(result.shouldInvalidate).toBe(true);
   });
 });
 

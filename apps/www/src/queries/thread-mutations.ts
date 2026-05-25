@@ -588,20 +588,20 @@ export function useCreateThreadMutation() {
         queryClient,
       });
 
-      result.createdThreads.forEach((createdThread) => {
-        void queryClient.prefetchQuery(
-          threadQueryOptions(createdThread.threadId),
-        );
-        void queryClient.prefetchQuery(
-          threadShellQueryOptions(createdThread.threadId),
-        );
-        void queryClient.prefetchQuery(
-          threadChatQueryOptions({
-            threadId: createdThread.threadId,
-            threadChatId: createdThread.threadChatId,
-          }),
-        );
-      });
+      void Promise.all(
+        result.createdThreads.flatMap((createdThread) => [
+          queryClient.prefetchQuery(threadQueryOptions(createdThread.threadId)),
+          queryClient.prefetchQuery(
+            threadShellQueryOptions(createdThread.threadId),
+          ),
+          queryClient.prefetchQuery(
+            threadChatQueryOptions({
+              threadId: createdThread.threadId,
+              threadChatId: createdThread.threadChatId,
+            }),
+          ),
+        ]),
+      );
 
       void queryClient.invalidateQueries({
         queryKey: threadQueryKeys.list(null),

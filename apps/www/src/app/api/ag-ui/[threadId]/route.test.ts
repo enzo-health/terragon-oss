@@ -2183,6 +2183,102 @@ describe("ag-ui SSE route", () => {
     await response.body!.cancel();
   });
 
+  it("keeps live-tailing after replaying durable active-run events from an empty Redis poll", async () => {
+    const initialEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-idle-catchup",
+      } as BaseEvent,
+    ];
+    const durableEvents: BaseEvent[] = [
+      ...initialEvents,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "message-idle-catchup",
+        role: "assistant",
+      } as BaseEvent,
+    ];
+    const envelopes = durableEvents.map((payload, seq) => ({
+      eventId: `event-${seq}`,
+      seq,
+      runId: "run-idle-catchup",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      timestamp: String(seq + 1),
+      idempotencyKey: `event-${seq}`,
+      payload,
+    }));
+    vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
+      async ({ afterSeq }) => {
+        const visibleEnvelopes =
+          afterSeq === undefined ? envelopes.slice(0, 1) : envelopes;
+        return visibleEnvelopes.filter(
+          (entry) => afterSeq === undefined || entry.seq > afterSeq,
+        );
+      },
+    );
+    vi.mocked(getAgUiEventEnvelopesForRun).mockImplementation(
+      async ({ runId }) =>
+        runId === "run-idle-catchup" ? envelopes.slice(0, 1) : [],
+    );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-idle-catchup", status: "processing" }),
+    );
+    redisMocks.xread.mockImplementation(() => {
+      const callIndex = redisMocks.xread.mock.calls.length;
+      if (callIndex <= 2) {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve([
+        [
+          "agui:thread:chat-1",
+          [
+            [
+              "1700000000003-0",
+              [
+                "envelope",
+                JSON.stringify({
+                  eventId: "event-2",
+                  seq: 2,
+                  runId: "run-idle-catchup",
+                  threadId: "thread-1",
+                  threadChatId: "chat-1",
+                  timestamp: "2026-05-25T00:00:03.000Z",
+                  idempotencyKey: "event-2",
+                  payload: {
+                    type: EventType.TEXT_MESSAGE_CONTENT,
+                    timestamp: 3,
+                    messageId: "message-idle-catchup",
+                    delta: "still live",
+                  },
+                }),
+              ],
+            ],
+          ],
+        ],
+      ]);
+    });
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-idle-catchup",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const events = await readReplayBurst(response, 3);
+
+    expect(events.map((event) => event.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+    ]);
+  });
+
   it("emits RUN_FINISHED and closes during live-tail when durable status turns terminal but the stream stays idle", async () => {
     const runEvents: BaseEvent[] = [
       {
