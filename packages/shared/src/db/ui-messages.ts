@@ -145,6 +145,19 @@ export type UIRepoFilePart = {
   lineRange?: RepoFileLineRange;
 };
 
+/**
+ * Descriptor-internal part backing a synthesized repo-tree artifact. Like
+ * UIRepoFilePart, this is NOT a persisted message part — it carries identity
+ * (the ref the tree is read at) so the renderer can fetch the listing lazily.
+ * There is one tree per ref, so this is the artifact's only distinguishing
+ * field.
+ */
+export type UIRepoTreePart = {
+  type: "repo-tree";
+  /** Ref/commit the tree is read against, when known. */
+  ref?: string;
+};
+
 export type UIStructuredPlanPart = {
   type: "plan-structured";
   entries: DBPlanPart["entries"];

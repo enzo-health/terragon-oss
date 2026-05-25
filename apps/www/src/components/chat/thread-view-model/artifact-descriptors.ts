@@ -15,7 +15,8 @@ import type { ThreadViewModelState } from "./types";
 function isSynthesizedDescriptor(descriptor: ArtifactDescriptor): boolean {
   return (
     descriptor.origin.type === "artifact-reference" ||
-    descriptor.origin.type === "repo-file"
+    descriptor.origin.type === "repo-file" ||
+    descriptor.origin.type === "repo-tree"
   );
 }
 

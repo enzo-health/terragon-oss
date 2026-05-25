@@ -4,11 +4,14 @@ import {
   type PlanArtifactDescriptor,
   type RepoFileArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import { Maximize2, Minimize2, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FolderTree, Maximize2, Minimize2, X } from "lucide-react";
 import React, { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { repoTreeQueryOptions } from "@/queries/repo-tree";
 import { GitDiffView } from "./git-diff-view";
+import { RepoTreeArtifactRenderer } from "./secondary-panel-repo-tree";
 import { DocumentArtifactRenderer } from "./secondary-panel-document";
 import {
   ARTIFACT_WORKSPACE_PANEL_ID,
@@ -37,6 +40,8 @@ export function SecondaryPanelContent({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -51,6 +56,8 @@ export function SecondaryPanelContent({
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -67,6 +74,8 @@ export function SecondaryPanelContent({
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
       onOpenRepoFile={onOpenRepoFile}
+      onOpenRepoTree={onOpenRepoTree}
+      activeRepoFilePath={activeRepoFilePath}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -90,6 +99,8 @@ function ArtifactWorkspaceShell({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -105,12 +116,15 @@ function ArtifactWorkspaceShell({
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
   emptyState: {
     title: string;
     description: string;
   };
 }) {
   const tablistRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
   const resolvedActiveArtifactId = resolveActiveArtifactId({
     artifacts,
     activeArtifactId,
@@ -186,6 +200,25 @@ function ArtifactWorkspaceShell({
             )}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
+            {onOpenRepoTree && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 rounded hover:bg-accent"
+                onClick={onOpenRepoTree}
+                onMouseEnter={() =>
+                  queryClient.prefetchQuery(repoTreeQueryOptions(thread.id))
+                }
+                onFocus={() =>
+                  queryClient.prefetchQuery(repoTreeQueryOptions(thread.id))
+                }
+                aria-label="Browse repository files"
+                title="Browse files"
+              >
+                <FolderTree className="size-3.5 opacity-50" />
+              </Button>
+            )}
             {onToggleMaximize && (
               <Button
                 type="button"
@@ -304,6 +337,7 @@ function ArtifactWorkspaceShell({
                 onOptimisticPermissionModeUpdate
               }
               onOpenRepoFile={onOpenRepoFile}
+              activeRepoFilePath={activeRepoFilePath}
             />
           </div>
         )}
@@ -321,6 +355,7 @@ function ActiveArtifactRenderer({
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
   onOpenRepoFile,
+  activeRepoFilePath,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -330,6 +365,7 @@ function ActiveArtifactRenderer({
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   onOpenRepoFile?: (path: string) => void;
+  activeRepoFilePath?: string | null;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
@@ -349,6 +385,15 @@ function ActiveArtifactRenderer({
         <RepoFileArtifactRenderer
           repoFilePart={(descriptor as RepoFileArtifactDescriptor).part}
           threadId={thread.id}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
+    case "repo-tree":
+      return (
+        <RepoTreeArtifactRenderer
+          threadId={thread.id}
+          thread={thread}
+          activeRepoFilePath={activeRepoFilePath}
           onOpenRepoFile={onOpenRepoFile}
         />
       );
