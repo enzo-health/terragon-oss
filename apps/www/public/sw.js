@@ -23,16 +23,12 @@ const STATIC_CACHE = `terragon-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `terragon-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline";
 
-const PRECACHE_URLS = [
-  OFFLINE_URL,
-  "/manifest.json",
-  "/favicon.png",
-  "/android-chrome-192x192.png",
-];
-
 self.addEventListener("install", (event) => {
+  // Only the offline page lives in STATIC_CACHE — it's the one thing the
+  // fetch handler serves from here. Other assets are cached on first use by
+  // the stale-while-revalidate path, so there's nothing else to precache.
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS)),
+    caches.open(STATIC_CACHE).then((cache) => cache.add(OFFLINE_URL)),
   );
   // Deliberately no self.skipWaiting() — see header comment.
 });
@@ -103,7 +99,15 @@ self.addEventListener("fetch", (event) => {
             return response;
           })
           .catch(() => cached);
-        return cached ?? network;
+        if (cached) {
+          // Serve the cached copy now; let the refresh finish in the
+          // background without the SW being killed mid-update.
+          event.waitUntil(network);
+          return cached;
+        }
+        // Offline with nothing cached: a network error beats a thrown
+        // "respondWith got undefined".
+        return (await network) ?? Response.error();
       })(),
     );
   }
