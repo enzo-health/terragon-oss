@@ -22,47 +22,13 @@ export function getDroidApiKeyOrNull(_runtime: IDaemonRuntime): string {
  *   {"type":"completion","finalText":...,"numTurns":...,"durationMs":...,"usage":{...}}
  *   {"type":"error","message":...,"timestamp":...}
  */
-type DroidEvent =
-  | {
-      type: "system";
-      subtype?: string;
-      session_id?: string;
-      model?: string;
-      tools?: string[];
-    }
-  | {
-      type: "message";
-      role?: "user" | "assistant";
-      text?: string;
-      id?: string;
-      session_id?: string;
-    }
-  | { type: "reasoning"; text?: string; session_id?: string }
-  | {
-      type: "tool_call";
-      id?: string;
-      toolName?: string;
-      toolId?: string;
-      parameters?: Record<string, unknown>;
-      session_id?: string;
-    }
-  | {
-      type: "tool_result";
-      id?: string;
-      toolId?: string;
-      isError?: boolean;
-      value?: unknown;
-      session_id?: string;
-    }
-  | {
-      type: "completion";
-      finalText?: string;
-      numTurns?: number;
-      durationMs?: number;
-      session_id?: string;
-    }
-  | { type: "error"; message?: string; error?: unknown; session_id?: string }
-  | { type: string; session_id?: string };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 /**
  * Parse a line of JSON output from the Droid CLI (`--output-format stream-json`).
@@ -97,22 +63,22 @@ export function parseDroidLine({
 }): ClaudeMessage[] {
   const messages: ClaudeMessage[] = [];
 
-  let event: DroidEvent;
+  let parsed: unknown;
   try {
-    event = JSON.parse(line) as DroidEvent;
+    parsed = JSON.parse(line);
   } catch {
     // No PHI in logs: never log the raw line, only that a parse failed.
     runtime.logger.error("Failed to parse Droid output line");
     return messages;
   }
 
-  if (!event || typeof event !== "object" || typeof event.type !== "string") {
+  if (!isRecord(parsed) || typeof parsed.type !== "string") {
     runtime.logger.warn("Droid event missing type discriminant");
     return messages;
   }
 
-  const eventType = event.type;
-  const sessionId = event.session_id ?? "";
+  const eventType = parsed.type;
+  const sessionId = asString(parsed.session_id) ?? "";
 
   // Synthesize a system/init on the first event we see so downstream state
   // transitions to "working" even if init arrives interleaved.
@@ -131,18 +97,21 @@ export function parseDroidLine({
 
   switch (eventType) {
     case "system": {
-      const systemEvent = event as Extract<DroidEvent, { type: "system" }>;
-      emitInitIfNeeded(systemEvent.tools ?? []);
+      const tools = Array.isArray(parsed.tools)
+        ? parsed.tools.filter(
+            (tool): tool is string => typeof tool === "string",
+          )
+        : [];
+      emitInitIfNeeded(tools);
       return messages;
     }
 
     case "message": {
-      const messageEvent = event as Extract<DroidEvent, { type: "message" }>;
       // Ignore the echoed user prompt; only the assistant turn is normalized.
-      if (messageEvent.role !== "assistant") {
+      if (asString(parsed.role) !== "assistant") {
         return messages;
       }
-      const text = messageEvent.text;
+      const text = asString(parsed.text);
       if (!text) {
         return messages;
       }
@@ -165,9 +134,9 @@ export function parseDroidLine({
     }
 
     case "tool_call": {
-      const toolEvent = event as Extract<DroidEvent, { type: "tool_call" }>;
-      const toolUseId = toolEvent.id ?? toolEvent.toolId ?? "";
-      const toolName = toolEvent.toolName ?? toolEvent.toolId ?? "";
+      const toolUseId = asString(parsed.id) ?? asString(parsed.toolId) ?? "";
+      const toolName =
+        asString(parsed.toolName) ?? asString(parsed.toolId) ?? "";
       if (!toolUseId || !toolName) {
         runtime.logger.warn("Droid tool_call missing id or name", {
           type: eventType,
@@ -184,7 +153,7 @@ export function parseDroidLine({
               type: "tool_use",
               id: toolUseId,
               name: toolName,
-              input: toolEvent.parameters ?? {},
+              input: isRecord(parsed.parameters) ? parsed.parameters : {},
             },
           ],
         },
@@ -195,16 +164,15 @@ export function parseDroidLine({
     }
 
     case "tool_result": {
-      const resultEvent = event as Extract<DroidEvent, { type: "tool_result" }>;
-      const toolUseId = resultEvent.id ?? resultEvent.toolId ?? "";
+      const toolUseId = asString(parsed.id) ?? asString(parsed.toolId) ?? "";
       if (!toolUseId) {
         runtime.logger.warn("Droid tool_result missing id", {
           type: eventType,
         });
         return messages;
       }
-      const isError = resultEvent.isError === true;
-      const rawValue = resultEvent.value;
+      const isError = parsed.isError === true;
+      const rawValue = parsed.value;
       const content =
         typeof rawValue === "string"
           ? rawValue
@@ -229,32 +197,32 @@ export function parseDroidLine({
     }
 
     case "completion": {
-      const completionEvent = event as Extract<
-        DroidEvent,
-        { type: "completion" }
-      >;
+      const numTurns =
+        typeof parsed.numTurns === "number" ? parsed.numTurns : 1;
+      const durationMs =
+        typeof parsed.durationMs === "number" ? parsed.durationMs : 0;
       messages.push({
         type: "result",
         subtype: "success",
         session_id: sessionId,
         is_error: false,
-        num_turns: completionEvent.numTurns ?? 1,
-        duration_ms: completionEvent.durationMs ?? 0,
-        duration_api_ms: completionEvent.durationMs ?? 0,
+        num_turns: numTurns,
+        duration_ms: durationMs,
+        duration_api_ms: durationMs,
         total_cost_usd: 0,
-        result: completionEvent.finalText ?? "Task completed successfully",
+        result: asString(parsed.finalText) ?? "Task completed successfully",
       });
       return messages;
     }
 
     case "error": {
-      const errorEvent = event as Extract<DroidEvent, { type: "error" }>;
+      const rawError = parsed.error;
       const errorMessage =
-        errorEvent.message ??
-        (typeof errorEvent.error === "string"
-          ? errorEvent.error
-          : errorEvent.error
-            ? JSON.stringify(errorEvent.error)
+        asString(parsed.message) ??
+        (typeof rawError === "string"
+          ? rawError
+          : rawError
+            ? JSON.stringify(rawError)
             : "Unknown error");
       // No PHI in logs: log only the event type/severity.
       runtime.logger.warn("Droid error event", { type: eventType });
