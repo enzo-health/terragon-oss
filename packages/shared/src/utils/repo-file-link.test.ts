@@ -19,6 +19,36 @@ describe("classifyRepoFileLink", () => {
       });
     });
 
+    it("strips the /root/repo sandbox prefix from an absolute path", () => {
+      expect(
+        classifyRepoFileLink("/root/repo/apps/dashboard/scheduling.ts"),
+      ).toEqual({ path: "apps/dashboard/scheduling.ts" });
+    });
+
+    it("keeps the line anchor after stripping the sandbox prefix", () => {
+      expect(classifyRepoFileLink("/root/repo/src/foo.ts#L5-L9")).toEqual({
+        path: "src/foo.ts",
+        lineRange: { start: 5, end: 9 },
+      });
+    });
+
+    it("does not strip a lookalike directory that is not the workspace root", () => {
+      // `/root/repository/...` is a different path; only the exact `/root/repo`
+      // workspace root (or `/root/repo/` prefix) is stripped.
+      expect(classifyRepoFileLink("/root/repository/foo.ts")).toEqual({
+        path: "root/repository/foo.ts",
+      });
+    });
+
+    it("rejects the bare workspace root with no file", () => {
+      expect(classifyRepoFileLink("/root/repo")).toBeNull();
+      expect(classifyRepoFileLink("/root/repo/")).toBeNull();
+    });
+
+    it("still rejects traversal that escapes via the sandbox prefix", () => {
+      expect(classifyRepoFileLink("/root/repo/../../secrets.ts")).toBeNull();
+    });
+
     it("collapses redundant slashes and . segments", () => {
       expect(classifyRepoFileLink("src/./bar//baz.ts")).toEqual({
         path: "src/bar/baz.ts",
