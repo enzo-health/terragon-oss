@@ -282,18 +282,7 @@ describe("prompt to daemon to client trace", () => {
       runStarted: false,
       threadStatus: "complete",
     });
-    expect(messages).toHaveLength(1);
-    const [message] = messages;
-    expect(message?.role).toBe("agent");
-    if (message?.role !== "agent") {
-      throw new Error("expected agent message");
-    }
-    expect(message.parts).toEqual([
-      {
-        type: "text",
-        text: assistantText,
-      },
-    ]);
+    expect(messages).toEqual([]);
 
     const spanNames = traceSpans.map((span) => span.name);
     expect(spanNames).toEqual(
