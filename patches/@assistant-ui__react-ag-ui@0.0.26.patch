@@ -555,25 +555,15 @@ index fae71ad368035e4521a3d1e8e2c0f0a3fc224fa3..a759b1f072feb3399cee172c6fcad05e
      ensureReasoningPart() {
          if (this.hasReasoningPart)
 diff --git a/dist/runtime/types.d.ts b/dist/runtime/types.d.ts
-index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..a6578a8bccf3a8e5551ffd58a27f3ca75685f21e 100644
+index dda3fe92c28aef4eab16e78f1ad66f45cc827ace..736b0d3a1a6456aa55c6b03d6d2fb6ef3b3fa140 100644
 --- a/dist/runtime/types.d.ts
 +++ b/dist/runtime/types.d.ts
-@@ -1,4 +1,4 @@
--import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
-+import type { AttachmentAdapter, DictationAdapter, FeedbackAdapter, AppendMessage, SpeechSynthesisAdapter, ThreadHistoryAdapter, ThreadMessage } from "@assistant-ui/core";
- import type { HttpAgent } from "@ag-ui/client";
- import type { Logger } from "./logger.js";
- import type { ReadonlyJSONValue } from "assistant-stream/utils";
-@@ -33,6 +33,12 @@ export type UseAgUiRuntimeOptions = {
+@@ -33,6 +33,8 @@ export type UseAgUiRuntimeOptions = {
      showThinking?: boolean;
      onError?: (e: Error) => void;
      onCancel?: () => void;
 +    historyLoadKey?: string;
 +    externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
-+    queue?: {
-+        shouldQueue: (message: AppendMessage) => boolean;
-+        enqueue: (message: AppendMessage) => Promise<void> | void;
-+    };
      adapters?: UseAgUiRuntimeAdapters;
  };
  export type AgUiEvent = {
@@ -581,15 +571,6 @@ diff --git a/dist/useAgUiRuntime.js b/dist/useAgUiRuntime.js
 index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834c7bee314 100644
 --- a/dist/useAgUiRuntime.js
 +++ b/dist/useAgUiRuntime.js
-@@ -9,6 +9,8 @@ export function useAgUiRuntime(options) {
-     const notifyUpdate = useCallback(() => setVersion((v) => v + 1), []);
-     const coreRef = useRef(null);
-     const runtimeAdapters = useRuntimeAdapters();
-+    const queueRef = useRef(options.queue);
-+    queueRef.current = options.queue;
-     const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
-     const threadListAdapter = options.adapters?.threadList;
-     if (!coreRef.current) {
 @@ -16,6 +18,7 @@ export function useAgUiRuntime(options) {
              agent: options.agent,
              logger,
@@ -598,7 +579,7 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834
              ...(options.onError && { onError: options.onError }),
              ...(options.onCancel && { onCancel: options.onCancel }),
              ...(historyAdapter && { history: historyAdapter }),
-@@ -27,6 +30,7 @@ export function useAgUiRuntime(options) {
+@@ -27,6 +28,7 @@ export function useAgUiRuntime(options) {
          agent: options.agent,
          logger,
          showThinking: options.showThinking ?? true,
@@ -606,25 +587,7 @@ index 94956a06f6087da9f47c0086819786f92b0d8214..4adcf1b98cf97fe1e10ae5d03a1cc834
          ...(options.onError && { onError: options.onError }),
          ...(options.onCancel && { onCancel: options.onCancel }),
          ...(historyAdapter && { history: historyAdapter }),
-@@ -107,7 +111,14 @@ export function useAgUiRuntime(options) {
-             messages: core.getMessages(),
-             state: core.getState(),
-             isRunning: core.isRunning() || hasExecutingTools,
--            onNew: (message) => core.append(message),
-+            onNew: async (message) => {
-+                const queue = queueRef.current;
-+                if (queue?.shouldQueue(message)) {
-+                    await queue.enqueue(message);
-+                    return;
-+                }
-+                await core.append(message);
-+            },
-             onEdit: (message) => core.edit(message),
-             onReload: (parentId, config) => core.reload(parentId, config),
-             onCancel: async () => {
-@@ -134,8 +145,8 @@ export function useAgUiRuntime(options) {
-         };
-     }, [core, runtime]);
+@@ -136,5 +138,5 @@ export function useAgUiRuntime(options) {
      useEffect(() => {
 -        core.__internal_load();
 -    }, [core]);
@@ -1276,27 +1239,15 @@ index 4f633601ac875109edfc5d7d13bcfd1d909f830c..4579dcbb6f881212e5297fa142e97f5c
  
    private ensureReasoningPart(): void {
 diff --git a/src/runtime/types.ts b/src/runtime/types.ts
-index ba0fda6ec2557b20276f2faec8a9395e54543425..87512fc414ed00d64ab585020afd7174be8d87af 100644
+index ba0fda6ec2557b20276f2faec8a9395e54543425..c1257c3ac41bbf0d6b29d092f1cbab6e74faec84 100644
 --- a/src/runtime/types.ts
 +++ b/src/runtime/types.ts
-@@ -2,6 +2,7 @@ import type {
-   AttachmentAdapter,
-   DictationAdapter,
-   FeedbackAdapter,
-+  AppendMessage,
-   SpeechSynthesisAdapter,
-   ThreadHistoryAdapter,
-   ThreadMessage,
-@@ -44,6 +45,12 @@ export type UseAgUiRuntimeOptions = {
+@@ -44,6 +44,8 @@ export type UseAgUiRuntimeOptions = {
    showThinking?: boolean;
    onError?: (e: Error) => void;
    onCancel?: () => void;
 +  historyLoadKey?: string;
 +  externalMessagesStrategy?: "replace" | "merge-after-local-mutations";
-+  queue?: {
-+    shouldQueue: (message: AppendMessage) => boolean;
-+    enqueue: (message: AppendMessage) => Promise<void> | void;
-+  };
    adapters?: UseAgUiRuntimeAdapters;
  };
  
@@ -1304,16 +1255,7 @@ diff --git a/src/useAgUiRuntime.ts b/src/useAgUiRuntime.ts
 index df696bad4c76f279da5b362f26c48c26866adba3..c733de786f9474e2c920e75077d59d1acb05eb55 100644
 --- a/src/useAgUiRuntime.ts
 +++ b/src/useAgUiRuntime.ts
-@@ -26,6 +26,8 @@ export function useAgUiRuntime(
-   const notifyUpdate = useCallback(() => setVersion((v) => v + 1), []);
-   const coreRef = useRef<AgUiThreadRuntimeCore | null>(null);
-   const runtimeAdapters = useRuntimeAdapters();
-+  const queueRef = useRef(options.queue);
-+  queueRef.current = options.queue;
- 
-   const historyAdapter = options.adapters?.history ?? runtimeAdapters?.history;
-   const threadListAdapter = options.adapters?.threadList;
-@@ -35,6 +37,7 @@ export function useAgUiRuntime(
+@@ -35,6 +35,7 @@ export function useAgUiRuntime(
        agent: options.agent,
        logger,
        showThinking: options.showThinking ?? true,
@@ -1321,7 +1263,7 @@ index df696bad4c76f279da5b362f26c48c26866adba3..c733de786f9474e2c920e75077d59d1a
        ...(options.onError && { onError: options.onError }),
        ...(options.onCancel && { onCancel: options.onCancel }),
        ...(historyAdapter && { history: historyAdapter }),
-@@ -47,6 +50,7 @@ export function useAgUiRuntime(
+@@ -47,6 +48,7 @@ export function useAgUiRuntime(
      agent: options.agent,
      logger,
      showThinking: options.showThinking ?? true,
@@ -1329,23 +1271,7 @@ index df696bad4c76f279da5b362f26c48c26866adba3..c733de786f9474e2c920e75077d59d1a
      ...(options.onError && { onError: options.onError }),
      ...(options.onCancel && { onCancel: options.onCancel }),
      ...(historyAdapter && { history: historyAdapter }),
-@@ -145,7 +149,14 @@ export function useAgUiRuntime(
-         messages: core.getMessages(),
-         state: core.getState(),
-         isRunning: core.isRunning() || hasExecutingTools,
--        onNew: (message: AppendMessage) => core.append(message),
-+        onNew: async (message: AppendMessage) => {
-+          const queue = queueRef.current;
-+          if (queue?.shouldQueue(message)) {
-+            await queue.enqueue(message);
-+            return;
-+          }
-+          await core.append(message);
-+        },
-         onEdit: (message: AppendMessage) => core.edit(message),
-         onReload: (parentId: string | null, config: { runConfig?: any }) =>
-           core.reload(parentId, config),
-@@ -184,8 +195,8 @@ export function useAgUiRuntime(
+@@ -184,8 +186,8 @@ export function useAgUiRuntime(
    }, [core, runtime]);
  
    useEffect(() => {
