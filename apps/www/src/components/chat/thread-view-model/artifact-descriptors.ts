@@ -28,12 +28,12 @@ export function getStableArtifactsForMessages({
   messages: UIMessage[];
   artifactThread: ThreadViewModelState["artifactThread"];
 }): ThreadViewModelState["artifacts"] {
-  const preservedReferenceDescriptors = previous.descriptors.filter(
+  const preservedSynthesizedDescriptors = previous.descriptors.filter(
     isSynthesizedDescriptor,
   );
   const next = {
     descriptors: mergeArtifactDescriptors([
-      ...preservedReferenceDescriptors,
+      ...preservedSynthesizedDescriptors,
       ...getArtifactDescriptorsForMessages({
         messages,
         artifactThread,
@@ -45,18 +45,18 @@ export function getStableArtifactsForMessages({
     : next;
 }
 
-export function preserveArtifactReferenceDescriptors(
+export function preserveSynthesizedDescriptors(
   current: ThreadViewModelState["artifacts"],
   snapshot: ThreadViewModelState["artifacts"],
 ): ThreadViewModelState["artifacts"] {
-  const referenceDescriptors = current.descriptors.filter(
+  const synthesizedDescriptors = current.descriptors.filter(
     isSynthesizedDescriptor,
   );
-  if (referenceDescriptors.length === 0) {
+  if (synthesizedDescriptors.length === 0) {
     return snapshot;
   }
   const descriptors = mergeArtifactDescriptors([
-    ...referenceDescriptors,
+    ...synthesizedDescriptors,
     ...snapshot.descriptors,
   ]);
   return areArtifactDescriptorsStable(current.descriptors, descriptors)
@@ -64,7 +64,7 @@ export function preserveArtifactReferenceDescriptors(
     : { descriptors };
 }
 
-export function upsertArtifactReferenceDescriptor(
+export function upsertSynthesizedDescriptor(
   artifacts: ThreadViewModelState["artifacts"],
   descriptor: ArtifactDescriptor | null,
 ): ThreadViewModelState["artifacts"] {

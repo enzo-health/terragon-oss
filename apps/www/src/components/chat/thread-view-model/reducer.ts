@@ -15,8 +15,8 @@ import {
 import {
   getArtifactReferenceDescriptor,
   getStableArtifactsForMessages,
-  preserveArtifactReferenceDescriptors,
-  upsertArtifactReferenceDescriptor,
+  preserveSynthesizedDescriptors,
+  upsertSynthesizedDescriptor,
 } from "./artifact-descriptors";
 import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
@@ -98,7 +98,7 @@ export function threadViewModelReducer(
     case "repo-file.opened":
       return {
         ...state,
-        artifacts: upsertArtifactReferenceDescriptor(
+        artifacts: upsertSynthesizedDescriptor(
           state.artifacts,
           createRepoFileArtifactDescriptor({
             path: event.path,
@@ -255,10 +255,7 @@ function applySnapshot(
     latestGitDiffTimestamp: snapshot.latestGitDiffTimestamp,
     artifactThread: snapshot.artifactThread,
     artifacts: shouldReplaceTranscript
-      ? preserveArtifactReferenceDescriptors(
-          state.artifacts,
-          snapshot.artifacts,
-        )
+      ? preserveSynthesizedDescriptors(state.artifacts, snapshot.artifacts)
       : getArtifactsForStateMessages(state, snapshot.artifactThread),
     sidePanel: shouldPreserveLocalTranscriptState
       ? state.sidePanel
@@ -342,7 +339,7 @@ function applyAgUiEvent(
   const runtimeActivities =
     nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
-  const artifacts = upsertArtifactReferenceDescriptor(
+  const artifacts = upsertSynthesizedDescriptor(
     transcript === state.transcript
       ? state.artifacts
       : getStableArtifactsForMessages({
