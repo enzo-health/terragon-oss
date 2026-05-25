@@ -502,7 +502,7 @@ export function AddContextButton({
             variant="ghost"
             size="icon"
             type="button"
-            className={cn("size-8 flex flex-initial sm:hidden", className)}
+            className={cn("size-11 flex flex-initial sm:hidden", className)}
             title="Add context"
           >
             <Plus className="size-4" />

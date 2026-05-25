@@ -72,7 +72,7 @@ export function ClaudeRedirect({ type }: { type: AuthType }) {
   }, [router, type]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-svh items-center justify-center">
       <div className="text-center">
         {error ? (
           <>

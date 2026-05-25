@@ -101,6 +101,26 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "4mb",
     },
   },
+  async headers() {
+    return [
+      {
+        // The service worker must never be cached by the browser/CDN or
+        // clients get stuck on a stale worker. It also needs root scope.
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      {
+        source: "/manifest.json",
+        headers: [{ key: "Content-Type", value: "application/manifest+json" }],
+      },
+    ];
+  },
   async rewrites() {
     return [];
   },

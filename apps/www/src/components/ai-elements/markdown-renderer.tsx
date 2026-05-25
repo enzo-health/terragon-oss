@@ -239,7 +239,7 @@ function CodeBlockPre(props: unknown) {
         type="button"
         size="icon"
         variant="ghost"
-        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70"
+        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70 [@media(hover:none)]:opacity-70"
         onClick={onCopy}
         title={isCopied ? "Copied" : "Copy code"}
         aria-label={isCopied ? "Code copied" : "Copy code"}

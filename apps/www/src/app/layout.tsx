@@ -19,7 +19,10 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    // "default" keeps status-bar text legible. "black-translucent" draws
+    // content under the status bar and needs explicit safe-area insets we
+    // don't yet apply.
+    statusBarStyle: "default",
     title: "Terragon",
   },
   formatDetection: {
