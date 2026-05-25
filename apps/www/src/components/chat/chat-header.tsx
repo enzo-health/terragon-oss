@@ -145,7 +145,7 @@ export const ChatHeader = memo(function ChatHeader({
               <PanelRightClose className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex min-w-0 w-full flex-col gap-1">
+          <div className="flex min-w-0 w-full flex-col gap-1.5">
             <div className="flex w-full min-w-0 items-center gap-2">
               <div className="flex items-center opacity-80 flex-shrink-0">
                 <ThreadStatusIndicator thread={thread} />
@@ -186,7 +186,7 @@ export const ChatHeader = memo(function ChatHeader({
               </div>
             </div>
             {/* metadata */}
-            <div className="flex h-5 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px]">
+            <div className="flex min-h-6 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px]">
               <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/80">
                 {thread.githubRepoFullName}
               </span>
@@ -196,7 +196,7 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
@@ -211,7 +211,7 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     title={thread.branchName}
                   >
                     {thread.branchName}
