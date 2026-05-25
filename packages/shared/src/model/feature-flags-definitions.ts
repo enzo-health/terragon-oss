@@ -119,6 +119,11 @@ export const featureFlagsDefinitions = {
     description:
       "Enables the image diff view for binary image file changes in git diffs, showing a side-by-side comparison of before/after images.",
   },
+  repoFilePreview: {
+    defaultValue: false,
+    description:
+      "Enables clickable file-path affordances (chat links, tool output, git diffs) that open a repo file preview in the artifacts panel instead of navigating away.",
+  },
   linearIntegration: {
     defaultValue: false,
     description:

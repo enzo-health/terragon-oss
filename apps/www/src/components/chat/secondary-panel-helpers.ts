@@ -132,6 +132,74 @@ export function findArtifactDescriptorForPart({
   return artifactLookup.byContentKey.get(contentKey) ?? null;
 }
 
+/**
+ * Resolves which existing artifact a clicked repo-relative file path should
+ * open, for the repo-file-preview flow (chat links, tool output, git-diff
+ * tree/headers). There is no standalone "repo-file" artifact kind — clicking a
+ * file path opens the git-diff artifact that contains it and lets the caller
+ * scroll to that file.
+ *
+ * Resolution order:
+ * 1. The working-tree git-diff artifact (origin `thread`/`gitDiff`) whose diff
+ *    text contains the path. This is the live "Current changes" surface.
+ * 2. Any other git-diff artifact (e.g. a diff checkpoint) whose diff contains
+ *    the path.
+ * 3. The working-tree git-diff artifact even if the path is not detected in its
+ *    text (defensive: diff path-prefix forms like `a/`/`b/` can vary).
+ *
+ * Returns `null` when no git-diff artifact exists, so callers can no-op instead
+ * of falling back to an unrelated artifact (which would open the wrong thing).
+ */
+export function resolveRepoFileTarget({
+  artifacts,
+  path,
+}: {
+  artifacts: Array<Pick<ArtifactDescriptor, "id" | "kind" | "part" | "origin">>;
+  path: string;
+}): { artifactId: string; filePath: string } | null {
+  if (!path) {
+    return null;
+  }
+
+  const gitDiffArtifacts = artifacts.filter(
+    (artifact) => artifact.kind === "git-diff",
+  );
+  if (gitDiffArtifacts.length === 0) {
+    return null;
+  }
+
+  const isWorkingTree = (
+    artifact: (typeof gitDiffArtifacts)[number],
+  ): boolean =>
+    artifact.origin.type === "thread" && artifact.origin.field === "gitDiff";
+
+  const diffContainsPath = (
+    artifact: (typeof gitDiffArtifacts)[number],
+  ): boolean => {
+    const diff = artifact.part.type === "git-diff" ? artifact.part.diff : "";
+    return typeof diff === "string" && diff.includes(path);
+  };
+
+  const workingTreeWithPath = gitDiffArtifacts.find(
+    (artifact) => isWorkingTree(artifact) && diffContainsPath(artifact),
+  );
+  if (workingTreeWithPath) {
+    return { artifactId: workingTreeWithPath.id, filePath: path };
+  }
+
+  const anyWithPath = gitDiffArtifacts.find(diffContainsPath);
+  if (anyWithPath) {
+    return { artifactId: anyWithPath.id, filePath: path };
+  }
+
+  const workingTree = gitDiffArtifacts.find(isWorkingTree);
+  if (workingTree) {
+    return { artifactId: workingTree.id, filePath: path };
+  }
+
+  return null;
+}
+
 function getPartContentKey(
   part: ArtifactWorkspaceComparablePart,
 ): string | null {

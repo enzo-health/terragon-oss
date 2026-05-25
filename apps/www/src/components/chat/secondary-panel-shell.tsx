@@ -34,6 +34,8 @@ export function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  repoFileFocusPath = null,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -47,6 +49,8 @@ export function SecondaryPanelContent({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  repoFileFocusPath?: string | null;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -62,6 +66,8 @@ export function SecondaryPanelContent({
       isReadOnly={isReadOnly}
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+      onOpenRepoFile={onOpenRepoFile}
+      repoFileFocusPath={repoFileFocusPath}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -84,6 +90,8 @@ function ArtifactWorkspaceShell({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  repoFileFocusPath = null,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -98,6 +106,8 @@ function ArtifactWorkspaceShell({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  repoFileFocusPath?: string | null;
   emptyState: {
     title: string;
     description: string;
@@ -296,6 +306,8 @@ function ArtifactWorkspaceShell({
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
+              repoFileFocusPath={repoFileFocusPath}
             />
           </div>
         )}
@@ -312,6 +324,8 @@ function ActiveArtifactRenderer({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  repoFileFocusPath,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -320,10 +334,19 @@ function ActiveArtifactRenderer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  repoFileFocusPath?: string | null;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
-      return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+      return (
+        <GitDiffView
+          thread={thread}
+          diffPart={descriptor.part}
+          onOpenRepoFile={onOpenRepoFile}
+          focusFilePath={repoFileFocusPath}
+        />
+      );
     case "document":
       return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
     case "file":

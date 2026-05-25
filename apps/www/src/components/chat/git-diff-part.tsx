@@ -37,6 +37,7 @@ export const GitDiffPart = memo(function GitDiffPart({
 }: GitDiffPartProps) {
   const { setIsSecondaryPanelOpen } = useSecondaryPanel();
   const isImageDiffViewEnabled = useFeatureFlag("imageDiffView");
+  const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const diffStats = useMemo(
     () => gitDiffPart.diffStats || parseGitDiffStats(gitDiffPart.diff),
     [gitDiffPart.diff, gitDiffPart.diffStats],
@@ -98,6 +99,15 @@ export const GitDiffPart = memo(function GitDiffPart({
       setIsSecondaryPanelOpen(true);
     }
   };
+
+  // Inline (chat transcript) diff headers get the same open-file affordance as
+  // the artifacts-panel diff: when the repo-file-preview flag is on and this
+  // diff maps to a real artifact, the per-file Open button routes to the same
+  // panel-open flow used by the "Open in side panel" button above.
+  const inlineOnOpenRepoFile =
+    isRepoFilePreviewEnabled && artifactDescriptor && onOpenArtifact
+      ? () => onOpenArtifact(artifactDescriptor.id)
+      : undefined;
 
   const toggleFile = (idx: number) => {
     setExpandedFiles((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -218,6 +228,7 @@ export const GitDiffPart = memo(function GitDiffPart({
                   thread={thread}
                   enableComments={false}
                   isImageDiffViewEnabled={isImageDiffViewEnabled}
+                  onOpenRepoFile={inlineOnOpenRepoFile}
                 />
               ))}
             </div>

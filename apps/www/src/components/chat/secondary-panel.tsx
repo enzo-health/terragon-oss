@@ -29,6 +29,7 @@ export {
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
+  resolveRepoFileTarget,
   ARTIFACT_WORKSPACE_PANEL_ID,
   type ArtifactDescriptorLookup,
   type ArtifactWorkspaceItemSummary,
@@ -53,6 +54,8 @@ export function SecondaryPanel({
   isReadOnly = false,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  repoFileFocusPath = null,
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
@@ -64,6 +67,8 @@ export function SecondaryPanel({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  repoFileFocusPath?: string | null;
 }) {
   const platform = usePlatform();
   const {
@@ -194,6 +199,8 @@ export function SecondaryPanel({
         isReadOnly={isReadOnly}
         promptBoxRef={promptBoxRef}
         onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+        onOpenRepoFile={onOpenRepoFile}
+        repoFileFocusPath={repoFileFocusPath}
       />
     );
   }
@@ -256,6 +263,8 @@ export function SecondaryPanel({
           isReadOnly={isReadOnly}
           promptBoxRef={promptBoxRef}
           onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+          onOpenRepoFile={onOpenRepoFile}
+          repoFileFocusPath={repoFileFocusPath}
         />
       </div>
     </>

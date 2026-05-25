@@ -13,6 +13,7 @@ import {
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
@@ -49,6 +50,7 @@ import {
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
 } from "./thread-view-model/optimistic-events";
+import { resolveRepoFileTarget } from "./secondary-panel-helpers";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   useAutoOpenPanelOnNewPlan,
@@ -354,6 +356,35 @@ function ChatUIContent() {
     [setIsSecondaryPanelOpen],
   );
 
+  const isRepoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
+  // The git-diff panel scrolls to this path when it opens via onOpenRepoFile.
+  const [repoFileFocusPath, setRepoFileFocusPath] = useState<string | null>(
+    null,
+  );
+  // Routes a repo-relative file path (e.g. from the git-diff file tree/headers)
+  // into the same artifacts-panel open flow as other artifacts. There is no
+  // standalone "repo-file" artifact kind; instead we resolve the git-diff
+  // artifact that contains the path, open that artifact, and ask the panel to
+  // scroll to the file. If no git-diff artifact exists we no-op rather than
+  // open an unrelated artifact. Gated on the flag so behavior is unchanged off.
+  const onOpenRepoFile = useCallback(
+    (path: string) => {
+      if (!isRepoFilePreviewEnabled || !path) {
+        return;
+      }
+      const target = resolveRepoFileTarget({
+        artifacts: artifactDescriptors,
+        path,
+      });
+      if (!target) {
+        return;
+      }
+      setRepoFileFocusPath(target.filePath);
+      handleOpenArtifact(target.artifactId);
+    },
+    [isRepoFilePreviewEnabled, artifactDescriptors, handleOpenArtifact],
+  );
+
   useAutoOpenPanelOnNewPlan({
     artifactDescriptors,
     shouldAutoOpenSecondaryPanel,
@@ -480,11 +511,13 @@ function ChatUIContent() {
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
+      onOpenRepoFile,
     }),
     [
       artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
+      onOpenRepoFile,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
@@ -524,8 +557,15 @@ function ChatUIContent() {
       setShowTerminal,
       shouldRenderSecondaryPanel,
       platform,
+      repoFileFocusPath,
     }),
-    [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
+    [
+      activeArtifactId,
+      platform,
+      repoFileFocusPath,
+      shouldRenderSecondaryPanel,
+      showTerminal,
+    ],
   );
 
   const dialogData = useMemo<ChatUIDialogData>(

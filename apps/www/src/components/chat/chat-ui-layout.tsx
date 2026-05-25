@@ -77,6 +77,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     toolProps,
     lastUsedModel,
     handleOpenArtifact,
+    onOpenRepoFile,
   } = viewModel;
 
   const {
@@ -98,6 +99,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     setShowTerminal,
     shouldRenderSecondaryPanel,
     platform,
+    repoFileFocusPath,
   } = panelState;
 
   const { redoDialogData, forkDialogData } = dialogData;
@@ -263,6 +265,8 @@ export function ChatUILayout(props: ChatUILayoutProps) {
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
+              repoFileFocusPath={repoFileFocusPath}
             />
           ) : null}
         </div>
@@ -315,6 +319,7 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (path: string) => void;
 };
 
 /**
@@ -347,6 +352,8 @@ export type ChatUIPanelState = {
   setShowTerminal: (show: boolean) => void;
   shouldRenderSecondaryPanel: boolean;
   platform: "unknown" | "mobile" | "desktop";
+  /** Repo-relative path the git-diff panel should scroll to when it opens. */
+  repoFileFocusPath: string | null;
 };
 
 /**

@@ -5,7 +5,7 @@ import {
   type DiffLineAnnotation,
   type DiffLineEventBaseProps,
 } from "@pierre/diffs/react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, FileSearch } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ImageDiffView } from "@/components/chat/image-diff-view";
 import { DiffRenderer } from "@/components/shared/diff-renderer";
@@ -50,6 +50,7 @@ export function FileDiffWrapper({
   threadMessages,
   forceUnified = false,
   isImageDiffViewEnabled = false,
+  onOpenRepoFile,
 }: FileDiffWrapperProps & { isImageDiffViewEnabled?: boolean }) {
   // Use unified mode for new files to avoid wide gutter, or if forced
   const effectiveMode =
@@ -140,6 +141,30 @@ export function FileDiffWrapper({
           <span className="truncate-start">{parsedFile.fileName}</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          {onOpenRepoFile && (
+            <button
+              type="button"
+              data-open-repo-file="true"
+              className="flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              aria-label={`Open ${parsedFile.fileName}`}
+              title="Open file"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenRepoFile(parsedFile.fileName);
+              }}
+              onKeyDown={(e) => {
+                // The native button fires its own click on Enter/Space, which
+                // runs onClick above. We only need to stop the key event from
+                // bubbling to the parent header's onKeyDown, which would
+                // otherwise also toggle the diff open/closed.
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                }
+              }}
+            >
+              <FileSearch className="w-3.5 h-3.5" />
+            </button>
+          )}
           {showLineCounts ? (
             <>
               {parsedFile.additions > 0 && (

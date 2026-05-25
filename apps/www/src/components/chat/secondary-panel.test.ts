@@ -9,6 +9,7 @@ import {
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
+  resolveRepoFileTarget,
 } from "./secondary-panel";
 import { ImagePart } from "./image-part";
 import { renderToolPartContent } from "./tool-part";
@@ -279,6 +280,120 @@ describe("secondary-panel artifact shell helpers", () => {
     openHandler?.();
 
     expect(onOpenArtifact).toHaveBeenCalledWith(artifactDescriptor.id);
+  });
+});
+
+describe("resolveRepoFileTarget (repo-file preview open flow)", () => {
+  const workingTreeDescriptor = {
+    id: "artifact:thread:thread-1:git-diff",
+    kind: "git-diff" as const,
+    part: {
+      type: "git-diff" as const,
+      diff: "diff --git a/src/foo.ts b/src/foo.ts\n@@ -1 +1 @@\n-a\n+b",
+    },
+    origin: {
+      type: "thread" as const,
+      threadId: "thread-1",
+      field: "gitDiff" as const,
+    },
+  };
+
+  const checkpointDescriptor = {
+    id: "artifact:system:git-diff:checkpoint",
+    kind: "git-diff" as const,
+    part: {
+      type: "git-diff" as const,
+      diff: "diff --git a/src/bar.ts b/src/bar.ts\n@@ -1 +1 @@\n-x\n+y",
+    },
+    origin: {
+      type: "system-message" as const,
+      messageType: "git-diff" as const,
+      fingerprint: "fp",
+    },
+  };
+
+  it("returns null when no git-diff artifact exists (no dead-end fallback)", () => {
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [
+          {
+            id: "artifact:document:1",
+            kind: "document",
+            part: { type: "rich-text", nodes: [] },
+            origin: {
+              type: "user-message-part",
+              partType: "rich-text",
+              fingerprint: "fp",
+            },
+          },
+        ],
+        path: "src/foo.ts",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for an empty path", () => {
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [workingTreeDescriptor],
+        path: "",
+      }),
+    ).toBeNull();
+  });
+
+  it("opens the working-tree diff and focuses the clicked path when it is present", () => {
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [checkpointDescriptor, workingTreeDescriptor],
+        path: "src/foo.ts",
+      }),
+    ).toEqual({
+      artifactId: "artifact:thread:thread-1:git-diff",
+      filePath: "src/foo.ts",
+    });
+  });
+
+  it("falls back to a non-working-tree git-diff artifact that contains the path", () => {
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [workingTreeDescriptor, checkpointDescriptor],
+        path: "src/bar.ts",
+      }),
+    ).toEqual({
+      artifactId: "artifact:system:git-diff:checkpoint",
+      filePath: "src/bar.ts",
+    });
+  });
+
+  it("falls back to the working-tree diff even when the path is not detected in any diff text", () => {
+    expect(
+      resolveRepoFileTarget({
+        artifacts: [checkpointDescriptor, workingTreeDescriptor],
+        path: "src/never-seen.ts",
+      }),
+    ).toEqual({
+      artifactId: "artifact:thread:thread-1:git-diff",
+      filePath: "src/never-seen.ts",
+    });
+  });
+
+  it("resolves to an id that actually exists in the artifact list (no dead-end)", () => {
+    // Regression: the previous implementation fabricated an
+    // `artifact:repo-file:working:${path}` id that no descriptor ever
+    // produced, so resolveActiveArtifactId silently fell back to artifacts[0].
+    // The resolved id must be one resolveActiveArtifactId keeps.
+    const target = resolveRepoFileTarget({
+      artifacts: [checkpointDescriptor, workingTreeDescriptor],
+      path: "src/foo.ts",
+    });
+    expect(target).not.toBeNull();
+    const resolvedActive = resolveActiveArtifactId({
+      artifacts: [checkpointDescriptor, workingTreeDescriptor],
+      activeArtifactId: target?.artifactId,
+    });
+    expect(resolvedActive).toBe(target?.artifactId);
+    // And it is NOT the first artifact (the old broken fallback behavior).
+    expect(resolvedActive).not.toBe(checkpointDescriptor.id);
   });
 });
 
