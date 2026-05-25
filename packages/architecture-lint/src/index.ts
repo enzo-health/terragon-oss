@@ -397,10 +397,6 @@ export const defaultConfig: ArchitectureLintConfig = {
         line: 194,
       },
       {
-        file: "apps/www/src/components/chat/thread-view-model/ag-ui-adapter.ts",
-        line: 104,
-      },
-      {
         file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
         line: 78,
       },
