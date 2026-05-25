@@ -6,7 +6,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadInfoFull } from "@terragon/shared";
-import type { GitDiffArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import {
+  createRepoFileArtifactDescriptor,
+  type GitDiffArtifactDescriptor,
+  type RepoFileArtifactDescriptor,
+} from "@terragon/shared/db/artifact-descriptors";
 import { FilesChangedHeader } from "./git-diff-view";
 import {
   type ArtifactWorkspaceItem,
@@ -23,31 +27,26 @@ vi.mock("./git-diff-view", async () => {
   };
 });
 
-const REPO_FILE_PATH = "src/components/button.tsx";
+// Stub the repo-file renderer for the workspace-chrome tests so they exercise
+// the tablist / keyboard / maximize / drawer wiring without the renderer's
+// server-action fetch. The renderer's own R11 behavior (basename header,
+// markdown/source toggle) is verified separately below against the real module.
+vi.mock("./secondary-panel-repo-file", () => ({
+  RepoFileArtifactRenderer: ({ repoFilePart }: { repoFilePart: { path: string } }) => (
+    <div data-testid="repo-file-renderer-stub">{repoFilePart.path}</div>
+  ),
+}));
 
-// SPEC DRIFT (R11): R11's literal criterion asks the repo-file tab to show a
-// basename title and relative-path summary. The shipped feature (commit
-// fafd3155) does NOT build a per-file repo-file artifact — `resolveRepoFileArtifactId`
-// ignores `filePath` and resolves a clicked path to the existing working-tree
-// git-diff artifact, which renders every changed file. That artifact's title is
-// "Current changes" and its summary is the diff file-stats line. The basename
-// title / relative-path summary was descoped: there is no per-file tab in the
-// codebase to assert against. These tests verify the behavior that actually
-// exists — the git-diff artifact participating as a tab in the workspace chrome.
-function makeRepoFileGitDiffDescriptor(): GitDiffArtifactDescriptor {
-  return {
-    id: "artifact:thread:thread-1:git-diff",
-    kind: "git-diff",
-    title: "Current changes",
-    status: "ready",
-    part: {
-      type: "git-diff",
-      diff: `diff --git a/${REPO_FILE_PATH} b/${REPO_FILE_PATH}`,
-      diffStats: { files: 1, additions: 3, deletions: 1 },
-    },
-    origin: { type: "thread", threadId: "thread-1", field: "gitDiff" },
-    summary: "1 file · +3 · -1",
-  };
+const REPO_FILE_PATH = "src/components/button.tsx";
+const REPO_FILE_BASENAME = "button.tsx";
+
+// R11: the per-file repo-file artifact. createRepoFileArtifactDescriptor titles
+// the tab with the basename and summarizes it with the repo-relative path.
+function makeRepoFileDescriptor(): RepoFileArtifactDescriptor {
+  return createRepoFileArtifactDescriptor({
+    path: REPO_FILE_PATH,
+    ref: "feature-branch",
+  });
 }
 
 function makePlanItem(): ArtifactWorkspaceItem {
@@ -73,7 +72,7 @@ function makePlanItem(): ArtifactWorkspaceItem {
 }
 
 function makeWorkspaceItem(
-  descriptor: GitDiffArtifactDescriptor,
+  descriptor: RepoFileArtifactDescriptor | GitDiffArtifactDescriptor,
 ): ArtifactWorkspaceItem {
   return { ...getArtifactWorkspaceItemSummary(descriptor), descriptor };
 }
@@ -118,26 +117,25 @@ describe("artifact workspace accessibility controls", () => {
   });
 });
 
-describe("getArtifactWorkspaceItemSummary derives tab metadata", () => {
-  it("passes through a ready git-diff descriptor's title/summary and labels its source", () => {
-    const summary = getArtifactWorkspaceItemSummary(
-      makeRepoFileGitDiffDescriptor(),
-    );
+describe("getArtifactWorkspaceItemSummary derives repo-file tab metadata (R11)", () => {
+  it("titles the tab with the basename and summarizes it with the repo-relative path", () => {
+    const summary = getArtifactWorkspaceItemSummary(makeRepoFileDescriptor());
 
-    expect(summary.kind).toBe("git-diff");
-    expect(summary.title).toBe("Current changes");
-    expect(summary.summary).toBe("1 file · +3 · -1");
+    expect(summary.kind).toBe("repo-file");
+    // R11: sensible title (file basename) + summary (relative path).
+    expect(summary.title).toBe(REPO_FILE_BASENAME);
+    expect(summary.summary).toBe(REPO_FILE_PATH);
     expect(summary.status).toBe("ready");
-    // Source label is derived from origin.type==="thread" — real branching.
-    expect(summary.sourceLabel).toBe("Current thread");
+    // Source label is derived from origin.type === "repo-file" — real branching.
+    expect(summary.sourceLabel).toBe("Repo file");
     expect(summary.errorMessage).toBeUndefined();
   });
 
-  it("derives an error status and recomputes the summary for a too-large diff", () => {
-    // Exercises the non-passthrough branch: when the diff is "too-large",
-    // getArtifactWorkspaceSummary recomputes the summary from diffStats.files
-    // and the status flips to "error" with an explanatory message — none of
-    // which are read verbatim off the descriptor's own summary field.
+  it("derives an error status and recomputes the summary for a too-large git diff (non-passthrough branch)", () => {
+    // Exercises the non-passthrough branch shared with repo-file summaries:
+    // when a git-diff is "too-large", getArtifactWorkspaceSummary recomputes the
+    // summary from diffStats.files and the status flips to "error" with an
+    // explanatory message — none read verbatim off the descriptor's summary.
     const descriptor: GitDiffArtifactDescriptor = {
       id: "artifact:thread:thread-2:git-diff",
       kind: "git-diff",
@@ -185,9 +183,9 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
     vi.restoreAllMocks();
   });
 
-  it("renders the repo-file tab in the tablist with title and roving-tabindex wiring", async () => {
+  it("renders the repo-file tab in the tablist with the basename title and roving-tabindex wiring", async () => {
     const { SecondaryPanelContent } = await import("./secondary-panel-shell");
-    const repoFileItem = makeWorkspaceItem(makeRepoFileGitDiffDescriptor());
+    const repoFileItem = makeWorkspaceItem(makeRepoFileDescriptor());
     const planItem = makePlanItem();
 
     const html = renderToStaticMarkup(
@@ -206,8 +204,8 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
     expect(html).toContain('role="tablist"');
     expect(html).toContain(`id="artifact-tab-${repoFileItem.id}"`);
     expect(html).toContain(`data-artifact-id="${repoFileItem.id}"`);
-    // The repo-file tab label comes from the descriptor title.
-    expect(html).toContain(repoFileItem.title);
+    // R11: the tab label is the file basename.
+    expect(html).toContain(REPO_FILE_BASENAME);
     // Active repo-file tab is selected and roving-tabindex focusable; the
     // inactive tab is removed from the tab order.
     expect(html).toContain(
@@ -216,15 +214,15 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
     expect(html).toContain(
       `id="artifact-tab-${planItem.id}" aria-selected="false"`,
     );
-    // The active repo-file tab controls its tabpanel and renders the git-diff body.
+    // The active repo-file tab controls its tabpanel and renders the repo-file body.
     expect(html).toContain(`aria-controls="artifact-panel-${repoFileItem.id}"`);
     expect(html).toContain(`id="artifact-panel-${repoFileItem.id}"`);
-    expect(html).toContain('data-testid="git-diff-view-stub"');
+    expect(html).toContain('data-testid="repo-file-renderer-stub"');
   });
 
   it("moves roving focus and selects the next tab on ArrowRight/Home/End keydown", async () => {
     const { SecondaryPanelContent } = await import("./secondary-panel-shell");
-    const repoFileItem = makeWorkspaceItem(makeRepoFileGitDiffDescriptor());
+    const repoFileItem = makeWorkspaceItem(makeRepoFileDescriptor());
     const planItem = makePlanItem();
     const onActiveArtifactChange = vi.fn();
 
@@ -299,7 +297,7 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
 
   it("activates a clicked repo-file tab through onActiveArtifactChange", async () => {
     const { SecondaryPanelContent } = await import("./secondary-panel-shell");
-    const repoFileItem = makeWorkspaceItem(makeRepoFileGitDiffDescriptor());
+    const repoFileItem = makeWorkspaceItem(makeRepoFileDescriptor());
     const planItem = makePlanItem();
     const onActiveArtifactChange = vi.fn();
 
@@ -330,7 +328,7 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
 
   it("exposes maximize and close controls in the chrome header", async () => {
     const { SecondaryPanelContent } = await import("./secondary-panel-shell");
-    const repoFileItem = makeWorkspaceItem(makeRepoFileGitDiffDescriptor());
+    const repoFileItem = makeWorkspaceItem(makeRepoFileDescriptor());
 
     const html = renderToStaticMarkup(
       <SecondaryPanelContent
@@ -367,11 +365,20 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
         DrawerTitle: Passthrough,
       };
     });
+    vi.doMock("./secondary-panel-repo-file", () => ({
+      RepoFileArtifactRenderer: ({
+        repoFilePart,
+      }: {
+        repoFilePart: { path: string };
+      }) => (
+        <div data-testid="repo-file-renderer-stub">{repoFilePart.path}</div>
+      ),
+    }));
 
     const { MobileArtifactDrawer } = await import(
       "./secondary-panel-mobile-drawer"
     );
-    const repoFileItem = makeWorkspaceItem(makeRepoFileGitDiffDescriptor());
+    const repoFileItem = makeWorkspaceItem(makeRepoFileDescriptor());
 
     const html = renderToStaticMarkup(
       <MobileArtifactDrawer
@@ -387,10 +394,12 @@ describe("repo-file artifact tab integrates with the artifact workspace chrome",
     );
 
     expect(html).toContain("Artifact workspace");
-    expect(html).toContain(repoFileItem.title);
-    expect(html).toContain('data-testid="git-diff-view-stub"');
+    // R11: basename title surfaces in the mobile tab too.
+    expect(html).toContain(REPO_FILE_BASENAME);
+    expect(html).toContain('data-testid="repo-file-renderer-stub"');
 
     vi.doUnmock("@/components/ui/drawer");
+    vi.doUnmock("./secondary-panel-repo-file");
     vi.resetModules();
   });
 });
