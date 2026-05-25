@@ -110,7 +110,7 @@ export default function RootLayout({
         )}
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
-        {/* Shadcn trial palette — pure white in light, near-black plum in dark */}
+        {/* Browser/PWA chrome color: white in light, Codex warm charcoal in dark */}
         <meta
           name="theme-color"
           content="#ffffff"
@@ -118,7 +118,7 @@ export default function RootLayout({
         />
         <meta
           name="theme-color"
-          content="#1a1519"
+          content="#2d2d2b"
           media="(prefers-color-scheme: dark)"
         />
       </head>
