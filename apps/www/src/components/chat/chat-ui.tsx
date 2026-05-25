@@ -544,6 +544,7 @@ function ChatUIContent() {
       mergedArtifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
+      onOpenRepoFile,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
@@ -585,7 +586,12 @@ function ChatUIContent() {
       shouldRenderSecondaryPanel,
       platform,
     }),
-    [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
+    [
+      activeArtifactId,
+      platform,
+      shouldRenderSecondaryPanel,
+      showTerminal,
+    ],
   );
 
   const dialogData = useMemo<ChatUIDialogData>(

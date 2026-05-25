@@ -265,6 +265,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
             />
           ) : null}
         </div>
@@ -317,7 +318,10 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
-  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
+  /**
+   * Opens an in-repo file path (from a markdown link, tool-output affordance,
+   * git-diff header, or git-diff file tree) as a dedicated repo-file artifact.
+   */
   onOpenRepoFile?: (href: string) => void;
 };
 

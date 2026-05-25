@@ -36,6 +36,7 @@ export function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -49,6 +50,7 @@ export function SecondaryPanelContent({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -64,6 +66,7 @@ export function SecondaryPanelContent({
       isReadOnly={isReadOnly}
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+      onOpenRepoFile={onOpenRepoFile}
       emptyState={{
         title: "No artifacts yet",
         description:
@@ -86,6 +89,7 @@ function ArtifactWorkspaceShell({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -100,6 +104,7 @@ function ArtifactWorkspaceShell({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
   emptyState: {
     title: string;
     description: string;
@@ -298,6 +303,7 @@ function ArtifactWorkspaceShell({
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
             />
           </div>
         )}
@@ -314,6 +320,7 @@ function ActiveArtifactRenderer({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -322,10 +329,17 @@ function ActiveArtifactRenderer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
-      return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+      return (
+        <GitDiffView
+          thread={thread}
+          diffPart={descriptor.part}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
     case "document":
       return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
     case "file":

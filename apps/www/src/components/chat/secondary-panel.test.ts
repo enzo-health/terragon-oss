@@ -9,7 +9,6 @@ import {
   getArtifactWorkspaceItems,
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
-  resolveRepoFileArtifactId,
 } from "./secondary-panel";
 import { ImagePart } from "./image-part";
 import { renderToolPartContent } from "./tool-part";
@@ -40,29 +39,6 @@ describe("secondary-panel artifact shell helpers", () => {
     );
     expect(getArtifactWorkspaceViewState({ status: "error" })).toBe("error");
     expect(getArtifactWorkspaceViewState({ status: "ready" })).toBe("ready");
-  });
-
-  it("resolves a repo file path to the working-tree git-diff artifact id", () => {
-    // Mirrors the chat-ui `handleOpenRepoFile` producer: a clicked file path
-    // opens the git-diff artifact through the shared `handleOpenArtifact` chain.
-    expect(
-      resolveRepoFileArtifactId({
-        artifacts: [
-          { id: "plan-1", kind: "plan" },
-          { id: "git-diff-1", kind: "git-diff" },
-        ],
-        filePath: "src/components/button.tsx",
-      }),
-    ).toBe("git-diff-1");
-  });
-
-  it("returns null when no git-diff artifact exists for the repo file", () => {
-    expect(
-      resolveRepoFileArtifactId({
-        artifacts: [{ id: "plan-1", kind: "plan" }],
-        filePath: "src/components/button.tsx",
-      }),
-    ).toBeNull();
   });
 
   it("creates a ready thread git diff artifact summary when diff data exists", () => {

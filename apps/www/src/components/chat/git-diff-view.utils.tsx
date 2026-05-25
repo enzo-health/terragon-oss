@@ -94,6 +94,35 @@ export function computeDefaultExpanded(
   );
 }
 
+export type FileTreeItemActivation =
+  | { kind: "toggle-folder"; path: string }
+  | { kind: "select-file"; fileIndex: number }
+  | { kind: "open-repo-file"; path: string }
+  | { kind: "none" };
+
+/**
+ * Pure decision for what activating (click / Enter / Space) a file-tree node
+ * does. When `openRepoFileEnabled` is true, activating a leaf file routes the
+ * path to the s3 open-repo-file flow instead of the in-place scroll/select.
+ * Folders always toggle. Keeping this pure lets the click path be unit-tested
+ * without a DOM event simulator.
+ */
+export function resolveFileTreeItemActivation(
+  node: FileTreeNode,
+  openRepoFileEnabled: boolean,
+): FileTreeItemActivation {
+  if (node.type === "folder") {
+    return { kind: "toggle-folder", path: node.path };
+  }
+  if (node.fileIndex === undefined) {
+    return { kind: "none" };
+  }
+  if (openRepoFileEnabled) {
+    return { kind: "open-repo-file", path: node.path };
+  }
+  return { kind: "select-file", fileIndex: node.fileIndex };
+}
+
 export function collectAllFolders(fileTree: FileTreeNode[]): Set<string> {
   const folders = new Set<string>();
   const walk = (nodes: FileTreeNode[]) => {
