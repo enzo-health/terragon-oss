@@ -17,6 +17,7 @@ import {
 } from "./secondary-panel-helpers";
 import { MediaArtifactRenderer } from "./secondary-panel-media";
 import { PlanArtifactRenderer } from "./secondary-panel-plan";
+import { RepoFileArtifactRenderer } from "./secondary-panel-repo-file";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import { TextFileArtifactRenderer } from "./secondary-panel-text-file";
 import type { PromptBoxRef } from "./thread-context";
@@ -341,7 +342,18 @@ function ActiveArtifactRenderer({
           onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
         />
       );
-    default:
+    case "repo-file":
+      return (
+        <RepoFileArtifactRenderer
+          repoFilePart={descriptor.part}
+          githubRepoFullName={thread.githubRepoFullName}
+          ref={thread.branchName ?? thread.repoBaseBranchName}
+        />
+      );
+    default: {
+      const exhaustiveCheck: never = descriptor;
+      void exhaustiveCheck;
       return null;
+    }
   }
 }

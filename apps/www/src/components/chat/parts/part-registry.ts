@@ -304,6 +304,7 @@ export const PART_REGISTRY: PartRegistry = {
     baseBranchName: ctx.baseBranchName,
     hasCheckpoint: ctx.hasCheckpoint,
     onOpenInArtifactWorkspace: ctx.onOpenPlanArtifact,
+    onOpenRepoFile: ctx.onOpenRepoFile,
   })),
 
   thinking: definePartEntry(ThinkingPart, (ctx, part) => ({
@@ -350,13 +351,17 @@ export const PART_REGISTRY: PartRegistry = {
 
   audio: definePartEntry(AudioPartView, (_ctx, part) => ({ part })),
 
-  "resource-link": definePartEntry(ResourceLinkView, (_ctx, part) => ({
+  "resource-link": definePartEntry(ResourceLinkView, (ctx, part) => ({
     part,
+    onOpenRepoFile: ctx.onOpenRepoFile,
   })),
 
   terminal: definePartEntry(TerminalPartView, (_ctx, part) => ({ part })),
 
-  diff: definePartEntry(DiffPartView, (_ctx, part) => ({ part })),
+  diff: definePartEntry(DiffPartView, (ctx, part) => ({
+    part,
+    onOpenRepoFile: ctx.onOpenRepoFile,
+  })),
 
   "auto-approval-review": definePartEntry(
     AutoApprovalReviewCard,

@@ -2,9 +2,12 @@ import React from "react";
 import { ExternalLink, File } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { DBResourceLinkPart } from "@terragon/shared";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 
 export interface ResourceLinkViewProps {
   part: DBResourceLinkPart;
+  /** When set, an in-repo file URI opens the artifact preview instead of a new tab. */
+  onOpenRepoFile?: (href: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -33,7 +36,12 @@ function sanitizeHref(uri: string): string | null {
   }
 }
 
-export function ResourceLinkView({ part }: ResourceLinkViewProps) {
+export function ResourceLinkView({
+  part,
+  onOpenRepoFile,
+}: ResourceLinkViewProps) {
+  const repoFileHref =
+    onOpenRepoFile && classifyRepoFileLink(part.uri) ? part.uri : null;
   const safeHref = sanitizeHref(part.uri);
   const cardClass =
     "flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3 text-sm group no-underline";
@@ -80,6 +88,18 @@ export function ResourceLinkView({ part }: ResourceLinkViewProps) {
       </div>
     </>
   );
+
+  if (onOpenRepoFile && repoFileHref) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpenRepoFile(repoFileHref)}
+        className={`${cardClass} w-full text-left hover:bg-muted/50 transition-colors`}
+      >
+        {content}
+      </button>
+    );
+  }
 
   if (safeHref) {
     return (

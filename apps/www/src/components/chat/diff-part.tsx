@@ -1,13 +1,22 @@
 import React, { useState } from "react";
-import { CheckCircle, XCircle, Clock, ChevronRight } from "lucide-react";
+import {
+  CheckCircle,
+  XCircle,
+  Clock,
+  ChevronRight,
+  FileCode,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { DBDiffPart } from "@terragon/shared";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 
 export interface DiffPartViewProps {
   part: DBDiffPart;
   onAccept?: () => void;
   onReject?: () => void;
+  /** When set and `filePath` is an in-repo path, opens the artifact preview. */
+  onOpenRepoFile?: (href: string) => void;
 }
 
 function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
@@ -48,9 +57,18 @@ function StatusBadge({ status }: { status: DBDiffPart["status"] }) {
   }
 }
 
-export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
+export function DiffPartView({
+  part,
+  onAccept,
+  onReject,
+  onOpenRepoFile,
+}: DiffPartViewProps) {
   const [expanded, setExpanded] = useState(false);
   const diffContent = part.unifiedDiff || buildSimpleDiff(part);
+  const repoFileHref =
+    onOpenRepoFile && classifyRepoFileLink(part.filePath)
+      ? part.filePath
+      : null;
 
   return (
     <div className="rounded-lg border border-border text-sm overflow-hidden">
@@ -70,6 +88,17 @@ export function DiffPartView({ part, onAccept, onReject }: DiffPartViewProps) {
           <span className="truncate">{part.filePath}</span>
         </button>
         <div className="flex items-center gap-2 shrink-0">
+          {onOpenRepoFile && repoFileHref && (
+            <button
+              type="button"
+              onClick={() => onOpenRepoFile(repoFileHref)}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={`Open ${part.filePath} preview`}
+            >
+              <FileCode className="size-3" />
+              Open file
+            </button>
+          )}
           <StatusBadge status={part.status} />
           {part.status === "pending" && (onAccept || onReject) && (
             <div className="flex gap-1">

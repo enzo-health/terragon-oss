@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { StreamdownProps } from "streamdown";
 import { parseMarkdownIntoBlocks, Streamdown } from "streamdown";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import { createCodePlugin } from "./code-plugin";
 import "streamdown/styles.css";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -105,6 +106,8 @@ type MarkdownRendererProps = {
   className?: string;
   renderImage?: (src: string, alt?: string) => ReactNode;
   streamingSegmentation?: "auto" | "off";
+  /** When set, in-repo file links open the artifact preview instead of a new tab. */
+  onOpenRepoFile?: (href: string) => void;
 };
 
 function getChildren(props: unknown): ReactNode {
@@ -249,6 +252,7 @@ function CodeBlockPre(props: unknown) {
 
 function getResponseComponents(
   renderImage?: (src: string, alt?: string) => ReactNode,
+  onOpenRepoFile?: (href: string) => void,
 ): NonNullable<StreamdownProps["components"]> {
   const components: NonNullable<StreamdownProps["components"]> = {
     pre(props) {
@@ -368,6 +372,17 @@ function getResponseComponents(
     a(props) {
       const children = getChildren(props);
       const href = getStringProp(props, "href");
+      if (onOpenRepoFile && href && classifyRepoFileLink(href)) {
+        return (
+          <button
+            type="button"
+            className="underline break-all text-left"
+            onClick={() => onOpenRepoFile(href)}
+          >
+            {children}
+          </button>
+        );
+      }
       return (
         <a
           href={href}
@@ -472,13 +487,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   className,
   renderImage,
   streamingSegmentation = "auto",
+  onOpenRepoFile,
 }: MarkdownRendererProps) {
   const components = useMemo(
     () =>
       variant === "reasoning"
         ? getReasoningComponents()
-        : getResponseComponents(renderImage),
-    [variant, renderImage],
+        : getResponseComponents(renderImage, onOpenRepoFile),
+    [variant, renderImage, onOpenRepoFile],
   );
 
   // Lazy-load the math plugin on demand. The first time `content` contains

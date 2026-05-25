@@ -23,6 +23,7 @@ interface TextPartProps {
   baseBranchName?: string;
   hasCheckpoint?: boolean;
   onOpenInArtifactWorkspace?: () => void;
+  onOpenRepoFile?: (href: string) => void;
 }
 
 function convertCitationsToGitHubLinks(
@@ -161,6 +162,7 @@ const TextPart = memo(function TextPart({
   baseBranchName,
   hasCheckpoint,
   onOpenInArtifactWorkspace,
+  onOpenRepoFile,
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
@@ -390,6 +392,7 @@ const TextPart = memo(function TextPart({
             streaming={streaming}
             renderImage={renderImage}
             streamingSegmentation={streamingSegmentation}
+            onOpenRepoFile={onOpenRepoFile}
           />
           {overlays}
         </div>
