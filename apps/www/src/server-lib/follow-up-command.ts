@@ -3,10 +3,10 @@ import type { DBUserMessage } from "@terragon/shared";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { getLatestRunIdForThreadChat } from "@terragon/shared/model/agent-event-log";
 import { db } from "@/lib/db";
-import { redis } from "@/lib/redis";
 import { followUpInternal } from "@/server-lib/follow-up";
 import { decodeRunMetadata } from "@/lib/run-metadata";
 import { agUiUserContentToDbParts } from "@/lib/user-message-content";
+import { withFollowUpSubmissionGuard } from "@/server-lib/ag-ui/follow-up-submission-guard";
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -23,24 +23,6 @@ export type FollowUpCommandError =
   | { kind: "thread-not-found" }
   | { kind: "lock-held" } // another POST already in flight
   | { kind: "invalid-input"; reason: string };
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const LOCK_TTL_SECONDS = 5;
-const SUBMISSION_DEDUPE_TTL_SECONDS = 60 * 60 * 24;
-
-function runLockKey(threadChatId: string): string {
-  return `lock:run:${threadChatId}`;
-}
-
-function submissionDedupeKey(
-  threadChatId: string,
-  clientSubmissionId: string,
-): string {
-  return `dedupe:ag-ui-submission:${threadChatId}:${clientSubmissionId}`;
-}
 
 // Narrowed type — only user-role messages
 type AgUiUserMessage = Extract<AgUiMessage, { role: "user" }>;
@@ -137,102 +119,79 @@ export async function dispatchFollowUpFromAppend(args: {
       },
     };
   }
-  const submissionKey =
-    clientSubmissionId !== null
-      ? submissionDedupeKey(threadChatId, clientSubmissionId)
-      : null;
-  if (submissionKey !== null) {
-    const claimedSubmission = await redis.set(submissionKey, "1", {
-      nx: true,
-      ex: SUBMISSION_DEDUPE_TTL_SECONDS,
-    });
-    if (claimedSubmission === null) {
-      return { skipped: "duplicate-submission" };
-    }
+
+  // 3. Extract the new user message
+  const agUiUserMessage = extractUserMessage(body);
+  if (agUiUserMessage === null) {
+    return {
+      error: {
+        kind: "invalid-input",
+        reason: "No user message found in body.messages",
+      },
+    };
+  }
+  const partsResult = agUiUserContentToDbParts(agUiUserMessage.content);
+  if (partsResult.type === "unsupported") {
+    return {
+      error: {
+        kind: "invalid-input",
+        reason: partsResult.reason,
+      },
+    };
   }
 
-  let dispatchedFollowUp = false;
+  // 4. Map AG-UI message → DBUserMessage
+  const { parts } = partsResult;
+  if (parts.length === 0) {
+    return {
+      error: {
+        kind: "invalid-input",
+        reason: "User message content is empty",
+      },
+    };
+  }
 
-  // 3. Acquire advisory lock (SET NX EX) to prevent double-dispatch on retry
-  const lockKey = runLockKey(threadChatId);
-  const acquired = await redis.set(lockKey, "1", {
-    nx: true,
-    ex: LOCK_TTL_SECONDS,
+  // 5. Extract metadata
+  extractStateMetadata(body); // logs TODO for unsupported fields
+
+  const message: DBUserMessage = {
+    type: "user",
+    model: selectedModel,
+    parts,
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
+  };
+
+  // 6. Guard and dispatch
+  const guarded = await withFollowUpSubmissionGuard({
+    threadChatId,
+    clientSubmissionId,
+    dispatch: async (markDispatched) => {
+      await followUpInternal({
+        userId,
+        threadId,
+        threadChatId,
+        message,
+        source: "www",
+      });
+      markDispatched();
+
+      // 7. Return runId from DB.
+      //
+      // followUp dispatches via waitUntil() (non-blocking), so the run row may
+      // not be written yet. We do a best-effort lookup and return whatever is
+      // current. Callers should treat a null runId as "run dispatched, id not
+      // yet available" and poll the SSE stream for RUN_STARTED.
+      const runId = await getLatestRunIdForThreadChat({ db, threadChatId });
+      return { runId: runId ?? "" };
+    },
   });
 
-  if (acquired === null) {
-    if (submissionKey !== null) {
-      await redis.del(submissionKey);
-    }
-    // Lock already held by another concurrent POST
+  if (guarded.type === "duplicate-submission") {
+    return { skipped: "duplicate-submission" };
+  }
+  if (guarded.type === "lock-held") {
     return { error: { kind: "lock-held" } };
   }
 
-  try {
-    // 4. Extract the new user message
-    const agUiUserMessage = extractUserMessage(body);
-    if (agUiUserMessage === null) {
-      return {
-        error: {
-          kind: "invalid-input",
-          reason: "No user message found in body.messages",
-        },
-      };
-    }
-    const partsResult = agUiUserContentToDbParts(agUiUserMessage.content);
-    if (partsResult.type === "unsupported") {
-      return {
-        error: {
-          kind: "invalid-input",
-          reason: partsResult.reason,
-        },
-      };
-    }
-
-    // 5. Map AG-UI message → DBUserMessage
-    const { parts } = partsResult;
-    if (parts.length === 0) {
-      return {
-        error: {
-          kind: "invalid-input",
-          reason: "User message content is empty",
-        },
-      };
-    }
-
-    // 6. Extract metadata
-    extractStateMetadata(body); // logs TODO for unsupported fields
-
-    const message: DBUserMessage = {
-      type: "user",
-      model: selectedModel,
-      parts,
-      ...(permissionMode !== undefined ? { permissionMode } : {}),
-    };
-
-    // 7. Call followUpInternal
-    await followUpInternal({
-      userId,
-      threadId,
-      threadChatId,
-      message,
-      source: "www",
-    });
-    dispatchedFollowUp = true;
-
-    // 8. Return runId from DB.
-    //
-    // followUp dispatches via waitUntil() (non-blocking), so the run row may
-    // not be written yet. We do a best-effort lookup and return whatever is
-    // current. Callers should treat a null runId as "run dispatched, id not
-    // yet available" and poll the SSE stream for RUN_STARTED.
-    const runId = await getLatestRunIdForThreadChat({ db, threadChatId });
-    return { runId: runId ?? "" };
-  } finally {
-    if (!dispatchedFollowUp && submissionKey !== null) {
-      await redis.del(submissionKey);
-    }
-    // Always release the lock, even on error
-    await redis.del(lockKey);
-  }
+  return guarded.value;
 }

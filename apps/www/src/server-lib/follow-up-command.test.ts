@@ -237,6 +237,29 @@ describe("dispatchFollowUpFromAppend", () => {
       expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
     });
 
+    it("keeps the dedupe key when runId lookup fails after followUpInternal succeeds", async () => {
+      const body = makeBody({
+        forwardedProps: {
+          runConfig: {
+            terragon: { clientSubmissionId: "submission-1" },
+          },
+        },
+      });
+      agentEventMocks.getLatestRunIdForThreadChat.mockRejectedValue(
+        new Error("lookup failed"),
+      );
+
+      await expect(
+        dispatchFollowUpFromAppend({ ...BASE_ARGS, body }),
+      ).rejects.toThrow("lookup failed");
+
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledOnce();
+      expect(redisMocks.del).not.toHaveBeenCalledWith(
+        "dedupe:ag-ui-submission:chat-1:submission-1",
+      );
+      expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
+    });
+
     it("dedupes sequential retries with the same clientSubmissionId", async () => {
       const body = makeBody({
         forwardedProps: {
@@ -546,12 +569,13 @@ describe("dispatchFollowUpFromAppend", () => {
       });
     });
 
-    it("releases the lock even when input is invalid", async () => {
+    it("does not acquire the dispatch guard when input is invalid", async () => {
       const body = makeBody({ messages: [] });
 
       await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
 
-      expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
+      expect(redisMocks.set).not.toHaveBeenCalled();
+      expect(redisMocks.del).not.toHaveBeenCalled();
     });
   });
 });
