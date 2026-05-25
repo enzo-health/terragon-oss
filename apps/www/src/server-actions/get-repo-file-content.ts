@@ -132,20 +132,21 @@ function isHttpStatusError(error: unknown): error is { status: number } {
  *
  * REF-RESOLUTION RULE: the getContent `ref` is the thread's working
  * `branchName` (the pushed branch the user sees in diffs/tool output) when
- * present, falling back to `repoBaseBranchName` (NOT NULL) when `branchName` is
- * null — never the repo default branch.
+ * present, with a 404 fallback to `repoBaseBranchName` (NOT NULL) — never the
+ * repo default branch. The fallback is what makes in-repo links work in
+ * read-only/exploration threads, whose `branchName` is assigned but never
+ * pushed: getContent 404s against that phantom ref, so we re-read the same path
+ * from base where the file actually exists.
  *
  * V1 LIMITATION (R4/R7 scope): blobs are sourced from GitHub getContent, so
- * only files COMMITTED AND PUSHED to the working branch (or base) are readable.
- * Uncommitted/unpushed working-tree edits — the agent's most common fresh
- * tool-output and diff targets — are NOT readable in v1 (there is no
+ * only files COMMITTED AND PUSHED to the working branch OR present on base are
+ * readable. Uncommitted/unpushed working-tree edits — the agent's most common
+ * fresh tool-output and diff targets — are NOT readable in v1 (there is no
  * web→sandbox file-read channel today: sendDaemonMessage is fire-and-forget).
- * Clicking a path that only exists unpushed returns category "not-found", which
- * s5 renders as the clean "not yet pushed" unsupported state. That is the
- * documented expected behavior for that case, not a crash. The expected
- * hit-rate caveat (fresh tool-output/diff paths are often unpushed → error
- * state) and the live-sandbox read channel as the follow-up that lifts this
- * limit are tracked in the slice/PR notes.
+ * Clicking a path absent on both refs returns category "not-found", which s5
+ * renders as the clean "not yet pushed" unsupported state. That is the
+ * documented expected behavior for that case, not a crash. The live-sandbox
+ * read channel that lifts this limit is tracked in the slice/PR notes.
  *
  * This deliberately does NOT reuse getGitHubFileContent (github-file-content.ts):
  * that action is authenticated-only, trusts a client-supplied
@@ -196,27 +197,45 @@ async function loadRepoFileContent(
       throw new RepoFileContentError("invalid-path");
     }
 
-    // REF-RESOLUTION RULE: working branch when present, else base (NOT NULL).
-    const ref = shell.branchName ?? shell.repoBaseBranchName;
+    // REF-RESOLUTION RULE: try the working branch first, then the base branch
+    // (NOT NULL) on a 404. A read-only/exploration thread is assigned a
+    // `branchName` that is never pushed (no commits), so getContent 404s against
+    // it for every path even though the file exists on base — the cascade
+    // resolves those from base. The base candidate is dropped when it equals the
+    // working ref so we never fetch the same ref twice. The repo's GitHub
+    // default branch is still never used; only the thread's own base branch.
+    const refCandidates =
+      shell.branchName && shell.branchName !== shell.repoBaseBranchName
+        ? [shell.branchName, shell.repoBaseBranchName]
+        : [shell.repoBaseBranchName];
 
     const [owner, repo] = parseRepoFullName(shell.githubRepoFullName);
     const octokit = await getOctokitForUserOrThrow({ userId });
 
-    let data: GetContentData;
-    try {
-      const response = await octokit.rest.repos.getContent({
-        owner,
-        repo,
-        path: classified.path,
-        ref,
-      });
-      data = response.data;
-    } catch (error) {
-      if (isHttpStatusError(error) && error.status === 404) {
-        throw new RepoFileContentError("not-found");
+    let data: GetContentData | undefined;
+    let resolvedRef: string | undefined;
+    for (const candidate of refCandidates) {
+      try {
+        const response = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: classified.path,
+          ref: candidate,
+        });
+        data = response.data;
+        resolvedRef = candidate;
+        break;
+      } catch (error) {
+        // A 404 means the path is absent on this ref; try the next candidate.
+        // Any other status is a hard GitHub failure and short-circuits.
+        if (isHttpStatusError(error) && error.status === 404) continue;
+        throw new RepoFileContentError("github-error");
       }
-      throw new RepoFileContentError("github-error");
     }
+    if (data === undefined || resolvedRef === undefined) {
+      throw new RepoFileContentError("not-found");
+    }
+    const ref = resolvedRef;
 
     // A directory comes back as an array of entries; return a browsable listing
     // so each child opens through the same in-repo flow when clicked.
