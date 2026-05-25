@@ -1913,7 +1913,6 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr1.repoFullName,
           prNumber: pr1.number,
           eventType: "check_run.completed",
@@ -1924,7 +1923,6 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr2.repoFullName,
           prNumber: pr2.number,
           eventType: "check_run.completed",
@@ -2315,7 +2313,6 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr1.repoFullName,
           prNumber: pr1.number,
           eventType: "check_suite.completed",
@@ -2326,7 +2323,6 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr2.repoFullName,
           prNumber: pr2.number,
           eventType: "check_suite.completed",
