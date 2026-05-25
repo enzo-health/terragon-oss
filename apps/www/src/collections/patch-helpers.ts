@@ -347,8 +347,22 @@ export function validateChatPatch(
     if (
       currentPatchVersion != null &&
       incomingPatchVersion <= currentPatchVersion
-    )
+    ) {
+      if (isPatchChatNewerThanCurrent(chat, patch)) {
+        return {
+          action: "apply",
+          nextChat: buildChatObject(
+            chat,
+            patch,
+            getTranscriptMessages(chat),
+            patch.chatSequence ?? chat.chatSequence,
+            incomingMessageSeq ?? currentMessageSeq ?? null,
+            currentPatchVersion,
+          ),
+        };
+      }
       return { action: "ignore" };
+    }
     return {
       action: "apply",
       nextChat: buildChatObject(
@@ -378,6 +392,17 @@ export function validateChatPatch(
   }
 
   return { action: "invalidate" };
+}
+
+function isPatchChatNewerThanCurrent(
+  chat: ThreadPageChat,
+  patch: BroadcastThreadPatch,
+): boolean {
+  const patchUpdatedAt = patch.chat?.updatedAt;
+  if (patchUpdatedAt === undefined) {
+    return false;
+  }
+  return new Date(patchUpdatedAt).getTime() > chat.updatedAt.getTime();
 }
 
 function buildChatObject(

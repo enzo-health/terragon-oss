@@ -8,6 +8,7 @@ import type {
   AgUiHistoryItem,
   AgUiHistoryMessagesResult,
 } from "@/lib/ag-ui-history-types";
+import type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 
 export type ThreadTranscriptEntry = {
   /** Composite key: `${threadId}:${threadChatId}` */
@@ -16,6 +17,7 @@ export type ThreadTranscriptEntry = {
   threadChatId: string;
   messages: AgUiHistoryItem[];
   lastSeq: number;
+  lastCursor?: AgUiReplayCursor;
   /** Wall-clock ms when this snapshot was cached. */
   cachedAt: number;
 };
@@ -100,6 +102,7 @@ export function seedTranscript({
     threadChatId,
     messages: result.messages,
     lastSeq: result.lastSeq,
+    lastCursor: result.lastCursor,
     cachedAt: Date.now(),
   };
   applyCollectionWrite((collection) => {
@@ -140,7 +143,13 @@ export function getCachedTranscript(
     return undefined;
   }
   const entry = raw as unknown as ThreadTranscriptEntry;
-  return { messages: entry.messages, lastSeq: entry.lastSeq };
+  return entry.lastCursor === undefined
+    ? { messages: entry.messages, lastSeq: entry.lastSeq }
+    : {
+        messages: entry.messages,
+        lastSeq: entry.lastSeq,
+        lastCursor: entry.lastCursor,
+      };
 }
 
 /**

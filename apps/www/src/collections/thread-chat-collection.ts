@@ -72,7 +72,7 @@ export function applyChatPatchToCollection(patch: BroadcastThreadPatch): {
   if (c.status !== "ready") return { shouldInvalidate: true };
   const key = chatKey(patch.threadId, patch.threadChatId);
   const existing = c.state.get(key) as ThreadPageChat | undefined;
-  if (!existing) return { shouldInvalidate: false };
+  if (!existing) return { shouldInvalidate: true };
   const result = validateChatPatch(existing, patch);
   if (result.action === "apply" && result.nextChat) {
     const nextChat = result.nextChat;
@@ -121,13 +121,19 @@ function isIncomingChatSeedFresh(
     }
   }
 
+  const incomingTime = getTime(incoming.updatedAt);
+  const existingTime = getTime(existing.updatedAt);
+  if (incomingTime !== existingTime) {
+    return incomingTime > existingTime;
+  }
+
   const existingPatchVersion = existing.patchVersion ?? null;
   const incomingPatchVersion = incoming.patchVersion ?? null;
   if (existingPatchVersion !== null && incomingPatchVersion !== null) {
     return incomingPatchVersion > existingPatchVersion;
   }
 
-  return getTime(incoming.updatedAt) > getTime(existing.updatedAt);
+  return false;
 }
 
 function getTime(value: Date | string | null | undefined): number {

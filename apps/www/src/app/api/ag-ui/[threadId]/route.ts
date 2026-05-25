@@ -807,7 +807,7 @@ export async function GET(
           enqueue(encodeSseComment("keepalive"));
         }, KEEPALIVE_INTERVAL_MS);
 
-        const maybeEmitTerminalFromDurable = async (
+        const maybeReconcileActiveRunFromDurable = async (
           phase: "idle" | "xread_error",
           cause?: unknown,
         ): Promise<boolean> => {
@@ -824,9 +824,8 @@ export async function GET(
               runContext !== null &&
               isTerminalAgentRunStatus(runContext.status)
             ) {
-              const replayedDurableEvents =
-                await replayDurableEventsAfterCursor();
-              if (replayedDurableEvents) {
+              await replayDurableEventsAfterCursor();
+              if (closed) {
                 return true;
               }
               const terminalEvent = buildRunTerminalAgUi({
@@ -846,6 +845,8 @@ export async function GET(
               );
               return true;
             }
+            await replayDurableEventsAfterCursor();
+            return closed;
           } catch (error) {
             console.warn(
               "[ag-ui] durable run status check failed during live-tail; continuing",
@@ -921,7 +922,7 @@ export async function GET(
                 if (!liveTailParams?.runId) {
                   await maybeDiscoverRunFromDurableLog();
                 } else if (liveTailParams.userId) {
-                  if (await maybeEmitTerminalFromDurable("idle")) {
+                  if (await maybeReconcileActiveRunFromDurable("idle")) {
                     break;
                   }
                 }
@@ -1004,7 +1005,9 @@ export async function GET(
               if (!liveTailParams?.runId) {
                 await maybeDiscoverRunFromDurableLog();
               } else if (liveTailParams.userId) {
-                if (await maybeEmitTerminalFromDurable("xread_error", error)) {
+                if (
+                  await maybeReconcileActiveRunFromDurable("xread_error", error)
+                ) {
                   break;
                 }
               }

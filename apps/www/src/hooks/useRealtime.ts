@@ -102,10 +102,8 @@ function usePartySocket({
 }) {
   const [socket, setSocket] = useState<PartySocket | null>(null);
   useEffect(() => {
-    if (!socket) {
-      setSocket(getOrCreatePartySocket({ party, channel, authToken }));
-    }
-  }, [socket, party, channel, authToken]);
+    setSocket(getOrCreatePartySocket({ party, channel, authToken }));
+  }, [party, channel, authToken]);
   useEffect(() => {
     incrementRealtimeChannelUsage(channel);
     return () => {
