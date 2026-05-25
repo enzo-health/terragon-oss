@@ -69,6 +69,7 @@ import {
   DaemonMessageSchema,
   DaemonTransportMode,
   FeatureFlags,
+  isDeltaStreamedAssistantMessage,
   RuntimeAdapterContract,
 } from "./shared";
 import {
@@ -387,6 +388,37 @@ function isCodexTurnOutputMessage(message: ClaudeMessage): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Codex item types whose text is streamed live as deltas and persisted under
+ * the item id. On `item.completed` any tail the deltas missed is flushed under
+ * the same id; the canonical/rich-part representation is then suppressed (see
+ * `isDeltaStreamedAssistantMessage`). `agent_message` streams as "text",
+ * `reasoning` as "thinking".
+ */
+function codexStreamedTextChannel(
+  context: AppServerRunContext,
+  itemType: string | undefined,
+): { accumulated: Map<string, string>; kind: "text" | "thinking" } | null {
+  switch (itemType) {
+    case "agent_message":
+      return { accumulated: context.agentMessageTextById, kind: "text" };
+    case "reasoning":
+      return { accumulated: context.reasoningTextById, kind: "thinking" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * The text not yet covered by the streamed deltas. Empty when the stream
+ * already holds the full text, or when it diverged from the final text (in
+ * which case we trust the stream rather than risk appending a duplicate).
+ */
+function unstreamedDeltaTail(streamed: string, final: string): string {
+  if (streamed.length === 0) return final;
+  return final.startsWith(streamed) ? final.slice(streamed.length) : "";
 }
 
 type DaemonEventRunState = {
@@ -1690,52 +1722,6 @@ export class TerragonDaemon {
             return;
           }
 
-          // On `item.completed` for an agent_message, flush any text the
-          // streaming deltas did not already cover — under the SAME item id —
-          // so the delta stream holds the complete text even when a message
-          // completes without prior `item.updated` deltas. We do NOT return:
-          // the event falls through to parseCodexLine so the DBAgentMessage is
-          // still persisted. That parsed message carries `_codexItemId`, which
-          // makes the canonical-event builder skip the duplicate
-          // `assistant-message` event — the delta stream is the single
-          // persisted/replayed representation, so a second one under a fresh
-          // id is exactly what stacked identical text in the transcript.
-          if (
-            threadEvent.type === "item.completed" &&
-            threadEvent.item &&
-            (threadEvent.item as Record<string, unknown>).type ===
-              "agent_message"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item.id as string | undefined;
-            const messageText = item.text as string | undefined;
-            if (itemId && messageText) {
-              const streamedText =
-                context.agentMessageTextById.get(itemId) ?? "";
-              const remaining =
-                streamedText.length === 0
-                  ? messageText
-                  : messageText.startsWith(streamedText)
-                    ? messageText.slice(streamedText.length)
-                    : // Prior stream diverged from the final text — trust the
-                      // stream and do not append, to avoid double text.
-                      "";
-              if (remaining) {
-                context.agentMessageTextById.set(itemId, messageText);
-                this.enqueueDelta({
-                  threadId: input.threadId,
-                  threadChatId: input.threadChatId,
-                  token: input.token,
-                  messageId: itemId,
-                  partIndex: 0,
-                  kind: "text",
-                  text: remaining,
-                });
-              }
-            }
-            // Fall through to parseCodexLine for DBAgentMessage persistence.
-          }
-
           // commandExecution/outputDelta carries live command output. We do
           // NOT stream it as a "text" delta: the delta channel only renders as
           // assistant text, so the command's stdout would surface as a raw
@@ -1804,48 +1790,48 @@ export class TerragonDaemon {
             return;
           }
 
-          // On `item.completed` for a reasoning item, flush any reasoning text
-          // the deltas did not already cover under the SAME item id, then fall
-          // through to parseCodexLine for the DBAgentMessage. The parsed message
-          // carries `_codexItemId`, which makes the server skip the duplicate
-          // rich-part REASONING representation keyed on the envelope-derived id
-          // — the delta stream is the single persisted/replayed representation.
-          if (
-            threadEvent.type === "item.completed" &&
-            threadEvent.item &&
-            (threadEvent.item as Record<string, unknown>).type === "reasoning"
-          ) {
+          // mcpToolCall/progress updates are delta-only — don't persist them
+          // as messages; future sprints will surface progress via the UI layer.
+          if (notification.method === "item/mcpToolCall/progress") {
+            return;
+          }
+
+          // On `item.completed` for a streamed-text item (agent_message /
+          // reasoning), flush any tail the live deltas missed under the SAME
+          // item id, so the delta stream holds the complete text even when a
+          // message completes without prior `item.updated` deltas. We do NOT
+          // return: the event falls through to parseCodexLine so the
+          // DBAgentMessage is still persisted. That parsed message carries
+          // `_codexItemId`, so its canonical / rich-part representation is
+          // suppressed — the delta stream is the single persisted/replayed
+          // copy, and a second one under a fresh id is exactly what stacked
+          // identical text in the transcript.
+          if (threadEvent.type === "item.completed" && threadEvent.item) {
             const item = threadEvent.item as Record<string, unknown>;
+            const channel = codexStreamedTextChannel(
+              context,
+              item.type as string | undefined,
+            );
             const itemId = item.id as string | undefined;
-            const reasoningText = item.text as string | undefined;
-            if (itemId && reasoningText) {
-              const streamed = context.reasoningTextById.get(itemId) ?? "";
-              const remaining =
-                streamed.length === 0
-                  ? reasoningText
-                  : reasoningText.startsWith(streamed)
-                    ? reasoningText.slice(streamed.length)
-                    : "";
-              if (remaining) {
-                context.reasoningTextById.set(itemId, reasoningText);
+            const finalText = item.text as string | undefined;
+            if (channel && itemId && finalText) {
+              const tail = unstreamedDeltaTail(
+                channel.accumulated.get(itemId) ?? "",
+                finalText,
+              );
+              if (tail) {
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
                   token: input.token,
                   messageId: itemId,
                   partIndex: 0,
-                  kind: "thinking",
-                  text: remaining,
+                  kind: channel.kind,
+                  text: tail,
                 });
               }
+              channel.accumulated.delete(itemId);
             }
-            // Fall through to parseCodexLine for DBAgentMessage persistence.
-          }
-
-          // mcpToolCall/progress updates are delta-only — don't persist them
-          // as messages; future sprints will surface progress via the UI layer.
-          if (notification.method === "item/mcpToolCall/progress") {
-            return;
           }
 
           // autoApprovalReview events are surfaced as chat messages containing
@@ -3407,18 +3393,17 @@ export class TerragonDaemon {
     const canonicalModel = this.toCanonicalModelOrNull(runState.model);
     for (const message of messages) {
       if (message.type === "assistant") {
-        // A Codex `agent_message` whose text already streamed as deltas under
-        // `_codexItemId` must NOT also emit a canonical `assistant-message`:
-        // that second representation lands in the replayed event log under a
-        // different id and renders the same text twice. Tool-use blocks below
-        // are unaffected — only the text emission is suppressed.
-        const codexStreamedTextItemId =
-          typeof message._codexItemId === "string"
-            ? message._codexItemId
-            : null;
+        // A Codex agent_message / reasoning whose text already streamed as
+        // deltas under `_codexItemId` is represented solely by that delta
+        // stream; a canonical event here would render the same text twice.
+        // Such messages carry only text/thinking blocks (never tool_use), so
+        // skipping the whole message loses nothing.
+        if (isDeltaStreamedAssistantMessage(message)) {
+          continue;
+        }
         const content = message.message.content;
         if (typeof content === "string") {
-          if (content.length === 0 || codexStreamedTextItemId) {
+          if (content.length === 0) {
             continue;
           }
           const baseEvent = allocateBaseEvent();
@@ -3443,7 +3428,7 @@ export class TerragonDaemon {
           const blockType = readString(blockRecord, "type");
           if (blockType === "text") {
             const text = readString(blockRecord, "text");
-            if (!text || text.length === 0 || codexStreamedTextItemId) {
+            if (!text || text.length === 0) {
               continue;
             }
             const baseEvent = allocateBaseEvent();

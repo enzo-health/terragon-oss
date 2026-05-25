@@ -138,7 +138,7 @@ export const featureFlagsDefinitions = {
     defaultValue: true,
     enabledForPreview: false,
     description:
-      "Renders the chat transcript directly from assistant-ui primitives reading the AG-UI runtime (ThreadPrimitive/MessagePrimitive + a single tool UI), bypassing the Terragon projector, view-model reducer, and per-part custom renderers. Text stays on the streamdown slot and input stays on the TipTap composer. Rich parts (diff/terminal/plan/etc.) render through the generic tool UI until re-added as native ActivityMessage renderers. Default off; flip only after the replay-harness duplicate gate is green.",
+      "Renders the chat transcript directly from assistant-ui primitives reading the AG-UI runtime (ThreadPrimitive/MessagePrimitive), bypassing the Terragon projector, view-model reducer, and per-part custom renderers. Only native part types render: text (streamdown slot), reasoning, and tool calls; input stays on the TipTap composer. Rich Terragon parts (diff/terminal/plan/delegation/...) are not rendered in this path.",
   },
   repoFilePreview: {
     defaultValue: false,

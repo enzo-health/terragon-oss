@@ -420,6 +420,19 @@ export type DaemonDelta = {
   text: string;
 };
 
+/**
+ * True when an assistant message's text was already streamed (and persisted)
+ * as deltas under its Codex item id, so its canonical / rich-part
+ * representation must be suppressed to avoid rendering the same content twice.
+ * The single source of truth for that suppression, shared by the daemon's
+ * canonical-event builder and the server's rich-part emitter.
+ */
+export function isDeltaStreamedAssistantMessage(
+  message: ClaudeMessage,
+): boolean {
+  return message.type === "assistant" && message._codexItemId !== undefined;
+}
+
 export type DaemonEventAPIBody = {
   threadId: string;
   threadChatId: string;
