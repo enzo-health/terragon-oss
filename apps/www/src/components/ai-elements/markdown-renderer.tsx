@@ -229,7 +229,7 @@ function CodeBlockPre(props: unknown) {
       <pre
         {...rest}
         className={cn(
-          "overflow-x-auto rounded-lg border border-border/50 bg-muted/20 p-3 pt-8 font-mono text-sm",
+          "overflow-x-auto rounded-lg border border-border/50 bg-muted/50 p-3 pt-8 font-mono text-sm",
           className,
         )}
       >

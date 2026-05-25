@@ -187,7 +187,7 @@ const ThreadListSectionHeader = memo(function ThreadListSectionHeader({
   return (
     <h3
       className={cn(
-        "group py-1.5 md:py-1 text-micro uppercase tracking-[0.06em] font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-background pl-2 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
+        "group py-1.5 md:py-1 text-micro uppercase tracking-[0.06em] font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-sidebar pl-2 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
         "animate-in fade-in slide-in-from-left-2 duration-300",
         className,
       )}
@@ -581,7 +581,7 @@ export const ThreadListContents = memo(function ThreadListContents({
         )}
         {viewFilter === "active" && showSuggestedTasks && (
           <div className="space-y-3">
-            <h3 className="text-caption uppercase tracking-[0.13em] font-medium text-muted-foreground sticky top-9 bg-background z-10 py-1">
+            <h3 className="text-caption uppercase tracking-[0.13em] font-medium text-muted-foreground sticky top-9 bg-sidebar z-10 py-1">
               Suggested tasks
             </h3>
             <RecommendedTasks
@@ -625,7 +625,7 @@ export const ThreadListMain = memo(function ThreadListMain({
   return (
     <div className="flex-1 pb-2 flex flex-col animate-in fade-in duration-500">
       <ThreadListHeader
-        className="sticky top-0 bg-background z-20 px-0 "
+        className="sticky top-0 bg-sidebar z-20 px-0 "
         viewFilter={viewFilter}
         setViewFilter={setViewFilter}
         allowGroupBy={allowGroupBy}
