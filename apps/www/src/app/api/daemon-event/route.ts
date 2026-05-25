@@ -214,7 +214,7 @@ function requiredDaemonProviderScopesForAgent(
     case "opencode":
       return ["openrouter", "openai", "anthropic"];
     case "droid":
-      return ["anthropic", "openai"];
+      return [];
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(

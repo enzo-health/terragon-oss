@@ -172,7 +172,7 @@ function runtimeProviderForDispatch({
         case "codex":
           return "codex-app-server";
         case "droid":
-          throw new Error("droid agent is not yet supported");
+          return "legacy-droid";
         default: {
           const _exhaustiveCheck: never = agent;
           throw new Error(

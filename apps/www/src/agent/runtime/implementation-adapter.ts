@@ -56,7 +56,9 @@ export interface ImplementationRuntimeAdapter {
 const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   contract(input) {
     const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
+      input.agent !== "gemini" &&
+      input.agent !== "droid" &&
+      input.enableAcpTransport !== false;
     if (supportsAcp) {
       return claudeAcpRuntimeAdapterContract;
     }
@@ -65,7 +67,9 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   createDispatch(input) {
     const contract = this.contract(input);
     const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
+      input.agent !== "gemini" &&
+      input.agent !== "droid" &&
+      input.enableAcpTransport !== false;
 
     if (supportsAcp) {
       return {
