@@ -21,7 +21,6 @@ type UseThreadViewModelArgs = {
   projectEvent?: (
     event: ThreadViewEventForAgUi,
   ) => ThreadViewEventForAgUi | null;
-  includeTranscriptMessages?: boolean;
 };
 
 export type ThreadViewModelController = ThreadViewModel & {
@@ -34,7 +33,6 @@ type UseAgUiSidecarRouterArgs = {
   projectEvent?: (
     event: ThreadViewEventForAgUi,
   ) => ThreadViewEventForAgUi | null;
-  includeTranscriptMessages?: boolean;
   onStatusOrTerminalEvent?: () => void;
 };
 
@@ -61,17 +59,14 @@ export function useAgUiSidecarRouter({
   agent,
   dispatchThreadViewEvent,
   projectEvent,
-  includeTranscriptMessages = true,
   onStatusOrTerminalEvent,
 }: UseAgUiSidecarRouterArgs): void {
   const dispatchRef = useRef(dispatchThreadViewEvent);
   const projectEventRef = useRef(projectEvent);
-  const includeTranscriptMessagesRef = useRef(includeTranscriptMessages);
   const onStatusOrTerminalEventRef = useRef(onStatusOrTerminalEvent);
 
   dispatchRef.current = dispatchThreadViewEvent;
   projectEventRef.current = projectEvent;
-  includeTranscriptMessagesRef.current = includeTranscriptMessages;
   onStatusOrTerminalEventRef.current = onStatusOrTerminalEvent;
 
   useEffect(() => {
@@ -92,7 +87,7 @@ export function useAgUiSidecarRouter({
         try {
           dispatchRef.current(
             createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: includeTranscriptMessagesRef.current,
+              projectTranscript: false,
             }),
           );
         } catch {
@@ -111,7 +106,6 @@ export function useThreadViewModel({
   agent,
   snapshot,
   projectEvent,
-  includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
   const projectedTraceKeysRef = useRef<Set<string>>(new Set());
   const [state, dispatch] = useReducer(
@@ -137,7 +131,7 @@ export function useThreadViewModel({
         try {
           dispatch(
             createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: includeTranscriptMessages,
+              projectTranscript: false,
             }),
           );
         } catch {
@@ -149,14 +143,14 @@ export function useThreadViewModel({
     return () => {
       subscription.unsubscribe();
     };
-  }, [agent, includeTranscriptMessages, projectEvent]);
+  }, [agent, projectEvent]);
 
   const viewModel = useMemo(
     () => ({
-      ...projectThreadViewModel(state, { includeTranscriptMessages }),
+      ...projectThreadViewModel(state, { includeTranscriptMessages: false }),
       dispatchThreadViewEvent: dispatch,
     }),
-    [includeTranscriptMessages, state],
+    [state],
   );
 
   useEffect(() => {
@@ -223,67 +217,19 @@ function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
   );
 }
 
-type ThreadViewSidecarEventProjectorOptions = {
-  includeTranscriptEvents?: boolean;
-};
-
-export function createThreadViewSidecarEventProjector(
-  options: ThreadViewSidecarEventProjectorOptions = {},
-): (event: ThreadViewEventForAgUi) => ThreadViewEventForAgUi | null {
-  const includeTranscriptEvents = options.includeTranscriptEvents ?? true;
-  const planCandidateMessageIds = new Set<string>();
-  let activeAssistantMessageId: string | null = null;
-
+export function createThreadViewSidecarEventProjector(): (
+  event: ThreadViewEventForAgUi,
+) => ThreadViewEventForAgUi | null {
   return (event) => {
     switch (event.type) {
       case EventType.RUN_STARTED:
-        activeAssistantMessageId = null;
-        planCandidateMessageIds.clear();
-        return event;
       case EventType.RUN_FINISHED:
       case EventType.RUN_ERROR:
-        activeAssistantMessageId = null;
-        planCandidateMessageIds.clear();
         return event;
-      case EventType.TEXT_MESSAGE_START: {
-        activeAssistantMessageId = getStringEventField(event, "messageId");
-        return null;
-      }
+      case EventType.TEXT_MESSAGE_START:
       case EventType.TEXT_MESSAGE_CONTENT:
-      case EventType.TEXT_MESSAGE_CHUNK: {
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        const messageId = getStringEventField(event, "messageId");
-        if (messageId && planCandidateMessageIds.has(messageId)) {
-          if (
-            getStringEventField(event, "delta")?.includes("</proposed_plan")
-          ) {
-            planCandidateMessageIds.delete(messageId);
-          }
-          return event;
-        }
-        const delta = getStringEventField(event, "delta");
-        const shouldTrackPlan =
-          delta?.includes("<") === true ||
-          delta?.includes("proposed_plan") === true;
-        if (messageId && shouldTrackPlan) {
-          planCandidateMessageIds.add(messageId);
-        }
-        return shouldTrackPlan ? event : null;
-      }
-      case EventType.TEXT_MESSAGE_END: {
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        const messageId = getStringEventField(event, "messageId");
-        const wasTrackingPlan =
-          messageId !== null && planCandidateMessageIds.has(messageId);
-        if (messageId) {
-          planCandidateMessageIds.delete(messageId);
-        }
-        return wasTrackingPlan ? event : null;
-      }
+      case EventType.TEXT_MESSAGE_CHUNK:
+      case EventType.TEXT_MESSAGE_END:
       case EventType.REASONING_MESSAGE_START:
       case EventType.REASONING_MESSAGE_CONTENT:
       case EventType.REASONING_MESSAGE_END:
@@ -291,26 +237,12 @@ export function createThreadViewSidecarEventProjector(
       case EventType.THINKING_TEXT_MESSAGE_START:
       case EventType.THINKING_TEXT_MESSAGE_CONTENT:
       case EventType.THINKING_TEXT_MESSAGE_END:
-        return null;
       case EventType.TOOL_CALL_START:
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        if (getStringEventField(event, "parentMessageId")) {
-          return event;
-        }
-        if (!activeAssistantMessageId) {
-          return event;
-        }
-        return {
-          ...event,
-          parentMessageId: activeAssistantMessageId,
-        };
       case EventType.TOOL_CALL_ARGS:
       case EventType.TOOL_CALL_CHUNK:
       case EventType.TOOL_CALL_END:
       case EventType.TOOL_CALL_RESULT:
-        return includeTranscriptEvents ? event : null;
+        return null;
       default:
         return event;
     }

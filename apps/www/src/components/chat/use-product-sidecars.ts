@@ -61,9 +61,7 @@ export function useProductSidecars({
   dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
 }): void {
   const projectProductSidecarEvent = useMemo(() => {
-    const projector = createThreadViewSidecarEventProjector({
-      includeTranscriptEvents: false,
-    });
+    const projector = createThreadViewSidecarEventProjector();
     return (event: ThreadViewEventForAgUi) =>
       isProductSidecarEvent(event) ? projector(event) : null;
   }, []);
@@ -77,7 +75,6 @@ export function useProductSidecars({
     agent,
     dispatchThreadViewEvent,
     projectEvent: projectProductSidecarEvent,
-    includeTranscriptMessages: false,
     onStatusOrTerminalEvent: scheduleThreadQueryInvalidation,
   });
 }
