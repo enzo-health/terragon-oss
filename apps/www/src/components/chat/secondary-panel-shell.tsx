@@ -85,6 +85,38 @@ export function SecondaryPanelContent({
   );
 }
 
+/**
+ * Panel-header button that opens the repo file tree. Owns the React Query
+ * client so the prefetch-on-hover hook only runs where the button renders —
+ * the shell itself stays free of a QueryClient dependency.
+ */
+function BrowseFilesButton({
+  threadId,
+  onOpen,
+}: {
+  threadId: string;
+  onOpen: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const prefetch = () =>
+    queryClient.prefetchQuery(repoTreeQueryOptions(threadId));
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="size-6 rounded hover:bg-accent"
+      onClick={onOpen}
+      onMouseEnter={prefetch}
+      onFocus={prefetch}
+      aria-label="Browse repository files"
+      title="Browse files"
+    >
+      <FolderTree className="size-3.5 opacity-50" />
+    </Button>
+  );
+}
+
 function ArtifactWorkspaceShell({
   artifacts,
   activeArtifactId,
@@ -124,7 +156,6 @@ function ArtifactWorkspaceShell({
   };
 }) {
   const tablistRef = useRef<HTMLDivElement>(null);
-  const queryClient = useQueryClient();
   const resolvedActiveArtifactId = resolveActiveArtifactId({
     artifacts,
     activeArtifactId,
@@ -201,23 +232,7 @@ function ArtifactWorkspaceShell({
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             {onOpenRepoTree && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-6 rounded hover:bg-accent"
-                onClick={onOpenRepoTree}
-                onMouseEnter={() =>
-                  queryClient.prefetchQuery(repoTreeQueryOptions(thread.id))
-                }
-                onFocus={() =>
-                  queryClient.prefetchQuery(repoTreeQueryOptions(thread.id))
-                }
-                aria-label="Browse repository files"
-                title="Browse files"
-              >
-                <FolderTree className="size-3.5 opacity-50" />
-              </Button>
+              <BrowseFilesButton threadId={thread.id} onOpen={onOpenRepoTree} />
             )}
             {onToggleMaximize && (
               <Button
