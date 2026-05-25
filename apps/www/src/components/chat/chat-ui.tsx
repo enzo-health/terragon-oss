@@ -343,6 +343,8 @@ function ChatUIContent() {
 
   // Reset synthesized repo-file tabs when switching chats so a previous chat's
   // file previews (resolved against that chat's branch) never leak across.
+  // threadChatId is the intended trigger, not a value read inside the effect.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset-on-switch trigger
   useEffect(() => {
     setRepoFileArtifacts([]);
   }, [threadChatId]);
@@ -372,7 +374,9 @@ function ChatUIContent() {
   );
   // Gate the producer on the feature flag: when off, the callback is undefined
   // end-to-end so in-repo links keep their default new-tab navigation.
-  const onOpenRepoFile = repoFilePreviewEnabled ? handleOpenRepoFile : undefined;
+  const onOpenRepoFile = repoFilePreviewEnabled
+    ? handleOpenRepoFile
+    : undefined;
 
   const toolProps = useMemo(
     () => ({
@@ -548,7 +552,6 @@ function ChatUIContent() {
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
-      onOpenRepoFile,
       queuedMessages,
       submittedOptimisticUserMessages,
       threadViewModel,
@@ -586,12 +589,7 @@ function ChatUIContent() {
       shouldRenderSecondaryPanel,
       platform,
     }),
-    [
-      activeArtifactId,
-      platform,
-      shouldRenderSecondaryPanel,
-      showTerminal,
-    ],
+    [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
   );
 
   const dialogData = useMemo<ChatUIDialogData>(

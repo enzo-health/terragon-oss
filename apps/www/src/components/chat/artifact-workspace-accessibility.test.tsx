@@ -32,9 +32,11 @@ vi.mock("./git-diff-view", async () => {
 // server-action fetch. The renderer's own R11 behavior (basename header,
 // markdown/source toggle) is verified separately below against the real module.
 vi.mock("./secondary-panel-repo-file", () => ({
-  RepoFileArtifactRenderer: ({ repoFilePart }: { repoFilePart: { path: string } }) => (
-    <div data-testid="repo-file-renderer-stub">{repoFilePart.path}</div>
-  ),
+  RepoFileArtifactRenderer: ({
+    repoFilePart,
+  }: {
+    repoFilePart: { path: string };
+  }) => <div data-testid="repo-file-renderer-stub">{repoFilePart.path}</div>,
 }));
 
 const REPO_FILE_PATH = "src/components/button.tsx";
