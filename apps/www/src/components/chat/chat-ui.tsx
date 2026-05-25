@@ -392,7 +392,9 @@ function ChatUIContent() {
       });
       setRepoFileArtifacts((current) =>
         current.some((existing) => existing.id === descriptor.id)
-          ? current
+          ? current.map((existing) =>
+              existing.id === descriptor.id ? descriptor : existing,
+            )
           : [...current, descriptor],
       );
       handleOpenArtifact(descriptor.id);
