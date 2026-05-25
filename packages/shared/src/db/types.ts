@@ -82,7 +82,11 @@ export type LinearInstallationInsert =
 // server-side only.
 export type LinearInstallationPublic = Omit<
   LinearInstallation,
-  "accessTokenEncrypted" | "refreshTokenEncrypted" | "scope" | "installerUserId"
+  | "accessTokenEncrypted"
+  | "refreshTokenEncrypted"
+  | "scope"
+  | "installerUserId"
+  | "appUserId"
 >;
 export type ThreadReadStatus = typeof schema.threadReadStatus.$inferSelect;
 export type ThreadReadStatusInsert =
