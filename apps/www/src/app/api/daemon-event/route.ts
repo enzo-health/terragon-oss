@@ -1888,10 +1888,13 @@ export async function POST(request: Request) {
           /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
             errorMessageStr,
           );
-        const errorMetadata = {
-          errorMessage: (isPromptTooLong
+        const errorMetadata: {
+          errorMessage: "prompt-too-long" | "agent-generic-error";
+          errorMessageInfo: string | null;
+        } = {
+          errorMessage: isPromptTooLong
             ? "prompt-too-long"
-            : "agent-generic-error") as const,
+            : "agent-generic-error",
           errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
         };
         const { didUpdate } = await updateThreadChatTerminalMetadataIfTerminal({
