@@ -269,6 +269,24 @@ function parseCodexDuration(durationStr: string): number | null {
   return totalMs > 0 ? totalMs : null;
 }
 
+// Newer Codex usage-limit messages give an absolute reset time instead of a
+// relative duration, e.g. "...or try again at May 30th, 2026 10:36 PM."
+// parseCodexDuration only understands the relative "try again in {duration}"
+// form, so without this the reset time is dropped and the run is mishandled as
+// a generic error rather than a rate limit. The message carries no timezone,
+// so this parses in the runtime's local time (UTC in production) — an
+// approximate reset beats discarding it.
+function parseCodexAbsoluteResetTime(message: string): number | null {
+  const match = message.match(/try again at ([^.]+)/i);
+  if (!match || !match[1]) {
+    return null;
+  }
+  // Strip ordinal suffixes ("30th" -> "30") so Date.parse accepts the date.
+  const cleaned = match[1].trim().replace(/(\d+)(?:st|nd|rd|th)/gi, "$1");
+  const parsed = Date.parse(cleaned);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export function parseCodexRateLimitMessageStr(
   result: string,
 ): RateLimitResult | null {
@@ -287,22 +305,30 @@ export function parseCodexRateLimitMessageStr(
   // - Team/Business: "You've hit your usage limit. To get more access now, send a request to your admin or try again in {duration}."
   const durationMs = parseCodexDuration(result);
 
-  if (durationMs === null) {
-    // Rate limited but can't parse the duration
+  if (durationMs !== null) {
+    // Calculate reset time from current time + duration
     return {
       isRateLimited: true,
       timezoneIsAmbiguous: false,
-      rateLimitResetTime: null,
+      rateLimitResetTime: Date.now() + durationMs,
     };
   }
 
-  // Calculate reset time from current time + duration
-  const resetTime = Date.now() + durationMs;
+  // Fall back to the absolute "try again at {date}" form.
+  const absoluteResetTime = parseCodexAbsoluteResetTime(result);
+  if (absoluteResetTime !== null) {
+    return {
+      isRateLimited: true,
+      timezoneIsAmbiguous: false,
+      rateLimitResetTime: absoluteResetTime,
+    };
+  }
 
+  // Rate limited but can't parse a reset time
   return {
     isRateLimited: true,
     timezoneIsAmbiguous: false,
-    rateLimitResetTime: resetTime,
+    rateLimitResetTime: null,
   };
 }
 
