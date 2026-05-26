@@ -82,19 +82,22 @@ const NativeAssistantMessage = () => (
   </MessagePrimitive.Root>
 );
 
+/**
+ * Native transcript MESSAGE LIST only. Rendered inside
+ * `TerragonTranscriptSurface`, which owns the surrounding chrome (lifecycle
+ * messages, the "Connecting to live task…" state, the boot checklist / working
+ * footer, errors, scheduled state) and the scroll container — so this renders
+ * no scroll viewport of its own to avoid a nested scroller.
+ */
 export function NativeThread() {
   return (
-    <ThreadPrimitive.Root className="flex h-full flex-col">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 sm:px-6">
-        <div className="mx-auto flex w-full max-w-chat flex-col gap-4 py-6">
-          <ThreadPrimitive.Messages
-            components={{
-              UserMessage: NativeUserMessage,
-              AssistantMessage: NativeAssistantMessage,
-            }}
-          />
-        </div>
-      </ThreadPrimitive.Viewport>
+    <ThreadPrimitive.Root className="flex flex-col gap-4">
+      <ThreadPrimitive.Messages
+        components={{
+          UserMessage: NativeUserMessage,
+          AssistantMessage: NativeAssistantMessage,
+        }}
+      />
     </ThreadPrimitive.Root>
   );
 }
