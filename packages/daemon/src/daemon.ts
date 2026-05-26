@@ -4,7 +4,7 @@ import {
   type CanonicalEvent,
   EVENT_ENVELOPE_VERSION,
 } from "@terragon/agent/canonical-events";
-import { AIAgent, type AIModel, AIModelSchema } from "@terragon/agent/types";
+import { AIAgent } from "@terragon/agent/types";
 import {
   coalesceAssistantTextMessages,
   createAcpPermissionRequestMessage,
@@ -13,6 +13,10 @@ import {
 } from "./acp-adapter";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
+import {
+  buildCanonicalEventsForBatch,
+  getMessageFingerprint,
+} from "./daemon-canonical-events";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import {
   ClaudeCodeParser,
@@ -70,9 +74,9 @@ import {
   DaemonMessageSchema,
   DaemonTransportMode,
   FeatureFlags,
-  isDeltaStreamedAssistantMessage,
   RuntimeAdapterContract,
 } from "./shared";
+import { readString, toRecord } from "./json-read";
 import {
   createIdleWatchdog,
   IdleWatchdog,
@@ -181,49 +185,6 @@ function isNonRetryableAuthError(error: unknown): boolean {
   }
   const status = (error as { status?: unknown }).status;
   return status === 401 || status === 403;
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function readString(
-  value: Record<string, unknown> | null,
-  key: string,
-): string | null {
-  if (!value) {
-    return null;
-  }
-  const keyValue = value[key];
-  return typeof keyValue === "string" ? keyValue : null;
-}
-
-function readBoolean(
-  value: Record<string, unknown> | null,
-  key: string,
-): boolean | null {
-  if (!value) {
-    return null;
-  }
-  const keyValue = value[key];
-  return typeof keyValue === "boolean" ? keyValue : null;
-}
-
-function stringifyCanonicalToolResult(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function extractThreadIdFromRpcResult(result: unknown): string | null {
@@ -3096,255 +3057,6 @@ export class TerragonDaemon {
     return true;
   }
 
-  private getMessageFingerprint(messages: ClaudeMessage[]): string {
-    return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
-  }
-
-  private createCanonicalEventId(runId: string, seq: number): string {
-    return createHash("sha256")
-      .update(`${runId}:canonical:${seq}`)
-      .digest("hex");
-  }
-
-  private allocateCanonicalBaseEvent(params: {
-    runId: string;
-    threadId: string;
-    threadChatId: string;
-    seq: number;
-    timestamp: string;
-  }): Pick<
-    CanonicalEvent,
-    | "payloadVersion"
-    | "eventId"
-    | "runId"
-    | "threadId"
-    | "threadChatId"
-    | "seq"
-    | "timestamp"
-  > {
-    return {
-      payloadVersion: EVENT_ENVELOPE_VERSION,
-      eventId: this.createCanonicalEventId(params.runId, params.seq),
-      runId: params.runId,
-      threadId: params.threadId,
-      threadChatId: params.threadChatId,
-      seq: params.seq,
-      timestamp: params.timestamp,
-    };
-  }
-
-  private toCanonicalModelOrNull(model: string | null): AIModel | null {
-    if (!model) {
-      return null;
-    }
-    const parsed = AIModelSchema.safeParse(model);
-    return parsed.success ? parsed.data : null;
-  }
-
-  private toCanonicalToolParameters(value: unknown): Record<string, unknown> {
-    const record = toRecord(value);
-    if (record) {
-      return record;
-    }
-    if (value === undefined) {
-      return {};
-    }
-    return { value };
-  }
-
-  private buildCanonicalEventsForBatch(params: {
-    runState: DaemonEventRunState;
-    threadId: string;
-    threadChatId: string;
-    messages: ClaudeMessage[];
-  }): {
-    canonicalEvents: CanonicalEvent[];
-    nextCanonicalSeqAfterBatch: number;
-    canonicalRunStartedEmittedAfterBatch: boolean;
-  } {
-    const { runState, threadId, threadChatId, messages } = params;
-    if (messages.length === 0 || runState.agent === null) {
-      return {
-        canonicalEvents: [],
-        nextCanonicalSeqAfterBatch: runState.nextCanonicalSeq,
-        canonicalRunStartedEmittedAfterBatch:
-          runState.canonicalRunStartedEmitted,
-      };
-    }
-
-    const timestamp = new Date().toISOString();
-    const events: CanonicalEvent[] = [];
-    let nextCanonicalSeq = runState.nextCanonicalSeq;
-    let canonicalRunStartedEmitted = runState.canonicalRunStartedEmitted;
-    const allocateBaseEvent = (): Pick<
-      CanonicalEvent,
-      | "payloadVersion"
-      | "eventId"
-      | "runId"
-      | "threadId"
-      | "threadChatId"
-      | "seq"
-      | "timestamp"
-    > => {
-      const baseEvent = this.allocateCanonicalBaseEvent({
-        runId: runState.runId,
-        threadId,
-        threadChatId,
-        seq: nextCanonicalSeq,
-        timestamp,
-      });
-      nextCanonicalSeq += 1;
-      return baseEvent;
-    };
-    const warnMalformedCanonicalBlock = (
-      reason: string,
-      blockType: string,
-    ): void => {
-      this.runtime.logger.warn("Skipping malformed canonical block", {
-        runId: runState.runId,
-        threadId,
-        threadChatId,
-        blockType,
-        reason,
-      });
-    };
-
-    if (!canonicalRunStartedEmitted) {
-      const baseEvent = allocateBaseEvent();
-      const model = this.toCanonicalModelOrNull(runState.model);
-      events.push({
-        ...baseEvent,
-        category: "operational",
-        type: "run-started",
-        agent: runState.agent,
-        transportMode: runState.transportMode,
-        protocolVersion: runState.protocolVersion,
-        ...(model ? { model } : {}),
-      });
-      canonicalRunStartedEmitted = true;
-    }
-
-    const canonicalModel = this.toCanonicalModelOrNull(runState.model);
-    for (const message of messages) {
-      if (message.type === "assistant") {
-        // A Codex agent_message / reasoning whose text already streamed as
-        // deltas under `_codexItemId` is represented solely by that delta
-        // stream; a canonical event here would render the same text twice.
-        // Such messages carry only text/thinking blocks (never tool_use), so
-        // skipping the whole message loses nothing.
-        if (isDeltaStreamedAssistantMessage(message)) {
-          continue;
-        }
-        const content = message.message.content;
-        if (typeof content === "string") {
-          if (content.length === 0) {
-            continue;
-          }
-          const baseEvent = allocateBaseEvent();
-          events.push({
-            ...baseEvent,
-            category: "transcript",
-            type: "assistant-message",
-            messageId: baseEvent.eventId,
-            content,
-            parentToolUseId: message.parent_tool_use_id,
-            ...(canonicalModel ? { model: canonicalModel } : {}),
-          });
-          continue;
-        }
-
-        if (!Array.isArray(content)) {
-          continue;
-        }
-
-        for (const block of content) {
-          const blockRecord = toRecord(block);
-          const blockType = readString(blockRecord, "type");
-          if (blockType === "text") {
-            const text = readString(blockRecord, "text");
-            if (!text || text.length === 0) {
-              continue;
-            }
-            const baseEvent = allocateBaseEvent();
-            events.push({
-              ...baseEvent,
-              category: "transcript",
-              type: "assistant-message",
-              messageId: baseEvent.eventId,
-              content: text,
-              parentToolUseId: message.parent_tool_use_id,
-              ...(canonicalModel ? { model: canonicalModel } : {}),
-            });
-            continue;
-          }
-          if (blockType !== "tool_use") {
-            continue;
-          }
-          const toolCallId = readString(blockRecord, "id");
-          const name = readString(blockRecord, "name");
-          if (!toolCallId || !name) {
-            warnMalformedCanonicalBlock(
-              "missing_tool_use_identity",
-              "tool_use",
-            );
-            continue;
-          }
-          const baseEvent = allocateBaseEvent();
-          events.push({
-            ...baseEvent,
-            category: "tool_lifecycle",
-            type: "tool-call-start",
-            toolCallId,
-            name,
-            parameters: this.toCanonicalToolParameters(blockRecord?.input),
-            parentToolUseId: message.parent_tool_use_id,
-          });
-        }
-        continue;
-      }
-
-      if (message.type !== "user") {
-        continue;
-      }
-
-      const content = message.message.content;
-      if (!Array.isArray(content)) {
-        continue;
-      }
-
-      for (const block of content) {
-        const blockRecord = toRecord(block);
-        if (readString(blockRecord, "type") !== "tool_result") {
-          continue;
-        }
-        const toolCallId = readString(blockRecord, "tool_use_id");
-        if (!toolCallId) {
-          warnMalformedCanonicalBlock(
-            "missing_tool_result_identity",
-            "tool_result",
-          );
-          continue;
-        }
-        const baseEvent = allocateBaseEvent();
-        events.push({
-          ...baseEvent,
-          category: "tool_lifecycle",
-          type: "tool-call-result",
-          toolCallId,
-          result: stringifyCanonicalToolResult(blockRecord?.content),
-          isError: readBoolean(blockRecord, "is_error") ?? false,
-          completedAt: timestamp,
-        });
-      }
-    }
-
-    return {
-      canonicalEvents: events,
-      nextCanonicalSeqAfterBatch: nextCanonicalSeq,
-      canonicalRunStartedEmittedAfterBatch: canonicalRunStartedEmitted,
-    };
-  }
-
   private getOrCreateDaemonEventRunState(
     threadChatId: string,
   ): DaemonEventRunState {
@@ -3383,7 +3095,7 @@ export class TerragonDaemon {
     entryCount: number;
   }): DaemonEventEnvelopePayload {
     const runState = this.getOrCreateDaemonEventRunState(threadChatId);
-    const messagesFingerprint = this.getMessageFingerprint(messages);
+    const messagesFingerprint = getMessageFingerprint(messages);
     const pendingEnvelope = runState.pendingEnvelope;
     if (pendingEnvelope) {
       if (pendingEnvelope.messagesFingerprint !== messagesFingerprint) {
@@ -3409,11 +3121,20 @@ export class TerragonDaemon {
     const eventId = createHash("sha256")
       .update(`${runState.runId}:${seq}`)
       .digest("hex");
-    const canonicalBatch = this.buildCanonicalEventsForBatch({
-      runState,
+    const canonicalBatch = buildCanonicalEventsForBatch({
+      runId: runState.runId,
+      agent: runState.agent,
+      model: runState.model,
+      transportMode: runState.transportMode,
+      protocolVersion: runState.protocolVersion,
+      nextCanonicalSeq: runState.nextCanonicalSeq,
+      canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
       threadId,
       threadChatId,
       messages,
+      onMalformedBlock: (info) => {
+        this.runtime.logger.warn("Skipping malformed canonical block", info);
+      },
     });
     runState.pendingEnvelope = {
       messagesFingerprint,
