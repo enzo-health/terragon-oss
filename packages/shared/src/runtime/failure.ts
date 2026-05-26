@@ -14,6 +14,7 @@ export type RuntimeFailureCategory =
   | "claude_dispatch_failed"
   | "gate_failed"
   | "config_error"
+  | "usage_limit"
   | "unknown";
 
 type RuntimeRetryAction =
@@ -42,6 +43,9 @@ export const RUNTIME_FAILURE_ACTION_TABLE: Record<
   claude_dispatch_failed: "rerun_prepare_and_retry",
   gate_failed: "return_to_implementing",
   config_error: "blocked",
+  // A usage/quota limit is not a transient runtime crash. Retrying before the
+  // reset just burns another failed run, so it is blocked rather than retried.
+  usage_limit: "blocked",
   unknown: "retry_if_budget",
 };
 
@@ -78,6 +82,16 @@ export function mapDaemonTerminalCategoryToRuntimeFailureCategory(
     )
   ) {
     return "config_error";
+  }
+
+  // Usage/quota limits (Claude "usage limit reached", Codex "you've hit your
+  // usage limit") are not retryable runtime crashes. Classify them distinctly
+  // so they are surfaced and not retried before the reset window.
+  if (
+    errorMessage &&
+    /usage limit reached|hit your usage limit/i.test(errorMessage)
+  ) {
+    return "usage_limit";
   }
 
   switch (category) {

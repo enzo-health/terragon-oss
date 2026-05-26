@@ -4,11 +4,12 @@
  * same record/string/boolean access logic isn't duplicated across modules.
  */
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function toRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
+  return isPlainObject(value) ? value : null;
 }
 
 export function readString(

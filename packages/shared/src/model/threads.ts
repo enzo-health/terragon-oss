@@ -1193,6 +1193,7 @@ export async function updateThreadChatTerminalMetadataIfTerminal({
   threadId,
   threadChatId,
   updates,
+  force = false,
 }: {
   db: DB;
   userId: string;
@@ -1202,6 +1203,12 @@ export async function updateThreadChatTerminalMetadataIfTerminal({
     Omit<ThreadChatInsert, "threadChatId" | "status">,
     "errorMessage" | "errorMessageInfo"
   >;
+  // When the terminal status transition raced (e.g. the chat was still
+  // `booting` when a failed run finalized), the status gate below would drop
+  // the error write and leave the user with a blank task. `force` writes the
+  // metadata regardless of current status — only safe for an authoritatively
+  // terminal run, where the chat must end up carrying the error either way.
+  force?: boolean;
 }): Promise<{ didUpdate: boolean }> {
   const updateResult = await db
     .update(schema.threadChat)
@@ -1211,11 +1218,15 @@ export async function updateThreadChatTerminalMetadataIfTerminal({
         eq(schema.threadChat.id, threadChatId),
         eq(schema.threadChat.threadId, threadId),
         eq(schema.threadChat.userId, userId),
-        inArray(schema.threadChat.status, [
-          "working-done",
-          "working-error",
-          "complete",
-        ]),
+        ...(force
+          ? []
+          : [
+              inArray(schema.threadChat.status, [
+                "working-done",
+                "working-error",
+                "complete",
+              ]),
+            ]),
       ),
     )
     .returning({ id: schema.threadChat.id });

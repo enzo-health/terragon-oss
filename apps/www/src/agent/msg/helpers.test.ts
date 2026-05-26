@@ -623,4 +623,37 @@ describe("parseCodexRateLimitMessage", () => {
       rateLimitResetTime: 1710511200000 + expectedDuration,
     });
   });
+
+  it("should parse Team/Business absolute 'try again at {date}' format (production example)", () => {
+    const result = parseCodexRateLimitMessageStr(
+      "You've hit your usage limit. To get more access now, send a request to your admin or try again at May 30th, 2026 10:36 PM.",
+    );
+    expect(result).toEqual({
+      isRateLimited: true,
+      timezoneIsAmbiguous: false,
+      rateLimitResetTime: new Date("May 30, 2026 10:36 PM").getTime(),
+    });
+  });
+
+  it("should parse absolute reset time with the ordinal stripped", () => {
+    const result = parseCodexRateLimitMessageStr(
+      "You've hit your usage limit. Try again at June 1st, 2026 9:00 AM.",
+    );
+    expect(result).toEqual({
+      isRateLimited: true,
+      timezoneIsAmbiguous: false,
+      rateLimitResetTime: new Date("June 1, 2026 9:00 AM").getTime(),
+    });
+  });
+
+  it("stays rate-limited with a null reset when the absolute date is unparseable", () => {
+    const result = parseCodexRateLimitMessageStr(
+      "You've hit your usage limit. Try again at some point soon.",
+    );
+    expect(result).toEqual({
+      isRateLimited: true,
+      timezoneIsAmbiguous: false,
+      rateLimitResetTime: null,
+    });
+  });
 });
