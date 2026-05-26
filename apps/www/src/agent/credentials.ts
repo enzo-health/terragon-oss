@@ -77,6 +77,27 @@ export async function getAndVerifyCredentials({
         type: "built-in-credits",
       };
     }
+    case "droid": {
+      const droidCredentials = await getAgentProviderCredentialsDecrypted({
+        db,
+        userId,
+        agent: "droid",
+        encryptionKey: env.ENCRYPTION_MASTER_KEY,
+      });
+      const droidApiKey = droidCredentials?.apiKey ?? null;
+      if (!droidApiKey) {
+        throw new ThreadError(
+          "missing-droid-credentials",
+          "User does not have Droid API key.",
+          null,
+        );
+      }
+      return {
+        type: "env-var",
+        key: "FACTORY_API_KEY",
+        value: droidApiKey,
+      };
+    }
     case "gemini":
     case "opencode": {
       return {

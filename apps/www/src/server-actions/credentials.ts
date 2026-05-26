@@ -40,6 +40,12 @@ function validateApiKeyFormat({
       }
       break;
     }
+    case "droid": {
+      if (!apiKey || !apiKey.startsWith("fk-")) {
+        throw new UserFacingError("Invalid API key format");
+      }
+      break;
+    }
     case "claudeCode": {
       if (!apiKey || !apiKey.startsWith("sk-ant-")) {
         throw new UserFacingError("Invalid API key format");

@@ -74,6 +74,7 @@ const BroadcastAIAgentSchema = z.enum([
   "amp",
   "codex",
   "opencode",
+  "droid",
 ]);
 
 export type BroadcastChannelUser = {

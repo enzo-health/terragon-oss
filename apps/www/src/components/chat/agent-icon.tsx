@@ -70,6 +70,12 @@ export function AgentIcon({
           />
         </span>
       );
+    case "droid":
+      return (
+        <span className="flex-shrink-0 inline-flex items-center">
+          <Image src="/agents/droid.svg" alt="Droid" width={16} height={16} />
+        </span>
+      );
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);

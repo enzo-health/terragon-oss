@@ -9,6 +9,7 @@ import {
   getAdminUserOrThrow,
   getUserIdOrNull,
   getUserInfoOrNull,
+  parseDaemonRunTokenClaims,
   validInternalRequestOrThrow,
 } from "@/lib/auth-server";
 import { createTestUser } from "@terragon/shared/model/test-helpers";
@@ -249,6 +250,53 @@ describe("auth-server", () => {
         "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
       });
       await validInternalRequestOrThrow();
+    });
+  });
+
+  describe("parseDaemonRunTokenClaims", () => {
+    const baseClaims = {
+      kind: "daemon-run",
+      runId: "run-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      sandboxId: "sandbox-1",
+      agent: "droid",
+      transportMode: "legacy",
+      protocolVersion: 1,
+      nonce: "nonce-1",
+      issuedAt: 1,
+      exp: Date.now() + 1000,
+    };
+
+    it("accepts an empty providers list (zero-scope agents like droid)", () => {
+      const claims = parseDaemonRunTokenClaims({
+        ...baseClaims,
+        providers: [],
+      });
+      expect(claims).not.toBeNull();
+      expect(claims?.agent).toBe("droid");
+      expect(claims?.providers).toEqual([]);
+    });
+
+    it("accepts a populated providers list", () => {
+      const claims = parseDaemonRunTokenClaims({
+        ...baseClaims,
+        agent: "claudeCode",
+        providers: ["anthropic"],
+      });
+      expect(claims?.providers).toEqual(["anthropic"]);
+    });
+
+    it("rejects a non-array providers value", () => {
+      expect(
+        parseDaemonRunTokenClaims({ ...baseClaims, providers: "anthropic" }),
+      ).toBeNull();
+    });
+
+    it("rejects an unknown provider value", () => {
+      expect(
+        parseDaemonRunTokenClaims({ ...baseClaims, providers: ["bogus"] }),
+      ).toBeNull();
     });
   });
 });

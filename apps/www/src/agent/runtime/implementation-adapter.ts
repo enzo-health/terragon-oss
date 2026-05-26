@@ -56,7 +56,9 @@ export interface ImplementationRuntimeAdapter {
 const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   contract(input) {
     const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
+      input.agent !== "gemini" &&
+      input.agent !== "droid" &&
+      input.enableAcpTransport !== false;
     if (supportsAcp) {
       return claudeAcpRuntimeAdapterContract;
     }
@@ -65,7 +67,9 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
   createDispatch(input) {
     const contract = this.contract(input);
     const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
+      input.agent !== "gemini" &&
+      input.agent !== "droid" &&
+      input.enableAcpTransport !== false;
 
     if (supportsAcp) {
       return {
@@ -93,7 +97,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
       };
     }
 
-    // Gemini: legacy transport (ACP not supported)
+    // Gemini and Droid: legacy transport (ACP not supported)
     return {
       transportMode: "legacy" as const,
       protocolVersion: 1 as const,
@@ -129,6 +133,7 @@ export function resolveImplementationRuntimeAdapter(
     case "amp":
     case "gemini":
     case "opencode":
+    case "droid":
       return genericImplementationAdapter;
     default: {
       const _exhaustiveCheck: never = agent;

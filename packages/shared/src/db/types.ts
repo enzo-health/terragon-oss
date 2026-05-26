@@ -228,7 +228,8 @@ export type AgentRuntimeProvider =
   | "legacy-claude"
   | "legacy-gemini"
   | "legacy-amp"
-  | "legacy-opencode";
+  | "legacy-opencode"
+  | "legacy-droid";
 
 export type AgentRunProtocolVersion = 1 | 2;
 
@@ -249,6 +250,7 @@ export type ThreadErrorType =
   | "sandbox-resume-failed"
   | "missing-gemini-credentials"
   | "missing-amp-credentials"
+  | "missing-droid-credentials"
   | "chatgpt-sub-required"
   | "invalid-codex-credentials"
   | "invalid-claude-credentials"
@@ -611,6 +613,7 @@ export type UserCreditInsert = typeof schema.userCredits.$inferInsert;
 export type UserCredentials = {
   hasClaude: boolean;
   hasAmp: boolean;
+  hasDroid: boolean;
   hasOpenAI: boolean;
   hasOpenAIOAuthCredentials: boolean;
 };

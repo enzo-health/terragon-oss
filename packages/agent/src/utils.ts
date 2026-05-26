@@ -17,6 +17,7 @@ export function ensureAgent(agent: AIAgent | null | undefined): AIAgent {
       case "amp":
       case "codex":
       case "opencode":
+      case "droid":
         return agent;
       default: {
         const _exhaustiveCheck: never = agent;
@@ -42,6 +43,9 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     }
     case "amp": {
       return "amp";
+    }
+    case "droid": {
+      return "droid";
     }
     case "gpt-5.5-low":
     case "gpt-5.5":
@@ -139,6 +143,9 @@ export function agentToModels(
     }
     case "amp": {
       return ["amp"];
+    }
+    case "droid": {
+      return ["droid"];
     }
     case "codex": {
       if (options.agentVersion === "latest" || options.agentVersion >= 6) {
@@ -278,6 +285,8 @@ export function getDefaultModelForAgent({
       return "gpt-5-codex-medium";
     case "amp":
       return "amp";
+    case "droid":
+      return "droid";
     case "gemini":
       return "gemini-3-pro";
     case "opencode":
@@ -298,6 +307,7 @@ export function isImageUploadSupported(model: AIModel | null): boolean {
     case "opencode":
       return true;
     case "gemini":
+    case "droid":
       return false;
     default:
       const _exhaustiveCheck: never = agent;
@@ -315,6 +325,7 @@ export function isPlanModeSupported(model: AIModel | null): boolean {
     case "codex":
     case "gemini":
     case "amp":
+    case "droid":
       return false;
     default:
       const _exhaustiveCheck: never = agent;
@@ -328,6 +339,7 @@ export function isConnectedCredentialsSupported(agent: AIAgent): boolean {
     case "claudeCode":
     case "codex":
     case "amp":
+    case "droid":
       return true;
     case "gemini":
     case "opencode":
@@ -358,6 +370,7 @@ export function isAgentSupportedForCredits(agent: AIAgent): boolean {
     case "gemini":
       return true;
     case "amp":
+    case "droid":
       return false;
     default:
       const _exhaustiveCheck: never = agent;
@@ -372,6 +385,7 @@ const agentDisplayNameMap: Record<AIAgent, string> = {
   gemini: "Gemini",
   amp: "Amp",
   opencode: "OpenCode",
+  droid: "Droid",
 };
 
 export function getAllAgentTypes(): AIAgent[] {
@@ -396,6 +410,8 @@ export function getAgentProviderDisplayName(agent: AIAgent): string {
       return "Amp";
     case "opencode":
       return "OpenCode";
+    case "droid":
+      return "Factory";
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);
@@ -457,6 +473,12 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
       return {
         fullName: "Amp",
         mainName: "Amp",
+        subName: null,
+      };
+    case "droid":
+      return {
+        fullName: "Droid",
+        mainName: "Droid",
         subName: null,
       };
     case "gpt-5":
@@ -889,6 +911,7 @@ const agentSortOrder: Record<AIAgent, number> = {
   gemini: 2,
   opencode: 3,
   amp: 4,
+  droid: 5,
 };
 
 export function sortByAgents(a: AIAgent, b: AIAgent): number {
@@ -905,6 +928,7 @@ export function isAgentEnabledByDefault(agent: AIAgent): boolean {
     case "gemini":
       return true;
     case "amp":
+    case "droid":
       return false;
     default:
       const _exhaustiveCheck: never = agent;
@@ -957,6 +981,8 @@ export function isModelEnabledByDefault({
       return true;
     case "amp":
       return true;
+    case "droid":
+      return false;
     case "gpt-5.1-codex-max":
     case "gpt-5.1-codex-max-low":
     case "gpt-5.1-codex-max-high":
@@ -1016,6 +1042,8 @@ export function getAgentInfo(agent: AIAgent): string {
       return "";
     case "amp":
       return "Amp is a coding agent built by Sourcegraph.";
+    case "droid":
+      return "Droid is a coding agent built by Factory.";
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);

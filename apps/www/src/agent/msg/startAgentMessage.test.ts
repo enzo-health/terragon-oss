@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
+import { runtimeProviderForDispatch } from "@/agent/msg/runtime-provider-for-dispatch";
 
 const baseInput = {
   agentVersion: 1,
@@ -74,5 +75,43 @@ describe("startAgentMessage runtime adapter dispatch contracts", () => {
       status: "unsupported",
       recovery: "manual-intervention",
     });
+  });
+
+  it("routes droid through legacy transport even when ACP is enabled", () => {
+    const dispatch = resolveImplementationRuntimeAdapter(
+      "droid",
+    ).createDispatch({
+      ...baseInput,
+      agent: "droid",
+      enableAcpTransport: true,
+    });
+
+    expect(dispatch.transportMode).toBe("legacy");
+    expect(dispatch.protocolVersion).toBe(1);
+    expect(dispatch.message.runtimeAdapterContract.adapterId).toBe("legacy");
+
+    const provider = runtimeProviderForDispatch({
+      agent: "droid",
+      adapterId: dispatch.message.runtimeAdapterContract.adapterId,
+    });
+    expect(provider).toBe("legacy-droid");
+  });
+
+  it("routes droid through legacy transport when ACP is disabled", () => {
+    const dispatch = resolveImplementationRuntimeAdapter(
+      "droid",
+    ).createDispatch({
+      ...baseInput,
+      agent: "droid",
+      enableAcpTransport: false,
+    });
+
+    expect(dispatch.transportMode).toBe("legacy");
+
+    const provider = runtimeProviderForDispatch({
+      agent: "droid",
+      adapterId: dispatch.message.runtimeAdapterContract.adapterId,
+    });
+    expect(provider).toBe("legacy-droid");
   });
 });

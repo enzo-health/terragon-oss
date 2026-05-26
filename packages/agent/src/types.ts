@@ -64,6 +64,9 @@ export const AIModelSchema = z.enum([
   "gpt-5.3-codex-spark-medium",
   "gpt-5.3-codex-spark-high",
 
+  // droid
+  "droid",
+
   // opencode
   "opencode/grok-code",
   "opencode/qwen3-coder",
@@ -110,6 +113,7 @@ export const AIAgentSchema = z.enum([
   "amp",
   "codex",
   "opencode",
+  "droid",
 ]);
 
 export type AIAgent = z.infer<typeof AIAgentSchema>;

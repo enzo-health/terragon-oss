@@ -51,6 +51,9 @@ export function useCredentialInfoForAgent(
     case "opencode":
       hasCredentials = false;
       break;
+    case "droid":
+      hasCredentials = credentials.hasDroid;
+      break;
     default:
       const _exhaustiveCheck: never = agent;
       console.warn("Unknown agent", _exhaustiveCheck);

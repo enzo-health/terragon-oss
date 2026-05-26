@@ -156,7 +156,10 @@ export type DaemonTokenAuthContext = {
 function parseDaemonTokenProviders(
   value: unknown,
 ): DaemonTokenProvider[] | null {
-  if (!Array.isArray(value) || value.length === 0) {
+  // An empty array is valid: agents that call their own API directly (e.g.
+  // droid via FACTORY_API_KEY) proxy no providers and carry a zero-scope list.
+  // Only a non-array or an unknown provider value is malformed.
+  if (!Array.isArray(value)) {
     return null;
   }
   const providers: DaemonTokenProvider[] = [];
@@ -177,7 +180,7 @@ function parseDaemonTokenProviders(
     seen.add(provider);
     providers.push(provider);
   }
-  return providers.length > 0 ? providers : null;
+  return providers;
 }
 
 function parseDaemonTokenMetadata(raw: unknown): DaemonTokenMetadata | null {
@@ -201,7 +204,9 @@ function parseDaemonTokenMetadata(raw: unknown): DaemonTokenMetadata | null {
   return null;
 }
 
-function parseDaemonRunTokenClaims(raw: unknown): DaemonRunTokenClaims | null {
+export function parseDaemonRunTokenClaims(
+  raw: unknown,
+): DaemonRunTokenClaims | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }

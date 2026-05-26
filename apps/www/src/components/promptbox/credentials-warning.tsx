@@ -43,6 +43,11 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
           message: "No more quota available for this model",
           linkText: null,
         };
+      case "droid":
+        return {
+          message: "Droid credentials not configured",
+          linkText: "Configure Droid",
+        };
       default:
         const _exhaustiveCheck: never = selectedAgent;
         console.warn("Unknown agent", _exhaustiveCheck);

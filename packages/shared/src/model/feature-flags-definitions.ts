@@ -40,6 +40,11 @@ export const featureFlagsDefinitions = {
     enabledForPreview: true,
     description: "Enables the Gemini agent for users.",
   },
+  droidAgent: {
+    defaultValue: false,
+    enabledForPreview: true,
+    description: "Enables the Droid agent for users.",
+  },
   allowUnlimitedAutomations: {
     defaultValue: false,
     description:

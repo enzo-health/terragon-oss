@@ -51,6 +51,11 @@ const PACKAGES: Pkg[] = [
     // Matches @google/gemini-cli@<semver>
     regex: /@google\/gemini-cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
   },
+  {
+    name: "droid",
+    // Matches droid@<semver>
+    regex: /droid@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
 ];
 
 function getLatestVersionViaNpm(pkgName: string): string {
