@@ -378,7 +378,7 @@ const TextPart = memo(function TextPart({
       {showStreamdown && !hasMarkdownSyntax ? (
         <div
           className={cn(
-            "whitespace-pre-wrap break-words text-sm leading-relaxed",
+            "whitespace-pre-wrap break-words text-[length:var(--text-fluid-base)] leading-relaxed",
             streaming && "streaming-cursor",
           )}
         >

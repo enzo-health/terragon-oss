@@ -30,7 +30,7 @@ export function TerminalPanel({
         "absolute bottom-0 bg-surface-dark text-on-dark border border-b-0 border-surface-dark-elevated rounded-t-lg z-50 flex flex-col shadow-lg origin-bottom-right transition-[opacity,transform] duration-200 ease-out",
         isMinimized
           ? "h-10 !w-[200px] right-2 sm:right-12"
-          : "max-h-[80vh] sm:h-[640px] w-auto right-2 left-2 sm:w-[600px] sm:right-12 sm:left-auto",
+          : "max-h-[80dvh] pb-[env(safe-area-inset-bottom)] sm:h-[640px] sm:pb-0 w-auto right-2 left-2 sm:w-[600px] sm:right-12 sm:left-auto",
       )}
     >
       {/* Terminal header */}

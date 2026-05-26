@@ -88,9 +88,11 @@ export function useThreadDocumentTitleAndFavicon({
       return;
     }
     document.title = documentTitle;
-    // Update favicon
+    // Update favicon. Use the exact rel="icon" match — a substring match
+    // (rel*='icon') also matches rel="apple-touch-icon", so a head reorder
+    // would silently rewrite the wrong link.
     const favicon = document.querySelector(
-      "link[rel*='icon']",
+      "link[rel='icon']",
     ) as HTMLLinkElement;
     if (favicon) {
       if (process.env.NODE_ENV === "development") {

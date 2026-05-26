@@ -227,6 +227,19 @@ export function usePromptBox({
                   interactive: true,
                   trigger: "manual",
                   placement: "bottom-start",
+                  // Keep the popover inside the viewport on narrow screens.
+                  maxWidth: "calc(100vw - 16px)",
+                  popperOptions: {
+                    modifiers: [
+                      { name: "preventOverflow", options: { padding: 8 } },
+                      {
+                        name: "flip",
+                        options: {
+                          fallbackPlacements: ["top-start", "bottom-start"],
+                        },
+                      },
+                    ],
+                  },
                 });
               },
 
@@ -310,6 +323,19 @@ export function usePromptBox({
                   interactive: true,
                   trigger: "manual",
                   placement: "bottom-start",
+                  // Keep the popover inside the viewport on narrow screens.
+                  maxWidth: "calc(100vw - 16px)",
+                  popperOptions: {
+                    modifiers: [
+                      { name: "preventOverflow", options: { padding: 8 } },
+                      {
+                        name: "flip",
+                        options: {
+                          fallbackPlacements: ["top-start", "bottom-start"],
+                        },
+                      },
+                    ],
+                  },
                 });
               },
 
@@ -360,6 +386,12 @@ export function usePromptBox({
       attributes: {
         class:
           "prose prose-sm max-w-none focus:outline-none min-h-[40px] px-4 py-4 cursor-text",
+        // On touch Enter inserts a newline (handled below), so hint "enter"
+        // rather than "send". Disable auto-capitalize/correct for code & paths.
+        enterKeyHint: "enter",
+        autocapitalize: "off",
+        autocorrect: "off",
+        spellcheck: "true",
       },
       handleKeyDown: (view, event) => {
         // On touch devices, we don't want to submit the form on Enter

@@ -115,7 +115,7 @@ export const ChatMessage = memo(function ChatMessage({
     // Single rhythm inside the message: gap-3 (12px) between part groups.
     // The previous double-wrapper (outer gap-3 + inner gap-2) created two
     // competing rhythms that flattened the visual hierarchy of grouped tools.
-    <div className="flex flex-col gap-3 text-sm leading-relaxed">
+    <div className="flex flex-col gap-3 text-[length:var(--text-fluid-base)] leading-relaxed">
       <div className="flex flex-col gap-3">
         {groups.map((group, groupIndex) => {
           if (group.type === "collapsible-agent-activity") {

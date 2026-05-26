@@ -59,6 +59,18 @@ function isActionableCheckFailure(conclusion: string | null): boolean {
   ].includes(conclusion);
 }
 
+// A check that is "not green" (used for snapshot aggregation) is broader than a
+// check the agent can fix by changing code. `cancelled` (manual/automatic
+// cancel), `stale` (superseded by a newer commit), and `action_required`
+// (awaiting human approval, e.g. a deploy gate) are not code failures — routing
+// auto-fix feedback for them would wake the agent on nothing it can act on.
+function isAgentFixableCheckFailure(conclusion: string | null): boolean {
+  if (!conclusion) {
+    return false;
+  }
+  return ["failure", "timed_out", "startup_failure"].includes(conclusion);
+}
+
 function getCheckSignalOutcome(
   conclusion: string | null,
 ): "pass" | "fail" | null {
@@ -66,7 +78,7 @@ function getCheckSignalOutcome(
     return "pass";
   }
 
-  if (isActionableCheckFailure(conclusion)) {
+  if (isAgentFixableCheckFailure(conclusion)) {
     return "fail";
   }
 
@@ -1031,6 +1043,99 @@ function buildCiFailureFeedbackDetails(
   return sections.join("\n\n");
 }
 
+// Shared completed-failure routing for check_run and check_suite. Both webhooks
+// fire for the same CI failure, so the snapshot/defer/open-PR/route flow is
+// identical — only the failure text, fallback summary, and id field differ.
+async function routeCiFailureFeedback(params: {
+  repoFullName: string;
+  deliveryId?: string;
+  headSha: string | null;
+  eventType: "check_run.completed" | "check_suite.completed";
+  conclusion: string | null;
+  failingCheckName: string;
+  individualFailureDetails: string;
+  fallbackCheckSummary: string;
+  fallbackPrNumbers: number[];
+  routeIdField: { checkRunId: number } | { checkSuiteId: number };
+  logLabel: string;
+}): Promise<void> {
+  const {
+    repoFullName,
+    deliveryId,
+    headSha,
+    eventType,
+    conclusion,
+    failingCheckName,
+    individualFailureDetails,
+    fallbackCheckSummary,
+    fallbackPrNumbers,
+    routeIdField,
+    logLabel,
+  } = params;
+
+  const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
+    repoFullName,
+    headSha,
+  });
+
+  // Wait for ALL checks to complete before routing. While checks are still
+  // running the next completion webhook re-evaluates; this stops the agent from
+  // acting on partial CI state (e.g. lint failed while typecheck is running).
+  if (ciSnapshot && !ciSnapshot.complete) {
+    console.log(
+      "CI snapshot incomplete — deferring auto-fix routing until all checks finish",
+      {
+        repoFullName,
+        ...routeIdField,
+        failingChecksCount: ciSnapshot.failingChecks.length,
+        totalChecksCount: ciSnapshot.checkNames.length,
+      },
+    );
+    return;
+  }
+
+  const failureDetails = buildCiFailureFeedbackDetails(
+    failingCheckName,
+    individualFailureDetails,
+    ciSnapshot,
+  );
+
+  // Route only to PRs still open. The inline pull_requests array carries no
+  // state, so a late check completing on a merged/closed PR would otherwise
+  // re-wake an archived thread.
+  const openPrNumbers = headSha
+    ? await resolvePrNumbersFromSha({ repoFullName, headSha })
+    : fallbackPrNumbers;
+
+  await Promise.all(
+    openPrNumbers.map(async (prNumber) => {
+      const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
+        repoFullName,
+        prNumber,
+        eventType,
+        deliveryId,
+        headSha: headSha ?? undefined,
+        checkSummary: ciSnapshot
+          ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
+          : fallbackCheckSummary,
+        failureDetails,
+        ...routeIdField,
+        sourceType: "automation",
+        isAutoFixEligible: true,
+      });
+      console.log(logLabel, {
+        repoFullName,
+        prNumber,
+        ...routeIdField,
+        conclusion,
+        ciSnapshotComplete: ciSnapshot?.complete ?? null,
+        ciSnapshotFailingChecksCount: ciSnapshot?.failingChecks.length ?? null,
+        ...feedbackRoutingResult,
+      });
+    }),
+  );
+}
+
 // Handle check run events
 export async function handleCheckRunEvent(
   event: CheckRunEvent,
@@ -1068,79 +1173,23 @@ export async function handleCheckRunEvent(
       }),
     );
 
-    if (event.action === "completed") {
-      const signalOutcome = getCheckSignalOutcome(checkRun.conclusion);
-      if (signalOutcome === "fail") {
-        const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
-          repoFullName,
-          headSha: checkRun.head_sha ?? null,
-        });
-
-        // Wait for ALL checks to complete before routing CI failure feedback.
-        // If checks are still running, the next check_run.completed webhook
-        // will re-evaluate. This prevents the agent from acting on partial CI
-        // state (e.g., only lint has failed while typecheck is still running).
-        if (ciSnapshot && !ciSnapshot.complete) {
-          console.log(
-            "CI snapshot incomplete — deferring auto-fix routing until all checks finish",
-            {
-              repoFullName,
-              checkRunId: checkRun.id,
-              failingChecksCount: ciSnapshot.failingChecks.length,
-              totalChecksCount: ciSnapshot.checkNames.length,
-            },
-          );
-          return;
-        }
-
-        const failureDetails = buildCiFailureFeedbackDetails(
-          checkRun.name,
-          getCheckRunFailureDetails(checkRun),
-          ciSnapshot,
-        );
-
-        await Promise.all(
-          prNumbers.map(async (prNumber) => {
-            const routeUserIds: Array<string | null> = [null];
-
-            if (routeUserIds.length === 0) {
-              return;
-            }
-
-            await Promise.all(
-              routeUserIds.map(async (routeUserId) => {
-                const feedbackRoutingResult =
-                  await routeGithubFeedbackOrSpawnThread({
-                    userId: routeUserId ?? undefined,
-                    repoFullName,
-                    prNumber,
-                    eventType: "check_run.completed",
-                    deliveryId,
-                    checkSummary: ciSnapshot
-                      ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
-                      : `${checkRun.name} (${checkRun.status}:${signalOutcome})`,
-                    failureDetails,
-                    checkRunId: checkRun.id,
-                    sourceType: "automation",
-                    isAutoFixEligible: true,
-                  });
-                console.log("GitHub feedback routed from check run", {
-                  repoFullName,
-                  prNumber,
-                  checkRunId: checkRun.id,
-                  conclusion: checkRun.conclusion,
-                  signalOutcome,
-                  ciSnapshotComplete: ciSnapshot?.complete ?? null,
-                  ciSnapshotFailingChecksCount:
-                    ciSnapshot?.failingChecks.length ?? null,
-                  routeUserId: routeUserId ?? null,
-                  ...feedbackRoutingResult,
-                });
-              }),
-            );
-          }),
-        );
-      }
+    if (
+      event.action === "completed" &&
+      getCheckSignalOutcome(checkRun.conclusion) === "fail"
+    ) {
+      await routeCiFailureFeedback({
+        repoFullName,
+        deliveryId,
+        headSha: checkRun.head_sha ?? null,
+        eventType: "check_run.completed",
+        conclusion: checkRun.conclusion,
+        failingCheckName: checkRun.name,
+        individualFailureDetails: getCheckRunFailureDetails(checkRun),
+        fallbackCheckSummary: `${checkRun.name} (${checkRun.status}:fail)`,
+        fallbackPrNumbers: prNumbers,
+        routeIdField: { checkRunId: checkRun.id },
+        logLabel: "GitHub feedback routed from check run",
+      });
     }
 
     console.log(
@@ -1192,76 +1241,23 @@ export async function handleCheckSuiteEvent(
       }),
     );
 
-    if (event.action === "completed") {
-      const signalOutcome = getCheckSignalOutcome(checkSuite.conclusion);
-      if (signalOutcome === "fail") {
-        const ciSnapshot = await fetchCiSignalSnapshotForHeadSha({
-          repoFullName,
-          headSha: checkSuite.head_sha ?? null,
-        });
-
-        // Wait for ALL checks to complete before routing CI failure feedback.
-        if (ciSnapshot && !ciSnapshot.complete) {
-          console.log(
-            "CI snapshot incomplete — deferring auto-fix routing until all checks finish",
-            {
-              repoFullName,
-              checkSuiteId: checkSuite.id,
-              failingChecksCount: ciSnapshot.failingChecks.length,
-              totalChecksCount: ciSnapshot.checkNames.length,
-            },
-          );
-          return;
-        }
-
-        const failureDetails = buildCiFailureFeedbackDetails(
-          `Check suite ${checkSuite.id}`,
-          getCheckSuiteFailureDetails(checkSuite),
-          ciSnapshot,
-        );
-
-        await Promise.all(
-          prNumbers.map(async (prNumber) => {
-            const routeUserIds: Array<string | null> = [null];
-
-            if (routeUserIds.length === 0) {
-              return;
-            }
-
-            await Promise.all(
-              routeUserIds.map(async (routeUserId) => {
-                const feedbackRoutingResult =
-                  await routeGithubFeedbackOrSpawnThread({
-                    userId: routeUserId ?? undefined,
-                    repoFullName,
-                    prNumber,
-                    eventType: "check_suite.completed",
-                    deliveryId,
-                    checkSummary: ciSnapshot
-                      ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
-                      : `Check suite (${checkSuite.status}:${signalOutcome})`,
-                    failureDetails,
-                    checkSuiteId: checkSuite.id,
-                    sourceType: "automation",
-                    isAutoFixEligible: true,
-                  });
-                console.log("GitHub feedback routed from check suite", {
-                  repoFullName,
-                  prNumber,
-                  checkSuiteId: checkSuite.id,
-                  conclusion: checkSuite.conclusion,
-                  signalOutcome,
-                  ciSnapshotComplete: ciSnapshot?.complete ?? null,
-                  ciSnapshotFailingChecksCount:
-                    ciSnapshot?.failingChecks.length ?? null,
-                  routeUserId: routeUserId ?? null,
-                  ...feedbackRoutingResult,
-                });
-              }),
-            );
-          }),
-        );
-      }
+    if (
+      event.action === "completed" &&
+      getCheckSignalOutcome(checkSuite.conclusion) === "fail"
+    ) {
+      await routeCiFailureFeedback({
+        repoFullName,
+        deliveryId,
+        headSha: checkSuite.head_sha ?? null,
+        eventType: "check_suite.completed",
+        conclusion: checkSuite.conclusion,
+        failingCheckName: `Check suite ${checkSuite.id}`,
+        individualFailureDetails: getCheckSuiteFailureDetails(checkSuite),
+        fallbackCheckSummary: `Check suite (${checkSuite.status}:fail)`,
+        fallbackPrNumbers: prNumbers,
+        routeIdField: { checkSuiteId: checkSuite.id },
+        logLabel: "GitHub feedback routed from check suite",
+      });
     }
 
     console.log(
@@ -1469,6 +1465,7 @@ export async function handleStatusEvent(
           prNumber,
           eventType: "status",
           deliveryId,
+          headSha,
           checkSummary: ciSnapshot
             ? `CI checks failed: ${ciSnapshot.failingChecks.join(", ")}`
             : `Legacy status failed: ${event.context ?? "status"}`,

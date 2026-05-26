@@ -211,6 +211,116 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     expect(maybeBatchThreads).not.toHaveBeenCalled();
   });
 
+  it("deduplicates CI failure feedback across check_run and check_suite by head SHA", async () => {
+    vi.mocked(getThreadsForGithubPR).mockResolvedValue([
+      { id: "thread-1", userId: "user-1", archived: false },
+    ]);
+    const marker = `<!-- terragon-github-feedback-delivery:ci:owner/repo:42:sha-shared -->`;
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: `user: prior auto-fix feedback\n${marker}`,
+      messageCount: 1,
+    });
+    vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
+      id: "thread-1",
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
+    } as unknown as NonNullable<
+      Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
+    >);
+
+    const result = await routeGithubFeedbackOrSpawnThread({
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_suite.completed",
+      deliveryId: "delivery-suite-1",
+      checkSuiteId: 999,
+      headSha: "sha-shared",
+      checkSummary: "CI failed",
+      failureDetails: "tests failed",
+      isAutoFixEligible: true,
+    });
+
+    expect(result).toEqual({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      mode: "reused_existing",
+      reason: "existing-unarchived-thread:deduplicated-delivery",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
+  it("uses the auto-fix directive and sanitizes summaries for eligible status events", async () => {
+    vi.mocked(getThreadsForGithubPR).mockResolvedValue([
+      { id: "thread-1", userId: "user-1", archived: false },
+    ]);
+    vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
+      id: "thread-1",
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
+    } as unknown as NonNullable<
+      Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
+    >);
+
+    await routeGithubFeedbackOrSpawnThread({
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "status",
+      deliveryId: "delivery-status-1",
+      headSha: "sha-status",
+      checkSummary: "CI checks failed: build",
+      failureDetails: "compile error",
+      isAutoFixEligible: true,
+    });
+
+    expect(queueFollowUpInternal).toHaveBeenCalledTimes(1);
+    const part = vi.mocked(queueFollowUpInternal).mock.calls[0]?.[0].messages[0]
+      ?.parts[0];
+    if (!part || part.type !== "text") {
+      throw new Error("Expected queued follow-up message to contain text part");
+    }
+    expect(part.text).toContain("[AUTO-FIX]");
+    expect(part.text).toContain("[BEGIN_UNTRUSTED_GITHUB_FEEDBACK]");
+    expect(part.text).toContain("CI checks failed: build");
+  });
+
+  it("deduplicates concurrent CI feedback via the delivery-marker claim", async () => {
+    vi.mocked(getThreadsForGithubPR).mockResolvedValue([
+      { id: "thread-1", userId: "user-1", archived: false },
+    ]);
+    // Transcript has no marker yet: the racing webhook has not landed its
+    // queued message, so only the DB claim can catch the duplicate.
+    vi.mocked(getNativeAgUiTranscriptForThreadChat).mockResolvedValue({
+      history: "",
+      messageCount: 0,
+    });
+    vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
+      id: "thread-1",
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
+    } as unknown as NonNullable<
+      Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
+    >);
+    // The marker claim loses the race — the other webhook already inserted it.
+    signalInboxInsertReturning.mockResolvedValueOnce([]);
+
+    const result = await routeGithubFeedbackOrSpawnThread({
+      repoFullName: "owner/repo",
+      prNumber: 42,
+      eventType: "check_run.completed",
+      deliveryId: "delivery-race-1",
+      checkRunId: 555,
+      headSha: "sha-race",
+      checkSummary: "CI failed",
+      failureDetails: "tests failed",
+      isAutoFixEligible: true,
+    });
+
+    expect(result).toEqual({
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      mode: "reused_existing",
+      reason: "existing-unarchived-thread:deduplicated-delivery",
+    });
+    expect(queueFollowUpInternal).not.toHaveBeenCalled();
+  });
+
   it("spawns a new thread when no resumable thread exists", async () => {
     vi.mocked(getUserIdByGitHubAccountId).mockResolvedValue("user-1");
 

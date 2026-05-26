@@ -101,7 +101,7 @@ export const SendButton = memo(function SendButton({
       aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
       className={cn(
-        "size-auto h-8 px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.98]",
+        "size-auto h-11 px-3 sm:h-8 sm:px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.98]",
         isSubmitting && "animate-pulse-subtle",
         className,
       )}
