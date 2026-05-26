@@ -1,4 +1,5 @@
 import type { DaemonCodexEvent } from "./codex-app-server";
+import { readString, toRecord } from "./json-read";
 
 /**
  * Per-item-id text accumulators the router reads and mutates. These are the
@@ -96,45 +97,43 @@ export function routeCodexNotification({
   // daemon's pass-through to parseCodexLine. A parser unit test asserts the
   // unknown-item-type default is a no-op so the surface area of this invariant
   // is explicit.
-  if (
-    threadEvent.type === "item.updated" &&
-    threadEvent.item &&
-    (threadEvent.item as Record<string, unknown>).type === "agent_message"
-  ) {
-    const item = threadEvent.item as Record<string, unknown>;
-    const itemId = item.id as string | undefined;
-    const messageText = item.text as string | undefined;
-    if (itemId && messageText) {
-      const previousText = context.agentMessageTextById.get(itemId) ?? "";
-      const isExplicitDeltaMethod = method === "item/agentMessage/delta";
-      const deltaText = isExplicitDeltaMethod
-        ? messageText
-        : messageText.startsWith(previousText)
-          ? messageText.slice(previousText.length)
-          : messageText;
-      if (isExplicitDeltaMethod) {
-        context.agentMessageTextById.set(itemId, previousText + messageText);
-      } else {
-        context.agentMessageTextById.set(itemId, messageText);
+  if (threadEvent.type === "item.updated" && threadEvent.item) {
+    const item = toRecord(threadEvent.item);
+    if (item && item.type === "agent_message") {
+      const itemId = readString(item, "id") ?? undefined;
+      const messageText = readString(item, "text") ?? undefined;
+      if (itemId && messageText) {
+        const previousText = context.agentMessageTextById.get(itemId) ?? "";
+        const isExplicitDeltaMethod = method === "item/agentMessage/delta";
+        const deltaText = isExplicitDeltaMethod
+          ? messageText
+          : messageText.startsWith(previousText)
+            ? messageText.slice(previousText.length)
+            : messageText;
+        if (isExplicitDeltaMethod) {
+          context.agentMessageTextById.set(itemId, previousText + messageText);
+        } else {
+          context.agentMessageTextById.set(itemId, messageText);
+        }
+        if (deltaText) {
+          return {
+            kind: "enqueue-delta",
+            delta: {
+              messageId: itemId,
+              partIndex: 0,
+              kind: "text",
+              text: deltaText,
+            },
+          };
+        }
       }
-      if (deltaText) {
-        return {
-          kind: "enqueue-delta",
-          delta: {
-            messageId: itemId,
-            partIndex: 0,
-            kind: "text",
-            text: deltaText,
-          },
-        };
-      }
+      // Deltas were routed through the broadcast buffer above; skip parseCodexLine
+      // for agent_message item.updated so we don't also persist a DBMessage per
+      // character-level accumulation (parseCodexLine now emits intermediate
+      // agent_message rows for replay / test harnesses, but the production daemon
+      // already streams deltas and persists the final item.completed).
+      return { kind: "skip" };
     }
-    // Deltas were routed through the broadcast buffer above; skip parseCodexLine
-    // for agent_message item.updated so we don't also persist a DBMessage per
-    // character-level accumulation (parseCodexLine now emits intermediate
-    // agent_message rows for replay / test harnesses, but the production daemon
-    // already streams deltas and persists the final item.completed).
-    return { kind: "skip" };
   }
 
   // commandExecution/outputDelta carries live command output. We do NOT stream
@@ -159,9 +158,9 @@ export function routeCodexNotification({
     threadEvent.type === "item.updated" &&
     method === "item/fileChange/outputDelta"
   ) {
-    const item = threadEvent.item as Record<string, unknown> | undefined;
-    const itemId = item?.id as string | undefined;
-    const delta = item?._delta as string | undefined;
+    const item = toRecord(threadEvent.item);
+    const itemId = item ? (readString(item, "id") ?? undefined) : undefined;
+    const delta = item ? (readString(item, "_delta") ?? undefined) : undefined;
     if (itemId && delta) {
       return {
         kind: "enqueue-delta",
@@ -185,9 +184,9 @@ export function routeCodexNotification({
       method === "item/reasoning/textDelta" ||
       method === "item/reasoning/summaryPartAdded")
   ) {
-    const item = threadEvent.item as Record<string, unknown> | undefined;
-    const itemId = item?.id as string | undefined;
-    const text = item?.text as string | undefined;
+    const item = toRecord(threadEvent.item);
+    const itemId = item ? (readString(item, "id") ?? undefined) : undefined;
+    const text = item ? (readString(item, "text") ?? undefined) : undefined;
     if (itemId && text) {
       const previous = context.reasoningTextById.get(itemId) ?? "";
       context.reasoningTextById.set(itemId, previous + text);
@@ -220,13 +219,14 @@ export function routeCodexNotification({
   // second one under a fresh id is exactly what stacked identical text in the
   // transcript.
   if (threadEvent.type === "item.completed" && threadEvent.item) {
-    const item = threadEvent.item as Record<string, unknown>;
-    const channel = codexStreamedTextChannel(
-      context,
-      item.type as string | undefined,
-    );
-    const itemId = item.id as string | undefined;
-    const finalText = item.text as string | undefined;
+    const item = toRecord(threadEvent.item);
+    const channel = item
+      ? codexStreamedTextChannel(context, readString(item, "type") ?? undefined)
+      : null;
+    const itemId = item ? (readString(item, "id") ?? undefined) : undefined;
+    const finalText = item
+      ? (readString(item, "text") ?? undefined)
+      : undefined;
     if (channel && itemId && finalText) {
       const tail = unstreamedDeltaTail(
         channel.accumulated.get(itemId) ?? "",

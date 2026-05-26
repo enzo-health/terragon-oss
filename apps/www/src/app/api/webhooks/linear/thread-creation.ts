@@ -428,7 +428,8 @@ async function transitionIssueToStarted({
 
     const currentState = await issue.state;
     if (!currentState) return;
-    const currentType = currentState.type as string;
+    const currentType = currentState.type;
+    if (typeof currentType !== "string") return;
     if (
       currentType === "started" ||
       currentType === "completed" ||
