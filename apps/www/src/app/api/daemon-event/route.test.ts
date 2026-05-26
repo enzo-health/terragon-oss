@@ -3642,6 +3642,45 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("force-writes the error when the failed-terminal metadata write is gated out", async () => {
+      // Simulate the terminal-transition race: the chat was not in a terminal
+      // status, so the status-gated write reports it did not update.
+      vi.mocked(
+        updateThreadChatTerminalMetadataIfTerminal,
+      ).mockResolvedValueOnce({ didUpdate: false });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "You've hit your usage limit.",
+            } as any,
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-fenced-force-error",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // First attempt is status-gated (no force); the fallback forces the write.
+      expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          force: true,
+          updates: expect.objectContaining({
+            errorMessage: "agent-generic-error",
+            errorMessageInfo: "You've hit your usage limit.",
+          }),
+        }),
+      );
+    });
+
     it("persists canonical events before legacy handling", async () => {
       const response = await POST(
         createDaemonRequest({

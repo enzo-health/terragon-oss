@@ -1888,18 +1888,38 @@ export async function POST(request: Request) {
           /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
             errorMessageStr,
           );
-        await updateThreadChatTerminalMetadataIfTerminal({
+        const errorMetadata = {
+          errorMessage: (isPromptTooLong
+            ? "prompt-too-long"
+            : "agent-generic-error") as const,
+          errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
+        };
+        const { didUpdate } = await updateThreadChatTerminalMetadataIfTerminal({
           db,
           userId,
           threadId,
           threadChatId,
-          updates: {
-            errorMessage: isPromptTooLong
-              ? "prompt-too-long"
-              : "agent-generic-error",
-            errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
-          },
+          updates: errorMetadata,
         });
+        if (!didUpdate) {
+          // The chat was not in a terminal status when we tried to attach the
+          // error (the terminal transition raced — e.g. the deferred Codex
+          // path finalized while the chat was still booting). Without this the
+          // failure is silently dropped and the user sees a blank task. The
+          // run is authoritatively failed, so force the error onto the chat.
+          console.warn(
+            "[daemon-event] failed-terminal error metadata write was gated out; forcing",
+            { threadId, threadChatId, runId: runContext?.runId ?? null },
+          );
+          await updateThreadChatTerminalMetadataIfTerminal({
+            db,
+            userId,
+            threadId,
+            threadChatId,
+            updates: errorMetadata,
+            force: true,
+          });
+        }
       } else {
         await updateThreadChatTerminalMetadataIfTerminal({
           db,
