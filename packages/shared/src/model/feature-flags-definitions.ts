@@ -135,7 +135,7 @@ export const featureFlagsDefinitions = {
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
   },
   nativeChatTranscript: {
-    defaultValue: true,
+    defaultValue: false,
     enabledForPreview: false,
     description:
       "Renders the chat transcript directly from assistant-ui primitives reading the AG-UI runtime (ThreadPrimitive/MessagePrimitive), bypassing the Terragon projector, view-model reducer, and per-part custom renderers. Only native part types render: text (streamdown slot), reasoning, and tool calls; input stays on the TipTap composer. Rich Terragon parts (diff/terminal/plan/delegation/...) are not rendered in this path.",
