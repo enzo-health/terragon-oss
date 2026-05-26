@@ -37,7 +37,6 @@ import {
   ThreadInsertRaw,
   ThreadSource,
   ThreadStatus,
-  ThreadVisibility,
 } from "../db/types";
 import { sanitizeForJson } from "../utils/sanitize-json";
 import { toUTC, validateTimezone } from "../utils/timezone";
@@ -47,7 +46,7 @@ import {
   toBroadcastActiveChatRealtimeFields,
   toBroadcastThreadShellRealtimeFields,
 } from "./thread-page";
-import { getUser } from "./user";
+import { getAuthorizedThreadAccess, sqlIsUnread } from "./thread-auth";
 
 type GetThreadsArgs = {
   db: DB;
@@ -198,7 +197,7 @@ async function getThreadsInner({
       prStatus: schema.githubPR.status,
       prChecksStatus: schema.githubPR.checksStatus,
       visibility: schema.threadVisibility.visibility,
-      isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
+      isUnread: sqlIsUnread(schema.threadReadStatus.isRead),
       threadChats: threadChatSubQuery.threadChats,
     })
     .from(schema.thread)
@@ -442,90 +441,26 @@ export async function getThreadWithPermissions({
   getHasRepoPermissions?: (repoFullName: string) => Promise<boolean>;
   allowAdmin?: boolean;
 }): Promise<ThreadInfoFull | undefined> {
-  const threadResultArr = await db
-    .select({
-      userId: schema.thread.userId,
-      githubRepoFullName: schema.thread.githubRepoFullName,
-      visibility: sql<ThreadVisibility>`COALESCE(${schema.threadVisibility.visibility}, ${schema.userSettings.defaultThreadVisibility}, 'private')`,
-    })
-    .from(schema.thread)
-    .leftJoin(
-      schema.threadVisibility,
-      eq(schema.threadVisibility.threadId, schema.thread.id),
-    )
-    .leftJoin(
-      schema.userSettings,
-      eq(schema.userSettings.userId, schema.thread.userId),
-    )
-    .where(eq(schema.thread.id, threadId));
-  if (threadResultArr.length === 0) {
-    return undefined;
-  }
-  const threadResult = threadResultArr[0]!;
-  const ownerUserId = threadResult.userId;
-  // Thread owners can view their own threads
-  if (ownerUserId === userId) {
-    const thread = await getThread({ db, threadId, userId });
-    if (!thread) {
-      return undefined;
-    }
-    return {
-      ...thread,
-      visibility: threadResult.visibility,
-    };
-  }
-
-  const user = await getUser({ db, userId });
-  if (!user) {
+  const access = await getAuthorizedThreadAccess({
+    db,
+    threadId,
+    userId,
+    getHasRepoPermissions,
+    allowAdmin,
+  });
+  if (!access) {
     return undefined;
   }
 
-  // Admins can view all threads if allowAdmin is true
-  if (allowAdmin) {
-    if (user.role === "admin") {
-      const thread = await getThread({ db, threadId, userId: ownerUserId });
-      if (!thread) {
-        return undefined;
-      }
-      return {
-        ...thread,
-        visibility: threadResult.visibility,
-      };
-    }
+  const thread = await getThread({ db, threadId, userId: access.ownerUserId });
+  if (!thread) {
+    return undefined;
   }
 
-  switch (threadResult.visibility) {
-    case "private": {
-      return undefined;
-    }
-    case "link": {
-      const thread = await getThread({ db, threadId, userId: ownerUserId });
-      if (!thread) {
-        return undefined;
-      }
-      return {
-        ...thread,
-        visibility: threadResult.visibility,
-      };
-    }
-    case "repo": {
-      if (await getHasRepoPermissions?.(threadResult.githubRepoFullName)) {
-        const thread = await getThread({ db, threadId, userId: ownerUserId });
-        if (!thread) {
-          return undefined;
-        }
-        return {
-          ...thread,
-          visibility: threadResult.visibility,
-        };
-      }
-      return undefined;
-    }
-    default: {
-      const _exhaustiveCheck: never = threadResult.visibility;
-      throw new Error(`Invalid visibility: ${_exhaustiveCheck}`);
-    }
-  }
+  return {
+    ...thread,
+    visibility: access.visibility,
+  };
 }
 
 export async function getThread({
@@ -548,7 +483,7 @@ export async function getThread({
         prChecksStatus: schema.githubPR.checksStatus,
         visibility: schema.threadVisibility.visibility,
         parentThreadName: parentThread.name,
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
+        isUnread: sqlIsUnread(schema.threadReadStatus.isRead),
       })
       .from(schema.thread)
       .leftJoin(
@@ -585,7 +520,7 @@ export async function getThread({
     db
       .select({
         ...getTableColumns(schema.threadChat),
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
+        isUnread: sqlIsUnread(schema.threadChatReadStatus.isRead),
       })
       .from(schema.threadChat)
       .leftJoin(
@@ -663,7 +598,7 @@ export async function getThreadChat({
   const threadChatResult = await db
     .select({
       ...getTableColumns(schema.threadChat),
-      isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
+      isUnread: sqlIsUnread(schema.threadChatReadStatus.isRead),
     })
     .from(schema.threadChat)
     .leftJoin(

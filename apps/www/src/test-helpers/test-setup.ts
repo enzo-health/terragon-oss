@@ -60,6 +60,7 @@ vi.mock("@/server-lib/claude-session-internal", () => {
 });
 // Mock for internalPOST with the ability to call underlying routes
 vi.mock("@/server-lib/internal-request", () => ({
+  isAnthropicDownPOST: vi.fn().mockResolvedValue(undefined),
   internalPOST: vi.fn().mockImplementation(async (path: string) => {
     console.log("internalPOST", path);
     if (path.startsWith("process-thread-queue/")) {

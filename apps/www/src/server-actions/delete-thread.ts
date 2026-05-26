@@ -6,11 +6,13 @@ import { getThread, deleteThreadById } from "@terragon/shared/model/threads";
 import { stopThread } from "./stop-thread";
 import { isAgentWorking } from "@/agent/thread-status";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { unwrapResult, UserFacingError } from "@/lib/server-actions";
+import { unwrapResult, requireResult } from "@/lib/server-actions";
 
 export const deleteThread = userOnlyAction(
   async function deleteThread(userId: string, threadId: string) {
-    console.log("deleteThread", threadId);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("deleteThread", threadId);
+    }
     getPostHogServer().capture({
       distinctId: userId,
       event: "delete_thread",
@@ -18,15 +20,10 @@ export const deleteThread = userOnlyAction(
         threadId,
       },
     });
-    // Get the thread to check its current status and ownership
-    const thread = await getThread({
-      db,
-      userId,
-      threadId,
-    });
-    if (!thread) {
-      throw new UserFacingError("Task not found");
-    }
+    const thread = await requireResult(
+      () => getThread({ db, userId, threadId }),
+      "Task not found",
+    );
     await Promise.all(
       thread.threadChats.map(async (threadChat) => {
         if (isAgentWorking(threadChat.status)) {

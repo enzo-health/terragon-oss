@@ -1,4 +1,8 @@
 import { db } from "@/lib/db";
+import {
+  findEventSeparator,
+  parseStreamEvent,
+} from "@/server-lib/proxy-handler";
 import { trackUsageEventBatched } from "@terragon/shared/model/usage-events";
 import {
   calculateUsageCostUsd,
@@ -11,6 +15,8 @@ type UsagePayload = {
   cache_read_input_tokens?: number | null;
   output_tokens?: number | null;
 };
+
+export { findEventSeparator, parseStreamEvent };
 
 export async function logAnthropicUsage({
   path,

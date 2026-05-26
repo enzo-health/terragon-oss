@@ -1,5 +1,4 @@
-import type { UIMessage } from "@terragon/shared";
-import { AllToolParts } from "@terragon/shared";
+import { AllToolParts, type UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { Check, Copy, ExternalLink } from "lucide-react";
@@ -8,7 +7,6 @@ import { toast } from "sonner";
 import { Button } from "../../ui/button";
 import { useSecondaryPanel } from "../hooks";
 import { findArtifactDescriptorForPart } from "../secondary-panel-helpers";
-import type { PromptBoxRef } from "../thread-context";
 import { GenericToolPart } from "./generic-ui";
 import { resolvePlanText } from "./plan-utils";
 
@@ -28,12 +26,7 @@ export function ExitPlanModeTool({
   onOpenArtifact,
 }: {
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
-  threadId: string;
-  threadChatId: string;
   messages: UIMessage[];
-  isReadOnly: boolean;
-  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
-  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;

@@ -13,15 +13,13 @@ import {
   ExternalLink,
   Loader2,
 } from "lucide-react";
-import { openPullRequest } from "@/server-actions/pull-request";
-import { getThreadPageDiffAction } from "@/server-actions/get-thread-page-diff";
+import { useThreadIntent } from "@/hooks/use-thread-intent";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Checkbox } from "../ui/checkbox";
 import { publicDocsUrl } from "@terragon/env/next-public";
 import { useAtomValue } from "jotai";
 import { userSettingsAtom } from "@/atoms/user";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
 
 export function CodeButton({
   thread,
@@ -143,33 +141,49 @@ export function CodeButton({
               thread={thread}
               closePopover={() => setOpen(false)}
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={async () => {
-                let gitDiff = thread.gitDiff;
-                if (!gitDiff) {
-                  const diffResult = await getThreadPageDiffAction(thread.id);
-                  gitDiff = diffResult.success
-                    ? (diffResult.data?.gitDiff ?? null)
-                    : null;
-                }
-                if (!gitDiff) {
-                  toast.error("No changes to copy");
-                  return;
-                }
-                const patchCommand = `git apply - <<'PATCH'\n${gitDiff}\nPATCH`;
-                copyToClipboard(patchCommand, "Copied patch command", "patch");
-              }}
-            >
-              <Copy className="h-4 w-4 mr-2" />
-              Copy Git Patch
-            </Button>
+            <CopyGitPatchButton
+              threadId={thread.id}
+              closePopover={() => setOpen(false)}
+            />
           </div>
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function CopyGitPatchButton({
+  threadId,
+  closePopover,
+}: {
+  threadId: string;
+  closePopover: () => void;
+}) {
+  const { publish } = useThreadIntent();
+  const [isCopying, setIsCopying] = useState(false);
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="w-full justify-start"
+      disabled={isCopying}
+      onClick={async () => {
+        setIsCopying(true);
+        try {
+          await publish({ type: "copy-git-diff", threadId });
+          toast.success("Copied patch command");
+          closePopover();
+        } catch {
+          toast.error("No changes to copy");
+        } finally {
+          setIsCopying(false);
+        }
+      }}
+    >
+      <Copy className="h-4 w-4 mr-2" />
+      Copy Git Patch
+    </Button>
   );
 }
 
@@ -183,9 +197,7 @@ function ViewOrCreatePRButton({
   const [isCreatingPR, setIsCreatingPR] = useState(false);
   const [isCreatingDraftPR, setIsCreatingDraftPR] = useState(false);
   const userSettings = useAtomValue(userSettingsAtom);
-  const openPullRequestMutation = useServerActionMutation({
-    mutationFn: openPullRequest,
-  });
+  const { publish } = useThreadIntent();
 
   // Use user's preference for PR type, default to draft if not set
   const preferredPrType = userSettings?.prType || "draft";
@@ -198,8 +210,9 @@ function ViewOrCreatePRButton({
         } else {
           setIsCreatingPR(true);
         }
-        await openPullRequestMutation.mutateAsync({
+        await publish({
           threadId: thread.id,
+          type: "open-pr",
           prType: draftPR ? "draft" : "ready",
         });
         closePopover();
@@ -213,7 +226,7 @@ function ViewOrCreatePRButton({
         }
       }
     },
-    [thread, closePopover, openPullRequestMutation],
+    [thread, closePopover, publish],
   );
 
   if (thread.githubPRNumber) {

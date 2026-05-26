@@ -21,9 +21,8 @@ import {
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
-import { stopThread } from "@/server-actions/stop-thread";
-import { queueFollowUp } from "@/server-actions/follow-up";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
+import { useThreadIntent } from "@/hooks/use-thread-intent";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import {
   TerragonThreadErrorBoundary,
@@ -46,7 +45,12 @@ type ChatRuntimeQueueParams = {
   setError: (error: string | null) => void;
   threadChatId: string;
   threadId: string;
-  queueFollowUpAction?: typeof queueFollowUp;
+  publish: (intent: {
+    type: "queue-message";
+    threadId: string;
+    threadChatId: string;
+    messages: DBUserMessage[];
+  }) => Promise<unknown>;
 };
 
 const TerminalPanel = dynamic(
@@ -132,7 +136,7 @@ export function createChatRuntimeQueue({
   forceScrollToBottom,
   isAgentCurrentlyWorking,
   onOptimisticQueuedMessagesUpdate,
-  queueFollowUpAction = queueFollowUp,
+  publish,
   queueWriteRef,
   queuedMessagesRef,
   reconcileActiveChatFromServer,
@@ -184,13 +188,15 @@ export function createChatRuntimeQueue({
           }
           queuedMessagesRef.current = nextMessages;
           onOptimisticQueuedMessagesUpdate(nextMessages);
-          const result = await queueFollowUpAction({
-            threadId,
-            threadChatId,
-            messages: nextMessages,
-          });
-          if (!result.success) {
-            setError(result.errorMessage);
+          try {
+            await publish({
+              type: "queue-message",
+              threadId,
+              threadChatId,
+              messages: nextMessages,
+            });
+          } catch {
+            setError("Failed to queue follow-up");
             await reconcileActiveChatFromServer();
             return;
           }
@@ -285,12 +291,19 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     queuedMessagesRef.current = queuedMessages;
   }, [queuedMessages]);
 
+  const { publish } = useThreadIntent();
+
   const handleCancel = useCallback(async () => {
-    await stopThread({
-      threadId: thread.id,
-      threadChatId: threadChat.id,
-    });
-  }, [thread.id, threadChat.id]);
+    try {
+      await publish({
+        type: "stop-thread",
+        threadId: thread.id,
+        threadChatId: threadChat.id,
+      });
+    } catch {
+      // Error already handled by subscriber
+    }
+  }, [thread.id, threadChat.id, publish]);
 
   const runtimeQueue = React.useMemo(
     () =>
@@ -298,6 +311,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
         forceScrollToBottom,
         isAgentCurrentlyWorking,
         onOptimisticQueuedMessagesUpdate,
+        publish,
         queueWriteRef,
         queuedMessagesRef,
         reconcileActiveChatFromServer,
@@ -309,6 +323,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
       forceScrollToBottom,
       isAgentCurrentlyWorking,
       onOptimisticQueuedMessagesUpdate,
+      publish,
       reconcileActiveChatFromServer,
       setError,
       thread.id,

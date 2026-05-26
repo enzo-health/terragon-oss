@@ -2595,6 +2595,8 @@ describe("daemon-event route", () => {
         success: false,
         error: "temporary failure",
         status: 503,
+        threadChatMessageSeq: null,
+        terminalRecoveryQueued: false,
       })
       .mockResolvedValue({
         success: true,

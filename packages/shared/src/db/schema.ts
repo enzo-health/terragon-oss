@@ -217,32 +217,6 @@ export const subscription = pgTable(
   ],
 );
 
-export const waitlist = pgTable(
-  "waitlist",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    email: text("email").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [uniqueIndex("email_unique").on(table.email)],
-);
-
-export const onboardingQuestionnaire = pgTable(
-  "onboarding_questionnaire",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    email: text("email").notNull(),
-    claudeSubscription: text("claude_subscription"),
-    participationPreference: text("participation_preference"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [uniqueIndex("onboarding_email_unique").on(table.email)],
-);
-
 export const allowedSignups = pgTable(
   "allowed_signup",
   {
@@ -886,94 +860,6 @@ export const environment = pgTable(
   ],
 );
 
-// Deprecated: UNUSED - replaced by agent_provider_credentials table
-export const claudeOAuthTokens_DEPRECATED = pgTable("claude_oauth_tokens", {
-  id: text("id")
-    .default(sql`gen_random_uuid()`)
-    .primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" })
-    .unique(), // One token per user
-  isSubscription: boolean("is_subscription").notNull().default(true),
-  anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
-  accessTokenEncrypted: text("access_token_encrypted").notNull(),
-  tokenType: text("token_type").notNull(),
-  expiresAt: timestamp("expires_at", { mode: "date" }), // Calculated from expires_in
-  refreshTokenEncrypted: text("refresh_token_encrypted"),
-  scope: text("scope"),
-  isMax: boolean("is_max").default(false).notNull(), // Cache Claude Max status
-  organizationType: text("organization_type").$type<ClaudeOrganizationType>(),
-  accountId: text("account_id"),
-  accountEmail: text("account_email"),
-  orgId: text("org_id"),
-  orgName: text("org_name"),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-});
-
-// Deprecated: UNUSED - replaced by agent_provider_credentials table
-export const geminiAuth_DEPRECATED = pgTable("gemini_auth", {
-  id: text("id")
-    .default(sql`gen_random_uuid()`)
-    .primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" })
-    .unique(), // One token per user
-  tokenType: text("token_type").$type<"oauth" | "apiKey">().notNull(),
-  geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-});
-
-// Deprecated: UNUSED - replaced by agent_provider_credentials table
-export const ampAuth_DEPRECATED = pgTable("amp_auth", {
-  id: text("id")
-    .default(sql`gen_random_uuid()`)
-    .primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" })
-    .unique(), // One token per user
-  ampApiKeyEncrypted: text("amp_api_key_encrypted"),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-});
-
-// Deprecated: UNUSED - replaced by agent_provider_credentials table
-export const openAIAuth_DEPRECATED = pgTable("openai_auth", {
-  id: text("id")
-    .default(sql`gen_random_uuid()`)
-    .primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" })
-    .unique(), // One token per user
-  openAIApiKeyEncrypted: text("openai_api_key_encrypted"),
-  // OAuth tokens for Codex credentials
-  accessTokenEncrypted: text("access_token_encrypted"),
-  refreshTokenEncrypted: text("refresh_token_encrypted"),
-  idTokenEncrypted: text("id_token_encrypted"),
-  accountId: text("account_id"),
-  expiresAt: timestamp("expires_at", { mode: "date" }),
-  lastRefreshedAt: timestamp("last_refreshed_at", { mode: "date" }),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-});
-
 export const slackInstallation = pgTable(
   "slack_installation",
   {
@@ -1198,32 +1084,6 @@ export const threadChatReadStatus = pgTable(
   ],
 );
 
-export const feedback = pgTable(
-  "feedback",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    type: text("type").$type<"bug" | "feature" | "feedback">().notNull(),
-    message: text("message").notNull(),
-    currentPage: text("current_page").notNull(),
-    resolved: boolean("resolved").notNull().default(false),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at")
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    index("feedback_user_id_index").on(table.userId),
-    index("feedback_type_index").on(table.type),
-    index("feedback_resolved_index").on(table.resolved),
-  ],
-);
-
 export const userFlags = pgTable(
   "user_flags",
   {
@@ -1335,52 +1195,6 @@ export const accessCodes = pgTable(
     uniqueIndex("access_code_unique").on(table.code),
     index("access_codes_expires_at_index").on(table.expiresAt),
     index("access_codes_created_by_user_id_index").on(table.createdByUserId),
-  ],
-);
-
-export const reengagementEmails = pgTable(
-  "reengagement_emails",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    email: text("email").notNull(),
-    accessCodeId: text("access_code_id")
-      .notNull()
-      .references(() => accessCodes.id, { onDelete: "cascade" }),
-    sentAt: timestamp("sent_at").notNull().defaultNow(),
-    sentByUserId: text("sent_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-  },
-  (table) => [
-    uniqueIndex("reengagement_email_access_code_unique").on(
-      table.email,
-      table.accessCodeId,
-    ),
-    index("reengagement_emails_email_index").on(table.email),
-    index("reengagement_emails_sent_at_index").on(table.sentAt),
-  ],
-);
-
-export const onboardingCompletionEmails = pgTable(
-  "onboarding_completion_emails",
-  {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    email: text("email").notNull(),
-    sentAt: timestamp("sent_at").notNull().defaultNow(),
-    sentByUserId: text("sent_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-  },
-  (table) => [
-    uniqueIndex("onboarding_completion_email_user_unique").on(table.userId),
-    index("onboarding_completion_emails_sent_at_index").on(table.sentAt),
   ],
 );
 

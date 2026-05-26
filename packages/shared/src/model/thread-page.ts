@@ -12,13 +12,12 @@ import {
   ThreadPageDiff,
   ThreadPageShell,
   ThreadStatus,
-  ThreadVisibility,
 } from "../db/types";
 import {
   getThreadReplayEntriesFromCanonicalEvents,
   hasCanonicalReplayProjection,
 } from "./agent-event-log";
-import { getUser } from "./user";
+import { getAuthorizedThreadAccess, sqlIsUnread } from "./thread-auth";
 
 const activeThreadStatuses: ReadonlySet<ThreadStatus> = new Set([
   "queued",
@@ -35,89 +34,9 @@ const activeThreadStatuses: ReadonlySet<ThreadStatus> = new Set([
   "checkpointing",
 ]);
 
-type AuthorizedThreadAccess = {
-  ownerUserId: string;
-  visibility: ThreadVisibility;
-};
-
 type ThreadPageChatSummaryWithCreatedAt = ThreadPageChatSummary & {
   createdAt: Date;
 };
-
-async function getAuthorizedThreadAccess({
-  db,
-  threadId,
-  userId,
-  getHasRepoPermissions,
-  allowAdmin = false,
-}: {
-  db: DB;
-  threadId: string;
-  userId: string;
-  getHasRepoPermissions?: (repoFullName: string) => Promise<boolean>;
-  allowAdmin?: boolean;
-}): Promise<AuthorizedThreadAccess | undefined> {
-  const threadResultArr = await db
-    .select({
-      userId: schema.thread.userId,
-      githubRepoFullName: schema.thread.githubRepoFullName,
-      visibility: sql<ThreadVisibility>`COALESCE(${schema.threadVisibility.visibility}, ${schema.userSettings.defaultThreadVisibility}, 'private')`,
-    })
-    .from(schema.thread)
-    .leftJoin(
-      schema.threadVisibility,
-      eq(schema.threadVisibility.threadId, schema.thread.id),
-    )
-    .leftJoin(
-      schema.userSettings,
-      eq(schema.userSettings.userId, schema.thread.userId),
-    )
-    .where(eq(schema.thread.id, threadId));
-
-  if (threadResultArr.length === 0) {
-    return undefined;
-  }
-
-  const threadResult = threadResultArr[0]!;
-  if (threadResult.userId === userId) {
-    return {
-      ownerUserId: threadResult.userId,
-      visibility: threadResult.visibility,
-    };
-  }
-
-  if (allowAdmin) {
-    const user = await getUser({ db, userId });
-    if (user?.role === "admin") {
-      return {
-        ownerUserId: threadResult.userId,
-        visibility: threadResult.visibility,
-      };
-    }
-  }
-
-  switch (threadResult.visibility) {
-    case "private":
-      return undefined;
-    case "link":
-      return {
-        ownerUserId: threadResult.userId,
-        visibility: threadResult.visibility,
-      };
-    case "repo":
-      if (await getHasRepoPermissions?.(threadResult.githubRepoFullName)) {
-        return {
-          ownerUserId: threadResult.userId,
-          visibility: threadResult.visibility,
-        };
-      }
-      return undefined;
-    default: {
-      const _exhaustiveCheck: never = threadResult.visibility;
-      throw new Error(`Invalid visibility: ${_exhaustiveCheck}`);
-    }
-  }
-}
 
 function getThreadChatTimestampValue(chat: ThreadPageChatSummaryWithCreatedAt) {
   const updatedAtTime = chat.updatedAt.getTime();
@@ -369,7 +288,7 @@ export async function getThreadPageShellWithPermissions({
         prStatus: schema.githubPR.status,
         prChecksStatus: schema.githubPR.checksStatus,
         parentThreadName: parentThread.name,
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadReadStatus.isRead}, true)`,
+        isUnread: sqlIsUnread(schema.threadReadStatus.isRead),
         hasGitDiff: sql<boolean>`${schema.thread.gitDiff} IS NOT NULL`,
       })
       .from(schema.thread)
@@ -406,7 +325,7 @@ export async function getThreadPageShellWithPermissions({
     db
       .select({
         ...getThreadPageShellThreadChatSummarySelect(),
-        isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
+        isUnread: sqlIsUnread(schema.threadChatReadStatus.isRead),
       })
       .from(schema.threadChat)
       .leftJoin(
@@ -508,7 +427,7 @@ export async function getThreadPageChatWithPermissions({
   const threadChatResult = await db
     .select({
       ...getThreadPageFullChatSelect(),
-      isUnread: sql<boolean>`NOT COALESCE(${schema.threadChatReadStatus.isRead}, true)`,
+      isUnread: sqlIsUnread(schema.threadChatReadStatus.isRead),
     })
     .from(schema.threadChat)
     .leftJoin(

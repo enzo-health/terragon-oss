@@ -21,17 +21,14 @@ describe("createChatRuntimeQueue", () => {
     const queueWriteRef = { current: Promise.resolve() };
     const forceScrollToBottom = vi.fn();
     const onOptimisticQueuedMessagesUpdate = vi.fn();
-    const queueFollowUpAction = vi.fn(async () => ({
-      data: undefined,
-      success: true as const,
-    }));
+    const publish = vi.fn(async () => undefined);
     const reconcileActiveChatFromServer = vi.fn(async () => undefined);
     const setError = vi.fn();
     const queue = createChatRuntimeQueue({
       forceScrollToBottom,
       isAgentCurrentlyWorking: true,
       onOptimisticQueuedMessagesUpdate,
-      queueFollowUpAction,
+      publish,
       queueWriteRef,
       queuedMessagesRef,
       reconcileActiveChatFromServer,
@@ -45,8 +42,9 @@ describe("createChatRuntimeQueue", () => {
     await queue.enqueue(message);
 
     expect(onOptimisticQueuedMessagesUpdate).toHaveBeenCalledTimes(1);
-    expect(queueFollowUpAction).toHaveBeenCalledTimes(1);
-    expect(queueFollowUpAction).toHaveBeenCalledWith({
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith({
+      type: "queue-message",
       threadId: "thread-1",
       threadChatId: "thread-chat-1",
       messages: expect.arrayContaining([

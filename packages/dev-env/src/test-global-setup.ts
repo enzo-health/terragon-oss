@@ -1,4 +1,6 @@
 import { execSync } from "child_process";
+import fs from "fs";
+import os from "os";
 import path from "path";
 
 export type SetupResult = {
@@ -19,15 +21,32 @@ export async function setupTestContainers(): Promise<SetupResult> {
     stdio: "inherit",
   });
 
-  // Clear existing data for clean test state
+  // Clear existing data for clean test state.
+  // We truncate tables instead of dropping the schema so that concurrent test
+  // suites (or a suite that is already running when another starts) do not
+  // see "relation does not exist" errors while the schema is being rebuilt.
   try {
-    // Clear PostgreSQL database
+    // Clear PostgreSQL database — truncate all tables preserving schema.
+    // Write SQL to a temp file to avoid shell escaping issues with $$.
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `terragon-test-truncate-${Date.now()}.sql`,
+    );
+    fs.writeFileSync(
+      tmpFile,
+      `DO $$ DECLARE r RECORD; BEGIN ` +
+        `FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP ` +
+        `EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE'; ` +
+        `END LOOP; END $$;`,
+    );
     execSync(
-      'docker exec terragon_postgres_test psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"',
+      `docker cp "${tmpFile}" terragon_postgres_test:/tmp/truncate.sql && ` +
+        `docker exec terragon_postgres_test psql -U postgres -d postgres -f /tmp/truncate.sql`,
       {
         stdio: "inherit",
       },
     );
+    fs.unlinkSync(tmpFile);
     // Clear Redis data
     execSync("docker exec terragon_redis_test redis-cli FLUSHALL", {
       stdio: "inherit",

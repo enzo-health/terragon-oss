@@ -1,25 +1,12 @@
 "use client";
 
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
   promptPreferencesPersistedAtom,
   selectedBranchAtom,
   selectedRepoAtom,
 } from "@/atoms/user-flags";
-
-export function useSelectedRepo() {
-  const [selectedRepo, setSelectedRepo] = useAtom(selectedRepoAtom);
-  return [selectedRepo, setSelectedRepo] as const;
-}
-
-export function useSelectedBranch(): [
-  string | null,
-  (branch: string | null) => void,
-] {
-  const [selectedBranch, setSelectedBranch] = useAtom(selectedBranchAtom);
-  return [selectedBranch, setSelectedBranch];
-}
 
 export function useSelectedRepoAndBranch(): {
   selectedRepo: string | null;

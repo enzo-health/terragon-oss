@@ -1,91 +1,14 @@
 import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { db } from "@/lib/db";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
-import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
-import { logGoogleUsage } from "../log-google-usage";
-import { waitUntil } from "@vercel/functions";
-import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
 import {
-  getDaemonTokenAuthContextOrNull,
-  hasDaemonProviderScope,
-} from "@/lib/auth-server";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-
-const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/";
-const DEFAULT_PATH = "v1beta/models/gemini-2.5-pro:streamGenerateContent";
-const GOOGLE_API_ORIGIN = new URL(GOOGLE_API_BASE).origin;
+  getGoogleDaemonTokenFromHeaders,
+  createProxyHandler,
+} from "@/server-lib/proxy-handler";
+import { logGoogleUsage } from "../log-google-usage";
 
 export const dynamic = "force-dynamic";
 
-type HandlerArgs = { params: Promise<{ path?: string[] }> };
-type AuthContext = { userId: string };
-
-function getDaemonTokenFromHeaders(headers: Headers) {
-  const directToken = headers.get("X-Daemon-Token");
-  if (directToken && directToken.trim() !== "") {
-    return directToken.trim();
-  }
-  // We're acting as a proxy for Google AI Studio, so we piggy back the daemon token as the GEMINI_API_KEY
-  const googleApiKey = headers.get("x-goog-api-key");
-  if (googleApiKey && googleApiKey.trim() !== "") {
-    return googleApiKey.trim();
-  }
-  const authHeader = headers.get("authorization");
-  if (!authHeader) {
-    return null;
-  }
-
-  const match = authHeader.match(/^\s*Bearer\s+(.*)$/i);
-  if (match && match[1]) {
-    const token = match[1]!.trim();
-    return token === "" ? null : token;
-  }
-
-  return null;
-}
-
-function buildTargetUrl(
-  request: NextRequest,
-  pathSegments: string[] | undefined,
-) {
-  let pathname =
-    pathSegments && pathSegments.length > 0
-      ? pathSegments.join("/")
-      : DEFAULT_PATH;
-  // Replace /v1/models with /v1beta/models
-  pathname = pathname.replace("v1/models", "v1beta/models");
-
-  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
-    throw new Error("invalid proxy path");
-  }
-
-  const targetUrl = new URL(pathname, GOOGLE_API_BASE);
-  if (targetUrl.origin !== GOOGLE_API_ORIGIN) {
-    throw new Error("invalid proxy origin");
-  }
-  if (!targetUrl.pathname.startsWith("/v1beta/")) {
-    throw new Error("invalid proxy path");
-  }
-  // Add API key as query parameter
-  const apiKey = getApiKey();
-  if (apiKey) {
-    targetUrl.searchParams.set("key", apiKey);
-  }
-
-  // Copy all other search params
-  for (const [key, value] of request.nextUrl.searchParams.entries()) {
-    if (key !== "key") {
-      targetUrl.searchParams.set(key, value);
-    }
-  }
-
-  return targetUrl;
-}
-
-function getApiKey(): string {
-  return env.GOOGLE_AI_STUDIO_API_KEY;
-}
+const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/";
 
 function isGenerateContentPath(pathname: string) {
   return (
@@ -98,27 +21,43 @@ function shouldLogUsage(pathname: string) {
   return isGenerateContentPath(pathname);
 }
 
-function isJsonContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("application/json"));
-}
+function buildTargetUrl(
+  request: NextRequest,
+  pathSegments: string[] | undefined,
+) {
+  let pathname =
+    pathSegments && pathSegments.length > 0
+      ? pathSegments.join("/")
+      : "v1beta/models/gemini-2.5-pro:streamGenerateContent";
+  pathname = pathname.replace("v1/models", "v1beta/models");
 
-function isEventStreamContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("text/event-stream"));
-}
-
-function findEventSeparator(buffer: string) {
-  const lfIndex = buffer.indexOf("\n\n");
-  const crlfIndex = buffer.indexOf("\r\n\r\n");
-  if (lfIndex === -1 && crlfIndex === -1) {
-    return null;
+  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
+    throw new Error("invalid proxy path");
   }
-  if (lfIndex !== -1 && (crlfIndex === -1 || lfIndex < crlfIndex)) {
-    return { index: lfIndex, length: 2 } as const;
+
+  const targetUrl = new URL(pathname, GOOGLE_API_BASE);
+  if (targetUrl.origin !== new URL(GOOGLE_API_BASE).origin) {
+    throw new Error("invalid proxy origin");
   }
-  return { index: crlfIndex, length: 4 } as const;
+  if (!targetUrl.pathname.startsWith("/v1beta/")) {
+    throw new Error("invalid proxy path");
+  }
+
+  const apiKey = env.GOOGLE_AI_STUDIO_API_KEY;
+  if (apiKey) {
+    targetUrl.searchParams.set("key", apiKey);
+  }
+
+  for (const [key, value] of request.nextUrl.searchParams.entries()) {
+    if (key !== "key") {
+      targetUrl.searchParams.set(key, value);
+    }
+  }
+
+  return targetUrl;
 }
 
-async function logUsageFromEventStream({
+async function logGoogleEventStreamUsage({
   stream,
   targetUrl,
   userId,
@@ -129,6 +68,8 @@ async function logUsageFromEventStream({
   userId: string;
   model?: string;
 }) {
+  const { findEventSeparator } = await import("@/server-lib/proxy-handler");
+
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -162,7 +103,6 @@ async function logUsageFromEventStream({
             return true;
           }
         } catch (_error) {
-          // Ignore payloads that are not JSON objects
           console.log("Failed to parse event stream payload:", payload);
         }
       }
@@ -199,299 +139,45 @@ async function logUsageFromEventStream({
   }
 }
 
-async function proxyRequest(
-  request: NextRequest,
-  args: HandlerArgs,
-  authContext: AuthContext & { bodyBuffer?: ArrayBuffer; model?: string },
-) {
-  const params = await args.params;
-  let targetUrl: URL;
+function extractModelFromBody(bodyBuffer: ArrayBuffer): string | undefined {
   try {
-    targetUrl = buildTargetUrl(request, params.path);
+    const decoded = new TextDecoder().decode(bodyBuffer);
+    const json = JSON.parse(decoded);
+    return json?.model;
   } catch {
-    return new Response("Invalid proxy path", { status: 400 });
+    return undefined;
   }
-
-  const validation = await validateProxyRequestModel({
-    request,
-    provider: "google",
-  });
-  if (!validation.valid) {
-    return new Response(validation.error, { status: 400 });
-  }
-
-  const headers = new Headers();
-  for (const [key, value] of request.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "host" ||
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "authorization" ||
-      lowerKey === "x-daemon-token" ||
-      lowerKey === "x-goog-api-key"
-    ) {
-      continue;
-    }
-    headers.set(key, value);
-  }
-
-  // Use the body buffer that was already read during authorization
-  // Transform it to match Gemini API schema
-  const body = authContext.bodyBuffer ? authContext.bodyBuffer : undefined;
-
-  const response = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body,
-    redirect: "manual",
-  });
-
-  let responseBody: BodyInit | null = response.body;
-  if (shouldLogUsage(targetUrl.pathname)) {
-    const contentType = response.headers.get("content-type");
-    if (isEventStreamContentType(contentType) && response.body) {
-      const [clientStream, loggingStream] = response.body.tee();
-      responseBody = clientStream;
-      void logUsageFromEventStream({
-        stream: loggingStream,
-        targetUrl,
-        userId: authContext.userId,
-        model: authContext.model,
-      }).catch((error) => {
-        console.error(
-          "Failed to log Google AI Studio usage (event-stream handler)",
-          error,
-        );
-      });
-    } else if (isJsonContentType(contentType)) {
-      try {
-        const buffer = await response.arrayBuffer();
-        responseBody = buffer;
-        const decoded = new TextDecoder().decode(buffer);
-        const json = JSON.parse(decoded);
-        const usage = json?.usageMetadata;
-        if (usage) {
-          await logGoogleUsage({
-            path: targetUrl.pathname,
-            usage,
-            userId: authContext.userId,
-            model: authContext.model ?? json?.modelVersion ?? undefined,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to log Google AI Studio usage (json)", error);
-      }
-    }
-  }
-
-  const responseHeaders = new Headers();
-  for (const [key, value] of response.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "transfer-encoding" ||
-      lowerKey === "content-encoding"
-    ) {
-      continue;
-    }
-    responseHeaders.set(key, value);
-  }
-
-  const origin = request.headers.get("origin");
-  if (origin) {
-    responseHeaders.set("Access-Control-Allow-Origin", origin);
-    responseHeaders.set("Access-Control-Allow-Credentials", "true");
-    responseHeaders.append("Vary", "Origin");
-  } else {
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-  }
-
-  return new Response(responseBody, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: responseHeaders,
-  });
 }
 
-async function authorize(request: NextRequest): Promise<
-  | {
-      response: Response;
-      userId?: undefined;
-      bodyBuffer?: undefined;
-      model?: undefined;
-    }
-  | {
-      response: null;
-      userId: string;
-      bodyBuffer?: ArrayBuffer;
-      model?: string;
-    }
-> {
-  const token = getDaemonTokenFromHeaders(request.headers);
-  if (!token) {
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-
-  // Read body once if present (for POST, PUT, PATCH requests)
-  let bodyBuffer: ArrayBuffer | undefined;
-  let model: string | undefined;
-
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    bodyBuffer = await request.arrayBuffer();
-
-    // Try to extract model from request body
-    try {
-      const decoded = new TextDecoder().decode(bodyBuffer);
-      const json = JSON.parse(decoded);
-      model = json?.model;
-    } catch {
-      // Ignore parsing errors
-    }
-  }
-
-  // Check if API key is configured
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    console.log("Google proxy access denied: API key not configured");
-    return {
-      response: new Response("Google provider not configured on this server", {
-        status: 503,
-      }),
-    };
-  }
-
-  try {
-    const daemonAuth = await getDaemonTokenAuthContextOrNull({
-      headers: new Headers({ "X-Daemon-Token": token }),
-    });
-    if (!daemonAuth || !daemonAuth.claims) {
-      console.log("Unauthorized Google proxy request");
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    const userId = daemonAuth.userId;
-    const claims = daemonAuth.claims;
-    if (!hasDaemonProviderScope(claims, "google") || claims.exp <= Date.now()) {
-      console.log("Google proxy access denied: provider scope mismatch", {
+const { GET, POST, PUT, PATCH, DELETE, OPTIONS } = createProxyHandler({
+  baseUrl: GOOGLE_API_BASE,
+  defaultPath: "v1beta/models/gemini-2.5-pro:streamGenerateContent",
+  providerName: "google",
+  pathPrefix: "/v1beta/",
+  getDaemonTokenFromHeaders: getGoogleDaemonTokenFromHeaders,
+  getApiKey: () => env.GOOGLE_AI_STUDIO_API_KEY,
+  buildTargetUrl,
+  stripRequestHeaders: ["authorization", "x-daemon-token", "x-goog-api-key"],
+  readBodyDuringAuth: true,
+  extractModelFromBody,
+  prepareRequestHeaders: () => {
+    // Google uses API key in query params, not headers
+  },
+  shouldLogUsage,
+  logEventStreamUsage: logGoogleEventStreamUsage,
+  logJsonUsage: async ({ buffer, targetUrl, userId, model }) => {
+    const decoded = new TextDecoder().decode(buffer);
+    const json = JSON.parse(decoded);
+    const usage = json?.usageMetadata;
+    if (usage) {
+      await logGoogleUsage({
+        path: targetUrl.pathname,
+        usage,
         userId,
-        runId: claims.runId,
+        model: model ?? json?.modelVersion ?? undefined,
       });
-      return { response: new Response("Unauthorized", { status: 401 }) };
     }
-    const runContext = await getAgentRunContextByRunId({
-      db,
-      runId: claims.runId,
-      userId,
-    });
-    if (!runContext) {
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    if (
-      !daemonAuth.keyId ||
-      !runContext.daemonTokenKeyId ||
-      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
-      runContext.runId !== claims.runId ||
-      runContext.threadId !== claims.threadId ||
-      runContext.threadChatId !== claims.threadChatId ||
-      runContext.sandboxId !== claims.sandboxId ||
-      runContext.agent !== claims.agent ||
-      runContext.transportMode !== claims.transportMode ||
-      runContext.protocolVersion !== claims.protocolVersion ||
-      runContext.tokenNonce !== claims.nonce ||
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      console.log("Google proxy access denied: run context mismatch", {
-        userId,
-        runId: claims.runId,
-      });
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
+  },
+});
 
-    const { balanceCents } = await getUserCreditBalance({
-      db,
-      userId,
-      skipAggCache: false,
-    });
-    waitUntil(maybeTriggerCreditAutoReload({ userId, balanceCents }));
-    if (balanceCents <= 0) {
-      console.log("Google proxy access denied: insufficient credits", {
-        userId,
-        balanceCents,
-      });
-      return {
-        response: new Response("Insufficient credits", { status: 402 }),
-      };
-    }
-    return { response: null, userId, bodyBuffer, model };
-  } catch (err) {
-    console.error("Failed to verify Google proxy request", err);
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-}
-
-async function handleWithAuth(
-  request: NextRequest,
-  args: HandlerArgs,
-  handler: (
-    request: NextRequest,
-    args: HandlerArgs,
-    context: AuthContext & { bodyBuffer?: ArrayBuffer; model?: string },
-  ) => Promise<Response>,
-) {
-  const authResult = await authorize(request);
-  if (authResult.response) {
-    return authResult.response;
-  }
-  return handler(request, args, {
-    userId: authResult.userId,
-    bodyBuffer: authResult.bodyBuffer,
-    model: authResult.model,
-  });
-}
-
-export async function GET(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function POST(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PUT(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PATCH(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function DELETE(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function OPTIONS(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  const allowOrigin = origin ?? "*";
-  const allowHeaders =
-    request.headers.get("access-control-request-headers") ??
-    "authorization, content-type, x-daemon-token";
-
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": allowHeaders,
-    Vary: "Origin",
-  };
-
-  if (allowOrigin !== "*") {
-    headers["Access-Control-Allow-Credentials"] = "true";
-  }
-
-  return new Response(null, {
-    status: 204,
-    headers,
-  });
-}
+export { GET, POST, PUT, PATCH, DELETE, OPTIONS };

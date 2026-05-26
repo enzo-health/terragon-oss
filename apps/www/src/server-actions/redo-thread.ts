@@ -7,7 +7,7 @@ import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { newThread } from "./new-thread";
 import { archiveThread } from "./archive-thread";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { unwrapResult, UserFacingError } from "@/lib/server-actions";
+import { unwrapResult, requireResult } from "@/lib/server-actions";
 
 export const redoThread = userOnlyAction(
   async function redoThread(
@@ -31,10 +31,10 @@ export const redoThread = userOnlyAction(
     },
   ) {
     console.log("redoThread", threadId);
-    const thread = await getThreadMinimal({ db, threadId, userId });
-    if (!thread) {
-      throw new UserFacingError("Task not found");
-    }
+    const thread = await requireResult(
+      () => getThreadMinimal({ db, threadId, userId }),
+      "Task not found",
+    );
     getPostHogServer().capture({
       distinctId: userId,
       event: "redo_thread",

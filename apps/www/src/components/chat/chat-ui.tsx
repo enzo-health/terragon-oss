@@ -66,6 +66,8 @@ import {
   useAgUiSidecarRouter,
   useThreadViewModel,
 } from "./use-ag-ui-messages";
+import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
+import { useCreateThreadIntentSubscriber } from "./use-thread-intent-handler";
 
 function submittedUserMessageToOptimisticUiMessage({
   message,
@@ -568,6 +570,11 @@ function ChatUIContent() {
     [error, handleRetry, isRetrying],
   );
 
+  const threadIntentSubscriber = useCreateThreadIntentSubscriber({
+    setError,
+    refetch: reconcileActiveChatFromServer,
+  });
+
   if (!coreData) {
     // `useAgUiTransport` returns null only when `threadChatId` is falsy,
     // which the provider has already gated against. Keep this guard so
@@ -581,15 +588,17 @@ function ChatUIContent() {
   }
 
   return (
-    <ChatUILayout
-      coreData={coreData}
-      viewModel={viewModel}
-      scrollState={scrollState}
-      panelState={panelState}
-      dialogData={dialogData}
-      optimisticHandlers={optimisticHandlers}
-      errorState={errorState}
-    />
+    <ThreadIntentProvider subscriber={threadIntentSubscriber}>
+      <ChatUILayout
+        coreData={coreData}
+        viewModel={viewModel}
+        scrollState={scrollState}
+        panelState={panelState}
+        dialogData={dialogData}
+        optimisticHandlers={optimisticHandlers}
+        errorState={errorState}
+      />
+    </ThreadIntentProvider>
   );
 }
 

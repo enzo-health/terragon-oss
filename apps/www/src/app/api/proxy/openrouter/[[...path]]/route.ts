@@ -1,84 +1,14 @@
 import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { db } from "@/lib/db";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
-import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
-import { logOpenRouterUsage } from "../log-usage";
-import { waitUntil } from "@vercel/functions";
-import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
 import {
-  getDaemonTokenAuthContextOrNull,
-  hasDaemonProviderScope,
-} from "@/lib/auth-server";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-
-const OPENROUTER_API_BASE = "https://openrouter.ai/api/";
-const DEFAULT_PATH = "v1/chat/completions";
-const OPENROUTER_API_ORIGIN = new URL(OPENROUTER_API_BASE).origin;
+  getOpenAIDaemonTokenFromHeaders,
+  createProxyHandler,
+} from "@/server-lib/proxy-handler";
+import { logOpenRouterUsage } from "../log-usage";
 
 export const dynamic = "force-dynamic";
 
-type HandlerArgs = { params: Promise<{ path?: string[] }> };
-type AuthContext = { userId: string };
-
-function getDaemonTokenFromHeaders(headers: Headers) {
-  const directToken = headers.get("X-Daemon-Token");
-  if (directToken && directToken.trim() !== "") {
-    return directToken.trim();
-  }
-
-  const authHeader = headers.get("authorization");
-  if (!authHeader) {
-    return null;
-  }
-
-  const daemonTokenMatch = authHeader.match(/^x-daemon-token\s+(.*)$/i);
-  if (daemonTokenMatch && daemonTokenMatch[1]) {
-    const token = daemonTokenMatch[1]!.trim();
-    return token === "" ? null : token;
-  }
-
-  const match = authHeader.match(/^\s*Bearer\s+(.*)$/i);
-  if (match && match[1]) {
-    const token = match[1]!.trim();
-    return token === "" ? null : token;
-  }
-
-  return null;
-}
-
-function buildTargetUrl(
-  request: NextRequest,
-  pathSegments: string[] | undefined,
-) {
-  const pathname =
-    pathSegments && pathSegments.length > 0
-      ? pathSegments.join("/")
-      : DEFAULT_PATH;
-
-  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
-    throw new Error("invalid proxy path");
-  }
-
-  const targetUrl = new URL(pathname, OPENROUTER_API_BASE);
-  if (targetUrl.origin !== OPENROUTER_API_ORIGIN) {
-    throw new Error("invalid proxy origin");
-  }
-  if (!targetUrl.pathname.startsWith("/api/v1/")) {
-    throw new Error("invalid proxy path");
-  }
-
-  // Copy all search params
-  if (request.nextUrl.searchParams.toString()) {
-    targetUrl.search = request.nextUrl.searchParams.toString();
-  }
-
-  return targetUrl;
-}
-
-function getApiKey(): string {
-  return env.OPENROUTER_API_KEY;
-}
+const OPENROUTER_API_BASE = "https://openrouter.ai/api/";
 
 function isChatCompletionsPath(pathname: string) {
   return pathname.startsWith("/api/v1/chat/completions");
@@ -92,27 +22,35 @@ function shouldLogUsage(pathname: string) {
   return isChatCompletionsPath(pathname) || isCompletionsPath(pathname);
 }
 
-function isJsonContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("application/json"));
-}
+function buildTargetUrl(
+  request: NextRequest,
+  pathSegments: string[] | undefined,
+) {
+  const pathname =
+    pathSegments && pathSegments.length > 0
+      ? pathSegments.join("/")
+      : "v1/chat/completions";
 
-function isEventStreamContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("text/event-stream"));
-}
-
-function findEventSeparator(buffer: string) {
-  const lfIndex = buffer.indexOf("\n\n");
-  const crlfIndex = buffer.indexOf("\r\n\r\n");
-  if (lfIndex === -1 && crlfIndex === -1) {
-    return null;
+  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
+    throw new Error("invalid proxy path");
   }
-  if (lfIndex !== -1 && (crlfIndex === -1 || lfIndex < crlfIndex)) {
-    return { index: lfIndex, length: 2 } as const;
+
+  const targetUrl = new URL(pathname, OPENROUTER_API_BASE);
+  if (targetUrl.origin !== new URL(OPENROUTER_API_BASE).origin) {
+    throw new Error("invalid proxy origin");
   }
-  return { index: crlfIndex, length: 4 } as const;
+  if (!targetUrl.pathname.startsWith("/api/v1/")) {
+    throw new Error("invalid proxy path");
+  }
+
+  if (request.nextUrl.searchParams.toString()) {
+    targetUrl.search = request.nextUrl.searchParams.toString();
+  }
+
+  return targetUrl;
 }
 
-async function logUsageFromEventStream({
+async function logOpenRouterEventStreamUsage({
   stream,
   targetUrl,
   userId,
@@ -121,6 +59,8 @@ async function logUsageFromEventStream({
   targetUrl: URL;
   userId: string;
 }) {
+  const { findEventSeparator } = await import("@/server-lib/proxy-handler");
+
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -190,295 +130,34 @@ async function logUsageFromEventStream({
   }
 }
 
-async function proxyRequest(
-  request: NextRequest,
-  args: HandlerArgs,
-  authContext: AuthContext & { bodyBuffer?: ArrayBuffer },
-) {
-  const params = await args.params;
-  let targetUrl: URL;
-  try {
-    targetUrl = buildTargetUrl(request, params.path);
-  } catch {
-    return new Response("Invalid proxy path", { status: 400 });
-  }
-
-  const validation = await validateProxyRequestModel({
-    request,
-    provider: "openrouter",
-    bodyBuffer: authContext.bodyBuffer,
-  });
-  if (!validation.valid) {
-    return new Response(validation.error, { status: 400 });
-  }
-
-  const headers = new Headers();
-  for (const [key, value] of request.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "host" ||
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "authorization" ||
-      lowerKey === "x-daemon-token"
-    ) {
-      continue;
-    }
-    headers.set(key, value);
-  }
-
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new Error("OpenRouter API key not configured");
-  }
-  headers.set("Authorization", `Bearer ${apiKey}`);
-
-  // Use the body buffer that was already read during authorization
-  const body = authContext.bodyBuffer;
-
-  const response = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body,
-    redirect: "manual",
-  });
-
-  let responseBody: BodyInit | null = response.body;
-  if (shouldLogUsage(targetUrl.pathname)) {
-    const contentType = response.headers.get("content-type");
-    if (isEventStreamContentType(contentType) && response.body) {
-      const [clientStream, loggingStream] = response.body.tee();
-      responseBody = clientStream;
-      void logUsageFromEventStream({
-        stream: loggingStream,
-        targetUrl,
-        userId: authContext.userId,
-      }).catch((error) => {
-        console.error(
-          "Failed to log OpenRouter usage (event-stream handler)",
-          error,
-        );
-      });
-    } else if (isJsonContentType(contentType)) {
-      try {
-        const buffer = await response.arrayBuffer();
-        responseBody = buffer;
-        const decoded = new TextDecoder().decode(buffer);
-        const json = JSON.parse(decoded);
-        const usage = json?.usage;
-        if (usage) {
-          await logOpenRouterUsage({
-            path: targetUrl.pathname,
-            usage,
-            userId: authContext.userId,
-            model: json?.model ?? undefined,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to log OpenRouter usage (json)", error);
-      }
-    }
-  }
-
-  const responseHeaders = new Headers();
-  for (const [key, value] of response.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "transfer-encoding" ||
-      lowerKey === "content-encoding"
-    ) {
-      continue;
-    }
-    responseHeaders.set(key, value);
-  }
-
-  const origin = request.headers.get("origin");
-  if (origin) {
-    responseHeaders.set("Access-Control-Allow-Origin", origin);
-    responseHeaders.set("Access-Control-Allow-Credentials", "true");
-    responseHeaders.append("Vary", "Origin");
-  } else {
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-  }
-
-  return new Response(responseBody, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: responseHeaders,
-  });
-}
-
-async function authorize(request: NextRequest): Promise<
-  | {
-      response: Response;
-      userId?: undefined;
-      bodyBuffer?: undefined;
-    }
-  | {
-      response: null;
-      userId: string;
-      bodyBuffer?: ArrayBuffer;
-    }
-> {
-  const token = getDaemonTokenFromHeaders(request.headers);
-  if (!token) {
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-
-  // Read body once if present (for POST, PUT, PATCH requests)
-  const bodyBuffer =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer();
-
-  // Check if API key is configured
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    console.log("OpenRouter proxy access denied: API key not configured");
-    return {
-      response: new Response(
-        "OpenRouter provider not configured on this server",
-        {
-          status: 503,
-        },
-      ),
-    };
-  }
-
-  try {
-    const daemonAuth = await getDaemonTokenAuthContextOrNull({
-      headers: new Headers({ "X-Daemon-Token": token }),
-    });
-    if (!daemonAuth || !daemonAuth.claims) {
-      console.log("Unauthorized OpenRouter proxy request");
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    const userId = daemonAuth.userId;
-    const claims = daemonAuth.claims;
-    if (
-      !hasDaemonProviderScope(claims, "openrouter") ||
-      claims.exp <= Date.now()
-    ) {
-      console.log("OpenRouter proxy access denied: provider scope mismatch", {
+const { GET, POST, PUT, PATCH, DELETE, OPTIONS } = createProxyHandler({
+  baseUrl: OPENROUTER_API_BASE,
+  defaultPath: "v1/chat/completions",
+  providerName: "openrouter",
+  pathPrefix: "/api/v1/",
+  getDaemonTokenFromHeaders: getOpenAIDaemonTokenFromHeaders,
+  getApiKey: () => env.OPENROUTER_API_KEY,
+  buildTargetUrl,
+  stripRequestHeaders: ["authorization", "x-daemon-token"],
+  readBodyDuringAuth: true,
+  prepareRequestHeaders: (headers, apiKey) => {
+    headers.set("Authorization", `Bearer ${apiKey}`);
+  },
+  shouldLogUsage,
+  logEventStreamUsage: logOpenRouterEventStreamUsage,
+  logJsonUsage: async ({ buffer, targetUrl, userId }) => {
+    const decoded = new TextDecoder().decode(buffer);
+    const json = JSON.parse(decoded);
+    const usage = json?.usage;
+    if (usage) {
+      await logOpenRouterUsage({
+        path: targetUrl.pathname,
+        usage,
         userId,
-        runId: claims.runId,
+        model: json?.model ?? undefined,
       });
-      return { response: new Response("Unauthorized", { status: 401 }) };
     }
-    const runContext = await getAgentRunContextByRunId({
-      db,
-      runId: claims.runId,
-      userId,
-    });
-    if (!runContext) {
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    if (
-      !daemonAuth.keyId ||
-      !runContext.daemonTokenKeyId ||
-      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
-      runContext.runId !== claims.runId ||
-      runContext.threadId !== claims.threadId ||
-      runContext.threadChatId !== claims.threadChatId ||
-      runContext.sandboxId !== claims.sandboxId ||
-      runContext.agent !== claims.agent ||
-      runContext.transportMode !== claims.transportMode ||
-      runContext.protocolVersion !== claims.protocolVersion ||
-      runContext.tokenNonce !== claims.nonce ||
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      console.log("OpenRouter proxy access denied: run context mismatch", {
-        userId,
-        runId: claims.runId,
-      });
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
+  },
+});
 
-    const { balanceCents } = await getUserCreditBalance({
-      db,
-      userId,
-      skipAggCache: false,
-    });
-    waitUntil(maybeTriggerCreditAutoReload({ userId, balanceCents }));
-    if (balanceCents <= 0) {
-      console.log("OpenRouter proxy access denied: insufficient credits", {
-        userId,
-        balanceCents,
-      });
-      return {
-        response: new Response("Insufficient credits", { status: 402 }),
-      };
-    }
-    return { response: null, userId, bodyBuffer };
-  } catch (err) {
-    console.error("Failed to verify OpenRouter proxy request", err);
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-}
-
-async function handleWithAuth(
-  request: NextRequest,
-  args: HandlerArgs,
-  handler: (
-    request: NextRequest,
-    args: HandlerArgs,
-    context: AuthContext & { bodyBuffer?: ArrayBuffer },
-  ) => Promise<Response>,
-) {
-  const authResult = await authorize(request);
-  if (authResult.response) {
-    return authResult.response;
-  }
-  return handler(request, args, {
-    userId: authResult.userId,
-    bodyBuffer: authResult.bodyBuffer,
-  });
-}
-
-export async function GET(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function POST(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PUT(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PATCH(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function DELETE(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function OPTIONS(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  const allowOrigin = origin ?? "*";
-  const allowHeaders =
-    request.headers.get("access-control-request-headers") ??
-    "authorization, content-type, x-daemon-token";
-
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": allowHeaders,
-    Vary: "Origin",
-  };
-
-  if (allowOrigin !== "*") {
-    headers["Access-Control-Allow-Credentials"] = "true";
-  }
-
-  return new Response(null, {
-    status: 204,
-    headers,
-  });
-}
+export { GET, POST, PUT, PATCH, DELETE, OPTIONS };

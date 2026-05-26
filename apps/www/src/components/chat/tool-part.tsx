@@ -21,8 +21,11 @@ import { DefaultTool } from "./tools/default-tool";
 import { ProgressChunks } from "./tools/progress-chunks";
 import { getToolVerb } from "./tools/utils";
 import {
+  getCapability,
+  getToolCapabilities,
   isToolName,
-  type ToolArgs,
+  type PermissionMode,
+  type ToolCapability,
   type ToolName,
 } from "./tools/tool-registry";
 import { Badge } from "@/components/ui/badge";
@@ -76,15 +79,16 @@ type ToolPartFor<N extends ToolName> = [
   : Extract<AllToolParts, { name: N }>;
 
 /**
- * Per-name renderer: the dispatch table parameterizes each entry with the
- * exact tool variant for that key, so each renderer body sees its narrowed
- * `toolPart` without runtime casts. Compare to the previous shape, which
- * typed every entry as `(AllToolParts) => ...` and required a per-renderer
- * `narrow<N>()` cast inside the body.
+ * Per-name renderer: each entry receives (1) the narrowed tool-part variant
+ * for that key and (2) a capability bag sliced from `ToolRenderContext`.
+ * Renderers extract only the capabilities they declared via
+ * `TOOL_CAPABILITY_REQUIREMENTS` in `tool-registry.ts`. Simple tools like
+ * `Read` only need `basic` (the toolPart itself); stateful tools like
+ * `SuggestFollowupTask` pull `threadAccess`, `childThreads`, etc.
  */
 type ToolRenderer<N extends ToolName> = (
   toolPart: ToolPartFor<N>,
-  ctx: ToolRenderContext,
+  capabilities: ToolCapability[],
 ) => ReactNode;
 
 type ToolDispatchTable = { [N in ToolName]: ToolRenderer<N> };
@@ -121,56 +125,81 @@ const TOOL_DISPATCH: ToolDispatchTable = {
   TodoWrite: (tp) => <TodoWriteTool toolPart={tp} />,
   NotebookRead: (tp) => <NotebookReadTool toolPart={tp} />,
   NotebookEdit: (tp) => <NotebookEditTool toolPart={tp} />,
-  Task: (tp, ctx) => (
-    <TaskTool toolPart={tp} renderToolPart={ctx.renderChildToolPart} />
-  ),
+  Task: (tp, caps) => {
+    const childCap = getCapability(caps, "renderChild");
+    return (
+      <TaskTool toolPart={tp} renderToolPart={childCap.renderChildToolPart} />
+    );
+  },
   WebFetch: (tp) => <WebFetchTool toolPart={tp} />,
   WebSearch: (tp) => <WebSearchTool toolPart={tp} />,
-  SuggestFollowupTask: (tp, ctx) => (
-    <SuggestFollowupTaskTool
-      toolPart={{ ...tp, name: "SuggestFollowupTask" }}
-      threadId={ctx.threadId}
-      childThreads={ctx.childThreads}
-      githubRepoFullName={ctx.githubRepoFullName}
-      repoBaseBranchName={ctx.repoBaseBranchName}
-    />
-  ),
+  SuggestFollowupTask: (tp, caps) => {
+    const threadCap = getCapability(caps, "threadAccess");
+    const childCap = getCapability(caps, "childThreads");
+    const ghCap = getCapability(caps, "githubContext");
+    return (
+      <SuggestFollowupTaskTool
+        toolPart={{ ...tp, name: "SuggestFollowupTask" }}
+        threadId={threadCap.threadId}
+        childThreads={childCap.childThreads}
+        githubRepoFullName={ghCap.repoFullName}
+        repoBaseBranchName={ghCap.repoBaseBranchName}
+      />
+    );
+  },
   // Alias from the MCP follow-up server. Same args, same component. The cast
   // is sound because both names share the `SuggestFollowupTask` parameter
   // shape (see ToolRegistry in tool-registry.ts).
-  mcp__terry__SuggestFollowupTask: (tp, ctx) =>
+  mcp__terry__SuggestFollowupTask: (tp, caps) =>
     TOOL_DISPATCH.SuggestFollowupTask(
       tp as Extract<AllToolParts, { name: "SuggestFollowupTask" }>,
-      ctx,
+      caps,
     ),
-  ExitPlanMode: (tp, ctx) => (
-    <ExitPlanModeTool
-      toolPart={tp}
-      threadId={ctx.threadId}
-      threadChatId={ctx.threadChatId}
-      messages={ctx.messagesRef.current}
-      isReadOnly={ctx.isReadOnly}
-      onOptimisticPermissionModeUpdate={ctx.onOptimisticPermissionModeUpdate}
-      artifactDescriptors={ctx.artifactDescriptors}
-      artifactDescriptorLookup={ctx.artifactDescriptorLookup}
-      onOpenArtifact={ctx.onOpenArtifact}
-    />
-  ),
-  PermissionRequest: (tp, ctx) => (
-    <PermissionRequestTool
-      toolPart={tp}
-      threadId={ctx.threadId}
-      threadChatId={ctx.threadChatId}
-      isReadOnly={ctx.isReadOnly}
-    />
-  ),
+  ExitPlanMode: (tp, caps) => {
+    const msgCap = getCapability(caps, "messagesRef");
+    const artCap = getCapability(caps, "artifactAccess");
+    return (
+      <ExitPlanModeTool
+        toolPart={tp}
+        messages={msgCap.messagesRef.current}
+        artifactDescriptors={artCap.artifactDescriptors}
+        artifactDescriptorLookup={artCap.artifactDescriptorLookup}
+        onOpenArtifact={artCap.onOpenArtifact}
+      />
+    );
+  },
+  PermissionRequest: (tp, caps) => {
+    const threadCap = getCapability(caps, "threadAccess");
+    const roCap = getCapability(caps, "readOnly");
+    return (
+      <PermissionRequestTool
+        toolPart={tp}
+        threadId={threadCap.threadId}
+        threadChatId={threadCap.threadChatId}
+        isReadOnly={roCap.isReadOnly}
+      />
+    );
+  },
   FileChange: (tp) => <FileChangeTool toolPart={tp} />,
   // Codex MCPTool: rewrite name to `mcp__server__tool` then route to
   // DefaultTool. The daemon emits it pre-rewrite; this is the only place that
   // rewrite happens.
   MCPTool: (tp) => {
-    const { server, tool, ...mcpArgs } = tp.parameters as ToolArgs<"MCPTool">;
-    const mcpName = server && tool ? `mcp__${server}__${tool}` : tp.name;
+    const params = tp.parameters;
+    if (!params || typeof params !== "object") {
+      return <DefaultTool toolPart={tp} />;
+    }
+    const server = Reflect.get(params, "server");
+    const tool = Reflect.get(params, "tool");
+    const mcpName =
+      typeof server === "string" && typeof tool === "string"
+        ? `mcp__${server}__${tool}`
+        : tp.name;
+    const {
+      server: _s,
+      tool: _t,
+      ...mcpArgs
+    } = params as Record<string, unknown>;
     return (
       <DefaultTool toolPart={{ ...tp, name: mcpName, parameters: mcpArgs }} />
     );
@@ -345,6 +374,81 @@ export function renderToolPartContent(
   );
 }
 
+/**
+ * Build a capability array for a given tool name from the full render context.
+ * Only includes capabilities the tool has declared it needs.
+ */
+function buildCapabilities(
+  toolName: ToolName,
+  renderCtx: ToolRenderContext,
+): ToolCapability[] {
+  const required = getToolCapabilities(toolName);
+  const caps: ToolCapability[] = [];
+
+  if (required.includes("basic")) {
+    // `basic` is filled in at the dispatch site with the normalized toolPart,
+    // not here — the toolPart varies per call.
+  }
+  if (required.includes("threadAccess")) {
+    caps.push({
+      kind: "threadAccess",
+      threadId: renderCtx.threadId,
+      threadChatId: renderCtx.threadChatId,
+    });
+  }
+  if (required.includes("childThreads")) {
+    caps.push({
+      kind: "childThreads",
+      childThreads: renderCtx.childThreads,
+    });
+  }
+  if (required.includes("permissionMode")) {
+    caps.push({
+      kind: "permissionMode",
+      mode:
+        renderCtx.onOptimisticPermissionModeUpdate === undefined
+          ? "allowAll"
+          : ("allowAll" as PermissionMode), // We don't have the current mode here; this capability is unused by any tool today
+      onUpdate: renderCtx.onOptimisticPermissionModeUpdate ?? (() => {}),
+    });
+  }
+  if (required.includes("githubContext")) {
+    caps.push({
+      kind: "githubContext",
+      repoFullName: renderCtx.githubRepoFullName,
+      repoBaseBranchName: renderCtx.repoBaseBranchName,
+    });
+  }
+  if (required.includes("messagesRef")) {
+    caps.push({
+      kind: "messagesRef",
+      messagesRef: renderCtx.messagesRef,
+    });
+  }
+  if (required.includes("readOnly")) {
+    caps.push({
+      kind: "readOnly",
+      isReadOnly: renderCtx.isReadOnly,
+    });
+  }
+  if (required.includes("artifactAccess")) {
+    caps.push({
+      kind: "artifactAccess",
+      artifactDescriptors: renderCtx.artifactDescriptors,
+      artifactDescriptorLookup: renderCtx.artifactDescriptorLookup,
+      onOpenArtifact: renderCtx.onOpenArtifact,
+    });
+  }
+  if (required.includes("renderChild")) {
+    caps.push({
+      kind: "renderChild",
+      renderChildToolPart: renderCtx.renderChildToolPart,
+    });
+  }
+
+  return caps;
+}
+
 export function renderToolPart(
   rawToolPart: AllToolParts,
   renderCtx: ToolRenderContext,
@@ -357,17 +461,28 @@ function renderNormalizedToolPart(
   toolPart: AllToolParts,
   renderCtx: ToolRenderContext,
 ): ReactNode {
+  const name = toolPart.name;
+  // Unknown tool names bypass capability slicing and go straight to DefaultTool.
+  if (!isToolName(name)) {
+    return renderUnknownTool(toolPart);
+  }
+
+  const capabilities = buildCapabilities(name, renderCtx);
+  // Always include `basic` with the toolPart as the first capability.
+  const allCapabilities: ToolCapability[] = [
+    { kind: "basic", toolPart },
+    ...capabilities,
+  ];
+
   // `isToolName` proves membership in `TOOL_DISPATCH`, but TS still sees the
   // looked-up entry as a contravariant union of `ToolRenderer<N>` for each N
   // in `ToolName` — and the intersected parameter type collapses to `never`.
   // Widen at the dispatch boundary once via a typed alias; the runtime
   // discriminator is `toolPart.name` matching the registry key, so the
   // dispatch is sound. Mirrors the pattern in `renderPartFromRegistry`.
-  type DispatchFn = (tp: AllToolParts, ctx: ToolRenderContext) => ReactNode;
-  const renderer: DispatchFn = isToolName(toolPart.name)
-    ? (TOOL_DISPATCH[toolPart.name] as DispatchFn)
-    : renderUnknownTool;
-  return renderer(toolPart, renderCtx);
+  type DispatchFn = (tp: AllToolParts, caps: ToolCapability[]) => ReactNode;
+  const renderer: DispatchFn = TOOL_DISPATCH[name] as DispatchFn;
+  return renderer(toolPart, allCapabilities);
 }
 
 const ToolPart = memo(function ToolPart({

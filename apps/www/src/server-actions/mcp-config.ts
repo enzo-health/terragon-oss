@@ -11,7 +11,7 @@ import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { McpConfig, validateMcpConfig } from "@terragon/sandbox/mcp-config";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult, UserFacingError } from "@/lib/server-actions";
 
 export const updateMcpConfig = userOnlyAction(
   async function updateMcpConfig(
@@ -25,14 +25,15 @@ export const updateMcpConfig = userOnlyAction(
     },
   ) {
     // Verify the user owns this environment
-    const existingEnvironment = await getEnvironment({
-      db,
-      environmentId,
-      userId,
-    });
-    if (!existingEnvironment) {
-      throw new UserFacingError("Environment not found");
-    }
+    const existingEnvironment = await requireResult(
+      () =>
+        getEnvironment({
+          db,
+          environmentId,
+          userId,
+        }),
+      "Environment not found",
+    );
 
     // Validate the MCP config using the shared validator
     const validationResult = validateMcpConfig(mcpConfig);

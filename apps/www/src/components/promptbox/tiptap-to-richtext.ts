@@ -360,7 +360,7 @@ function convertNodeToTiptap(node: DBRichTextNode): JSONContent | null {
               href: node.text,
               target: "_blank",
               rel: "noopener noreferrer nofollow",
-              class: "text-blue-600 underline hover:text-blue-800",
+              class: "text-coral underline hover:text-coral-active",
             },
           },
         ],

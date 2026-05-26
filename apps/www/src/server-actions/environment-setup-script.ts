@@ -11,7 +11,7 @@ import {
   updateEnvironment,
   markSnapshotsStale,
 } from "@terragon/shared/model/environments";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult } from "@/lib/server-actions";
 
 export const updateEnvironmentSetupScript = userOnlyAction(
   async function updateEnvironmentSetupScript(
@@ -24,14 +24,15 @@ export const updateEnvironmentSetupScript = userOnlyAction(
       setupScript: string | null;
     },
   ) {
-    const environment = await getEnvironment({
-      db,
-      environmentId,
-      userId,
-    });
-    if (!environment) {
-      throw new UserFacingError("Environment not found");
-    }
+    await requireResult(
+      () =>
+        getEnvironment({
+          db,
+          environmentId,
+          userId,
+        }),
+      "Environment not found",
+    );
     await updateEnvironment({
       db,
       userId,

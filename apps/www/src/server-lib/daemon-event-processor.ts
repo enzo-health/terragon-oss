@@ -1,0 +1,1859 @@
+import {
+  type DaemonEventAPIBody,
+  type ClaudeMessage,
+} from "@terragon/daemon/shared";
+import { extendSandboxLife } from "@terragon/sandbox";
+import * as schema from "@terragon/shared/db/schema";
+import type { DBMessage } from "@terragon/shared";
+import {
+  assignThreadChatMessageSeqToCanonicalEvents,
+  findOpenAgUiMessagesForRun,
+} from "@terragon/shared/model/agent-event-log";
+import {
+  completeAgentRunContextTerminal,
+  getAgentRunContextByRunId,
+  updateAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
+import {
+  getThreadChat,
+  getThreadMinimal,
+  touchThreadChatUpdatedAt,
+  updateThreadChatTerminalMetadataIfTerminal,
+} from "@terragon/shared/model/threads";
+import {
+  classifyDaemonTerminalErrorCategory,
+  type DaemonTerminalErrorCategory,
+  hashRuntimeFailureMessage,
+  mapDaemonTerminalCategoryToRuntimeFailureCategory,
+  RUNTIME_FAILURE_ACTION_TABLE,
+  type RuntimeFailureCategory,
+} from "@terragon/shared/runtime/failure";
+import { waitUntil } from "@vercel/functions";
+import { and, eq } from "drizzle-orm";
+import type {
+  DaemonTokenAuthContext,
+  DaemonTokenProvider,
+} from "@/lib/auth-server";
+import { hasDaemonProviderScope } from "@/lib/auth-server";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
+import { db } from "@/lib/db";
+import type { ThreadEvent } from "@/agent/machine";
+import {
+  type AssistantMessagePartsInput,
+  broadcastAgUiEventEphemeral,
+  buildDeltaRunEndRows,
+  canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
+  dbAgentMessagePartsToAgUiRows,
+  metaEventsToAgUiEvents,
+  persistAgUiEvents,
+  persistAndPublishAgUiEvents,
+  publishPersistedAgUiEvents,
+} from "@/server-lib/ag-ui-publisher";
+import { checkpointThread } from "@/server-lib/checkpoint-thread";
+import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
+import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
+
+export type DaemonEventEnvelopeV2 = {
+  payloadVersion: 2;
+  eventId: string;
+  runId: string;
+  seq: number;
+};
+
+export type CanonicalPersistenceSummary = {
+  attempted: number;
+  inserted: number;
+  deduplicated: number;
+  insertedEventIds: string[];
+  persistedEvents: Awaited<
+    ReturnType<typeof persistAgUiEvents>
+  >["persistedEvents"];
+  persistedEnvelopes: Awaited<
+    ReturnType<typeof persistAgUiEvents>
+  >["persistedEnvelopes"];
+};
+
+export type DaemonEventProcessResult =
+  | { kind: "json"; status: number; body: Record<string, unknown> }
+  | { kind: "text"; status: number; body: string };
+
+export type CanonicalEventsPayload = NonNullable<
+  DaemonEventAPIBody["canonicalEvents"]
+>;
+
+export type DaemonDeltasPayload = NonNullable<DaemonEventAPIBody["deltas"]>;
+
+export type DaemonEventProcessorDeps = {
+  toDBMessage: (message: ClaudeMessage) => DBMessage[];
+  hasOtherActiveRuns: (params: {
+    sandboxId: string;
+    threadChatId: string;
+    excludeRunId: string;
+  }) => Promise<boolean>;
+  setActiveThreadChat: (params: {
+    sandboxId: string;
+    threadChatId: string;
+    isActive: boolean;
+    runId: string;
+  }) => Promise<void>;
+  updateThreadChatWithTransition: (params: {
+    userId: string;
+    threadId: string;
+    threadChatId: string;
+    eventType: ThreadEvent;
+    markAsUnread?: boolean;
+    requireStatusTransitionForChatUpdates?: boolean;
+    skipBroadcast?: boolean;
+  }) => Promise<{
+    didUpdateStatus: boolean;
+    updatedStatus?: string;
+    chatSequence?: unknown;
+  }>;
+};
+
+export type DaemonEventProcessorInput = {
+  body: DaemonEventAPIBody;
+  envelopeV2: DaemonEventEnvelopeV2 | null;
+  daemonAdvertisesEnvelopeV2: boolean;
+  authContext: DaemonTokenAuthContext;
+  usingDaemonTestAuth: boolean;
+  daemonEventReceivedAtMs: number;
+};
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+export function filterCanonicalEventsForDeltaCoexistence(params: {
+  canonicalEvents: CanonicalEventsPayload | null;
+  deltas: DaemonDeltasPayload | null | undefined;
+}): CanonicalEventsPayload | null {
+  const { canonicalEvents, deltas } = params;
+  if (!canonicalEvents || canonicalEvents.length === 0) {
+    return canonicalEvents;
+  }
+  if (!deltas || deltas.length === 0) {
+    return canonicalEvents;
+  }
+  return canonicalEvents.filter((event) => event.type !== "assistant-message");
+}
+
+export function findCanonicalEventContextMismatch(params: {
+  canonicalEvents: CanonicalEventsPayload;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+}): {
+  eventId: string;
+  reason: "payloadVersion" | "runId" | "threadId" | "threadChatId";
+} | null {
+  for (const event of params.canonicalEvents) {
+    if (event.payloadVersion !== 2) {
+      return { eventId: event.eventId, reason: "payloadVersion" };
+    }
+    if (event.runId !== params.runId) {
+      return { eventId: event.eventId, reason: "runId" };
+    }
+    if (event.threadId !== params.threadId) {
+      return { eventId: event.eventId, reason: "threadId" };
+    }
+    if (event.threadChatId !== params.threadChatId) {
+      return { eventId: event.eventId, reason: "threadChatId" };
+    }
+  }
+  return null;
+}
+
+export function requiredDaemonProviderScopesForAgent(
+  agent: NonNullable<
+    Awaited<ReturnType<typeof getAgentRunContextByRunId>>
+  >["agent"],
+): DaemonTokenProvider[] {
+  switch (agent) {
+    case "claudeCode":
+    case "amp":
+      return ["anthropic"];
+    case "codex":
+      return ["openai"];
+    case "gemini":
+      return ["google"];
+    case "opencode":
+      return ["openrouter", "openai", "anthropic"];
+    default: {
+      const _exhaustiveCheck: never = agent;
+      throw new Error(
+        `unsupported agent for daemon provider scope: ${_exhaustiveCheck}`,
+      );
+    }
+  }
+}
+
+export function hasRequiredDaemonProviderScopes(params: {
+  claims: NonNullable<DaemonTokenAuthContext["claims"]>;
+  agent: NonNullable<
+    Awaited<ReturnType<typeof getAgentRunContextByRunId>>
+  >["agent"];
+}): boolean {
+  return requiredDaemonProviderScopesForAgent(params.agent).every((provider) =>
+    hasDaemonProviderScope(params.claims, provider),
+  );
+}
+
+export function deriveSessionIdFromMessages(
+  messages: DaemonEventAPIBody["messages"],
+): string | null {
+  for (const message of messages) {
+    if (message.type === "assistant" || message.type === "user") {
+      if (
+        typeof message.session_id === "string" &&
+        message.session_id.length > 0
+      ) {
+        return message.session_id;
+      }
+    }
+  }
+  return null;
+}
+
+export function deriveRunStatusFromMessages(
+  messages: DaemonEventAPIBody["messages"],
+): "processing" | "completed" | "failed" | "stopped" {
+  let sawResult = false;
+  for (const message of messages) {
+    if (message.type === "custom-stop") {
+      return "stopped";
+    }
+    if (message.type === "custom-error") {
+      return "failed";
+    }
+    if (message.type === "result") {
+      sawResult = true;
+      if (message.is_error) {
+        return "failed";
+      }
+    }
+  }
+  if (sawResult) {
+    return "completed";
+  }
+  return "processing";
+}
+
+export function deriveDaemonTerminalErrorInfo(
+  messages: DaemonEventAPIBody["messages"],
+): {
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+} {
+  for (const message of messages) {
+    if (message.type === "custom-error") {
+      const errorMessage = message.error_info ?? null;
+      return {
+        errorMessage,
+        errorCategory: classifyDaemonTerminalErrorCategory(errorMessage),
+      };
+    }
+    if (message.type === "result" && message.is_error) {
+      const errorMessage =
+        "error" in message && typeof message.error === "string"
+          ? message.error
+          : null;
+      return {
+        errorMessage,
+        errorCategory: "daemon_result_error",
+      };
+    }
+  }
+  return {
+    errorMessage: null,
+    errorCategory: "unknown",
+  };
+}
+
+export function findCanonicalRunTerminalEvent(
+  canonicalEvents: CanonicalEventsPayload,
+): {
+  eventId: string;
+  seq: number;
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCode: string | null;
+  headShaAtCompletion: string | null;
+} | null {
+  for (const event of canonicalEvents) {
+    if (event.category !== "operational") continue;
+    if (event.type !== "run-terminal") continue;
+    return {
+      eventId: event.eventId,
+      seq: event.seq,
+      status: event.status,
+      errorMessage: event.errorMessage ?? null,
+      errorCode: event.errorCode ?? null,
+      headShaAtCompletion: event.headShaAtCompletion ?? null,
+    };
+  }
+  return null;
+}
+
+export function buildCanonicalRunTerminalEvent(params: {
+  envelope: DaemonEventEnvelopeV2;
+  threadId: string;
+  threadChatId: string;
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCode: string | null;
+  headShaAtCompletion: string | null;
+}): CanonicalEventsPayload[number] {
+  return {
+    payloadVersion: 2,
+    eventId: params.envelope.eventId,
+    runId: params.envelope.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+    seq: params.envelope.seq,
+    timestamp: new Date().toISOString(),
+    category: "operational",
+    type: "run-terminal",
+    status: params.status,
+    errorMessage: params.errorMessage,
+    errorCode: params.errorCode,
+    headShaAtCompletion: params.headShaAtCompletion,
+  };
+}
+
+export function publishMetaEvents(params: {
+  metaEvents: NonNullable<DaemonEventAPIBody["metaEvents"]> | null;
+  threadId: string;
+  threadChatId: string;
+}): void {
+  if (!params.metaEvents || params.metaEvents.length === 0) {
+    return;
+  }
+  for (const agUi of metaEventsToAgUiEvents(params.metaEvents)) {
+    broadcastAgUiEventEphemeral({
+      threadChatId: params.threadChatId,
+      event: agUi,
+    }).catch((error) => {
+      console.warn("[daemon-event] meta-event AG-UI broadcast failed", {
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        error,
+      });
+    });
+  }
+}
+
+export function deriveTerminalFailureSource(
+  messages: DaemonEventAPIBody["messages"],
+): "custom-error" | "result" | "custom-stop" | "unknown" | null {
+  for (const message of messages) {
+    if (message.type === "custom-error") return "custom-error";
+    if (message.type === "custom-stop") return "custom-stop";
+    if (message.type === "result" && message.is_error) return "result";
+  }
+  return null;
+}
+
+export function isFailureRetryable(
+  failureCategory: RuntimeFailureCategory,
+): boolean {
+  const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
+  return action !== "blocked";
+}
+
+export function numericUsageField(usage: object, field: string): number {
+  const value = Reflect.get(usage, field);
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+export function buildRunContextFailureUpdates(params: {
+  status: "processing" | "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+  errorCategory: DaemonTerminalErrorCategory;
+  failureSource: "custom-error" | "result" | "custom-stop" | "unknown" | null;
+}):
+  | {
+      failureCategory: RuntimeFailureCategory | null;
+      failureSource:
+        | "custom-error"
+        | "result"
+        | "custom-stop"
+        | "unknown"
+        | null;
+      failureRetryable: boolean | null;
+      failureSignatureHash: number | null;
+      failureTerminalReason: string | null;
+    }
+  | {} {
+  if (params.status !== "failed") {
+    return {
+      failureCategory: null,
+      failureSource: null,
+      failureRetryable: null,
+      failureSignatureHash: null,
+      failureTerminalReason: null,
+    };
+  }
+  const failureCategory = mapDaemonTerminalCategoryToRuntimeFailureCategory(
+    params.errorCategory,
+    params.errorMessage,
+  );
+  const signatureSource = params.errorMessage;
+  return {
+    failureCategory,
+    failureSource: params.failureSource,
+    failureRetryable: isFailureRetryable(failureCategory),
+    failureSignatureHash:
+      signatureSource != null
+        ? hashRuntimeFailureMessage(signatureSource)
+        : null,
+    failureTerminalReason: params.errorMessage,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Async helpers
+// ---------------------------------------------------------------------------
+
+async function persistCanonicalEventsOrResponse(params: {
+  canonicalEvents: CanonicalEventsPayload | null;
+  canPersistCanonicalEvents: boolean;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  publishLive: boolean;
+}): Promise<
+  | { summary: CanonicalPersistenceSummary; response?: undefined }
+  | { summary?: undefined; response: DaemonEventProcessResult }
+> {
+  const canonicalEvents = params.canonicalEvents;
+  if (!canonicalEvents || canonicalEvents.length === 0) {
+    return {
+      summary: {
+        attempted: 0,
+        inserted: 0,
+        deduplicated: 0,
+        insertedEventIds: [],
+        persistedEvents: [],
+        persistedEnvelopes: [],
+      },
+    };
+  }
+
+  if (!params.canPersistCanonicalEvents) {
+    return {
+      response: {
+        kind: "json",
+        status: 503,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+      },
+    };
+  }
+
+  const contextMismatch = findCanonicalEventContextMismatch({
+    canonicalEvents,
+    runId: params.runId,
+    threadId: params.threadId,
+    threadChatId: params.threadChatId,
+  });
+  if (contextMismatch) {
+    return {
+      response: {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+      },
+    };
+  }
+
+  const rows = canonicalEventsToAgUiRows(canonicalEvents);
+  try {
+    if (params.publishLive) {
+      const result = await persistAndPublishAgUiEvents({
+        db,
+        runId: params.runId,
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        rows,
+      });
+      return {
+        summary: {
+          attempted: canonicalEvents.length,
+          inserted: result.inserted,
+          deduplicated: result.skipped,
+          insertedEventIds: result.insertedEventIds,
+          persistedEvents: [],
+          persistedEnvelopes: [],
+        },
+      };
+    }
+
+    const result = await persistAgUiEvents({
+      db,
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      rows,
+    });
+    return {
+      summary: {
+        attempted: canonicalEvents.length,
+        inserted: result.inserted,
+        deduplicated: result.skipped,
+        insertedEventIds: result.insertedEventIds,
+        persistedEvents: result.persistedEvents,
+        persistedEnvelopes: result.persistedEnvelopes,
+      },
+    };
+  } catch (error) {
+    console.error("[daemon-event] AG-UI canonical persistence failed", {
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
+    return {
+      response: {
+        kind: "json",
+        status: 500,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      },
+    };
+  }
+}
+
+async function deactivateAcceptedTerminalRun(params: {
+  deps: DaemonEventProcessorDeps;
+  sandboxId: string;
+  threadChatId: string;
+  runId: string;
+}): Promise<void> {
+  const otherRunsActive = await params.deps.hasOtherActiveRuns({
+    sandboxId: params.sandboxId,
+    threadChatId: params.threadChatId,
+    excludeRunId: params.runId,
+  });
+  if (otherRunsActive) {
+    await params.deps.setActiveThreadChat({
+      sandboxId: params.sandboxId,
+      threadChatId: params.threadChatId,
+      isActive: false,
+      runId: params.runId,
+    });
+    return;
+  }
+  await params.deps.setActiveThreadChat({
+    sandboxId: params.sandboxId,
+    threadChatId: params.threadChatId,
+    isActive: false,
+    runId: params.runId,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Main processor
+// ---------------------------------------------------------------------------
+
+export async function processDaemonEvent(
+  deps: DaemonEventProcessorDeps,
+  input: DaemonEventProcessorInput,
+): Promise<DaemonEventProcessResult> {
+  const {
+    body,
+    envelopeV2,
+    daemonAdvertisesEnvelopeV2,
+    authContext,
+    usingDaemonTestAuth,
+    daemonEventReceivedAtMs,
+  } = input;
+
+  const {
+    messages,
+    threadId,
+    timezone = "UTC",
+    transportMode = "acp",
+    protocolVersion = 2,
+  } = body;
+  const daemonHeadShaAtCompletion =
+    typeof body.headShaAtCompletion === "string" &&
+    body.headShaAtCompletion.length > 0
+      ? body.headShaAtCompletion
+      : null;
+  const threadChatId = body.threadChatId;
+  const userId = authContext.userId;
+  const claims = authContext.claims;
+
+  const rawCanonicalEvents = Array.isArray(body.canonicalEvents)
+    ? body.canonicalEvents
+    : null;
+  const deltas = body.deltas;
+  const metaEvents = Array.isArray(body.metaEvents) ? body.metaEvents : null;
+
+  if (daemonAdvertisesEnvelopeV2 && !envelopeV2) {
+    return {
+      kind: "json",
+      status: 400,
+      body: {
+        success: false,
+        error: "daemon_event_capability_v2_requires_v2_envelope",
+      },
+    };
+  }
+
+  if (envelopeV2 && !daemonAdvertisesEnvelopeV2) {
+    return {
+      kind: "json",
+      status: 400,
+      body: {
+        success: false,
+        error: "daemon_event_v2_envelope_requires_capability_v2",
+      },
+    };
+  }
+
+  if (envelopeV2 && claims && envelopeV2.runId !== claims.runId) {
+    return {
+      kind: "json",
+      status: 401,
+      body: {
+        success: false,
+        error: "daemon_event_run_id_claim_mismatch",
+        runId: envelopeV2.runId,
+      },
+    };
+  }
+
+  if (envelopeV2 && !claims && !usingDaemonTestAuth) {
+    return {
+      kind: "json",
+      status: 401,
+      body: {
+        success: false,
+        error: "daemon_token_claims_required",
+        runId: envelopeV2.runId,
+      },
+    };
+  }
+
+  if (claims) {
+    if (claims.exp <= Date.now()) {
+      return {
+        kind: "json",
+        status: 401,
+        body: {
+          success: false,
+          error: "daemon_token_expired",
+          runId: claims.runId,
+        },
+      };
+    }
+    if (claims.threadId !== threadId || claims.threadChatId !== threadChatId) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: claims.runId,
+        },
+      };
+    }
+  }
+
+  const dbPreflight = await getDaemonEventDbPreflight(db);
+  if (!dbPreflight.agentRunContextFailureColumnsReady) {
+    return {
+      kind: "json",
+      status: 503,
+      body: {
+        success: false,
+        error: "daemon_event_runtime_session_schema_not_ready",
+        missing: dbPreflight.missing,
+      },
+    };
+  }
+  const canPersistCanonicalEvents = dbPreflight.agentEventLogReady;
+  const canPersistRunContextFailureMeta =
+    dbPreflight.agentRunContextFailureColumnsReady;
+
+  let runContext: Awaited<ReturnType<typeof getAgentRunContextByRunId>> | null =
+    null;
+  const authoritativeRunId = claims?.runId ?? envelopeV2?.runId ?? null;
+  if (!authoritativeRunId) {
+    return {
+      kind: "json",
+      status: 400,
+      body: {
+        success: false,
+        error: "daemon_event_run_id_required",
+      },
+    };
+  }
+
+  recordAgentTraceSpan({
+    traceId: authoritativeRunId,
+    name: "server.daemon_event.received",
+    startedAtMs: daemonEventReceivedAtMs,
+    endedAtMs: daemonEventReceivedAtMs,
+    attributes: {
+      threadId,
+      threadChatId,
+      runId: authoritativeRunId,
+      payloadVersion: body.payloadVersion ?? null,
+      seq: envelopeV2?.seq ?? null,
+      canonicalEventCount: rawCanonicalEvents?.length ?? 0,
+      deltaCount: deltas?.length ?? 0,
+      metaEventCount: metaEvents?.length ?? 0,
+      daemonEventId: envelopeV2?.eventId ?? null,
+      daemonEventReceivedAtMs,
+    },
+  });
+
+  runContext = await getAgentRunContextByRunId({
+    db,
+    runId: authoritativeRunId,
+    userId,
+  });
+  if (!runContext) {
+    return {
+      kind: "json",
+      status: 409,
+      body: {
+        success: false,
+        error: "daemon_event_run_context_not_found",
+        runId: authoritativeRunId,
+      },
+    };
+  }
+
+  const updateRunContextIfPresent = async (
+    updates: Parameters<typeof updateAgentRunContext>[0]["updates"],
+  ): Promise<void> => {
+    if (!runContext) {
+      return;
+    }
+
+    const touchesFailureMetadata =
+      "failureCategory" in updates ||
+      "failureSource" in updates ||
+      "failureRetryable" in updates ||
+      "failureSignatureHash" in updates ||
+      "failureTerminalReason" in updates;
+    if (touchesFailureMetadata && !canPersistRunContextFailureMeta) {
+      return;
+    }
+
+    await updateAgentRunContext({
+      db,
+      userId,
+      runId: runContext.runId,
+      updates,
+    });
+  };
+
+  if (envelopeV2 && !claims) {
+    if (!runContext) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: envelopeV2.runId,
+        },
+      };
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId
+    ) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (
+      transportMode !== runContext.transportMode ||
+      protocolVersion !== runContext.protocolVersion
+    ) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_transport_context_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+  }
+
+  if (claims) {
+    if (!runContext) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_run_context_not_found",
+          runId: claims.runId,
+        },
+      };
+    }
+    if (
+      runContext.threadId !== threadId ||
+      runContext.threadChatId !== threadChatId
+    ) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_run_context_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (
+      claims.runId !== runContext.runId ||
+      claims.threadId !== runContext.threadId ||
+      claims.threadChatId !== runContext.threadChatId ||
+      claims.sandboxId !== runContext.sandboxId ||
+      claims.agent !== runContext.agent ||
+      claims.nonce !== runContext.tokenNonce ||
+      claims.transportMode !== runContext.transportMode ||
+      claims.protocolVersion !== runContext.protocolVersion
+    ) {
+      return {
+        kind: "json",
+        status: 401,
+        body: {
+          success: false,
+          error: "daemon_token_claim_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (
+      !hasRequiredDaemonProviderScopes({
+        claims,
+        agent: runContext.agent,
+      })
+    ) {
+      return {
+        kind: "json",
+        status: 401,
+        body: {
+          success: false,
+          error: "daemon_token_provider_scope_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (!authContext.keyId || !runContext.daemonTokenKeyId) {
+      return {
+        kind: "json",
+        status: 401,
+        body: {
+          success: false,
+          error: "daemon_token_key_missing",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (authContext.keyId !== runContext.daemonTokenKeyId) {
+      return {
+        kind: "json",
+        status: 401,
+        body: {
+          success: false,
+          error: "daemon_token_key_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+    if (
+      transportMode !== runContext.transportMode ||
+      protocolVersion !== runContext.protocolVersion
+    ) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_transport_context_mismatch",
+          runId: runContext.runId,
+        },
+      };
+    }
+  }
+
+  if (rawCanonicalEvents && rawCanonicalEvents.length > 0) {
+    const contextMismatch = findCanonicalEventContextMismatch({
+      canonicalEvents: rawCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+    });
+    if (contextMismatch) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_event_context_mismatch",
+          eventId: contextMismatch.eventId,
+          reason: contextMismatch.reason,
+        },
+      };
+    }
+  }
+
+  const canonicalEvents = filterCanonicalEventsForDeltaCoexistence({
+    canonicalEvents: rawCanonicalEvents,
+    deltas,
+  });
+  const canonicalTerminalBeforePersistence = canonicalEvents
+    ? findCanonicalRunTerminalEvent(canonicalEvents)
+    : null;
+
+  const canonicalTerminal = canonicalTerminalBeforePersistence;
+  const daemonRunStatusFromMessages = canonicalTerminal
+    ? canonicalTerminal.status
+    : deriveRunStatusFromMessages(messages);
+  const daemonTerminalErrorInfo = canonicalTerminal
+    ? {
+        errorMessage: canonicalTerminal.errorMessage,
+        errorCategory: canonicalTerminal.errorMessage
+          ? classifyDaemonTerminalErrorCategory(canonicalTerminal.errorMessage)
+          : "unknown",
+      }
+    : deriveDaemonTerminalErrorInfo(messages);
+  const terminalFailureSource = canonicalTerminal
+    ? daemonRunStatusFromMessages === "stopped"
+      ? ("custom-stop" as const)
+      : daemonRunStatusFromMessages === "failed"
+        ? ("custom-error" as const)
+        : null
+    : deriveTerminalFailureSource(messages);
+  const effectiveHeadShaAtCompletion =
+    daemonHeadShaAtCompletion ?? canonicalTerminal?.headShaAtCompletion ?? null;
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    !envelopeV2 &&
+    !canonicalTerminal
+  ) {
+    return {
+      kind: "json",
+      status: 409,
+      body: {
+        success: false,
+        error: "daemon_event_terminal_requires_v2_envelope",
+      },
+    };
+  }
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    !canPersistCanonicalEvents
+  ) {
+    return {
+      kind: "json",
+      status: 503,
+      body: {
+        success: false,
+        error: "daemon_event_canonical_persistence_unavailable",
+        missing: dbPreflight.missing,
+      },
+    };
+  }
+
+  const terminalFailureUpdates = buildRunContextFailureUpdates({
+    status: daemonRunStatusFromMessages,
+    errorMessage: daemonTerminalErrorInfo.errorMessage,
+    errorCategory: daemonTerminalErrorInfo.errorCategory,
+    failureSource: terminalFailureSource,
+  });
+
+  let terminalFenceOutcome: "committed" | "duplicate" | null = null;
+  let terminalEventIdForAck: string | null = null;
+  let terminalSeqForAck: number | null = null;
+
+  if (daemonRunStatusFromMessages !== "processing") {
+    const terminalEventId = canonicalTerminal?.eventId ?? envelopeV2?.eventId;
+    const terminalSeq = canonicalTerminal?.seq ?? envelopeV2?.seq;
+    if (!terminalEventId || terminalSeq === undefined) {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_terminal_fence_missing_event_identity",
+        },
+      };
+    }
+    terminalEventIdForAck = terminalEventId;
+    terminalSeqForAck = terminalSeq;
+
+    const terminalFenceResult = await completeAgentRunContextTerminal({
+      db,
+      runId: runContext.runId,
+      userId,
+      threadId,
+      threadChatId,
+      transportMode: runContext.transportMode,
+      protocolVersion: runContext.protocolVersion,
+      runtimeProvider: runContext.runtimeProvider,
+      daemonTokenKeyId: runContext.daemonTokenKeyId,
+      terminalStatus: daemonRunStatusFromMessages,
+      lastAcceptedSeq: terminalSeq,
+      terminalEventId,
+      failureUpdates: terminalFailureUpdates,
+    });
+    if (terminalFenceResult.status === "rejected") {
+      return {
+        kind: "json",
+        status: 409,
+        body: {
+          success: false,
+          error: "daemon_event_terminal_run_context_cas_failed",
+          reason: terminalFenceResult.reason,
+          runId: runContext.runId,
+        },
+      };
+    }
+    terminalFenceOutcome = terminalFenceResult.status;
+    runContext = terminalFenceResult.runContext;
+  }
+
+  const terminalCanonicalEvents =
+    canonicalEvents?.filter((event) => event.type === "run-terminal") ?? [];
+  let canonicalEventsForPersistence: CanonicalEventsPayload | null =
+    canonicalEvents?.filter((event) => event.type !== "run-terminal") ?? null;
+  if (canonicalEventsForPersistence?.length === 0) {
+    canonicalEventsForPersistence = null;
+  }
+  let terminalCanonicalEventsForPersistence: CanonicalEventsPayload | null =
+    terminalCanonicalEvents.length > 0 ? terminalCanonicalEvents : null;
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    envelopeV2 &&
+    !canonicalTerminal
+  ) {
+    const synthesizedTerminal = buildCanonicalRunTerminalEvent({
+      envelope: envelopeV2,
+      threadId,
+      threadChatId,
+      status: daemonRunStatusFromMessages,
+      errorMessage: daemonTerminalErrorInfo.errorMessage,
+      errorCode: daemonTerminalErrorInfo.errorCategory,
+      headShaAtCompletion: effectiveHeadShaAtCompletion,
+    });
+    terminalCanonicalEventsForPersistence = [synthesizedTerminal];
+  }
+
+  const canonicalPersistence = await persistCanonicalEventsOrResponse({
+    canonicalEvents: canonicalEventsForPersistence,
+    canPersistCanonicalEvents,
+    runId: runContext.runId,
+    threadId,
+    threadChatId,
+    publishLive: daemonRunStatusFromMessages === "processing",
+  });
+  if (canonicalPersistence.response) {
+    return canonicalPersistence.response;
+  }
+
+  recordAgentTraceSpan({
+    traceId: runContext.runId,
+    name: "server.daemon_event.canonical.persisted",
+    attributes: {
+      threadId,
+      threadChatId,
+      runId: runContext.runId,
+      attempted: canonicalPersistence.summary.attempted,
+      inserted: canonicalPersistence.summary.inserted,
+      deduplicated: canonicalPersistence.summary.deduplicated,
+    },
+  });
+
+  let terminalCanonicalPersistence:
+    | { summary: CanonicalPersistenceSummary; response?: undefined }
+    | { summary?: undefined; response: DaemonEventProcessResult }
+    | null = null;
+
+  publishMetaEvents({ metaEvents, threadId, threadChatId });
+
+  const shouldIgnoreTerminalRun =
+    runContext !== null &&
+    (claims !== null || (usingDaemonTestAuth && envelopeV2 !== null)) &&
+    canonicalTerminal === null &&
+    daemonRunStatusFromMessages === "processing" &&
+    (runContext.status === "completed" ||
+      runContext.status === "failed" ||
+      runContext.status === "stopped");
+
+  if (shouldIgnoreTerminalRun) {
+    return {
+      kind: "json",
+      status: 202,
+      body: {
+        success: true,
+        deduplicated: true,
+        reason: "run_terminal_ignored",
+        runId: runContext.runId,
+        acknowledgedEventId: envelopeV2?.eventId ?? null,
+        acknowledgedSeq: envelopeV2?.seq ?? null,
+      },
+    };
+  }
+
+  // Delta persistence
+  if (deltas && deltas.length > 0) {
+    if (!canPersistCanonicalEvents) {
+      return {
+        kind: "json",
+        status: 503,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_persistence_unavailable",
+        },
+      };
+    }
+    try {
+      const deltaPersistence = await persistAndPublishAgUiEvents({
+        db,
+        runId: authoritativeRunId,
+        threadId,
+        threadChatId,
+        rows: daemonDeltasToAgUiRows({
+          runId: authoritativeRunId,
+          deltas,
+        }),
+      });
+      recordAgentTraceSpan({
+        traceId: authoritativeRunId,
+        name: "server.daemon_event.delta.persisted",
+        attributes: {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          deltaCount: deltas.length,
+          inserted: deltaPersistence.inserted,
+          deduplicated: deltaPersistence.skipped,
+        },
+      });
+    } catch (error) {
+      console.error("[daemon-event] AG-UI delta persistence failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+      return {
+        kind: "json",
+        status: 500,
+        body: {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  // Synthetic END rows for open delta messages
+  if (
+    canPersistCanonicalEvents &&
+    daemonRunStatusFromMessages !== "processing"
+  ) {
+    try {
+      const openMessages = await findOpenAgUiMessagesForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      if (openMessages.length > 0) {
+        const endRows = buildDeltaRunEndRows({
+          runId: authoritativeRunId,
+          openMessages,
+        });
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: endRows,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        "[daemon-event] AG-UI run-terminal END synthesis failed, continuing",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
+    }
+  }
+
+  // Heartbeat shortcut
+  if (
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    (!canonicalEvents || canonicalEvents.length === 0)
+  ) {
+    const result = await handleDaemonEvent({
+      messages: [],
+      threadId,
+      threadChatId,
+      userId,
+      timezone,
+      contextUsage: null,
+      runId: authoritativeRunId,
+      runContext,
+    });
+    if (!result.success) {
+      return {
+        kind: "text",
+        status: result.status || 500,
+        body: result.error || "Unknown error",
+      };
+    }
+    return {
+      kind: "json",
+      status: 200,
+      body: { success: true },
+    };
+  }
+
+  // Canonical-only non-terminal shortcut
+  if (
+    messages.length === 0 &&
+    (!deltas || deltas.length === 0) &&
+    canonicalEvents &&
+    canonicalEvents.length > 0
+  ) {
+    const canonicalTerminal = findCanonicalRunTerminalEvent(canonicalEvents);
+    if (canonicalTerminal) {
+      // Canonical-only terminal batches must not take the freshness-touch
+      // shortcut; they need the fenced terminal transition contract below.
+    } else {
+      waitUntil(
+        (async () => {
+          try {
+            await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only freshness touch failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
+          }
+        })(),
+      );
+      waitUntil(
+        (async () => {
+          try {
+            const thread = await getThreadMinimal({ db, threadId, userId });
+            if (thread?.codesandboxId && thread.sandboxProvider) {
+              await extendSandboxLife({
+                sandboxId: thread.codesandboxId,
+                sandboxProvider: thread.sandboxProvider,
+              });
+            }
+          } catch (error) {
+            console.warn(
+              "[daemon-event] canonical-only thread refresh failed",
+              {
+                threadId,
+                threadChatId,
+                error,
+              },
+            );
+          }
+        })(),
+      );
+      return {
+        kind: "json",
+        status: 200,
+        body: {
+          success: true,
+          canonicalEventsPersisted: canonicalPersistence.summary.inserted,
+          canonicalEventsDeduplicated:
+            canonicalPersistence.summary.deduplicated,
+        },
+      };
+    }
+  }
+
+  const fenceTerminalTransition =
+    daemonRunStatusFromMessages !== "processing" &&
+    (envelopeV2 != null || canonicalTerminal != null);
+
+  // Compute context usage
+  const computedContextUsage = (() => {
+    try {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (!message || message.type === "result") continue;
+        if (!("message" in message)) continue;
+        if ("parent_tool_use_id" in message && message.parent_tool_use_id) {
+          continue;
+        }
+        const messagePayload = message.message;
+        if (typeof messagePayload !== "object" || messagePayload === null) {
+          continue;
+        }
+        if (!("usage" in messagePayload)) continue;
+        const usage = messagePayload.usage;
+        if (typeof usage !== "object" || usage === null) continue;
+        const input = numericUsageField(usage, "input_tokens");
+        const output = numericUsageField(usage, "output_tokens");
+        const cacheCreate = numericUsageField(
+          usage,
+          "cache_creation_input_tokens",
+        );
+        const cacheRead = numericUsageField(usage, "cache_read_input_tokens");
+        const total = input + output + cacheCreate + cacheRead;
+        return Number.isFinite(total) && total > 0 ? total : null;
+      }
+      return null;
+    } catch (_e) {
+      return null;
+    }
+  })();
+
+  let result: Awaited<ReturnType<typeof handleDaemonEvent>>;
+
+  if (
+    runContext &&
+    (runContext.status === "pending" || runContext.status === "dispatched")
+  ) {
+    await updateRunContextIfPresent({
+      status: "processing",
+    });
+  }
+
+  let skipLegacyRuntimeTranscriptPersistence = false;
+
+  try {
+    const isCanonicalOnlyTerminalBatch =
+      canonicalTerminal != null &&
+      messages.length === 0 &&
+      (!deltas || deltas.length === 0);
+    const hasNativeRuntimeEvents =
+      (canonicalEvents != null && canonicalEvents.length > 0) ||
+      (deltas != null && deltas.length > 0);
+    skipLegacyRuntimeTranscriptPersistence =
+      canPersistCanonicalEvents && envelopeV2 != null && hasNativeRuntimeEvents;
+    const shouldSkipDuplicateTerminalProjection =
+      terminalFenceOutcome === "duplicate" &&
+      !messages.some((message) => message.type === "assistant") &&
+      (!deltas || deltas.length === 0);
+    if (shouldSkipDuplicateTerminalProjection || isCanonicalOnlyTerminalBatch) {
+      result = {
+        success: true,
+        threadChatMessageSeq: null,
+        terminalRecoveryQueued: false,
+      };
+    } else {
+      result = await handleDaemonEvent({
+        messages,
+        threadId,
+        threadChatId,
+        userId,
+        timezone,
+        contextUsage: computedContextUsage ?? null,
+        runId: authoritativeRunId,
+        runContext,
+        deferTerminalTransitionToRoute: fenceTerminalTransition,
+        skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
+      });
+    }
+  } catch (error) {
+    console.error(
+      "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
+      error,
+    );
+    if (runContext && !fenceTerminalTransition) {
+      await updateRunContextIfPresent({
+        status: "failed",
+      });
+    }
+    throw error;
+  }
+
+  if (!result.success) {
+    if (runContext) {
+      await updateRunContextIfPresent({
+        status: "failed",
+      });
+    }
+    return {
+      kind: "text",
+      status: result.status || 500,
+      body: result.error || "Unknown error",
+    };
+  }
+
+  if (result.threadChatMessageSeq != null) {
+    const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
+    if (insertedEventIds.length > 0) {
+      await assignThreadChatMessageSeqToCanonicalEvents({
+        db,
+        eventIds: insertedEventIds,
+        threadChatMessageSeq: result.threadChatMessageSeq,
+      });
+    }
+  }
+
+  // Rich-part AG-UI emission
+  if (canPersistCanonicalEvents && envelopeV2) {
+    const richPartInputs: AssistantMessagePartsInput[] = [];
+    let messageIndex = 0;
+    for (const claudeMessage of messages) {
+      for (const dbMsg of deps.toDBMessage(claudeMessage)) {
+        const currentIndex = messageIndex++;
+        if (dbMsg.type !== "agent") continue;
+        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
+        if (!hasRichParts) continue;
+        richPartInputs.push({
+          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
+          parts: dbMsg.parts,
+        });
+      }
+    }
+    if (richPartInputs.length > 0) {
+      try {
+        await persistAndPublishAgUiEvents({
+          db,
+          runId: authoritativeRunId,
+          threadId,
+          threadChatId,
+          rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
+        });
+      } catch (error) {
+        if (skipLegacyRuntimeTranscriptPersistence) {
+          console.error(
+            "[daemon-event] AG-UI rich-part persistence failed for native-runtime batch",
+            {
+              threadId,
+              threadChatId,
+              runId: authoritativeRunId,
+              error,
+            },
+          );
+          return {
+            kind: "json",
+            status: 500,
+            body: {
+              error: "daemon_event_ag_ui_rich_part_persist_failed",
+            },
+          };
+        }
+        console.warn("[daemon-event] AG-UI rich-part persistence failed", {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        });
+      }
+    }
+  }
+
+  const resolvedSessionId = deriveSessionIdFromMessages(messages);
+  const resolvedStatus = daemonRunStatusFromMessages;
+
+  // Post-handle ops
+  {
+    const postHandleOps: Array<Promise<unknown>> = [];
+    if (runContext) {
+      postHandleOps.push(
+        updateRunContextIfPresent({
+          resolvedSessionId,
+          ...(resolvedStatus === "processing"
+            ? { status: "processing" as const }
+            : {}),
+        }),
+      );
+    }
+    if (postHandleOps.length > 0) {
+      try {
+        await Promise.all(postHandleOps);
+      } catch (postHandleErr) {
+        console.warn(
+          "[daemon-event] postHandleOps best-effort failure, continuing",
+          {
+            userId,
+            threadId,
+            error: postHandleErr,
+          },
+        );
+      }
+    }
+  }
+
+  if (resolvedStatus === "failed") {
+    console.warn("[daemon-event] daemon run ended with terminal failure", {
+      userId,
+      threadId,
+      threadChatId,
+      runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+      errorCategory: daemonTerminalErrorInfo.errorCategory,
+      errorMessage: daemonTerminalErrorInfo.errorMessage,
+    });
+  }
+
+  // Codex previousResponseId persistence
+  if (
+    resolvedStatus === "completed" &&
+    body.codexPreviousResponseId !== undefined
+  ) {
+    if (
+      body.codexPreviousResponseId !== null &&
+      typeof body.codexPreviousResponseId !== "string"
+    ) {
+      console.warn(
+        "[daemon-event] invalid codexPreviousResponseId type, skipping persistence",
+        {
+          userId,
+          threadId,
+          threadChatId,
+          codexPreviousResponseId: body.codexPreviousResponseId,
+        },
+      );
+    } else {
+      const shouldPersistCodexPreviousResponseId =
+        transportMode === "codex-app-server" ||
+        body.codexPreviousResponseId === null;
+      if (shouldPersistCodexPreviousResponseId) {
+        try {
+          await Promise.all([
+            db
+              .update(schema.threadChat)
+              .set({
+                codexPreviousResponseId: body.codexPreviousResponseId,
+              })
+              .where(
+                and(
+                  eq(schema.threadChat.userId, userId),
+                  eq(schema.threadChat.threadId, threadId),
+                  eq(schema.threadChat.id, threadChatId),
+                ),
+              ),
+            updateRunContextIfPresent({
+              previousResponseId: body.codexPreviousResponseId,
+            }),
+          ]);
+        } catch (error) {
+          console.error(
+            "[daemon-event] failed to persist codexPreviousResponseId; continuing without rollback",
+            {
+              userId,
+              threadId,
+              threadChatId,
+              transportMode,
+              codexPreviousResponseId: body.codexPreviousResponseId,
+              error,
+            },
+          );
+        }
+      }
+    }
+  }
+
+  // Terminal transitions
+  {
+    const terminalOps: Array<Promise<unknown>> = [];
+
+    if (fenceTerminalTransition) {
+      const terminalStatusForTransition = result.terminalRecoveryQueued
+        ? ("completed" as const)
+        : resolvedStatus;
+      const terminalThread =
+        terminalStatusForTransition === "completed"
+          ? await getThreadMinimal({ db, threadId, userId })
+          : null;
+      const shouldSkipCheckpoint =
+        terminalStatusForTransition === "stopped" ||
+        (terminalStatusForTransition === "completed" &&
+          !!terminalThread?.disableGitCheckpointing);
+      const eventType =
+        terminalStatusForTransition === "stopped"
+          ? ("assistant.message_stop" as const)
+          : terminalStatusForTransition === "failed"
+            ? ("assistant.message_error" as const)
+            : shouldSkipCheckpoint
+              ? ("assistant.message_done_skip_checkpoint" as const)
+              : ("assistant.message_done" as const);
+
+      const transitionResult = await deps.updateThreadChatWithTransition({
+        userId,
+        threadId,
+        threadChatId,
+        eventType,
+        markAsUnread: true,
+        requireStatusTransitionForChatUpdates: true,
+        skipBroadcast: true,
+      });
+
+      let latestThreadChatAfterTransition:
+        | Awaited<ReturnType<typeof getThreadChat>>
+        | undefined;
+      if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
+        latestThreadChatAfterTransition = await getThreadChat({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+        });
+        if (
+          !latestThreadChatAfterTransition ||
+          latestThreadChatAfterTransition.status !==
+            transitionResult.updatedStatus
+        ) {
+          return {
+            kind: "json",
+            status: 409,
+            body: {
+              success: false,
+              error: "daemon_event_terminal_thread_chat_cas_failed",
+              expectedStatus: transitionResult.updatedStatus,
+              actualStatus: latestThreadChatAfterTransition?.status ?? null,
+            },
+          };
+        }
+      }
+      const checkpointReadyStatus =
+        eventType === "assistant.message_done"
+          ? "working-done"
+          : eventType === "assistant.message_error"
+            ? "working-error"
+            : null;
+      if (
+        checkpointReadyStatus !== null &&
+        !transitionResult.didUpdateStatus &&
+        latestThreadChatAfterTransition === undefined
+      ) {
+        latestThreadChatAfterTransition = await getThreadChat({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+        });
+      }
+      const shouldQueueCheckpoint =
+        checkpointReadyStatus !== null &&
+        (transitionResult.didUpdateStatus ||
+          latestThreadChatAfterTransition?.status === checkpointReadyStatus);
+      if (shouldQueueCheckpoint) {
+        waitUntil(checkpointThread({ userId, threadId, threadChatId }));
+      }
+
+      await deactivateAcceptedTerminalRun({
+        deps,
+        sandboxId: runContext.sandboxId,
+        threadChatId,
+        runId: runContext.runId,
+      });
+
+      if (result.terminalRecoveryQueued) {
+        await Promise.all([
+          updateThreadChatTerminalMetadataIfTerminal({
+            db,
+            userId,
+            threadId,
+            threadChatId,
+            updates: {
+              errorMessage: null,
+              errorMessageInfo: null,
+            },
+          }),
+          updateRunContextIfPresent({
+            status: "completed",
+            ...buildRunContextFailureUpdates({
+              status: "completed",
+              errorMessage: null,
+              errorCategory: "unknown",
+              failureSource: null,
+            }),
+          }),
+        ]);
+      } else if (resolvedStatus === "failed") {
+        const errorMessageStr = daemonTerminalErrorInfo.errorMessage;
+        const isPromptTooLong =
+          !!errorMessageStr &&
+          /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
+            errorMessageStr,
+          );
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: isPromptTooLong
+              ? "prompt-too-long"
+              : "agent-generic-error",
+            errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
+          },
+        });
+      } else {
+        await updateThreadChatTerminalMetadataIfTerminal({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: {
+            errorMessage: null,
+            errorMessageInfo: null,
+          },
+        });
+      }
+      if (terminalOps.length > 0) {
+        try {
+          await Promise.all(terminalOps);
+        } catch (error) {
+          console.warn(
+            "[daemon-event] fenced terminal state persistence failed",
+            {
+              threadId,
+              threadChatId,
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error,
+            },
+          );
+          return {
+            kind: "json",
+            status: 503,
+            body: {
+              success: false,
+              error: "daemon_event_terminal_persistence_failed",
+              runId: runContext?.runId ?? envelopeV2?.runId ?? null,
+              detail: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      }
+    } else {
+      if (runContext && resolvedStatus !== "processing") {
+        terminalOps.push(
+          updateRunContextIfPresent({
+            status: resolvedStatus,
+            ...buildRunContextFailureUpdates({
+              status: resolvedStatus,
+              errorMessage: daemonTerminalErrorInfo.errorMessage,
+              errorCategory: daemonTerminalErrorInfo.errorCategory,
+              failureSource: terminalFailureSource,
+            }),
+          }),
+        );
+      }
+      if (terminalOps.length > 0) {
+        const results = await Promise.allSettled(terminalOps);
+        for (const r of results) {
+          if (r.status === "rejected") {
+            console.warn("[daemon-event] terminal state persistence failed", {
+              runId: runContext?.runId ?? envelopeV2?.runId,
+              error: r.reason,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Deferred terminal canonical event persistence
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    terminalCanonicalEventsForPersistence
+  ) {
+    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
+      canonicalEvents: terminalCanonicalEventsForPersistence,
+      canPersistCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
+      publishLive: false,
+    });
+    if (terminalCanonicalPersistence.response) {
+      return terminalCanonicalPersistence.response;
+    }
+  }
+
+  if (
+    daemonRunStatusFromMessages !== "processing" &&
+    (canonicalPersistence.summary.persistedEvents.length > 0 ||
+      (terminalCanonicalPersistence?.summary?.persistedEvents.length ?? 0) > 0)
+  ) {
+    for (const summary of [
+      canonicalPersistence.summary,
+      terminalCanonicalPersistence?.summary,
+    ]) {
+      if (!summary || summary.persistedEvents.length === 0) {
+        continue;
+      }
+      await publishPersistedAgUiEvents({
+        threadChatId,
+        persistedEvents: summary.persistedEvents,
+        insertedEventIds: summary.insertedEventIds,
+        persistedEnvelopes: summary.persistedEnvelopes,
+      });
+    }
+  }
+
+  const shouldReturnDuplicateTerminalIgnored =
+    terminalFenceOutcome === "duplicate" &&
+    !messages.some((message) => message.type === "assistant") &&
+    (!deltas || deltas.length === 0);
+
+  return {
+    kind: "json",
+    status: shouldReturnDuplicateTerminalIgnored ? 202 : 200,
+    body: {
+      success: true,
+      ...(shouldReturnDuplicateTerminalIgnored
+        ? {
+            deduplicated: true as const,
+            reason: "run_terminal_ignored",
+            runId: runContext.runId,
+          }
+        : {}),
+      acknowledgedEventId: terminalEventIdForAck ?? envelopeV2?.eventId ?? null,
+      acknowledgedSeq: terminalSeqForAck ?? envelopeV2?.seq ?? null,
+    },
+  };
+}

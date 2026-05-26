@@ -7,22 +7,22 @@ import {
   getEnvironment,
 } from "@terragon/shared/model/environments";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult } from "@/lib/server-actions";
 
 export const deleteEnvironment = userOnlyAction(
   async function deleteEnvironment(
     userId: string,
     { environmentId }: { environmentId: string },
   ) {
-    const environment = await getEnvironment({
-      db,
-      environmentId,
-      userId,
-    });
-
-    if (!environment) {
-      throw new UserFacingError("Environment not found");
-    }
+    const environment = await requireResult(
+      () =>
+        getEnvironment({
+          db,
+          environmentId,
+          userId,
+        }),
+      "Environment not found",
+    );
 
     getPostHogServer().capture({
       distinctId: userId,

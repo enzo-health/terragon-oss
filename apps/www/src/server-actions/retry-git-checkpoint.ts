@@ -6,7 +6,7 @@ import { waitUntil } from "@vercel/functions";
 import { checkpointThread } from "../server-lib/checkpoint-thread";
 import { getPostHogServer } from "@/lib/posthog-server";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult } from "@/lib/server-actions";
 import { getThreadChat } from "@terragon/shared/model/threads";
 
 export const retryGitCheckpoint = userOnlyAction(
@@ -18,15 +18,16 @@ export const retryGitCheckpoint = userOnlyAction(
       threadId,
       threadChatId,
     });
-    const threadChat = await getThreadChat({
-      db,
-      threadId,
-      threadChatId,
-      userId,
-    });
-    if (!threadChat) {
-      throw new UserFacingError("Task not found");
-    }
+    await requireResult(
+      () =>
+        getThreadChat({
+          db,
+          threadId,
+          threadChatId,
+          userId,
+        }),
+      "Task not found",
+    );
     getPostHogServer().capture({
       distinctId: userId,
       event: "retry_git_checkpoint",
