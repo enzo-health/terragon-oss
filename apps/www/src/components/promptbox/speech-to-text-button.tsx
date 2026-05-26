@@ -155,7 +155,7 @@ export const SpeechToTextButton = memo(function SpeechToTextButton({
     <Button
       variant="ghost"
       size="icon"
-      className={cn("size-8", className)}
+      className={cn("size-11 sm:size-8", className)}
       onClick={toggleRecording}
       type="button"
       title={

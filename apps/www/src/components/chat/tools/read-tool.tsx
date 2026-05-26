@@ -13,8 +13,10 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function ReadTool({
   toolPart,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "Read" }>;
+  onToolArgClick?: () => void;
 }) {
   return (
     <GenericToolPart
@@ -23,6 +25,7 @@ export function ReadTool({
         keyOrder: ["file_path", "offset", "limit"],
       })}
       toolStatus={toolPart.status}
+      onToolArgClick={onToolArgClick}
     >
       <ReadToolContent toolPart={toolPart} />
     </GenericToolPart>

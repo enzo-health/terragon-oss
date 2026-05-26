@@ -3420,6 +3420,41 @@ describe("thread", () => {
       expect(threads).toEqual([]);
     });
 
+    it("orders and exposes list freshness by latest thread chat activity", async () => {
+      const olderThread = await createTestThread({ db, userId: user.id });
+      const newerParentThread = await createTestThread({ db, userId: user.id });
+
+      const parentOld = new Date("2026-03-09T00:00:00.000Z");
+      const parentNew = new Date("2026-03-09T00:00:10.000Z");
+      const chatNewest = new Date("2026-03-09T00:00:20.000Z");
+
+      await db
+        .update(schema.thread)
+        .set({ updatedAt: parentOld })
+        .where(eq(schema.thread.id, olderThread.threadId));
+      await db
+        .update(schema.threadChat)
+        .set({ updatedAt: chatNewest })
+        .where(eq(schema.threadChat.id, olderThread.threadChatId));
+      await db
+        .update(schema.thread)
+        .set({ updatedAt: parentNew })
+        .where(eq(schema.thread.id, newerParentThread.threadId));
+      await db
+        .update(schema.threadChat)
+        .set({ updatedAt: parentNew })
+        .where(eq(schema.threadChat.id, newerParentThread.threadChatId));
+
+      const threads = await getThreads({
+        db,
+        userId: user.id,
+        archived: false,
+      });
+
+      expect(threads[0]!.id).toBe(olderThread.threadId);
+      expect(threads[0]!.updatedAt).toEqual(chatNewest);
+    });
+
     it("multiple users", async () => {
       const { user: otherUser } = await createTestUser({ db });
 

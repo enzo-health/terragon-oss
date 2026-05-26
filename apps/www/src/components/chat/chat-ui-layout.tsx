@@ -1,12 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
-import type { AppendMessage } from "@assistant-ui/react";
-import {
-  AIModelSchema,
-  type AIAgent,
-  type AIModel,
-} from "@terragon/agent/types";
+import type { AIAgent } from "@terragon/agent/types";
 import {
   DBUserMessage,
   ThreadErrorMessage,
@@ -14,44 +9,20 @@ import {
 } from "@terragon/shared";
 import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
-import React, { useCallback } from "react";
+import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  convertToPlainText,
-  getLastUserMessageModel,
-} from "@/lib/db-message-helpers";
+import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import { useThreadIntent } from "@/hooks/use-thread-intent";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import {
-  TerragonThreadErrorBoundary,
-  TerragonThreadRuntimeFrame,
-} from "./assistant-ui/terragon-thread";
+import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
+import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
-import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-ag-ui-messages";
-
-type ChatRuntimeQueueParams = {
-  forceScrollToBottom: () => void;
-  isAgentCurrentlyWorking: boolean;
-  onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
-  queueWriteRef: React.MutableRefObject<Promise<void>>;
-  queuedMessagesRef: React.MutableRefObject<DBUserMessage[] | null>;
-  reconcileActiveChatFromServer: () => Promise<unknown>;
-  setError: (error: string | null) => void;
-  threadChatId: string;
-  threadId: string;
-  publish: (intent: {
-    type: "queue-message";
-    threadId: string;
-    threadChatId: string;
-    messages: DBUserMessage[];
-  }) => Promise<unknown>;
-};
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),
@@ -62,151 +33,6 @@ const SecondaryPanel = dynamic(
   () => import("./secondary-panel").then((mod) => mod.SecondaryPanel),
   { ssr: false },
 );
-
-type TerragonComposerRunConfig = {
-  selectedModel: AIModel | null;
-  permissionMode: "allowAll" | "plan";
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readTerragonComposerRunConfig(
-  message: AppendMessage,
-): TerragonComposerRunConfig {
-  const fallback: TerragonComposerRunConfig = {
-    selectedModel: null,
-    permissionMode: "allowAll",
-  };
-  const custom = message.runConfig?.custom;
-  if (!isRecord(custom)) {
-    return fallback;
-  }
-  const terragon = custom.terragon;
-  if (!isRecord(terragon)) {
-    return fallback;
-  }
-  const selectedModelResult = AIModelSchema.safeParse(terragon.selectedModel);
-  return {
-    selectedModel: selectedModelResult.success
-      ? selectedModelResult.data
-      : null,
-    permissionMode:
-      terragon.permissionMode === "plan" ? "plan" : fallback.permissionMode,
-  };
-}
-
-function appendMessageToDbUserMessage(message: AppendMessage): DBUserMessage {
-  const config = readTerragonComposerRunConfig(message);
-  const attachmentParts: DBUserMessage["parts"][number][] = [];
-  const richTextNodes: Extract<
-    DBUserMessage["parts"][number],
-    { type: "rich-text" }
-  >["nodes"] = [];
-
-  if (message.role !== "user") {
-    throw new Error(`Cannot queue non-user message: ${message.role}`);
-  }
-
-  for (const part of message.content) {
-    if (part.type === "text") {
-      richTextNodes.push({ type: "text", text: part.text });
-    } else if (part.type === "image") {
-      if (typeof part.image === "string") {
-        attachmentParts.push({
-          type: "image",
-          image_url: part.image,
-          mime_type: "image/png",
-        });
-      }
-    }
-  }
-
-  return {
-    type: "user",
-    model: config.selectedModel,
-    parts: [{ type: "rich-text", nodes: richTextNodes }, ...attachmentParts],
-    timestamp: new Date().toISOString(),
-    permissionMode: config.permissionMode,
-  };
-}
-
-export function createChatRuntimeQueue({
-  forceScrollToBottom,
-  isAgentCurrentlyWorking,
-  onOptimisticQueuedMessagesUpdate,
-  publish,
-  queueWriteRef,
-  queuedMessagesRef,
-  reconcileActiveChatFromServer,
-  setError,
-  threadChatId,
-  threadId,
-}: ChatRuntimeQueueParams): {
-  shouldQueue: (message: AppendMessage) => boolean;
-  enqueue: (message: AppendMessage) => Promise<void>;
-} {
-  const clientSubmissionIds = new WeakMap<AppendMessage, string>();
-  const clientSubmissionIdFor = (message: AppendMessage): string => {
-    if (typeof message.sourceId === "string" && message.sourceId.length > 0) {
-      return message.sourceId;
-    }
-    const existing = clientSubmissionIds.get(message);
-    if (existing) {
-      return existing;
-    }
-    const next = crypto.randomUUID();
-    clientSubmissionIds.set(message, next);
-    return next;
-  };
-
-  return {
-    shouldQueue: (message: AppendMessage) =>
-      message.role === "user" && isAgentCurrentlyWorking,
-    enqueue: async (message: AppendMessage) => {
-      const userMessage = appendMessageToDbUserMessage(message);
-      const plainText = convertToPlainText({ message: userMessage });
-      if (plainText.length === 0) {
-        return;
-      }
-      const queuedUserMessage = {
-        clientSubmissionId: clientSubmissionIdFor(message),
-        message: userMessage,
-      };
-      forceScrollToBottom();
-      setError(null);
-      const write = queueWriteRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          const baseQueuedMessages = queuedMessagesRef.current ?? [];
-          const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
-            queuedUserMessage,
-          ]);
-          if (nextMessages === baseQueuedMessages) {
-            return;
-          }
-          queuedMessagesRef.current = nextMessages;
-          onOptimisticQueuedMessagesUpdate(nextMessages);
-          try {
-            await publish({
-              type: "queue-message",
-              threadId,
-              threadChatId,
-              messages: nextMessages,
-            });
-          } catch {
-            setError("Failed to queue follow-up");
-            await reconcileActiveChatFromServer();
-            return;
-          }
-          await reconcileActiveChatFromServer();
-        });
-      queueWriteRef.current = write.catch(() => undefined);
-      await write;
-    },
-  };
-}
 
 /**
  * Pure presentation: composes the chat header, scroll-area transcript, prompt
@@ -244,13 +70,15 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     threadViewModel,
     loadAgUiHistoryMessages,
     queuedMessages,
-    optimisticUserMessages,
     artifactDescriptors,
     effectiveThreadStatus,
     isAgentCurrentlyWorking,
     toolProps,
     lastUsedModel,
     handleOpenArtifact,
+    onOpenRepoFile,
+    onOpenRepoTree,
+    activeRepoFilePath,
   } = viewModel;
 
   const {
@@ -284,56 +112,10 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = optimisticHandlers;
 
   const { error, setError, isRetrying, handleRetry } = errorState;
-  const queuedMessagesRef = React.useRef(queuedMessages);
-  const queueWriteRef = React.useRef<Promise<void>>(Promise.resolve());
-
-  React.useEffect(() => {
-    queuedMessagesRef.current = queuedMessages;
-  }, [queuedMessages]);
-
-  const { publish } = useThreadIntent();
-
-  const handleCancel = useCallback(async () => {
-    try {
-      await publish({
-        type: "stop-thread",
-        threadId: thread.id,
-        threadChatId: threadChat.id,
-      });
-    } catch {
-      // Error already handled by subscriber
-    }
-  }, [thread.id, threadChat.id, publish]);
-
-  const runtimeQueue = React.useMemo(
-    () =>
-      createChatRuntimeQueue({
-        forceScrollToBottom,
-        isAgentCurrentlyWorking,
-        onOptimisticQueuedMessagesUpdate,
-        publish,
-        queueWriteRef,
-        queuedMessagesRef,
-        reconcileActiveChatFromServer,
-        setError,
-        threadId: thread.id,
-        threadChatId: threadChat.id,
-      }),
-    [
-      forceScrollToBottom,
-      isAgentCurrentlyWorking,
-      onOptimisticQueuedMessagesUpdate,
-      publish,
-      reconcileActiveChatFromServer,
-      setError,
-      thread.id,
-      threadChat.id,
-    ],
-  );
 
   return (
     <AgUiAgentProvider agent={agent}>
-      <div className="flex flex-col h-full w-full">
+      <div className="@container/pane flex flex-col h-full w-full">
         <ChatHeader
           thread={threadWithViewModelStatus}
           threadAgent={chatAgent}
@@ -345,21 +127,20 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           githubSummary={threadViewModel.githubSummary}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
-          <TerragonThreadRuntimeFrame
+          <AssistantRuntimeSession
             agent={agent}
             loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-            onCancel={handleCancel}
             chatAgent={chatAgent}
             isAgentWorking={isAgentCurrentlyWorking}
             threadId={thread.id}
             threadChatId={threadChat.id}
+            setReplayCursor={coreData.setReplayCursor}
             callerError={error || threadChat.errorMessageInfo || undefined}
             callerErrorType={threadChat.errorMessage || undefined}
             callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
-            runtimeQueue={runtimeQueue}
           >
             {(runtimeProps) => (
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
                 <div className="relative flex-1 overflow-hidden">
                   <ScrollArea
                     ref={scrollAreaRef}
@@ -376,7 +157,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                       >
                         <TerragonThreadRuntimeContent
                           lifecycleMessages={threadViewModel.lifecycleMessages}
-                          optimisticUserMessages={optimisticUserMessages}
                           threadStatus={effectiveThreadStatus}
                           thread={threadWithViewModelStatus}
                           latestGitDiffTimestamp={
@@ -388,7 +168,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           }
                           artifactDescriptors={artifactDescriptors}
                           onOpenArtifact={handleOpenArtifact}
-                          onCancel={handleCancel}
+                          onOpenRepoFile={onOpenRepoFile}
                           redoDialogData={redoDialogData}
                           forkDialogData={forkDialogData}
                           toolProps={toolProps}
@@ -410,11 +190,11 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                           threadChatStatus={threadChat.status}
                         />
                       </TerragonThreadErrorBoundary>
+                      <div
+                        ref={messagesEndRef}
+                        className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
+                      />
                     </div>
-                    <div
-                      ref={messagesEndRef}
-                      className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
-                    />
                   </ScrollArea>
                   {/* Scroll-to-bottom button floating above scroll area */}
                   <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
@@ -470,7 +250,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                 )}
               </div>
             )}
-          </TerragonThreadRuntimeFrame>
+          </AssistantRuntimeSession>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
               thread={threadWithViewModelStatus}
@@ -485,6 +265,9 @@ export function ChatUILayout(props: ChatUILayoutProps) {
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
+              onOpenRepoTree={onOpenRepoTree}
+              activeRepoFilePath={activeRepoFilePath}
             />
           ) : null}
         </div>
@@ -515,6 +298,7 @@ export type ChatUICoreData = {
   threadChat: ThreadPageChat;
   thread: ThreadInfoFull;
   threadWithViewModelStatus: ThreadInfoFull;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
 };
 
 /**
@@ -525,9 +309,6 @@ export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   queuedMessages: DBUserMessage[] | null;
-  optimisticUserMessages: React.ComponentProps<
-    typeof TerragonThreadRuntimeContent
-  >["optimisticUserMessages"];
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];
   isAgentCurrentlyWorking: boolean;
@@ -536,6 +317,15 @@ export type ChatUIViewModelData = {
   >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
+  /**
+   * Opens an in-repo file path (from a markdown link, tool-output affordance,
+   * git-diff header, or git-diff file tree) as a dedicated repo-file artifact.
+   */
+  onOpenRepoFile?: (href: string) => void;
+  /** Opens the repo file tree as a singleton artifact tab. */
+  onOpenRepoTree?: () => void;
+  /** Path of the most recently opened repo file, highlighted in the tree. */
+  activeRepoFilePath?: string | null;
 };
 
 /**

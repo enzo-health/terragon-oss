@@ -4,6 +4,7 @@ import type {
   AgUiHistoryMessagesResult,
   TerragonCustomPartEvent,
 } from "./ag-ui-history-types";
+import type { AgUiReplayCursor } from "./ag-ui-replay-cursor";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -49,6 +50,29 @@ function isAgUiHistoryItem(value: unknown): value is AgUiHistoryItem {
   return isAgUiHistoryMessage(value) || isTerragonCustomPartEvent(value);
 }
 
+function parseAgUiHistoryCursor(value: unknown): AgUiReplayCursor | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("Invalid AG UI history replay cursor");
+  }
+  const seq = value.seq;
+  const projectionIndex = value.projectionIndex;
+  if (
+    typeof seq !== "number" ||
+    !Number.isSafeInteger(seq) ||
+    seq < -1 ||
+    (projectionIndex !== null &&
+      (typeof projectionIndex !== "number" ||
+        !Number.isSafeInteger(projectionIndex) ||
+        projectionIndex < 0))
+  ) {
+    throw new Error("Invalid AG UI history replay cursor");
+  }
+  return { seq, projectionIndex };
+}
+
 export function parseAgUiHistoryMessagesResponse(
   value: unknown,
 ): AgUiHistoryMessagesResult {
@@ -66,7 +90,10 @@ export function parseAgUiHistoryMessagesResponse(
   ) {
     throw new Error("Invalid AG UI history cursor");
   }
-  return { messages: value.messages, lastSeq };
+  const lastCursor = parseAgUiHistoryCursor(value.lastCursor);
+  return lastCursor === undefined
+    ? { messages: value.messages, lastSeq }
+    : { messages: value.messages, lastSeq, lastCursor };
 }
 
 /**

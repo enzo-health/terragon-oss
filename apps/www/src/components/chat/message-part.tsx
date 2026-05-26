@@ -24,6 +24,8 @@ export interface MessagePartProps {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
+  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
+  onOpenRepoFile?: (href: string) => void;
   /** When multiple text parts contain `<proposed_plan>` with identical content,
    *  this ordinal (0-based) disambiguates which plan descriptor to open. */
   planOccurrenceIndex?: number;
@@ -42,6 +44,7 @@ export const MessagePart = memo(function MessagePart({
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact,
+  onOpenRepoFile,
   planOccurrenceIndex = 0,
   githubRepoFullName,
   branchName,
@@ -131,6 +134,7 @@ export const MessagePart = memo(function MessagePart({
     artifactDescriptors,
     artifactDescriptorLookup: fallbackArtifactDescriptorLookup,
     onOpenArtifact,
+    onOpenRepoFile,
     artifactDescriptor,
     onOpenInArtifactWorkspace: handleOpenArtifact,
     onOpenPlanArtifact: handleOpenPlanArtifact,
@@ -164,6 +168,7 @@ function areMessagePartPropsEqual(
     prevProps.artifactDescriptors !== nextProps.artifactDescriptors ||
     prevProps.artifactDescriptorLookup !== nextProps.artifactDescriptorLookup ||
     prevProps.onOpenArtifact !== nextProps.onOpenArtifact ||
+    prevProps.onOpenRepoFile !== nextProps.onOpenRepoFile ||
     prevProps.planOccurrenceIndex !== nextProps.planOccurrenceIndex
   ) {
     return false;
@@ -178,7 +183,6 @@ function areMessagePartPropsEqual(
   if (
     prevProps.toolProps.threadId !== nextProps.toolProps.threadId ||
     prevProps.toolProps.threadChatId !== nextProps.toolProps.threadChatId ||
-    prevProps.toolProps.messagesRef !== nextProps.toolProps.messagesRef ||
     prevProps.toolProps.isReadOnly !== nextProps.toolProps.isReadOnly ||
     prevProps.toolProps.promptBoxRef !== nextProps.toolProps.promptBoxRef ||
     prevProps.toolProps.childThreads !== nextProps.toolProps.childThreads ||

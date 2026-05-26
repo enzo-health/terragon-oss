@@ -672,6 +672,7 @@ describe("linearInstallation", () => {
         installation: {
           organizationId: orgId,
           organizationName: "Acme Corp",
+          appUserId: "app-user-123",
           accessTokenEncrypted: "enc-access-token",
           refreshTokenEncrypted: "enc-refresh-token",
           tokenExpiresAt: new Date("2099-01-01"),
@@ -682,6 +683,7 @@ describe("linearInstallation", () => {
 
       expect(installation.organizationId).toBe(orgId);
       expect(installation.organizationName).toBe("Acme Corp");
+      expect(installation.appUserId).toBe("app-user-123");
       expect(installation.isActive).toBe(true);
     });
 
@@ -701,12 +703,14 @@ describe("linearInstallation", () => {
         installation: {
           organizationId: orgId,
           organizationName: "New Name",
+          appUserId: "app-user-new",
           accessTokenEncrypted: "new-token",
           scope: "read,write",
         },
       });
 
       expect(updated.organizationName).toBe("New Name");
+      expect(updated.appUserId).toBe("app-user-new");
       expect(updated.accessTokenEncrypted).toBe("new-token");
     });
 

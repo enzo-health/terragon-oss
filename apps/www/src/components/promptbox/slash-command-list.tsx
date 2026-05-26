@@ -150,7 +150,7 @@ export const SlashCommandList = forwardRef<
   }));
 
   return (
-    <div className="z-50 min-w-[250px] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md">
+    <div className="z-50 min-w-[min(250px,90vw)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md">
       <div className="max-h-[300px] overflow-y-auto p-1">
         <SlashCommandListContent
           ref={contentRef}

@@ -24,6 +24,9 @@ overrides:
   '@types/react': ^19.1.8
 
 patchedDependencies:
+  '@assistant-ui/react-ag-ui@0.0.26':
+    hash: f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a
+    path: patches/@assistant-ui__react-ag-ui@0.0.26.patch
   e2b:
     hash: b610d3be3c7d8bc730e67a9fdea4af7a56e880bdb2064d5b0ec78742dfbf5c0c
     path: patches/e2b.patch
@@ -241,7 +244,7 @@ importers:
         version: 0.12.24(@types/react-dom@19.1.6(@types/react@19.1.8))(@types/react@19.1.8)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
       '@assistant-ui/react-ag-ui':
         specifier: 0.0.26
-        version: 0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
+        version: 0.0.26(patch_hash=f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a)(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
       '@aws-sdk/client-s3':
         specifier: ^3.803.0
         version: 3.820.0
@@ -278,6 +281,9 @@ importers:
       '@pierre/diffs':
         specifier: ^1.0.11
         version: 1.0.11(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
+      '@pierre/trees':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
       '@radix-ui/react-avatar':
         specifier: ^1.1.10
         version: 1.1.10(@types/react-dom@19.1.6(@types/react@19.1.8))(@types/react@19.1.8)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -3738,6 +3744,12 @@ packages:
 
   '@pierre/diffs@1.0.11':
     resolution: {integrity: sha512-j6zIEoyImQy1HfcJqbrDwP0O5I7V2VNXAaw53FqQ+SykRfaNwABeZHs9uibXO4supaXPmTx6LEH9Lffr03e1Tw==}
+    peerDependencies:
+      react: 19.1.2
+      react-dom: 19.1.2
+
+  '@pierre/trees@1.0.0-beta.4':
+    resolution: {integrity: sha512-OfT1yk9ne8Te5+GB5zUY8yqE6B8BqjBHQJleH4lu8ltwNpoocZl4vXt1AzlEExpxI/pp+AFX5QG+lR3JjtTEag==}
     peerDependencies:
       react: 19.1.2
       react-dom: 19.1.2
@@ -9648,6 +9660,14 @@ packages:
     resolution: {integrity: sha512-6VISkNdxO24ehXiDA4dugyCSIV7lpGVaEu5kn/dlAj+SJ1lgcDru9PQ8p/+GSXsXVxohd1t7kHL2JKc9NoGb0w==}
     engines: {node: '>=20'}
 
+  preact-render-to-string@6.6.5:
+    resolution: {integrity: sha512-O6MHzYNIKYaiSX3bOw0gGZfEbOmlIDtDfWwN1JJdc/T3ihzRT6tGGSEWE088dWrEDGa1u7101q+6fzQnO9XCPA==}
+    peerDependencies:
+      preact: '>=10 || >= 11.0.0-0'
+
+  preact@11.0.0-beta.0:
+    resolution: {integrity: sha512-IcODoASASYwJ9kxz7+MJeiJhvLriwSb4y4mHIyxdgaRZp6kPUud7xytrk/6GZw8U3y6EFJaRb5wi9SrEK+8+lg==}
+
   prettier@3.5.3:
     resolution: {integrity: sha512-QQtaxnoDJeAkDvDKWCLiwIXkTgRhwYDEQCghU9Z6q03iyek/rxRh/2lC3HB7P8sWT2xC/y5JDctPLBIGzHKbhw==}
     engines: {node: '>=14'}
@@ -11564,7 +11584,7 @@ snapshots:
       react: 19.1.2
       zustand: 5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
 
-  '@assistant-ui/react-ag-ui@0.0.26(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
+  '@assistant-ui/react-ag-ui@0.0.26(patch_hash=f1a671dde9b1bbb9ffd280a97cea3710b31cf4fcf888ad203a2eaf0e01e8450a)(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))':
     dependencies:
       '@ag-ui/client': 0.0.52
       '@assistant-ui/core': 0.1.14(@assistant-ui/store@0.2.6(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(react@19.1.2))(@assistant-ui/tap@0.5.7(@types/react@19.1.8)(react@19.1.2))(@types/react@19.1.8)(assistant-cloud@0.1.25)(react@19.1.2)(zustand@5.0.12(@types/react@19.1.8)(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2)))
@@ -14460,6 +14480,13 @@ snapshots:
       react: 19.1.2
       react-dom: 19.1.2(react@19.1.2)
       shiki: 3.23.0
+
+  '@pierre/trees@1.0.0-beta.4(react-dom@19.1.2(react@19.1.2))(react@19.1.2)':
+    dependencies:
+      preact: 11.0.0-beta.0
+      preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
+      react: 19.1.2
+      react-dom: 19.1.2(react@19.1.2)
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -21242,6 +21269,12 @@ snapshots:
     optional: true
 
   posthog-node@5.1.1: {}
+
+  preact-render-to-string@6.6.5(preact@11.0.0-beta.0):
+    dependencies:
+      preact: 11.0.0-beta.0
+
+  preact@11.0.0-beta.0: {}
 
   prettier@3.5.3: {}
 

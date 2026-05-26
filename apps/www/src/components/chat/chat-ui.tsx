@@ -7,33 +7,36 @@ import {
   ThreadErrorMessage,
   ThreadInfoFull,
   ThreadStatus,
-  UIMessage,
-  UIUserMessage,
 } from "@terragon/shared";
+import {
+  buildRepoFileArtifactId,
+  buildRepoTreeArtifactId,
+} from "@terragon/shared/db/artifact-descriptors";
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentWorking } from "@/agent/thread-status";
-import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
-import { useThreadQueryInvalidationScheduler } from "@/hooks/use-ag-ui-query-invalidator";
-import {
-  type ScopedRunIdState,
-  selectScopedRunId,
-  useCurrentRunId,
-} from "@/hooks/use-current-run-id";
-import { usePlatform } from "@/hooks/use-platform";
-import { useScrollToBottom } from "@/hooks/useScrollToBottom";
-import { threadDiffQueryOptions } from "@/queries/thread-queries";
-import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import {
   getCachedTranscript,
   invalidateCachedTranscript,
   seedTranscript,
 } from "@/collections/thread-transcript-collection";
+import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
 import {
-  ChatUILayout,
+  type ScopedRunIdState,
+  selectScopedRunId,
+  useCurrentRunId,
+} from "@/hooks/use-current-run-id";
+import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { usePlatform } from "@/hooks/use-platform";
+import { useScrollToBottom } from "@/hooks/useScrollToBottom";
+import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
+import { threadDiffQueryOptions } from "@/queries/thread-queries";
+import {
   type ChatUICoreData,
   type ChatUIDialogData,
   type ChatUIErrorState,
+  ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
   type ChatUIScrollState,
@@ -45,76 +48,26 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./leaf-loading";
+import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
   createOptimisticUserSubmittedEvent,
+  createRepoFileOpenedEvent,
+  createRepoTreeOpenedEvent,
 } from "./thread-view-model/optimistic-events";
-import { ThreadProvider, useThreadContext } from "./thread-provider";
+import { useThreadViewModel } from "./use-ag-ui-messages";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
   useInvalidateCreditBalanceOnAgentIdle,
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
+import { useProductSidecars } from "./use-product-sidecars";
 import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
-import {
-  createThreadViewSidecarEventProjector,
-  useAgUiSidecarRouter,
-  useThreadViewModel,
-} from "./use-ag-ui-messages";
-import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
-import { useCreateThreadIntentSubscriber } from "./use-thread-intent-handler";
-
-function submittedUserMessageToOptimisticUiMessage({
-  message,
-  index,
-  threadChatId,
-}: {
-  message: DBUserMessage;
-  index: number;
-  threadChatId: string;
-}): UIUserMessage {
-  return {
-    id: `user-optimistic-local-${threadChatId}-${index}-${message.timestamp ?? "pending"}`,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
-}
-
-function isSameUiUserMessage(
-  left: UIUserMessage,
-  right: UIUserMessage,
-): boolean {
-  return (
-    left.parts.length === right.parts.length &&
-    left.parts.every(
-      (part, index) =>
-        JSON.stringify(part) === JSON.stringify(right.parts[index]),
-    )
-  );
-}
-
-function appendUniqueUiUserMessages(
-  baseMessages: UIUserMessage[],
-  nextMessages: UIUserMessage[],
-): UIUserMessage[] {
-  let didAppend = false;
-  const out = [...baseMessages];
-  for (const message of nextMessages) {
-    if (out.some((existing) => isSameUiUserMessage(existing, message))) {
-      continue;
-    }
-    out.push(message);
-    didAppend = true;
-  }
-  return didAppend ? out : baseMessages;
-}
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
 // active thread. Bootstrap queries + loading gate live in <ThreadProvider/>;
@@ -142,18 +95,10 @@ function ChatUIContent() {
     { observedRef: transcriptRef },
   );
   const platform = usePlatform();
+  const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  const [submittedOptimisticUserState, setSubmittedOptimisticUserState] =
-    useState<{ threadChatId: string; messages: UIUserMessage[] }>(() => ({
-      threadChatId,
-      messages: [],
-    }));
-  const submittedOptimisticUserMessages =
-    submittedOptimisticUserState.threadChatId === threadChatId
-      ? submittedOptimisticUserState.messages
-      : [];
   // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
   const [hasInitialized, setHasInitialized] = useState(false);
   useEffect(() => {
@@ -254,11 +199,12 @@ function ChatUIContent() {
     seedTranscript({ threadId, threadChatId, result: fresh });
     return fresh;
   }, [threadChatId, threadId]);
-  const agent = useAgUiTransport({
+  const agUiTransport = useAgUiTransport({
     threadId,
     threadChatId,
     runId: capturedRunId,
   });
+  const agent = agUiTransport.agent;
   const observedRunId = useCurrentRunId(agent);
   useEffect(() => {
     // Pin the captured runId to the latest RUN_STARTED on the current
@@ -281,31 +227,16 @@ function ChatUIContent() {
     });
   }, [observedRunId, threadChat.id, threadId]);
 
-  const projectThreadViewEvent = useMemo(
-    () =>
-      createThreadViewSidecarEventProjector({
-        includeTranscriptEvents: false,
-      }),
-    [],
-  );
   const threadViewModel = useThreadViewModel({
-    agent: null,
     snapshot: threadViewSnapshot,
     includeTranscriptMessages: false,
   });
-  const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
+  useProductSidecars({
+    agent,
     threadId,
     threadChatId,
-    enabled: Boolean(agent),
-  });
-  useAgUiSidecarRouter({
-    agent,
     dispatchThreadViewEvent: threadViewModel.dispatchThreadViewEvent,
-    projectEvent: projectThreadViewEvent,
-    includeTranscriptMessages: false,
-    onStatusOrTerminalEvent: scheduleThreadQueryInvalidation,
   });
-  const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
   const shouldAutoRenderSecondaryPanel =
@@ -331,11 +262,79 @@ function ChatUIContent() {
     [dispatch],
   );
 
+  const handleOpenArtifact = useCallback(
+    (artifactId: string) => {
+      setActiveArtifactId(artifactId);
+      setIsSecondaryPanelOpen(true);
+    },
+    [setIsSecondaryPanelOpen],
+  );
+
+  // Producer for every file-path affordance (markdown links, Read/Write/Edit/
+  // MultiEdit/FileChange renderers, the git-diff header and file tree). A
+  // clicked in-repo path is classified and dispatched as a `repo-file.opened`
+  // event; the reducer synthesizes the descriptor into `state.artifacts` (the
+  // one path every artifact flows through), then we focus its tab. The reducer
+  // re-seeds from the snapshot on chat switch, so previews never leak across
+  // chats without any manual reset here.
+  // The path of the most recently opened repo file. The file tree highlights
+  // it ("you are here") when the Files tab is shown.
+  const [activeRepoFilePath, setActiveRepoFilePath] = useState<string | null>(
+    null,
+  );
+  const handleOpenRepoFile = useCallback(
+    (href: string) => {
+      const classified = classifyRepoFileLink(href);
+      if (!classified) return;
+      // Mirror the server's ref-resolution rule (get-repo-file-content.ts):
+      // working branch when present, else base branch. Keeps the descriptor id
+      // and label consistent with the ref the content is actually read from.
+      const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
+      setActiveRepoFilePath(classified.path);
+      dispatch(
+        createRepoFileOpenedEvent({
+          path: classified.path,
+          ref,
+          lineRange: classified.lineRange,
+        }),
+      );
+      handleOpenArtifact(
+        buildRepoFileArtifactId({ path: classified.path, ref }),
+      );
+    },
+    [
+      dispatch,
+      handleOpenArtifact,
+      thread.branchName,
+      thread.repoBaseBranchName,
+    ],
+  );
+  // Gate the producer on the feature flag: when off, the callback is undefined
+  // end-to-end so in-repo links keep their default new-tab navigation.
+  const onOpenRepoFile = repoFilePreviewEnabled
+    ? handleOpenRepoFile
+    : undefined;
+
+  // Opens the repo file tree as a singleton artifact tab, resolving the ref the
+  // same way handleOpenRepoFile does so the tree and previews share a ref.
+  const handleOpenRepoTree = useCallback(() => {
+    const ref = thread.branchName ?? thread.repoBaseBranchName ?? undefined;
+    dispatch(createRepoTreeOpenedEvent({ ref }));
+    handleOpenArtifact(buildRepoTreeArtifactId({ ref }));
+  }, [
+    dispatch,
+    handleOpenArtifact,
+    thread.branchName,
+    thread.repoBaseBranchName,
+  ]);
+  const onOpenRepoTree = repoFilePreviewEnabled
+    ? handleOpenRepoTree
+    : undefined;
+
   const toolProps = useMemo(
     () => ({
       threadId,
       threadChatId: threadViewModel.threadChatId,
-      messagesRef: runtimeMessagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads: shell.childThreads ?? [],
@@ -343,6 +342,7 @@ function ChatUIContent() {
       repoBaseBranchName: thread.repoBaseBranchName ?? "main",
       branchName: thread.branchName ?? null,
       onOptimisticPermissionModeUpdate,
+      onOpenRepoFile,
     }),
     [
       isReadOnly,
@@ -353,6 +353,7 @@ function ChatUIContent() {
       thread.repoBaseBranchName,
       threadViewModel.threadChatId,
       threadId,
+      onOpenRepoFile,
     ],
   );
 
@@ -364,14 +365,6 @@ function ChatUIContent() {
     thread,
     setError,
   });
-
-  const handleOpenArtifact = useCallback(
-    (artifactId: string) => {
-      setActiveArtifactId(artifactId);
-      setIsSecondaryPanelOpen(true);
-    },
-    [setIsSecondaryPanelOpen],
-  );
 
   useAutoOpenPanelOnNewPlan({
     artifactDescriptors,
@@ -423,20 +416,6 @@ function ChatUIContent() {
 
   const onOptimisticUserSubmit = useCallback(
     (userMessage: DBUserMessage, optimisticStatus: ThreadStatus) => {
-      setSubmittedOptimisticUserState((current) => {
-        const currentMessages =
-          current.threadChatId === threadChatId ? current.messages : [];
-        return {
-          threadChatId,
-          messages: appendUniqueUiUserMessages(currentMessages, [
-            submittedUserMessageToOptimisticUiMessage({
-              message: userMessage,
-              index: currentMessages.length,
-              threadChatId,
-            }),
-          ]),
-        };
-      });
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
@@ -444,7 +423,7 @@ function ChatUIContent() {
         }),
       );
     },
-    [dispatch, threadChatId],
+    [dispatch],
   );
 
   const onOptimisticQueuedMessagesUpdate = useCallback(
@@ -471,6 +450,7 @@ function ChatUIContent() {
             threadChat,
             thread,
             threadWithViewModelStatus,
+            setReplayCursor: agUiTransport.setReplayCursor,
           }
         : null,
     [
@@ -482,6 +462,7 @@ function ChatUIContent() {
       threadChatId,
       threadId,
       threadWithViewModelStatus,
+      agUiTransport.setReplayCursor,
     ],
   );
 
@@ -490,23 +471,27 @@ function ChatUIContent() {
       threadViewModel,
       loadAgUiHistoryMessages,
       queuedMessages,
-      optimisticUserMessages: submittedOptimisticUserMessages,
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
+      onOpenRepoFile,
+      onOpenRepoTree,
+      activeRepoFilePath,
     }),
     [
       artifactDescriptors,
       effectiveThreadStatus,
       handleOpenArtifact,
+      onOpenRepoFile,
+      onOpenRepoTree,
+      activeRepoFilePath,
       isAgentCurrentlyWorking,
       lastUsedModel,
       loadAgUiHistoryMessages,
       queuedMessages,
-      submittedOptimisticUserMessages,
       threadViewModel,
       toolProps,
     ],
@@ -570,11 +555,6 @@ function ChatUIContent() {
     [error, handleRetry, isRetrying],
   );
 
-  const threadIntentSubscriber = useCreateThreadIntentSubscriber({
-    setError,
-    refetch: reconcileActiveChatFromServer,
-  });
-
   if (!coreData) {
     // `useAgUiTransport` returns null only when `threadChatId` is falsy,
     // which the provider has already gated against. Keep this guard so
@@ -588,17 +568,15 @@ function ChatUIContent() {
   }
 
   return (
-    <ThreadIntentProvider subscriber={threadIntentSubscriber}>
-      <ChatUILayout
-        coreData={coreData}
-        viewModel={viewModel}
-        scrollState={scrollState}
-        panelState={panelState}
-        dialogData={dialogData}
-        optimisticHandlers={optimisticHandlers}
-        errorState={errorState}
-      />
-    </ThreadIntentProvider>
+    <ChatUILayout
+      coreData={coreData}
+      viewModel={viewModel}
+      scrollState={scrollState}
+      panelState={panelState}
+      dialogData={dialogData}
+      optimisticHandlers={optimisticHandlers}
+      errorState={errorState}
+    />
   );
 }
 

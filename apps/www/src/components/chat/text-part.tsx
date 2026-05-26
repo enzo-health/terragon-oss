@@ -23,6 +23,14 @@ interface TextPartProps {
   baseBranchName?: string;
   hasCheckpoint?: boolean;
   onOpenInArtifactWorkspace?: () => void;
+  /**
+   * Opens an in-repo file link in the artifacts panel. Forwarded to the
+   * markdown renderer's `onOpenFile`; when absent, links keep their default
+   * new-tab behavior. Citations rewritten by `convertCitationsToGitHubLinks`
+   * are absolute github.com URLs, so the classifier rejects them and they stay
+   * new-tab — coordinating citations with the in-panel preview is a follow-up.
+   */
+  onOpenRepoFile?: (href: string) => void;
 }
 
 function convertCitationsToGitHubLinks(
@@ -161,6 +169,7 @@ const TextPart = memo(function TextPart({
   baseBranchName,
   hasCheckpoint,
   onOpenInArtifactWorkspace,
+  onOpenRepoFile,
 }: TextPartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
@@ -369,7 +378,7 @@ const TextPart = memo(function TextPart({
       {showStreamdown && !hasMarkdownSyntax ? (
         <div
           className={cn(
-            "whitespace-pre-wrap break-words text-sm leading-relaxed",
+            "whitespace-pre-wrap break-words text-[length:var(--text-fluid-base)] leading-relaxed",
             streaming && "streaming-cursor",
           )}
         >
@@ -389,6 +398,7 @@ const TextPart = memo(function TextPart({
             controls={MARKDOWN_CONTROLS}
             streaming={streaming}
             renderImage={renderImage}
+            onOpenFile={onOpenRepoFile}
             streamingSegmentation={streamingSegmentation}
           />
           {overlays}

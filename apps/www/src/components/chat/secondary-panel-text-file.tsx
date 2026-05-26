@@ -121,7 +121,7 @@ export function TextFileArtifactRenderer({
         </Button>
       </div>
       {state.status === "ready" && state.isTruncated && (
-        <div className="flex items-center gap-2 border-b px-4 py-2 bg-amber-50 dark:bg-amber-950/20 text-xs text-amber-700 dark:text-amber-400">
+        <div className="flex items-center gap-2 border-b border-warning/30 px-4 py-2 bg-warning/10 text-xs text-warning">
           <AlertTriangle className="size-3.5 shrink-0" />
           <span>File preview truncated at 512 KB</span>
         </div>

@@ -30,6 +30,11 @@ export const featureFlagsDefinitions = {
     description:
       "Automatically updates the daemon in sandboxes when new versions are available.",
   },
+  backgroundSetupScript: {
+    defaultValue: false,
+    description:
+      "Run the repo setup script detached in the sandbox and dispatch the agent immediately, instead of blocking boot on setup. Dependency-needing commands (pnpm/npm/yarn/node) wait on a setup-complete sentinel via PATH wrappers. Hides setup latency for tasks whose early work doesn't need installed deps.",
+  },
   geminiAgent: {
     defaultValue: false,
     enabledForPreview: true,
@@ -128,6 +133,12 @@ export const featureFlagsDefinitions = {
     defaultValue: false,
     description:
       "Enable shutdown mode - shows shutdown banner and blocks new subscriptions. Used for Terragon shutdown on February 14th, 2026.",
+  },
+  repoFilePreview: {
+    defaultValue: false,
+    enabledForPreview: false,
+    description:
+      "Enables in-repo file preview: clicking links/file references that point to files inside the sandboxed repo opens a preview in the artifacts panel instead of navigating away (source files via the Pierre diff/code renderer, .md/.mdx via the streamdown markdown renderer). When disabled, links keep the existing new-tab behavior. NOTE: scoping this to the Bonaparte healthcare monorepo is an operational admin toggle (global default off, enabled per-user or globally via the admin overrides) — the flag system has NO per-repo mechanism, and this feature ships NO repo allowlist enforcement in code. Repo gating is operational, not code-enforced.",
   },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 

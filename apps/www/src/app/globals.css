@@ -87,8 +87,8 @@
      --font-outfit / --font-merriweather / --font-jetbrains-mono CSS
      variables are produced by next/font/google in layout.tsx. */
   --font-sans:
-    var(--font-outfit, "Outfit"), var(--font-geist, ui-sans-serif), "Inter",
-    system-ui, sans-serif;
+    var(--font-geist, ui-sans-serif), var(--font-outfit, "Outfit"), system-ui,
+    sans-serif;
   --font-serif: var(--font-merriweather, "Merriweather"), ui-serif, serif;
   --font-mono:
     var(--font-jetbrains-mono, "JetBrains Mono"),
@@ -98,7 +98,7 @@
     var(--font-merriweather, "Merriweather"), "Tiempos Headline", "EB Garamond",
     Garamond, "Times New Roman", serif;
 
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --tracking-normal: 0rem;
   --spacing: 0.25rem;
 
@@ -109,16 +109,16 @@
   --shadow-spread: 0px;
   --shadow-opacity: 0.05;
   --shadow-color: #000000;
-  --shadow-2xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
-  --shadow-xs: 0px 1px 4px 0px hsl(0 0% 0% / 0.03);
+  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.025);
+  --shadow-xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.025);
   --shadow-sm:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 1px 1px -1px hsl(0 0% 0% / 0.04);
   --shadow-base:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 1px 2px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 1px 1px -1px hsl(0 0% 0% / 0.04);
   --shadow-md:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 2px 4px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 2px 4px -2px hsl(0 0% 0% / 0.04);
   --shadow-lg:
-    0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 4px 6px -1px hsl(0 0% 0% / 0.05);
+    0px 1px 2px 0px hsl(0 0% 0% / 0.04), 0px 4px 8px -4px hsl(0 0% 0% / 0.05);
   --shadow-xl:
     0px 1px 4px 0px hsl(0 0% 0% / 0.05), 0px 8px 10px -1px hsl(0 0% 0% / 0.05);
   --shadow-2xl: 0px 1px 4px 0px hsl(0 0% 0% / 0.13);
@@ -127,10 +127,10 @@
   --shadow-inset-edge: rgba(0, 0, 0, 0.075) 0px 0px 0px 0.5px inset;
   --shadow-outline-ring: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px;
   --shadow-card:
-    rgba(0, 0, 0, 0.025) 0px 1px 2px, rgba(0, 0, 0, 0.03) 0px 2px 6px,
+    rgba(0, 0, 0, 0.02) 0px 1px 2px, rgba(0, 0, 0, 0.025) 0px 2px 4px,
     rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
   --shadow-warm-lift:
-    rgba(78, 50, 23, 0.03) 0px 4px 12px,
+    rgba(78, 50, 23, 0.025) 0px 2px 6px,
     rgba(0, 0, 0, 0.05) 0px 0px 0px 0.5px inset;
 
   /* Diff colors — domain convention (red/green) regardless of theme */
@@ -170,40 +170,55 @@
 }
 
 .dark {
-  /* Shadcn registry tokens (verbatim, dark) */
-  --background: oklch(0.1797 0.0043 308.1928);
-  --foreground: oklch(0.8109 0 0);
-  --card: oklch(0.1822 0 0);
-  --card-foreground: oklch(0.8109 0 0);
-  --popover: oklch(0.1797 0.0043 308.1928);
-  --popover-foreground: oklch(0.8109 0 0);
+  /* ===========================================================
+     Codex-app dark theme. Measured from the Codex desktop UI:
+     a warm charcoal canvas (not near-black) with a clear surface
+     elevation ladder — canvas < sidebar < elevated cards. All
+     neutrals share a faint warm cast (~106° hue, tiny chroma).
+       canvas  #2d2d2b  L 0.296
+       sidebar #343432  L 0.324
+       surface #3f3f3d  L 0.367  (cards, popovers, input, muted)
+       border  ~        L 0.40
+       text    #c4c4c3  L 0.82   (soft, not pure white)
+     =========================================================== */
+  --background: oklch(0.2964 0.0036 106.6);
+  --foreground: oklch(0.82 0.0014 106.4);
+  --card: oklch(0.367 0.0034 106.6);
+  --card-foreground: oklch(0.82 0.0014 106.4);
+  --popover: oklch(0.367 0.0034 106.6);
+  --popover-foreground: oklch(0.82 0.0014 106.4);
   --primary: oklch(0.7214 0.1337 49.9802);
-  --primary-foreground: oklch(0.1797 0.0043 308.1928);
+  --primary-foreground: oklch(0.2 0.004 106.6);
   --secondary: oklch(0.594 0.0443 196.0233);
-  --secondary-foreground: oklch(0.1797 0.0043 308.1928);
-  --muted: oklch(0.252 0 0);
-  --muted-foreground: oklch(0.6268 0 0);
-  --accent: oklch(0.3211 0 0);
-  --accent-foreground: oklch(0.8109 0 0);
+  --secondary-foreground: oklch(0.2 0.004 106.6);
+  /* muted sits one step BELOW card so bg-muted fills and inline code
+     stay visible on a card surface (card is 0.367). */
+  --muted: oklch(0.34 0.0034 106.6);
+  /* Codex runs secondary text deliberately dim. This is below WCAG AA
+     (~3-4:1) on canvas/card; kept intentionally for Codex fidelity. */
+  --muted-foreground: oklch(0.6328 0.0029 106.5);
+  --accent: oklch(0.44 0.0033 106.5);
+  --accent-foreground: oklch(0.82 0.0014 106.4);
   --destructive: oklch(0.594 0.0443 196.0233);
-  --destructive-foreground: oklch(0.1797 0.0043 308.1928);
-  --border: oklch(0.252 0 0);
-  --input: oklch(0.252 0 0);
+  --destructive-foreground: oklch(0.2 0.004 106.6);
+  --border: oklch(0.4 0.0033 106.5);
+  --input: oklch(0.44 0.0033 106.5);
   --ring: oklch(0.7214 0.1337 49.9802);
   --chart-1: oklch(0.594 0.0443 196.0233);
   --chart-2: oklch(0.7214 0.1337 49.9802);
   --chart-3: oklch(0.8721 0.0864 68.5474);
   --chart-4: oklch(0.6268 0 0);
   --chart-5: oklch(0.683 0 0);
+  /* Sidebar blends into the canvas (same surface); the right-edge
+     hairline is the only separator. Active nav highlight still lifts
+     to the elevated surface tone. */
   --sidebar: var(--background);
-  --sidebar-foreground: oklch(0.8109 0 0);
+  --sidebar-foreground: oklch(0.82 0.0014 106.4);
   --sidebar-primary: oklch(0.7214 0.1337 49.9802);
-  --sidebar-primary-foreground: oklch(0.1797 0.0043 308.1928);
-  /* Accent stays distinct from the unified sidebar/background so the
-     active nav item still reads as highlighted. */
-  --sidebar-accent: oklch(0.3211 0 0);
-  --sidebar-accent-foreground: oklch(0.8109 0 0);
-  --sidebar-border: oklch(0.252 0 0);
+  --sidebar-primary-foreground: oklch(0.2 0.004 106.6);
+  --sidebar-accent: oklch(0.44 0.0033 106.5);
+  --sidebar-accent-foreground: oklch(0.82 0.0014 106.4);
+  --sidebar-border: oklch(0.4 0.0033 106.5);
   --sidebar-ring: oklch(0.7214 0.1337 49.9802);
   --app-background: var(--background);
 
@@ -215,7 +230,9 @@
   --neutral: var(--accent);
   --mid: var(--muted-foreground);
   --strong: var(--foreground);
-  --base: oklch(0.1797 0.0043 308.1928);
+  /* Code/terminal floor sits just below the canvas so code blocks read
+     as a sunken surface against the lighter charcoal. */
+  --base: oklch(0.24 0.004 106.6);
   --coral: var(--primary);
   --coral-active: oklch(0.6 0.12 49.9);
 
@@ -229,10 +246,39 @@
 
   /* Brand-anchored dark surfaces */
   --surface-dark: var(--base);
-  --surface-dark-soft: oklch(0.2 0.005 308);
-  --surface-dark-elevated: oklch(0.24 0.005 308);
+  --surface-dark-soft: oklch(0.27 0.004 106.6);
+  --surface-dark-elevated: oklch(0.31 0.004 106.6);
   --on-dark: oklch(0.97 0 0);
   --on-dark-soft: oklch(0.66 0.01 80);
+
+  /* Dark shadow scale. The light scale uses near-zero-opacity black,
+     which is invisible on a charcoal canvas — overlays (dropdowns,
+     dialogs, toasts, elevated cards) would lose all sense of depth.
+     These raise opacity and blur so elevated surfaces read as floating,
+     matching the Codex look. */
+  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.18);
+  --shadow-xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.2);
+  --shadow-sm:
+    0px 1px 2px 0px hsl(0 0% 0% / 0.24), 0px 1px 1px -1px hsl(0 0% 0% / 0.24);
+  --shadow-base:
+    0px 1px 2px 0px hsl(0 0% 0% / 0.24), 0px 1px 1px -1px hsl(0 0% 0% / 0.24);
+  --shadow-md:
+    0px 2px 4px -1px hsl(0 0% 0% / 0.28), 0px 4px 8px -2px hsl(0 0% 0% / 0.3);
+  --shadow-lg:
+    0px 4px 8px -2px hsl(0 0% 0% / 0.32), 0px 8px 16px -4px hsl(0 0% 0% / 0.36);
+  --shadow-xl:
+    0px 8px 16px -4px hsl(0 0% 0% / 0.36), 0px 16px 24px -8px hsl(0 0% 0% / 0.4);
+  --shadow-2xl: 0px 16px 32px -8px hsl(0 0% 0% / 0.48);
+
+  /* Compound shadows: the inset edge becomes a faint top catch-light
+     (white, not black) so cards read as lifted on the dark canvas. */
+  --shadow-inset-edge: rgba(255, 255, 255, 0.04) 0px 0px 0px 0.5px inset;
+  --shadow-card:
+    rgba(0, 0, 0, 0.28) 0px 1px 2px, rgba(0, 0, 0, 0.22) 0px 2px 6px,
+    rgba(255, 255, 255, 0.04) 0px 0px 0px 0.5px inset;
+  --shadow-warm-lift:
+    rgba(0, 0, 0, 0.28) 0px 2px 6px,
+    rgba(255, 255, 255, 0.04) 0px 0px 0px 0.5px inset;
 
   --invert: #ffffff;
   --invert-foreground: #000000;
@@ -243,6 +289,14 @@
 }
 
 @theme inline {
+  --breakpoint-xs: 30rem;
+  /* Fluid scale: rem + vw so it still responds to browser zoom; max <= 2.5x
+     min keeps it within WCAG 1.4.4. Body stays in the 15-16px readable band;
+     titles and gutters scale a little more. */
+  --text-fluid-sm: clamp(0.8125rem, 0.79rem + 0.11vw, 0.875rem);
+  --text-fluid-base: clamp(0.9375rem, 0.91rem + 0.18vw, 1rem);
+  --text-fluid-title: clamp(1rem, 0.95rem + 0.28vw, 1.0625rem);
+  --space-fluid-edge: clamp(1rem, 0.85rem + 0.7vw, 1.5rem);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -390,6 +444,7 @@
       "rlig" 1,
       "calt" 1;
     text-rendering: optimizeLegibility;
+    text-wrap: pretty;
     /* Handle safe areas for PWA */
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
@@ -459,9 +514,14 @@
     color-scheme: dark;
   }
 
-  /* Safe area utility class for PWA bottom padding */
+  /* Clear the home indicator / browser bottom chrome on mobile, not only in
+     PWA standalone mode, and lift above the on-screen keyboard on platforms
+     where it overlays rather than resizes the viewport (older iOS Safari).
+     Both env() and --keyboard-inset resolve to 0 when not applicable. */
   .chat-prompt-box {
-    padding-bottom: 0.5rem;
+    padding-bottom: calc(
+      0.5rem + env(safe-area-inset-bottom) + var(--keyboard-inset, 0px)
+    );
   }
 
   @media (display-mode: standalone) {

@@ -14,7 +14,6 @@ import {
 import { Attachment } from "@/lib/attachment-types";
 import StarterKit from "@tiptap/starter-kit";
 import { useThreadRuntime } from "@assistant-ui/react";
-import type { ThreadUserMessagePart } from "@assistant-ui/react";
 import {
   FolderAwareMention,
   folderAwareMentionPluginKey,
@@ -31,47 +30,7 @@ import { TSubmitForm } from "./send-button";
 import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
 import { toast } from "sonner";
 import { getDynamicSlashCommands } from "./add-context-button";
-
-// ---------------------------------------------------------------------------
-// AG-UI content conversion
-// ---------------------------------------------------------------------------
-
-/**
- * Convert DBUserMessage parts to the content array expected by
- * ThreadRuntime.append(). Only text and image parts have assistant-ui
- * equivalents; other part types (pdf, text-file) are dropped.
- *
- * Note: The adapter (run-from-ag-ui.ts) reconstructs model and permissionMode
- * from body.forwardedProps.terragon. The runtime core maps runConfig.custom to
- * forwardedProps.runConfig (not forwardedProps.terragon), so those fields are
- * not currently forwarded. They will be null/undefined in the POST body when
- * this path is active. This is a known deviation for the initial flag-off
- * rollout — tracked in the Wave 3 ADR.
- */
-function dbPartsToAssistantUiContent(
-  parts: DBUserMessage["parts"],
-): ThreadUserMessagePart[] {
-  const result: ThreadUserMessagePart[] = [];
-  for (const part of parts) {
-    if (part.type === "rich-text") {
-      // Flatten rich-text nodes to a single text string.
-      const text = part.nodes
-        .map((node) => {
-          if (typeof node === "string") return node;
-          if ("text" in node && typeof node.text === "string") return node.text;
-          return "";
-        })
-        .join("");
-      if (text.length > 0) {
-        result.push({ type: "text", text });
-      }
-    } else if (part.type === "image") {
-      result.push({ type: "image", image: part.image_url });
-    }
-    // pdf, text-file: no assistant-ui equivalent — dropped
-  }
-  return result;
-}
+import { routeComposerSubmit } from "./composer-submit-routing";
 
 export type HandleSubmitArgs = {
   userMessage: DBUserMessage;
@@ -103,6 +62,7 @@ interface UsePromptBoxProps {
   handleStop: HandleStop;
   onUpdate?: HandleUpdate;
   handleSubmit: HandleSubmit;
+  handleQueueMessage?: HandleSubmit;
   typeahead: Typeahead;
   clearContentOnSubmit?: boolean;
   clearContentBeforeSubmit?: boolean;
@@ -131,6 +91,7 @@ export function usePromptBox({
   onUpdate,
   handleStop,
   handleSubmit,
+  handleQueueMessage,
   typeahead,
   clearContentOnSubmit = true,
   clearContentBeforeSubmit = false,
@@ -266,6 +227,19 @@ export function usePromptBox({
                   interactive: true,
                   trigger: "manual",
                   placement: "bottom-start",
+                  // Keep the popover inside the viewport on narrow screens.
+                  maxWidth: "calc(100vw - 16px)",
+                  popperOptions: {
+                    modifiers: [
+                      { name: "preventOverflow", options: { padding: 8 } },
+                      {
+                        name: "flip",
+                        options: {
+                          fallbackPlacements: ["top-start", "bottom-start"],
+                        },
+                      },
+                    ],
+                  },
                 });
               },
 
@@ -349,6 +323,19 @@ export function usePromptBox({
                   interactive: true,
                   trigger: "manual",
                   placement: "bottom-start",
+                  // Keep the popover inside the viewport on narrow screens.
+                  maxWidth: "calc(100vw - 16px)",
+                  popperOptions: {
+                    modifiers: [
+                      { name: "preventOverflow", options: { padding: 8 } },
+                      {
+                        name: "flip",
+                        options: {
+                          fallbackPlacements: ["top-start", "bottom-start"],
+                        },
+                      },
+                    ],
+                  },
                 });
               },
 
@@ -399,6 +386,12 @@ export function usePromptBox({
       attributes: {
         class:
           "prose prose-sm max-w-none focus:outline-none min-h-[40px] px-4 py-4 cursor-text",
+        // On touch Enter inserts a newline (handled below), so hint "enter"
+        // rather than "send". Disable auto-capitalize/correct for code & paths.
+        enterKeyHint: "enter",
+        autocapitalize: "off",
+        autocorrect: "off",
+        spellcheck: "true",
       },
       handleKeyDown: (view, event) => {
         // On touch devices, we don't want to submit the form on Enter
@@ -734,39 +727,19 @@ export function usePromptBox({
           attachedFiles,
         });
 
-        // Thread composer (existing thread): runtime appends → AG-UI POST →
-        // run-from-ag-ui adapter → followUp() server action.
-        // Dashboard/generic composer (no runtime in context): falls through
-        // to props.handleSubmit, which calls createThread or whatever task-
-        // creation mutation the caller wires in. Thread creation and
-        // appending to an existing thread are different operations — they
-        // intentionally take different paths.
-        if (threadRuntime != null) {
-          const content = dbPartsToAssistantUiContent(userMessage.parts);
-          if (content.length > 0) {
-            await threadRuntime.append({
-              role: "user",
-              content,
-              runConfig: {
-                custom: {
-                  terragon: {
-                    selectedModel: userMessage.model,
-                    permissionMode: userMessage.permissionMode,
-                  },
-                },
-              },
-            });
-          }
-        } else {
-          await handleSubmit({
-            userMessage,
-            selectedModels,
-            repoFullName: repoFullName ?? "",
-            branchName: branchName ?? "",
-            saveAsDraft,
-            scheduleAt,
-          });
-        }
+        await routeComposerSubmit({
+          userMessage,
+          selectedModels,
+          repoFullName: repoFullName ?? "",
+          branchName: branchName ?? "",
+          saveAsDraft,
+          scheduleAt,
+          threadRuntime,
+          isAgentWorking,
+          isQueueingEnabled,
+          submitFallback: handleSubmit,
+          queueMessage: handleQueueMessage,
+        });
 
         if (clearContentOnSubmit) {
           clearContent();
@@ -795,6 +768,9 @@ export function usePromptBox({
       getOnSubmitError,
       clearContent,
       isMultiAgentMode,
+      isAgentWorking,
+      isQueueingEnabled,
+      handleQueueMessage,
       threadRuntime,
     ],
   );

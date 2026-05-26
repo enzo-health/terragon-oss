@@ -133,6 +133,10 @@ async function getThreadsInner({
   }
   const threadChatSubQuery = db
     .select({
+      latestThreadChatUpdatedAt:
+        sql<Date>`max(${schema.threadChat.updatedAt})`.as(
+          "latestThreadChatUpdatedAt",
+        ),
       threadChats: sql<
         Pick<ThreadChat, "id" | "agent" | "status" | "errorMessage">[]
       >`jsonb_agg(jsonb_build_object(
@@ -151,6 +155,10 @@ async function getThreadsInner({
       ),
     )
     .as("threadChatsAggregated");
+  const effectiveThreadUpdatedAt = sql<Date>`GREATEST(
+    ${schema.thread.updatedAt},
+    COALESCE(${threadChatSubQuery.latestThreadChatUpdatedAt}, ${schema.thread.updatedAt})
+  )`.mapWith(schema.thread.updatedAt);
   const query = db
     .select({
       id: schema.thread.id,
@@ -165,7 +173,7 @@ async function getThreadsInner({
       sandboxStatus: schema.thread.sandboxStatus,
       bootingSubstatus: schema.thread.bootingSubstatus,
       createdAt: schema.thread.createdAt,
-      updatedAt: schema.thread.updatedAt,
+      updatedAt: effectiveThreadUpdatedAt,
       repoBaseBranchName: schema.thread.repoBaseBranchName,
       branchName: schema.thread.branchName,
       archived: schema.thread.archived,
@@ -203,7 +211,7 @@ async function getThreadsInner({
     .from(schema.thread)
     .limit(limit)
     .offset(offset)
-    .orderBy(desc(schema.thread.updatedAt))
+    .orderBy(desc(effectiveThreadUpdatedAt), desc(schema.thread.id))
     .leftJoin(
       schema.threadVisibility,
       eq(schema.threadVisibility.threadId, schema.thread.id),

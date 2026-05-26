@@ -41,6 +41,7 @@ import { getPostHogServer } from "@/lib/posthog-server";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
+import { maybeTriggerSnapshotBuildForBoot } from "@/server-lib/environment-snapshot-build";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
@@ -671,6 +672,32 @@ async function getOrCreateSandboxForThread({
           })
         : null);
 
+    // Warm the per-repo snapshot in the background so the *next* Daytona boot on
+    // this repo skips the setup script. Only meaningful when we'd actually
+    // consult a snapshot (fresh sandbox, daytona, setup not skipped). Reaps dead
+    // `building` entries and debounces in-flight builds. Never blocks the boot.
+    if (
+      thread.sandboxProvider === "daytona" &&
+      !thread.codesandboxId &&
+      !thread.skipSetup &&
+      resolvedRepositoryEnvironment.repoFullName &&
+      githubAccessToken
+    ) {
+      void maybeTriggerSnapshotBuildForBoot({
+        db,
+        userId,
+        environmentId: resolvedRepositoryEnvironment.id,
+        snapshots: resolvedRepositoryEnvironment.snapshots,
+        repoFullName: resolvedRepositoryEnvironment.repoFullName,
+        baseBranch: thread.repoBaseBranchName,
+        githubAccessToken,
+        setupScript: resolvedSetupScript,
+        size: thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE,
+        environmentVariables: repositoryEnvironmentVariables,
+        mcpConfig: resolvedMcpConfig,
+      });
+    }
+
     if (!cachedResumeContext) {
       await setCachedSandboxResumeContext({
         userId,
@@ -767,6 +794,7 @@ async function getOrCreateSandboxForThread({
       // Local docker sandboxes can OOM on monorepo `pnpm install` during first
       // boot; skip setup script by default in local dev unless explicitly needed.
       skipSetupScript: thread.skipSetup || shouldAutoSkipSetupInLocalDocker,
+      backgroundSetupScript: !!userFeatureFlags.backgroundSetupScript,
       snapshotTemplateId: snapshot?.snapshotName ?? undefined,
       publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,

@@ -13,8 +13,10 @@ import { formatToolParameters } from "./utils";
 
 export function MultiEditTool({
   toolPart,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "MultiEdit" }>;
+  onToolArgClick?: () => void;
 }) {
   return (
     <GenericToolPart
@@ -29,6 +31,7 @@ export function MultiEditTool({
         },
       )}
       toolStatus={toolPart.status}
+      onToolArgClick={onToolArgClick}
     >
       <ToolPartMultiEditResult toolPart={toolPart} />
     </GenericToolPart>

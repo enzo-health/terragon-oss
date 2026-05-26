@@ -33,6 +33,9 @@ export function MobileArtifactDrawer({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -46,6 +49,9 @@ export function MobileArtifactDrawer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
 }) {
   const [activeSnap, setActiveSnap] = useState<number | string | null>(
     MOBILE_DRAWER_DEFAULT_SNAP,
@@ -119,6 +125,9 @@ export function MobileArtifactDrawer({
             isReadOnly={isReadOnly}
             promptBoxRef={promptBoxRef}
             onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+            onOpenRepoFile={onOpenRepoFile}
+            onOpenRepoTree={onOpenRepoTree}
+            activeRepoFilePath={activeRepoFilePath}
           />
         </div>
         {showScrollFade && (

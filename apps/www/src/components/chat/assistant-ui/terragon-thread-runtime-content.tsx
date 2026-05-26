@@ -1,12 +1,15 @@
 "use client";
 
-import { useAuiState } from "@assistant-ui/react";
+import {
+  useAuiState,
+  type ThreadAssistantMessagePart,
+  type ThreadMessage,
+} from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
   ThreadInfoFull,
   ThreadStatus,
-  UIUserMessage,
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -22,8 +25,6 @@ import type {
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
-import { createRuntimeTranscriptProjector } from "./runtime-transcript-adapter";
-import { createTerragonTranscriptModelBuilder } from "./terragon-transcript-model";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
   type TerragonMessageRenderContext,
@@ -44,7 +45,7 @@ export type TerragonThreadRuntimeContentProps = {
   isAgentWorking: boolean;
   artifactDescriptors: ArtifactDescriptor[];
   onOpenArtifact: (artifactId: string) => void;
-  onCancel?: () => Promise<void>;
+  onOpenRepoFile?: (href: string) => void;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   toolProps: TerragonThreadContext["toolProps"];
@@ -63,9 +64,35 @@ export type TerragonThreadRuntimeContentProps = {
   threadChatId?: string;
   scheduleAt?: Date | null;
   threadChatStatus?: ThreadStatus;
-  optimisticUserMessages?: UIUserMessage[];
   children?: React.ReactNode;
 };
+
+function threadMessageHasRenderableParts(message: ThreadMessage): boolean {
+  return message.content.some((part) => {
+    switch (part.type) {
+      case "text":
+      case "reasoning":
+        return part.text.trim().length > 0;
+      case "tool-call":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+function isPendingToolCall(part: ThreadAssistantMessagePart): boolean {
+  return (
+    part.type === "tool-call" && (!("result" in part) || part.result === null)
+  );
+}
+
+function threadMessageHasPendingToolCall(message: ThreadMessage): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+  return message.content.some(isPendingToolCall);
+}
 
 export function TerragonThreadRuntimeContent({
   lifecycleMessages,
@@ -75,6 +102,7 @@ export function TerragonThreadRuntimeContent({
   isAgentWorking,
   artifactDescriptors,
   onOpenArtifact,
+  onOpenRepoFile,
   redoDialogData,
   forkDialogData,
   toolProps,
@@ -93,51 +121,23 @@ export function TerragonThreadRuntimeContent({
   threadChatId,
   scheduleAt,
   threadChatStatus,
-  optimisticUserMessages = [],
   children,
 }: TerragonThreadRuntimeContentProps) {
   const runtimeMessages = useAuiState((state) => state.thread.messages);
   const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
-  const runtimeTranscriptProjector = useMemo(
-    () => createRuntimeTranscriptProjector(),
-    [],
+  const isRuntimeHydrating = runtimeIsLoading && runtimeMessages.length === 0;
+  const hasRenderableAgentParts = runtimeMessages.some(
+    (message) =>
+      message.role === "assistant" && threadMessageHasRenderableParts(message),
   );
-  const projectedTranscript = useMemo(
-    () =>
-      runtimeTranscriptProjector({
-        runtimeMessages,
-        agent: chatAgent,
-      }),
-    [chatAgent, runtimeMessages, runtimeTranscriptProjector],
+  const hasPendingToolCall = runtimeMessages.some(
+    threadMessageHasPendingToolCall,
   );
-  const transcriptModelBuilder = useMemo(
-    () => createTerragonTranscriptModelBuilder(),
-    [],
-  );
-  const transcriptModel = useMemo(
-    () =>
-      transcriptModelBuilder({
-        runtimeMessages: projectedTranscript.messages,
-        optimisticUserMessages,
-      }),
-    [
-      optimisticUserMessages,
-      projectedTranscript.messages,
-      transcriptModelBuilder,
-    ],
-  );
-  const messages = transcriptModel.messages;
-  toolProps.messagesRef.current = messages;
-  const isRuntimeHydrating =
-    runtimeIsLoading && runtimeMessages.length === 0 && messages.length === 0;
   useScrollToHashMessageOnce({
-    messages: isRuntimeHydrating ? [] : messages,
+    messages: [],
     resetKey: thread.id,
   });
-  const planOccurrences = useStableRef(
-    transcriptModel.planOccurrencesRaw,
-    isEqualPlanMap,
-  );
+  const planOccurrences = useStableRef(new Map(), isEqualPlanMap);
   const stableArtifactDescriptors = useStableRef(
     artifactDescriptors,
     isEqualArtifactList,
@@ -158,13 +158,12 @@ export function TerragonThreadRuntimeContent({
   const suppressPreStartLifecycleFooter = shouldSuppressPreStartLifecycleFooter(
     {
       threadStatus,
-      hasAgentMessages: transcriptModel.hasRenderableAgentParts,
+      hasAgentMessages: hasRenderableAgentParts,
     },
   );
   const baseShowWorking =
     isAgentWorking &&
-    (!transcriptModel.hasPendingToolCall ||
-      !transcriptModel.hasRenderableAgentParts) &&
+    (!hasPendingToolCall || !hasRenderableAgentParts) &&
     !hasSandboxError &&
     !suppressPreStartLifecycleFooter;
   const shouldCheckWorkingFooterFreshness =
@@ -211,6 +210,7 @@ export function TerragonThreadRuntimeContent({
       artifactDescriptors: stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -228,6 +228,7 @@ export function TerragonThreadRuntimeContent({
       stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -243,6 +244,7 @@ export function TerragonThreadRuntimeContent({
       artifactDescriptors: stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -253,6 +255,7 @@ export function TerragonThreadRuntimeContent({
       stableArtifactDescriptors,
       artifactDescriptorLookup,
       onOpenArtifact,
+      onOpenRepoFile,
       planOccurrences,
       redoDialogData,
       forkDialogData,
@@ -266,8 +269,6 @@ export function TerragonThreadRuntimeContent({
         <TerragonTranscriptSurface
           lifecycleMessages={lifecycleMessages}
           isRuntimeHydrating={isRuntimeHydrating}
-          messages={messages}
-          latestAgentMessageIndex={transcriptModel.latestAgentMessageIndex}
           chatAgent={chatAgent}
           error={error}
           errorType={errorType}

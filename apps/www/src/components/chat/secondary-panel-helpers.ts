@@ -1,6 +1,8 @@
 import {
   type UIGitDiffPart,
   type UIPart,
+  type UIRepoFilePart,
+  type UIRepoTreePart,
   type UIStructuredPlanPart,
 } from "@terragon/shared";
 import {
@@ -31,7 +33,9 @@ export interface ArtifactWorkspaceItem extends ArtifactWorkspaceItemSummary {
 export type ArtifactWorkspaceComparablePart =
   | UIPart
   | UIGitDiffPart
-  | UIStructuredPlanPart;
+  | UIStructuredPlanPart
+  | UIRepoFilePart
+  | UIRepoTreePart;
 
 type ArtifactDescriptorMatch = Pick<ArtifactDescriptor, "id" | "part">;
 
@@ -150,6 +154,8 @@ function getPartContentKey(
       return `plan-structured:${safeStableStringify(part.entries)}`;
     case "git-diff":
       return `git-diff:${part.diff}`;
+    case "repo-file":
+      return `repo-file:${part.ref ?? "working"}:${part.path}`;
     default:
       return null;
   }
@@ -239,6 +245,10 @@ function getArtifactSourceLabel(origin: ArtifactDescriptorOrigin) {
       return "Agent plan";
     case "artifact-reference":
       return "Runtime artifact";
+    case "repo-file":
+      return "Repo file";
+    case "repo-tree":
+      return "Repo files";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;
@@ -260,6 +270,12 @@ function getArtifactResponseActionLabel(origin: ArtifactDescriptorOrigin) {
       return "Plan";
     case "artifact-reference":
       return origin.artifactType;
+    case "repo-file":
+      return origin.lineRange
+        ? `Lines ${origin.lineRange.start}-${origin.lineRange.end}`
+        : "File";
+    case "repo-tree":
+      return "Files";
     default: {
       const exhaustiveCheck: never = origin;
       return exhaustiveCheck;

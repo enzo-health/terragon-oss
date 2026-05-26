@@ -44,19 +44,16 @@ export function ThreadListSidebar() {
     >
       <div className="flex flex-col h-full w-full overflow-hidden">
         <div
-          className={cn(
-            "px-2.5 py-1.5 flex items-center gap-2",
-            headerClassName,
-          )}
+          className={cn("px-2 py-1 flex items-center gap-1.5", headerClassName)}
         >
           {isOnDashboard ? (
-            <span className="flex-1 flex items-center gap-2 px-3 text-caption font-medium text-foreground">
+            <span className="flex-1 flex items-center gap-2 px-2 text-caption font-medium text-foreground">
               Your tasks
             </span>
           ) : (
             <Link
               href="/dashboard"
-              className="flex-1 flex items-center gap-2 rounded-md py-1.5 px-3 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
+              className="flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
             >
               <SquarePen className="h-3.5 w-3.5 text-muted-foreground" />
               <span>New Task</span>
@@ -67,7 +64,7 @@ export function ThreadListSidebar() {
               variant="ghost"
               size="icon"
               onClick={() => setThreadListCollapsed(true)}
-              className="h-8 w-8 flex-shrink-0 rounded-lg hover:bg-accent"
+              className="size-8 flex-shrink-0 rounded-md hover:bg-accent"
               title="Collapse task list"
             >
               <PanelLeftClose className="h-4 w-4 text-muted-foreground" />

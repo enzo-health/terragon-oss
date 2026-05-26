@@ -4,7 +4,7 @@ import {
   type CanonicalEvent,
   EVENT_ENVELOPE_VERSION,
 } from "@terragon/agent/canonical-events";
-import { AIAgent, type AIModel, AIModelSchema } from "@terragon/agent/types";
+import { AIAgent } from "@terragon/agent/types";
 import {
   coalesceAssistantTextMessages,
   createAcpPermissionRequestMessage,
@@ -13,6 +13,10 @@ import {
 } from "./acp-adapter";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
+import {
+  buildCanonicalEventsForBatch,
+  getMessageFingerprint,
+} from "./daemon-canonical-events";
 import { ampCommand, getAmpApiKeyOrNull } from "./amp";
 import {
   ClaudeCodeParser,
@@ -37,6 +41,7 @@ import {
   SILENTLY_IGNORED_ITEM_TYPES,
   type ThreadMetaEvent,
 } from "./codex-app-server";
+import { routeCodexNotification } from "./codex-notification-router";
 import {
   createGeminiParserState,
   geminiCommand,
@@ -71,6 +76,7 @@ import {
   FeatureFlags,
   RuntimeAdapterContract,
 } from "./shared";
+import { readString, toRecord } from "./json-read";
 import {
   createIdleWatchdog,
   IdleWatchdog,
@@ -179,49 +185,6 @@ function isNonRetryableAuthError(error: unknown): boolean {
   }
   const status = (error as { status?: unknown }).status;
   return status === 401 || status === 403;
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function readString(
-  value: Record<string, unknown> | null,
-  key: string,
-): string | null {
-  if (!value) {
-    return null;
-  }
-  const keyValue = value[key];
-  return typeof keyValue === "string" ? keyValue : null;
-}
-
-function readBoolean(
-  value: Record<string, unknown> | null,
-  key: string,
-): boolean | null {
-  if (!value) {
-    return null;
-  }
-  const keyValue = value[key];
-  return typeof keyValue === "boolean" ? keyValue : null;
-}
-
-function stringifyCanonicalToolResult(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function extractThreadIdFromRpcResult(result: unknown): string | null {
@@ -344,6 +307,13 @@ type AppServerRunContext = {
   watchdogTimer: NodeJS.Timeout | null;
   /** Last full agent_message text by item id (for cumulative update dedupe). */
   agentMessageTextById: Map<string, string>;
+  /**
+   * Accumulated reasoning text streamed as "thinking" deltas, by item id.
+   * Mirrors `agentMessageTextById`: on `item.completed` we flush any tail not
+   * yet streamed so the delta stream holds the complete reasoning, then the
+   * server suppresses the duplicate rich-part REASONING representation.
+   */
+  reasoningTextById: Map<string, string>;
   /**
    * Most recent non-empty diff from `turn/diff/updated`. Held across
    * intermediate updates and flushed as a single `codex-diff` ClaudeMessage
@@ -1104,6 +1074,7 @@ export class TerragonDaemon {
       threadReadyPromise,
       watchdogTimer: null,
       agentMessageTextById: new Map<string, string>(),
+      reasoningTextById: new Map<string, string>(),
       pendingTurnDiff: null,
       turnOutputMessageCount: 0,
       runtimeAdapterContract: resolveDaemonRuntimeAdapterContract(input),
@@ -1620,144 +1591,42 @@ export class TerragonDaemon {
             return;
           }
 
-          // Intercept agentMessage deltas before they reach parseCodexLine.
-          // Route them through the delta buffer for ephemeral streaming to
-          // clients, then short-circuit to avoid persisting a DBMessage per
-          // character-level accumulation.
-          //
-          // INVARIANT: this guard's `item.type === "agent_message"` check
-          // MUST stay in sync with parseCodexLine's `agent_message` case
-          // under `item.updated`. If codex-app-server ever renames this
-          // item type, both branches must be updated atomically — otherwise
-          // the parser's fall-through default path (which treats unknown
-          // types as no-ops) will silently double-persist deltas via the
-          // daemon's pass-through to parseCodexLine. A parser unit test
-          // asserts the unknown-item-type default is a no-op so the
-          // surface area of this invariant is explicit.
-          if (
-            threadEvent.type === "item.updated" &&
-            threadEvent.item &&
-            (threadEvent.item as Record<string, unknown>).type ===
-              "agent_message"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item.id as string | undefined;
-            const messageText = item.text as string | undefined;
-            if (itemId && messageText) {
-              const previousText =
-                context.agentMessageTextById.get(itemId) ?? "";
-              const isExplicitDeltaMethod =
-                notification.method === "item/agentMessage/delta";
-              const deltaText = isExplicitDeltaMethod
-                ? messageText
-                : messageText.startsWith(previousText)
-                  ? messageText.slice(previousText.length)
-                  : messageText;
-              if (isExplicitDeltaMethod) {
-                context.agentMessageTextById.set(
-                  itemId,
-                  previousText + messageText,
-                );
-              } else {
-                context.agentMessageTextById.set(itemId, messageText);
-              }
-              if (deltaText) {
-                this.enqueueDelta({
-                  threadId: input.threadId,
-                  threadChatId: input.threadChatId,
-                  token: input.token,
-                  messageId: itemId,
-                  partIndex: 0,
-                  kind: "text",
-                  text: deltaText,
-                });
-              }
-            }
-            // Deltas were routed through the broadcast buffer above; skip
-            // parseCodexLine for agent_message item.updated so we don't
-            // also persist a DBMessage per character-level accumulation
-            // (parseCodexLine now emits intermediate agent_message rows
-            // for replay / test harnesses, but the production daemon
-            // already streams deltas and persists the final item.completed).
+          // Compute the per-item routing decision (delta-enqueue / skip /
+          // flush-then-parse / parse) in a pure router, then execute the side
+          // effects here. The router owns the streamed-text accumulation
+          // (agent_message / reasoning maps on `context`) and the
+          // `item.completed` tail flush; this handler owns the actual
+          // `enqueueDelta` calls and the fall-through to parseCodexLine.
+          const decision = routeCodexNotification({
+            threadEvent,
+            method: notification.method,
+            context,
+          });
+          if (decision.kind === "skip") {
             return;
           }
-
-          // Route commandExecution/outputDelta through the delta buffer as
-          // "text" kind so the client can stream command output progressively.
-          if (
-            threadEvent.type === "item.updated" &&
-            notification.method === "item/commandExecution/outputDelta"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const output = item?.aggregated_output as string | undefined;
-            if (itemId && output) {
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "text",
-                text: output,
-              });
-            }
-            // commandExecution/outputDelta is delta-only — don't pass to
-            // parseCodexLine since there's no full item to persist yet.
+          if (decision.kind === "enqueue-delta") {
+            this.enqueueDelta({
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+              messageId: decision.delta.messageId,
+              partIndex: decision.delta.partIndex,
+              kind: decision.delta.kind,
+              text: decision.delta.text,
+            });
             return;
           }
-
-          // Route fileChange/outputDelta through the delta buffer as "text"
-          // kind so the client can stream unified-diff output progressively.
-          if (
-            threadEvent.type === "item.updated" &&
-            notification.method === "item/fileChange/outputDelta"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const delta = item?._delta as string | undefined;
-            if (itemId && delta) {
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "text",
-                text: delta,
-              });
-            }
-            return;
-          }
-
-          // Route reasoning deltas through the delta buffer as "thinking" kind.
-          if (
-            threadEvent.type === "item.updated" &&
-            (notification.method === "item/reasoning/summaryTextDelta" ||
-              notification.method === "item/reasoning/textDelta" ||
-              notification.method === "item/reasoning/summaryPartAdded")
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const text = item?.text as string | undefined;
-            if (itemId && text) {
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "thinking",
-                text,
-              });
-            }
-            return;
-          }
-
-          // mcpToolCall/progress updates are delta-only — don't persist them
-          // as messages; future sprints will surface progress via the UI layer.
-          if (notification.method === "item/mcpToolCall/progress") {
-            return;
+          if (decision.kind === "flush-then-parse" && decision.delta) {
+            this.enqueueDelta({
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+              messageId: decision.delta.messageId,
+              partIndex: decision.delta.partIndex,
+              kind: decision.delta.kind,
+              text: decision.delta.text,
+            });
           }
 
           // autoApprovalReview events are surfaced as chat messages containing
@@ -3188,247 +3057,6 @@ export class TerragonDaemon {
     return true;
   }
 
-  private getMessageFingerprint(messages: ClaudeMessage[]): string {
-    return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
-  }
-
-  private createCanonicalEventId(runId: string, seq: number): string {
-    return createHash("sha256")
-      .update(`${runId}:canonical:${seq}`)
-      .digest("hex");
-  }
-
-  private allocateCanonicalBaseEvent(params: {
-    runId: string;
-    threadId: string;
-    threadChatId: string;
-    seq: number;
-    timestamp: string;
-  }): Pick<
-    CanonicalEvent,
-    | "payloadVersion"
-    | "eventId"
-    | "runId"
-    | "threadId"
-    | "threadChatId"
-    | "seq"
-    | "timestamp"
-  > {
-    return {
-      payloadVersion: EVENT_ENVELOPE_VERSION,
-      eventId: this.createCanonicalEventId(params.runId, params.seq),
-      runId: params.runId,
-      threadId: params.threadId,
-      threadChatId: params.threadChatId,
-      seq: params.seq,
-      timestamp: params.timestamp,
-    };
-  }
-
-  private toCanonicalModelOrNull(model: string | null): AIModel | null {
-    if (!model) {
-      return null;
-    }
-    const parsed = AIModelSchema.safeParse(model);
-    return parsed.success ? parsed.data : null;
-  }
-
-  private toCanonicalToolParameters(value: unknown): Record<string, unknown> {
-    const record = toRecord(value);
-    if (record) {
-      return record;
-    }
-    if (value === undefined) {
-      return {};
-    }
-    return { value };
-  }
-
-  private buildCanonicalEventsForBatch(params: {
-    runState: DaemonEventRunState;
-    threadId: string;
-    threadChatId: string;
-    messages: ClaudeMessage[];
-  }): {
-    canonicalEvents: CanonicalEvent[];
-    nextCanonicalSeqAfterBatch: number;
-    canonicalRunStartedEmittedAfterBatch: boolean;
-  } {
-    const { runState, threadId, threadChatId, messages } = params;
-    if (messages.length === 0 || runState.agent === null) {
-      return {
-        canonicalEvents: [],
-        nextCanonicalSeqAfterBatch: runState.nextCanonicalSeq,
-        canonicalRunStartedEmittedAfterBatch:
-          runState.canonicalRunStartedEmitted,
-      };
-    }
-
-    const timestamp = new Date().toISOString();
-    const events: CanonicalEvent[] = [];
-    let nextCanonicalSeq = runState.nextCanonicalSeq;
-    let canonicalRunStartedEmitted = runState.canonicalRunStartedEmitted;
-    const allocateBaseEvent = (): Pick<
-      CanonicalEvent,
-      | "payloadVersion"
-      | "eventId"
-      | "runId"
-      | "threadId"
-      | "threadChatId"
-      | "seq"
-      | "timestamp"
-    > => {
-      const baseEvent = this.allocateCanonicalBaseEvent({
-        runId: runState.runId,
-        threadId,
-        threadChatId,
-        seq: nextCanonicalSeq,
-        timestamp,
-      });
-      nextCanonicalSeq += 1;
-      return baseEvent;
-    };
-    const warnMalformedCanonicalBlock = (
-      reason: string,
-      blockType: string,
-    ): void => {
-      this.runtime.logger.warn("Skipping malformed canonical block", {
-        runId: runState.runId,
-        threadId,
-        threadChatId,
-        blockType,
-        reason,
-      });
-    };
-
-    if (!canonicalRunStartedEmitted) {
-      const baseEvent = allocateBaseEvent();
-      const model = this.toCanonicalModelOrNull(runState.model);
-      events.push({
-        ...baseEvent,
-        category: "operational",
-        type: "run-started",
-        agent: runState.agent,
-        transportMode: runState.transportMode,
-        protocolVersion: runState.protocolVersion,
-        ...(model ? { model } : {}),
-      });
-      canonicalRunStartedEmitted = true;
-    }
-
-    const canonicalModel = this.toCanonicalModelOrNull(runState.model);
-    for (const message of messages) {
-      if (message.type === "assistant") {
-        const content = message.message.content;
-        if (typeof content === "string") {
-          if (content.length === 0) {
-            continue;
-          }
-          const baseEvent = allocateBaseEvent();
-          events.push({
-            ...baseEvent,
-            category: "transcript",
-            type: "assistant-message",
-            messageId: baseEvent.eventId,
-            content,
-            parentToolUseId: message.parent_tool_use_id,
-            ...(canonicalModel ? { model: canonicalModel } : {}),
-          });
-          continue;
-        }
-
-        if (!Array.isArray(content)) {
-          continue;
-        }
-
-        for (const block of content) {
-          const blockRecord = toRecord(block);
-          const blockType = readString(blockRecord, "type");
-          if (blockType === "text") {
-            const text = readString(blockRecord, "text");
-            if (!text || text.length === 0) {
-              continue;
-            }
-            const baseEvent = allocateBaseEvent();
-            events.push({
-              ...baseEvent,
-              category: "transcript",
-              type: "assistant-message",
-              messageId: baseEvent.eventId,
-              content: text,
-              parentToolUseId: message.parent_tool_use_id,
-              ...(canonicalModel ? { model: canonicalModel } : {}),
-            });
-            continue;
-          }
-          if (blockType !== "tool_use") {
-            continue;
-          }
-          const toolCallId = readString(blockRecord, "id");
-          const name = readString(blockRecord, "name");
-          if (!toolCallId || !name) {
-            warnMalformedCanonicalBlock(
-              "missing_tool_use_identity",
-              "tool_use",
-            );
-            continue;
-          }
-          const baseEvent = allocateBaseEvent();
-          events.push({
-            ...baseEvent,
-            category: "tool_lifecycle",
-            type: "tool-call-start",
-            toolCallId,
-            name,
-            parameters: this.toCanonicalToolParameters(blockRecord?.input),
-            parentToolUseId: message.parent_tool_use_id,
-          });
-        }
-        continue;
-      }
-
-      if (message.type !== "user") {
-        continue;
-      }
-
-      const content = message.message.content;
-      if (!Array.isArray(content)) {
-        continue;
-      }
-
-      for (const block of content) {
-        const blockRecord = toRecord(block);
-        if (readString(blockRecord, "type") !== "tool_result") {
-          continue;
-        }
-        const toolCallId = readString(blockRecord, "tool_use_id");
-        if (!toolCallId) {
-          warnMalformedCanonicalBlock(
-            "missing_tool_result_identity",
-            "tool_result",
-          );
-          continue;
-        }
-        const baseEvent = allocateBaseEvent();
-        events.push({
-          ...baseEvent,
-          category: "tool_lifecycle",
-          type: "tool-call-result",
-          toolCallId,
-          result: stringifyCanonicalToolResult(blockRecord?.content),
-          isError: readBoolean(blockRecord, "is_error") ?? false,
-          completedAt: timestamp,
-        });
-      }
-    }
-
-    return {
-      canonicalEvents: events,
-      nextCanonicalSeqAfterBatch: nextCanonicalSeq,
-      canonicalRunStartedEmittedAfterBatch: canonicalRunStartedEmitted,
-    };
-  }
-
   private getOrCreateDaemonEventRunState(
     threadChatId: string,
   ): DaemonEventRunState {
@@ -3467,7 +3095,7 @@ export class TerragonDaemon {
     entryCount: number;
   }): DaemonEventEnvelopePayload {
     const runState = this.getOrCreateDaemonEventRunState(threadChatId);
-    const messagesFingerprint = this.getMessageFingerprint(messages);
+    const messagesFingerprint = getMessageFingerprint(messages);
     const pendingEnvelope = runState.pendingEnvelope;
     if (pendingEnvelope) {
       if (pendingEnvelope.messagesFingerprint !== messagesFingerprint) {
@@ -3493,11 +3121,20 @@ export class TerragonDaemon {
     const eventId = createHash("sha256")
       .update(`${runState.runId}:${seq}`)
       .digest("hex");
-    const canonicalBatch = this.buildCanonicalEventsForBatch({
-      runState,
+    const canonicalBatch = buildCanonicalEventsForBatch({
+      runId: runState.runId,
+      agent: runState.agent,
+      model: runState.model,
+      transportMode: runState.transportMode,
+      protocolVersion: runState.protocolVersion,
+      nextCanonicalSeq: runState.nextCanonicalSeq,
+      canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
       threadId,
       threadChatId,
       messages,
+      onMalformedBlock: (info) => {
+        this.runtime.logger.warn("Skipping malformed canonical block", info);
+      },
     });
     runState.pendingEnvelope = {
       messagesFingerprint,

@@ -1,4 +1,4 @@
-import { AllToolParts, type UIMessage } from "@terragon/shared";
+import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import { Check, Copy, ExternalLink } from "lucide-react";
@@ -7,8 +7,9 @@ import { toast } from "sonner";
 import { Button } from "../../ui/button";
 import { useSecondaryPanel } from "../hooks";
 import { findArtifactDescriptorForPart } from "../secondary-panel-helpers";
+import type { PromptBoxRef } from "../thread-context";
 import { GenericToolPart } from "./generic-ui";
-import { resolvePlanText } from "./plan-utils";
+import { formatPlanForDisplay } from "./plan-utils";
 
 export function truncateAtWordBoundary(text: string, maxChars = 300): string {
   if (text.length <= maxChars) return text;
@@ -20,13 +21,16 @@ export function truncateAtWordBoundary(text: string, maxChars = 300): string {
 
 export function ExitPlanModeTool({
   toolPart,
-  messages,
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact,
 }: {
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
-  messages: UIMessage[];
+  threadId: string;
+  threadChatId: string;
+  isReadOnly: boolean;
+  promptBoxRef?: React.RefObject<PromptBoxRef | null>;
+  onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
@@ -36,13 +40,8 @@ export function ExitPlanModeTool({
   useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const plan = useMemo(
-    () =>
-      resolvePlanText({
-        planParam: toolPart.parameters.plan,
-        messages,
-        exitPlanModeToolId: toolPart.id,
-      }),
-    [toolPart.parameters.plan, toolPart.id, messages],
+    () => formatPlanForDisplay(toolPart.parameters.plan?.trim() ?? ""),
+    [toolPart.parameters.plan],
   );
 
   const artifactDescriptor = useMemo(

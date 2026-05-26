@@ -2,12 +2,16 @@ import { DBMessage, ThreadInfoFull } from "@terragon/shared";
 import {
   type ArtifactDescriptor,
   type PlanArtifactDescriptor,
+  type RepoFileArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import { Maximize2, Minimize2, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FolderTree, Maximize2, Minimize2, X } from "lucide-react";
 import React, { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { repoTreeQueryOptions } from "@/queries/repo-tree";
 import { GitDiffView } from "./git-diff-view";
+import { RepoTreeArtifactRenderer } from "./secondary-panel-repo-tree";
 import { DocumentArtifactRenderer } from "./secondary-panel-document";
 import {
   ARTIFACT_WORKSPACE_PANEL_ID,
@@ -17,6 +21,7 @@ import {
 } from "./secondary-panel-helpers";
 import { MediaArtifactRenderer } from "./secondary-panel-media";
 import { PlanArtifactRenderer } from "./secondary-panel-plan";
+import { RepoFileArtifactRenderer } from "./secondary-panel-repo-file";
 import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import { TextFileArtifactRenderer } from "./secondary-panel-text-file";
 import type { PromptBoxRef } from "./thread-context";
@@ -34,6 +39,9 @@ export function SecondaryPanelContent({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
 }: {
   artifacts: ArtifactWorkspaceItem[];
   activeArtifactId: string | null;
@@ -47,6 +55,9 @@ export function SecondaryPanelContent({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
 }) {
   return (
     <ArtifactWorkspaceShell
@@ -62,12 +73,47 @@ export function SecondaryPanelContent({
       isReadOnly={isReadOnly}
       promptBoxRef={promptBoxRef}
       onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+      onOpenRepoFile={onOpenRepoFile}
+      onOpenRepoTree={onOpenRepoTree}
+      activeRepoFilePath={activeRepoFilePath}
       emptyState={{
         title: "No artifacts yet",
         description:
           "Artifacts like diffs and generated outputs will appear here.",
       }}
     />
+  );
+}
+
+/**
+ * Panel-header button that opens the repo file tree. Owns the React Query
+ * client so the prefetch-on-hover hook only runs where the button renders —
+ * the shell itself stays free of a QueryClient dependency.
+ */
+function BrowseFilesButton({
+  threadId,
+  onOpen,
+}: {
+  threadId: string;
+  onOpen: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const prefetch = () =>
+    queryClient.prefetchQuery(repoTreeQueryOptions(threadId));
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="size-6 rounded hover:bg-accent"
+      onClick={onOpen}
+      onMouseEnter={prefetch}
+      onFocus={prefetch}
+      aria-label="Browse repository files"
+      title="Browse files"
+    >
+      <FolderTree className="size-3.5 opacity-50" />
+    </Button>
   );
 }
 
@@ -84,6 +130,9 @@ function ArtifactWorkspaceShell({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
   emptyState,
 }: {
   artifacts: ArtifactWorkspaceItem[];
@@ -98,6 +147,9 @@ function ArtifactWorkspaceShell({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
   emptyState: {
     title: string;
     description: string;
@@ -179,6 +231,9 @@ function ArtifactWorkspaceShell({
             )}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
+            {onOpenRepoTree && (
+              <BrowseFilesButton threadId={thread.id} onOpen={onOpenRepoTree} />
+            )}
             {onToggleMaximize && (
               <Button
                 type="button"
@@ -217,7 +272,7 @@ function ArtifactWorkspaceShell({
             ref={tablistRef}
             role="tablist"
             aria-label="Artifacts"
-            className="flex gap-0 px-3 border-t border-border/50"
+            className="flex gap-0 px-3 border-t border-border/50 overflow-x-auto min-w-0"
           >
             {artifacts.map((artifact) => {
               const isActive = artifact.id === resolvedActiveArtifactId;
@@ -296,6 +351,8 @@ function ArtifactWorkspaceShell({
               onOptimisticPermissionModeUpdate={
                 onOptimisticPermissionModeUpdate
               }
+              onOpenRepoFile={onOpenRepoFile}
+              activeRepoFilePath={activeRepoFilePath}
             />
           </div>
         )}
@@ -312,6 +369,8 @@ function ActiveArtifactRenderer({
   isReadOnly,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  activeRepoFilePath,
 }: {
   descriptor: ArtifactDescriptor;
   thread: ThreadInfoFull;
@@ -320,14 +379,39 @@ function ActiveArtifactRenderer({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  activeRepoFilePath?: string | null;
 }) {
   switch (descriptor.kind) {
     case "git-diff":
-      return <GitDiffView thread={thread} diffPart={descriptor.part} />;
+      return (
+        <GitDiffView
+          thread={thread}
+          diffPart={descriptor.part}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
     case "document":
       return <DocumentArtifactRenderer richTextPart={descriptor.part} />;
     case "file":
       return <TextFileArtifactRenderer textFilePart={descriptor.part} />;
+    case "repo-file":
+      return (
+        <RepoFileArtifactRenderer
+          repoFilePart={(descriptor as RepoFileArtifactDescriptor).part}
+          threadId={thread.id}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
+    case "repo-tree":
+      return (
+        <RepoTreeArtifactRenderer
+          threadId={thread.id}
+          thread={thread}
+          activeRepoFilePath={activeRepoFilePath}
+          onOpenRepoFile={onOpenRepoFile}
+        />
+      );
     case "media":
       return <MediaArtifactRenderer mediaPart={descriptor.part} />;
     case "plan":

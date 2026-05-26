@@ -186,6 +186,7 @@ export const ThreadPromptBox = React.forwardRef<
     isSandboxProvisioned: props.sandboxId != null,
     isQueueingEnabled: true,
     handleSubmit: props.handleSubmit,
+    handleQueueMessage: props.handleQueueMessage,
     isRecording,
     initialPermissionMode: props.permissionMode ?? "allowAll",
     supportsMultiAgentPromptSubmission: false,

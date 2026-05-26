@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
+import type { ThreadInfoFull, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import type { PromptBoxRef } from "../thread-context";
@@ -28,13 +28,14 @@ export type TerragonThreadContext = {
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
+  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
+  onOpenRepoFile?: (href: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;
   toolProps: {
     threadId: string;
     threadChatId: string;
-    messagesRef: { current: UIMessage[] };
     isReadOnly: boolean;
     promptBoxRef?: React.RefObject<PromptBoxRef | null>;
     childThreads: { id: string; parentToolId: string | null }[];
@@ -61,6 +62,8 @@ export type TerragonMessageRenderContext = {
   artifactDescriptors: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact: (artifactId: string) => void;
+  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
+  onOpenRepoFile?: (href: string) => void;
   planOccurrences: Map<UIPart, number>;
   redoDialogData?: RedoDialogData;
   forkDialogData?: ForkDialogData;

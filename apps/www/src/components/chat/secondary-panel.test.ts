@@ -1,8 +1,9 @@
-import React from "react";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
 import type { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ReactNode } from "react";
+import React from "react";
+import { describe, expect, it, vi } from "vitest";
+import { ImagePart } from "./image-part";
 import {
   createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
@@ -10,7 +11,6 @@ import {
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
 } from "./secondary-panel";
-import { ImagePart } from "./image-part";
 import { renderToolPartContent } from "./tool-part";
 
 describe("secondary-panel artifact shell helpers", () => {
@@ -250,7 +250,6 @@ describe("secondary-panel artifact shell helpers", () => {
     const toolTree = renderToolPartContent(toolPart, {
       threadId: "thread-1",
       threadChatId: "chat-1",
-      messagesRef: { current: [] },
       isReadOnly: false,
       childThreads: [],
       githubRepoFullName: "acme/app",

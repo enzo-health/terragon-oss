@@ -8,6 +8,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "next-themes";
 import { ThemeColorMeta } from "./theme-color-meta";
 import { AutoRefresh } from "./auto-refresh";
+import { InstallPrompt } from "./install-prompt";
+import { ServiceWorkerRegister } from "./service-worker-register";
+import { KeyboardInset } from "./keyboard-inset";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -22,6 +25,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <TooltipProvider>
             <ThemeColorMeta />
             <AutoRefresh />
+            <ServiceWorkerRegister />
+            <InstallPrompt />
+            <KeyboardInset />
             {children}
           </TooltipProvider>
         </ThemeProvider>

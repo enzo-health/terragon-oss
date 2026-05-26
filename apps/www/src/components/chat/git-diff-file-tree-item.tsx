@@ -4,7 +4,10 @@ import React from "react";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "./git-diff-view.types";
-import { getFileIcon } from "./git-diff-view.utils";
+import {
+  getFileIcon,
+  resolveFileTreeItemActivation,
+} from "./git-diff-view.utils";
 
 export function FileTreeItem({
   node,
@@ -13,6 +16,7 @@ export function FileTreeItem({
   onFileSelect,
   expandedFolders,
   onToggleFolder,
+  onOpenRepoFile,
 }: {
   node: FileTreeNode;
   depth?: number;
@@ -20,11 +24,32 @@ export function FileTreeItem({
   onFileSelect: (index: number) => void;
   expandedFolders: Set<string>;
   onToggleFolder: (path: string) => void;
+  // When provided, activating a leaf file routes its repo-relative path to the
+  // s3 open-repo-file flow instead of scrolling/selecting in place. Absent =>
+  // unchanged behavior (flag off).
+  onOpenRepoFile?: (path: string) => void;
 }) {
   const isFolder = node.type === "folder";
   const isExpanded = expandedFolders.has(node.path);
   const isSelected =
     node.fileIndex !== undefined && node.fileIndex === selectedFile;
+
+  const activate = () => {
+    const action = resolveFileTreeItemActivation(node, !!onOpenRepoFile);
+    switch (action.kind) {
+      case "toggle-folder":
+        onToggleFolder(action.path);
+        break;
+      case "select-file":
+        onFileSelect(action.fileIndex);
+        break;
+      case "open-repo-file":
+        onOpenRepoFile?.(action.path);
+        break;
+      case "none":
+        break;
+    }
+  };
 
   return (
     <div>
@@ -36,24 +61,21 @@ export function FileTreeItem({
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         role="button"
         tabIndex={0}
+        data-open-repo-file={!isFolder && !!onOpenRepoFile ? "true" : undefined}
         aria-expanded={isFolder ? isExpanded : undefined}
-        aria-pressed={!isFolder ? isSelected : undefined}
-        aria-label={node.name}
-        onClick={() => {
-          if (isFolder) {
-            onToggleFolder(node.path);
-          } else if (node.fileIndex !== undefined) {
-            onFileSelect(node.fileIndex);
-          }
-        }}
+        // In open-repo-file mode activating a leaf opens the artifact rather
+        // than toggling selection, so the toggle-button (pressed-state)
+        // semantics no longer apply — only expose aria-pressed when the row
+        // actually toggles in-place selection.
+        aria-pressed={!isFolder && !onOpenRepoFile ? isSelected : undefined}
+        aria-label={
+          !isFolder && onOpenRepoFile ? `Open ${node.name}` : node.name
+        }
+        onClick={activate}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            if (isFolder) {
-              onToggleFolder(node.path);
-            } else if (node.fileIndex !== undefined) {
-              onFileSelect(node.fileIndex);
-            }
+            activate();
           }
         }}
       >
@@ -84,6 +106,7 @@ export function FileTreeItem({
               onFileSelect={onFileSelect}
               expandedFolders={expandedFolders}
               onToggleFolder={onToggleFolder}
+              onOpenRepoFile={onOpenRepoFile}
             />
           ))}
         </div>

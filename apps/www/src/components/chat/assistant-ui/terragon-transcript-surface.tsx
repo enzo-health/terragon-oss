@@ -1,27 +1,18 @@
 "use client";
 
-import { memo } from "react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
-import type {
-  ThreadStatus,
-  UIMessage,
-  UISystemMessage,
-} from "@terragon/shared";
+import type { ThreadStatus, UISystemMessage } from "@terragon/shared";
 import { ChatError } from "../chat-error";
 import { LeafLoading } from "../leaf-loading";
 import { MessageScheduled, WorkingMessage } from "../chat-messages";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
-import { RuntimeTerragonMessage } from "./runtime-terragon-message";
+import { NativeThread } from "./native-thread";
 import { TerragonSystemMessage } from "./system-message";
-import { useStablePrefix } from "./use-stable-prefix";
-import { TerragonUserMessage } from "./user-message";
 
 type TerragonTranscriptSurfaceProps = {
   lifecycleMessages: UISystemMessage[];
   isRuntimeHydrating: boolean;
-  messages: UIMessage[];
-  latestAgentMessageIndex: number;
   chatAgent: AIAgent;
   error?: string | null;
   errorType?: string;
@@ -45,8 +36,6 @@ type TerragonTranscriptSurfaceProps = {
 export function TerragonTranscriptSurface({
   lifecycleMessages,
   isRuntimeHydrating,
-  messages,
-  latestAgentMessageIndex,
   chatAgent,
   error,
   errorType,
@@ -66,13 +55,8 @@ export function TerragonTranscriptSurface({
   scheduleAt,
   threadChatStatus,
 }: TerragonTranscriptSurfaceProps) {
-  const lastIndex = messages.length - 1;
-  const staticMessages = useStablePrefix(messages, Math.max(0, lastIndex));
-  const liveMessage = lastIndex >= 0 ? messages[lastIndex] : undefined;
-  const hasTranscriptMessages = messages.length > 0;
   const shouldRenderWorkingMessage = showWorkingMessage || passiveWait !== null;
   const workingMessageSlotClassName = getWorkingMessageSlotClassName({
-    hasTranscriptMessages,
     threadStatus,
   });
 
@@ -94,22 +78,9 @@ export function TerragonTranscriptSurface({
         <div className="pt-2">
           <LeafLoading message="Connecting to live task…" />
         </div>
-      ) : messages.length > 0 ? (
-        <>
-          <StaticTranscriptHistory
-            messages={staticMessages}
-            latestAgentMessageIndex={latestAgentMessageIndex}
-          />
-          {liveMessage ? (
-            <TranscriptMessageRow
-              message={liveMessage}
-              messageIndex={lastIndex}
-              isLatestMessage={true}
-              isLatestAgentMessage={lastIndex === latestAgentMessageIndex}
-            />
-          ) : null}
-        </>
-      ) : null}
+      ) : (
+        <NativeThread />
+      )}
       {(error || errorType || errorInfo) && (
         <ChatError
           status={threadStatus ?? "error"}
@@ -145,79 +116,12 @@ export function TerragonTranscriptSurface({
   );
 }
 
-type TranscriptMessageRowProps = {
-  message: UIMessage;
-  messageIndex: number;
-  isLatestMessage: boolean;
-  isLatestAgentMessage: boolean;
-};
-
-const TranscriptMessageRow = memo(function TranscriptMessageRow({
-  message,
-  messageIndex,
-  isLatestMessage,
-  isLatestAgentMessage,
-}: TranscriptMessageRowProps) {
-  if (message.role === "user") {
-    return (
-      <TerragonUserMessage
-        message={message}
-        messageIndex={messageIndex}
-        isLatestMessage={isLatestMessage}
-        isFirstUserMessage={messageIndex === 0}
-      />
-    );
-  }
-  if (message.role === "system") {
-    return (
-      <TerragonSystemMessage
-        message={message}
-        messageIndex={messageIndex}
-        isLatestMessage={isLatestMessage}
-      />
-    );
-  }
-  return (
-    <RuntimeTerragonMessage
-      message={message}
-      messageIndex={messageIndex}
-      isLatestMessage={isLatestMessage}
-      isFirstUserMessage={false}
-      isLatestAgentMessage={isLatestAgentMessage}
-    />
-  );
-});
-
-const StaticTranscriptHistory = memo(function StaticTranscriptHistory({
-  messages,
-  latestAgentMessageIndex,
-}: {
-  messages: UIMessage[];
-  latestAgentMessageIndex: number;
-}) {
-  return (
-    <>
-      {messages.map((message, messageIndex) => (
-        <TranscriptMessageRow
-          key={message.id}
-          message={message}
-          messageIndex={messageIndex}
-          isLatestMessage={false}
-          isLatestAgentMessage={messageIndex === latestAgentMessageIndex}
-        />
-      ))}
-    </>
-  );
-});
-
 export function getWorkingMessageSlotClassName({
-  hasTranscriptMessages,
   threadStatus,
 }: {
-  hasTranscriptMessages: boolean;
   threadStatus: ThreadStatus | null;
 }): string {
-  return threadStatus === "booting" && !hasTranscriptMessages
+  return threadStatus === "booting"
     ? "min-h-[168px]"
     : "min-h-11 flex items-start";
 }

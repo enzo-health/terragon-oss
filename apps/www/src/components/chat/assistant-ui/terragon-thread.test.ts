@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldSuppressPreStartLifecycleFooter } from "./terragon-thread";
+import { shouldSuppressPreStartLifecycleFooter } from "./working-footer-freshness";
 
 describe("shouldSuppressPreStartLifecycleFooter", () => {
   it("suppresses stale pre-start footer when stream output exists and status is booting", () => {

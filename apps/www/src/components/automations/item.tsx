@@ -97,15 +97,15 @@ export function AutomationItem({
           }
         }}
         className={cn(
-          "group flex flex-col rounded-2xl bg-card transition-colors py-3 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)] hover:bg-sunken",
+          "group flex flex-col rounded-lg bg-card transition-colors py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)] hover:bg-sunken",
           verbose && "!cursor-default",
         )}
       >
-        <div className="grid grid-cols-[auto_1fr] px-4 items-center justify-between gap-x-3">
+        <div className="grid grid-cols-[auto_1fr] px-3 items-center justify-between gap-x-2.5">
           <div className="contents">
             {getIconForTriggerType(automation.triggerType)}
             <div className="flex items-center justify-between gap-2 min-w-0">
-              <div className="flex flex-col gap-1 truncate min-w-0">
+              <div className="flex flex-col gap-0.5 truncate min-w-0">
                 <h3
                   className={cn(
                     "text-sm font-semibold truncate",

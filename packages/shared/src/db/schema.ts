@@ -1011,6 +1011,7 @@ export const linearInstallation = pgTable(
       .primaryKey(),
     organizationId: text("organization_id").notNull().unique(), // Linear workspace/org ID
     organizationName: text("organization_name").notNull(),
+    appUserId: text("app_user_id"), // Linear app actor user ID for this workspace install
     accessTokenEncrypted: text("access_token_encrypted").notNull(),
     refreshTokenEncrypted: text("refresh_token_encrypted"), // nullable — some installs may not receive refresh token
     tokenExpiresAt: timestamp("token_expires_at", { mode: "date" }),
@@ -1413,6 +1414,20 @@ export const githubWebhookDeliveries = pgTable("github_webhook_deliveries", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
+});
+
+/**
+ * Idempotency store for routed GitHub feedback (CI failures, reviews,
+ * comments). The primary key is the per-cause delivery marker. The
+ * marker-in-transcript scan handles long-term idempotency; this table closes
+ * the read-then-write race where two webhooks for the same logical CI failure
+ * (e.g. check_run.completed and check_suite.completed on the same commit) both
+ * read the thread before either has queued, and would otherwise both enqueue.
+ */
+export const githubFeedbackDeliveries = pgTable("github_feedback_deliveries", {
+  deliveryMarkerKey: text("delivery_marker_key").primaryKey(),
+  threadId: text("thread_id"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
 /**

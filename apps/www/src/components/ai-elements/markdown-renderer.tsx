@@ -23,6 +23,7 @@ type MathPlugin = ReturnType<
   typeof import("@streamdown/math").createMathPlugin
 >;
 
+import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
 import { ImagePart } from "@/components/chat/image-part";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -105,6 +106,12 @@ type MarkdownRendererProps = {
   className?: string;
   renderImage?: (src: string, alt?: string) => ReactNode;
   streamingSegmentation?: "auto" | "off";
+  /**
+   * Called when a link that classifies as an in-repo file path is clicked.
+   * When provided, such links open the file preview in-app instead of
+   * navigating; external links fall back to normal navigation.
+   */
+  onOpenFile?: (href: string) => void;
 };
 
 function getChildren(props: unknown): ReactNode {
@@ -222,7 +229,7 @@ function CodeBlockPre(props: unknown) {
       <pre
         {...rest}
         className={cn(
-          "overflow-x-auto rounded-lg border border-border/50 bg-muted/20 p-3 pt-8 font-mono text-sm",
+          "overflow-x-auto rounded-lg border border-border/50 bg-muted/50 p-3 pt-8 font-mono text-sm",
           className,
         )}
       >
@@ -232,7 +239,7 @@ function CodeBlockPre(props: unknown) {
         type="button"
         size="icon"
         variant="ghost"
-        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70"
+        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70 [@media(hover:none)]:opacity-70"
         onClick={onCopy}
         title={isCopied ? "Copied" : "Copy code"}
         aria-label={isCopied ? "Code copied" : "Copy code"}
@@ -249,6 +256,7 @@ function CodeBlockPre(props: unknown) {
 
 function getResponseComponents(
   renderImage?: (src: string, alt?: string) => ReactNode,
+  onOpenFile?: (href: string) => void,
 ): NonNullable<StreamdownProps["components"]> {
   const components: NonNullable<StreamdownProps["components"]> = {
     pre(props) {
@@ -368,6 +376,22 @@ function getResponseComponents(
     a(props) {
       const children = getChildren(props);
       const href = getStringProp(props, "href");
+      const repoFileLink =
+        onOpenFile && href ? classifyRepoFileLink(href) : null;
+      if (onOpenFile && href && repoFileLink) {
+        return (
+          <a
+            href={href}
+            className="underline break-all"
+            onClick={(event) => {
+              event.preventDefault();
+              onOpenFile(href);
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
       return (
         <a
           href={href}
@@ -472,13 +496,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   className,
   renderImage,
   streamingSegmentation = "auto",
+  onOpenFile,
 }: MarkdownRendererProps) {
   const components = useMemo(
     () =>
       variant === "reasoning"
         ? getReasoningComponents()
-        : getResponseComponents(renderImage),
-    [variant, renderImage],
+        : getResponseComponents(renderImage, onOpenFile),
+    [variant, renderImage, onOpenFile],
   );
 
   // Lazy-load the math plugin on demand. The first time `content` contains

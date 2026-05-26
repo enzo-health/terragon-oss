@@ -1,5 +1,6 @@
 import type { DBUserMessage, ThreadStatus, UIMessage } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
+import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
 import { stableSerialize } from "./renderable-part-shape";
 import type { ThreadViewEvent, ThreadViewModelState } from "./types";
 
@@ -35,6 +36,34 @@ export function createOptimisticPermissionModeUpdatedEvent(
   };
 }
 
+export function createRepoFileOpenedEvent({
+  path,
+  ref,
+  lineRange,
+}: {
+  path: string;
+  ref?: string;
+  lineRange?: RepoFileLineRange;
+}): ThreadViewEvent {
+  return {
+    type: "repo-file.opened",
+    path,
+    ...(ref ? { ref } : {}),
+    ...(lineRange ? { lineRange } : {}),
+  };
+}
+
+export function createRepoTreeOpenedEvent({
+  ref,
+}: {
+  ref?: string;
+}): ThreadViewEvent {
+  return {
+    type: "repo-tree.opened",
+    ...(ref ? { ref } : {}),
+  };
+}
+
 export function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
@@ -43,7 +72,6 @@ export function applyOptimisticUserSubmit(
     message: event.message,
     id: `user-optimistic-${state.threadChatId}-${state.dbMessages.length}`,
   });
-
   const duplicate = state.transcript.messages.some((message) =>
     isSameUserMessage(message, uiMessage),
   );

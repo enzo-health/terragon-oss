@@ -48,25 +48,28 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
   return (
     <>
       <div className="flex gap-2 sm:gap-2.5 items-center">
-        {(!isReadOnly || isSmallScreen) && (
-          <ThreadMenuDropdown
-            thread={thread}
-            redoDialogData={redoDialogData}
-            trigger={
-              <Button variant="ghost" size="icon" aria-label="More options">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            }
-            onRenameClick={onRenameClick}
-            onShareClick={handleShareClick}
-            onTerminalClick={onTerminalClick}
-            showRedoTaskAction={!isReadOnly}
-            showPullRequestActions
-            showRenameAction={!isReadOnly}
-            showShareAction={true}
-            isReadOnly={isReadOnly}
-          />
-        )}
+        <ThreadMenuDropdown
+          thread={thread}
+          redoDialogData={redoDialogData}
+          trigger={
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="More options"
+              className="size-11 @xl/pane:size-8"
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          }
+          onRenameClick={onRenameClick}
+          onShareClick={handleShareClick}
+          onTerminalClick={onTerminalClick}
+          showRedoTaskAction={!isReadOnly}
+          showPullRequestActions
+          showRenameAction={!isReadOnly}
+          showShareAction={true}
+          isReadOnly={isReadOnly}
+        />
         <Button
           variant="ghost"
           size="icon"
@@ -75,28 +78,27 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
           aria-expanded={isSecondaryPanelOpen}
           aria-controls={ARTIFACT_WORKSPACE_PANEL_ID}
           aria-haspopup={isSmallScreen ? "dialog" : undefined}
+          className="size-11 @xl/pane:size-8"
         >
-          {isSmallScreen ? (
-            <PanelBottom
-              className="size-4"
-              isOpen={isSecondaryPanelOpen}
-              aria-hidden="true"
-            />
-          ) : (
-            <PanelRight
-              className="size-4"
-              isOpen={isSecondaryPanelOpen}
-              aria-hidden="true"
-            />
-          )}
+          <PanelBottom
+            className="size-4 @xl/pane:hidden"
+            isOpen={isSecondaryPanelOpen}
+            aria-hidden="true"
+          />
+          <PanelRight
+            className="size-4 hidden @xl/pane:block"
+            isOpen={isSecondaryPanelOpen}
+            aria-hidden="true"
+          />
         </Button>
-        {!isReadOnly && !isSmallScreen && (
-          <CodeButton thread={thread} agent={threadAgent} />
+        {!isReadOnly && (
+          <span className="hidden @xl/pane:inline-flex">
+            <CodeButton thread={thread} agent={threadAgent} />
+          </span>
         )}
-        {/* Hide ShareButton on mobile */}
-        {!isSmallScreen && (
+        <span className="hidden @xl/pane:inline-flex">
           <ShareButton thread={thread} isReadOnly={isReadOnly} />
-        )}
+        </span>
       </div>
 
       {/* Share Drawer for mobile */}

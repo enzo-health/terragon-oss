@@ -1,14 +1,14 @@
 /**
  * AG-UI integration replayer — minimal harness that feeds a sequence of
- * AG-UI `BaseEvent`s through the same ThreadViewModel-backed hook the chat
- * renders with, and returns the final `UIMessage[]` projection.
+ * AG-UI `BaseEvent`s through the product sidecar projection used beside the
+ * assistant-ui runtime.
  *
  * This is the Phase 7 counterpart to the legacy daemon-event replayer
  * (`./replayer.ts`). The legacy harness exercises the full Next.js route
  * + DB pipeline; this one exercises the *frontend* half of the AG-UI
- * migration end-to-end, proving that an SSE-style BaseEvent stream
- * (TEXT_MESSAGE_START/CONTENT/END, TOOL_CALL_*, CUSTOM rich parts)
- * reduces to the same `UIMessage[]` shape the renderer consumes.
+ * migration end-to-end, proving that an SSE-style BaseEvent stream updates
+ * lifecycle, artifacts, runtime state, and quarantine state without becoming a
+ * second transcript renderer.
  *
  * No DB, no Redis, no route — a pure in-memory `HttpAgent` double pumps
  * events into the hook. Suitable for deterministic CI assertions.
@@ -29,7 +29,10 @@ import type {
   ThreadViewRuntimeActivities,
   ThreadViewRuntimeState,
 } from "../../src/components/chat/thread-view-model/types";
-import { useThreadViewModel } from "../../src/components/chat/use-ag-ui-messages";
+import {
+  useAgUiSidecarRouter,
+  useThreadViewModel,
+} from "../../src/components/chat/use-ag-ui-messages";
 
 // ---------------------------------------------------------------------------
 // Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
@@ -81,7 +84,7 @@ export type ReplayAgUiOptions = {
 };
 
 export type ReplayAgUiResult = {
-  /** Final UIMessage[] after all events are drained. */
+  /** Product sidecar messages after all events are drained. Transcript is runtime-owned. */
   messages: UIMessage[];
   /** Final artifact descriptors projected by ThreadViewModel. */
   artifactDescriptors: ArtifactDescriptor[];
@@ -232,8 +235,11 @@ function Harness({
     [agentKind, initialMessages],
   );
   const viewModel = useThreadViewModel({
-    agent,
     snapshot,
+  });
+  useAgUiSidecarRouter({
+    agent,
+    dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
   });
   onProjection({
     messages: viewModel.messages,

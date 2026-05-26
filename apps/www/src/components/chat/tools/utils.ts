@@ -13,8 +13,8 @@ export type TextLinePreview = {
  */
 export function ansiToHtml(text: string, theme: "light" | "dark"): string {
   const convert = new Convert({
-    fg: "var(--foreground)",
-    bg: "var(--background)",
+    fg: "var(--on-dark)",
+    bg: "var(--base)",
     newline: false,
     escapeXML: true,
     stream: false,

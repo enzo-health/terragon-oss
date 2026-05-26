@@ -16,11 +16,7 @@ import type {
 } from "./thread-view-model/types";
 
 type UseThreadViewModelArgs = {
-  agent: HttpAgent | null;
   snapshot: ThreadViewSnapshot;
-  projectEvent?: (
-    event: ThreadViewEventForAgUi,
-  ) => ThreadViewEventForAgUi | null;
   includeTranscriptMessages?: boolean;
 };
 
@@ -34,26 +30,21 @@ type UseAgUiSidecarRouterArgs = {
   projectEvent?: (
     event: ThreadViewEventForAgUi,
   ) => ThreadViewEventForAgUi | null;
-  includeTranscriptMessages?: boolean;
   onStatusOrTerminalEvent?: () => void;
 };
 
-export function createThreadViewEventFromAgUiEvent(
+export function createProductSidecarThreadViewEvent(
   event: ThreadViewEventForAgUi,
-  options?: { projectTranscript?: boolean },
 ): ThreadViewEvent {
-  const projectTranscript = options?.projectTranscript;
   if (isRuntimeLifecycleEvent(event)) {
     return {
       type: "runtime.event",
       event,
-      ...(projectTranscript !== undefined ? { projectTranscript } : {}),
     };
   }
   return {
     type: "ag-ui.event",
     event,
-    ...(projectTranscript !== undefined ? { projectTranscript } : {}),
   };
 }
 
@@ -61,17 +52,14 @@ export function useAgUiSidecarRouter({
   agent,
   dispatchThreadViewEvent,
   projectEvent,
-  includeTranscriptMessages = true,
   onStatusOrTerminalEvent,
 }: UseAgUiSidecarRouterArgs): void {
   const dispatchRef = useRef(dispatchThreadViewEvent);
   const projectEventRef = useRef(projectEvent);
-  const includeTranscriptMessagesRef = useRef(includeTranscriptMessages);
   const onStatusOrTerminalEventRef = useRef(onStatusOrTerminalEvent);
 
   dispatchRef.current = dispatchThreadViewEvent;
   projectEventRef.current = projectEvent;
-  includeTranscriptMessagesRef.current = includeTranscriptMessages;
   onStatusOrTerminalEventRef.current = onStatusOrTerminalEvent;
 
   useEffect(() => {
@@ -91,9 +79,7 @@ export function useAgUiSidecarRouter({
         }
         try {
           dispatchRef.current(
-            createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: includeTranscriptMessagesRef.current,
-            }),
+            createProductSidecarThreadViewEvent(projectedEvent),
           );
         } catch {
           // Malformed projection events are quarantined by the reducer; keep the
@@ -108,9 +94,7 @@ export function useAgUiSidecarRouter({
 }
 
 export function useThreadViewModel({
-  agent,
   snapshot,
-  projectEvent,
   includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
   const projectedTraceKeysRef = useRef<Set<string>>(new Set());
@@ -124,40 +108,14 @@ export function useThreadViewModel({
     dispatch({ type: "snapshot.hydrated", snapshot });
   }, [snapshot]);
 
-  useEffect(() => {
-    if (!agent) return;
-
-    const subscription = agent.subscribe({
-      onEvent: ({ event }) => {
-        recordAgUiEventReceipt(event);
-        const projectedEvent = projectEvent ? projectEvent(event) : event;
-        if (!projectedEvent) {
-          return;
-        }
-        try {
-          dispatch(
-            createThreadViewEventFromAgUiEvent(projectedEvent, {
-              projectTranscript: includeTranscriptMessages,
-            }),
-          );
-        } catch {
-          // Malformed projection events are quarantined by the reducer; keep the
-          // subscription healthy if a future event shape still slips through.
-        }
-      },
-    });
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [agent, includeTranscriptMessages, projectEvent]);
-
-  const viewModel = useMemo(
-    () => ({
-      ...projectThreadViewModel(state, { includeTranscriptMessages }),
+  const viewModel = useMemo(() => {
+    const projected = projectThreadViewModel(state);
+    return {
+      ...projected,
+      messages: includeTranscriptMessages ? projected.messages : [],
       dispatchThreadViewEvent: dispatch,
-    }),
-    [includeTranscriptMessages, state],
-  );
+    };
+  }, [includeTranscriptMessages, state]);
 
   useEffect(() => {
     const runId = viewModel.lifecycle.runId;
@@ -223,67 +181,19 @@ function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
   );
 }
 
-type ThreadViewSidecarEventProjectorOptions = {
-  includeTranscriptEvents?: boolean;
-};
-
-export function createThreadViewSidecarEventProjector(
-  options: ThreadViewSidecarEventProjectorOptions = {},
-): (event: ThreadViewEventForAgUi) => ThreadViewEventForAgUi | null {
-  const includeTranscriptEvents = options.includeTranscriptEvents ?? true;
-  const planCandidateMessageIds = new Set<string>();
-  let activeAssistantMessageId: string | null = null;
-
+export function createThreadViewSidecarEventProjector(): (
+  event: ThreadViewEventForAgUi,
+) => ThreadViewEventForAgUi | null {
   return (event) => {
     switch (event.type) {
       case EventType.RUN_STARTED:
-        activeAssistantMessageId = null;
-        planCandidateMessageIds.clear();
-        return event;
       case EventType.RUN_FINISHED:
       case EventType.RUN_ERROR:
-        activeAssistantMessageId = null;
-        planCandidateMessageIds.clear();
         return event;
-      case EventType.TEXT_MESSAGE_START: {
-        activeAssistantMessageId = getStringEventField(event, "messageId");
-        return null;
-      }
+      case EventType.TEXT_MESSAGE_START:
       case EventType.TEXT_MESSAGE_CONTENT:
-      case EventType.TEXT_MESSAGE_CHUNK: {
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        const messageId = getStringEventField(event, "messageId");
-        if (messageId && planCandidateMessageIds.has(messageId)) {
-          if (
-            getStringEventField(event, "delta")?.includes("</proposed_plan")
-          ) {
-            planCandidateMessageIds.delete(messageId);
-          }
-          return event;
-        }
-        const delta = getStringEventField(event, "delta");
-        const shouldTrackPlan =
-          delta?.includes("<") === true ||
-          delta?.includes("proposed_plan") === true;
-        if (messageId && shouldTrackPlan) {
-          planCandidateMessageIds.add(messageId);
-        }
-        return shouldTrackPlan ? event : null;
-      }
-      case EventType.TEXT_MESSAGE_END: {
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        const messageId = getStringEventField(event, "messageId");
-        const wasTrackingPlan =
-          messageId !== null && planCandidateMessageIds.has(messageId);
-        if (messageId) {
-          planCandidateMessageIds.delete(messageId);
-        }
-        return wasTrackingPlan ? event : null;
-      }
+      case EventType.TEXT_MESSAGE_CHUNK:
+      case EventType.TEXT_MESSAGE_END:
       case EventType.REASONING_MESSAGE_START:
       case EventType.REASONING_MESSAGE_CONTENT:
       case EventType.REASONING_MESSAGE_END:
@@ -291,26 +201,12 @@ export function createThreadViewSidecarEventProjector(
       case EventType.THINKING_TEXT_MESSAGE_START:
       case EventType.THINKING_TEXT_MESSAGE_CONTENT:
       case EventType.THINKING_TEXT_MESSAGE_END:
-        return null;
       case EventType.TOOL_CALL_START:
-        if (!includeTranscriptEvents) {
-          return null;
-        }
-        if (getStringEventField(event, "parentMessageId")) {
-          return event;
-        }
-        if (!activeAssistantMessageId) {
-          return event;
-        }
-        return {
-          ...event,
-          parentMessageId: activeAssistantMessageId,
-        };
       case EventType.TOOL_CALL_ARGS:
       case EventType.TOOL_CALL_CHUNK:
       case EventType.TOOL_CALL_END:
       case EventType.TOOL_CALL_RESULT:
-        return includeTranscriptEvents ? event : null;
+        return null;
       default:
         return event;
     }

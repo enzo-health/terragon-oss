@@ -441,6 +441,7 @@ describe("GitHub webhook route", () => {
       commentId,
       githubAccountId,
       commentBody,
+      commentUserType = "User",
       isPullRequest = true,
       issueTitle = "Default Issue Title",
       issueBody = "Default issue body description",
@@ -451,6 +452,7 @@ describe("GitHub webhook route", () => {
       commentId?: number;
       githubAccountId: number | undefined;
       commentBody: string;
+      commentUserType?: string;
       isPullRequest?: boolean;
       issueTitle?: string;
       issueBody?: string | null;
@@ -473,6 +475,7 @@ describe("GitHub webhook route", () => {
           user: {
             login: "commenter",
             id: githubAccountId,
+            type: commentUserType,
           },
         },
         repository: {
@@ -538,6 +541,29 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
+      expect(handleAppMention).not.toHaveBeenCalled();
+    });
+
+    it("does not route unmentioned bot PR comments as feedback", async () => {
+      const request = await createMockRequest(
+        createValidIssueCommentBody({
+          repoFullName: "owner/repo",
+          prNumber: 123,
+          githubAccountId,
+          commentBody: "No security or compliance issues detected.",
+          commentUserType: "Bot",
+        }),
+        {
+          "x-github-event": "issue_comment",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
       expect(handleAppMention).not.toHaveBeenCalled();
     });
 
@@ -1258,6 +1284,7 @@ describe("GitHub webhook route", () => {
       prNumber,
       githubAccountId,
       commentBody,
+      commentUserType = "User",
       action = "created",
       prTitle = "Default PR Title",
       prBody = "Default PR body description",
@@ -1266,6 +1293,7 @@ describe("GitHub webhook route", () => {
       prNumber: number;
       githubAccountId: number | null;
       commentBody: string;
+      commentUserType?: string;
       action?: "created" | "edited" | "deleted";
       prTitle?: string;
       prBody?: string | null;
@@ -1285,6 +1313,7 @@ describe("GitHub webhook route", () => {
           user: {
             login: "reviewer",
             id: githubAccountId ?? undefined,
+            type: commentUserType,
           },
         },
         repository: {
@@ -1406,6 +1435,30 @@ describe("GitHub webhook route", () => {
           authorGitHubAccountId: githubAccountId,
         }),
       );
+    });
+
+    it("does not route unmentioned bot review comments as feedback", async () => {
+      const githubPR = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createValidPullRequestReviewCommentBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          commentBody: "No security or compliance issues detected.",
+          githubAccountId,
+          commentUserType: "Bot",
+        }),
+        {
+          "x-github-event": "pull_request_review_comment",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(handleAppMention).not.toHaveBeenCalled();
     });
 
     it("should ignore edited or deleted review comments", async () => {
@@ -1878,6 +1931,22 @@ describe("GitHub webhook route", () => {
           repoFullName: pr1.repoFullName,
         },
       });
+      // Auto-fix routing resolves open PRs from the head SHA so it never
+      // re-wakes a merged/closed PR. Both PRs report open here. mockReset
+      // drains any mockResolvedValueOnce values leaked by earlier tests.
+      vi.mocked(getOctokitForApp).mockReset();
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit: vi.fn().mockResolvedValue({
+              data: [
+                { number: pr1.number, state: "open" },
+                { number: pr2.number, state: "open" },
+              ],
+            }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
       const body = createCheckRunBody({
         repoFullName: pr1.repoFullName,
         prNumbers: [pr1.number, pr2.number],
@@ -1897,7 +1966,6 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr1.repoFullName,
           prNumber: pr1.number,
           eventType: "check_run.completed",
@@ -1908,7 +1976,6 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr2.repoFullName,
           prNumber: pr2.number,
           eventType: "check_run.completed",
@@ -1917,6 +1984,76 @@ describe("GitHub webhook route", () => {
           checkRunId: 1,
         }),
       );
+    });
+
+    it("does not route auto-fix feedback to closed PRs on a failed check run", async () => {
+      const openPr = await createTestGitHubPR({ db });
+      const closedPr = await createTestGitHubPR({
+        db,
+        overrides: {
+          number: openPr.number + 1,
+          repoFullName: openPr.repoFullName,
+        },
+      });
+      vi.mocked(getOctokitForApp).mockReset();
+      vi.mocked(getOctokitForApp).mockResolvedValue({
+        rest: {
+          repos: {
+            listPullRequestsAssociatedWithCommit: vi.fn().mockResolvedValue({
+              data: [
+                { number: openPr.number, state: "open" },
+                { number: closedPr.number, state: "closed" },
+              ],
+            }),
+          },
+        },
+      } as unknown as Awaited<ReturnType<typeof getOctokitForApp>>);
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: openPr.repoFullName,
+          prNumbers: [openPr.number, closedPr.number],
+          conclusion: "failure",
+        }),
+        {
+          "x-github-event": "check_run",
+          "x-github-delivery": "delivery-check-run-closed-pr",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(1);
+      expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prNumber: openPr.number,
+          eventType: "check_run.completed",
+        }),
+      );
+    });
+
+    it("does not route auto-fix feedback for a cancelled check run", async () => {
+      const pr = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createCheckRunBody({
+          repoFullName: pr.repoFullName,
+          prNumbers: [pr.number],
+          conclusion: "cancelled",
+        }),
+        {
+          "x-github-event": "check_run",
+          "x-github-delivery": "delivery-check-run-cancelled",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
     });
 
     it("should handle check runs with no associated PRs", async () => {
@@ -2229,7 +2366,6 @@ describe("GitHub webhook route", () => {
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledTimes(2);
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr1.repoFullName,
           prNumber: pr1.number,
           eventType: "check_suite.completed",
@@ -2240,7 +2376,6 @@ describe("GitHub webhook route", () => {
       );
       expect(routeGithubFeedbackOrSpawnThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: undefined,
           repoFullName: pr2.repoFullName,
           prNumber: pr2.number,
           eventType: "check_suite.completed",

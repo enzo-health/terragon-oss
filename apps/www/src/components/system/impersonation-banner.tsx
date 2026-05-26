@@ -27,7 +27,7 @@ export function ImpersonationBanner() {
   };
 
   return (
-    <div className="sticky top-0 z-50 bg-orange-100 dark:bg-orange-900/30 text-orange-900 dark:text-orange-100 text-sm font-medium px-4 py-2 flex items-center justify-between border-b-2 border-orange-300 dark:border-orange-700 w-full">
+    <div className="sticky top-0 z-50 bg-warning/15 text-warning text-sm font-medium px-4 py-2 flex items-center justify-between border-b border-warning/40 w-full">
       <div className="flex items-center gap-1">
         <span>Logged in as:</span>
         {impersonation.impersonatedUser && (

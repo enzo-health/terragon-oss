@@ -1,12 +1,9 @@
 "use client";
 
-import React, { memo, useMemo } from "react";
-import { UIMessage, UIPart, ThreadInfoFull } from "@terragon/shared";
+import { ThreadInfoFull, UIMessage, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
-import { MessagePart } from "./message-part";
+import React, { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { MessageToolbar } from "./chat-message-toolbar";
 import {
   DEFAULT_MESSAGE_PART_PROPS,
   ForkDialogData,
@@ -14,10 +11,13 @@ import {
   RedoDialogData,
 } from "./chat-message.types";
 import { buildPlanOccurrenceMap, groupParts } from "./chat-message.utils";
-import { ImageGroup } from "./chat-message-image-group";
 import { AgentMetaFooter } from "./chat-message-agent-meta-footer";
-import { SystemMessage } from "./chat-message-system";
 import { CollapsibleAgentActivityGroup } from "./chat-message-collapsible-activity";
+import { ImageGroup } from "./chat-message-image-group";
+import { SystemMessage } from "./chat-message-system";
+import { MessageToolbar } from "./chat-message-toolbar";
+import { MessagePart } from "./message-part";
+import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
 
 type ChatMessageProps = {
   message: UIMessage;
@@ -38,7 +38,7 @@ type ChatMessageProps = {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
-  /** Thread-global plan occurrence map (from ChatMessages). */
+  /** Thread-global plan occurrence map for legacy Terragon part rendering. */
   planOccurrences?: Map<UIPart, number>;
 };
 
@@ -105,6 +105,7 @@ export const ChatMessage = memo(function ChatMessage({
         artifactDescriptors={artifactDescriptors}
         artifactDescriptorLookup={artifactDescriptorLookup}
         onOpenArtifact={onOpenArtifact}
+        onOpenRepoFile={messagePartProps.toolProps.onOpenRepoFile}
       />
     );
   }
@@ -114,7 +115,7 @@ export const ChatMessage = memo(function ChatMessage({
     // Single rhythm inside the message: gap-3 (12px) between part groups.
     // The previous double-wrapper (outer gap-3 + inner gap-2) created two
     // competing rhythms that flattened the visual hierarchy of grouped tools.
-    <div className="flex flex-col gap-3 text-sm leading-relaxed">
+    <div className="flex flex-col gap-3 text-[length:var(--text-fluid-base)] leading-relaxed">
       <div className="flex flex-col gap-3">
         {groups.map((group, groupIndex) => {
           if (group.type === "collapsible-agent-activity") {

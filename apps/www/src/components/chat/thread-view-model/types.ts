@@ -12,6 +12,7 @@ import type {
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
+import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
 import type { AgUiMessagesState } from "../ag-ui-messages-reducer";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 
@@ -95,12 +96,10 @@ export type ThreadViewEvent =
   | {
       type: "ag-ui.event";
       event: BaseEvent;
-      projectTranscript?: boolean;
     }
   | {
       type: "runtime.event";
       event: BaseEvent;
-      projectTranscript?: boolean;
     }
   | {
       type: "optimistic.user-submitted";
@@ -114,6 +113,16 @@ export type ThreadViewEvent =
   | {
       type: "optimistic.permission-mode-updated";
       permissionMode: ThreadPageChat["permissionMode"];
+    }
+  | {
+      type: "repo-file.opened";
+      path: string;
+      ref?: string;
+      lineRange?: RepoFileLineRange;
+    }
+  | {
+      type: "repo-tree.opened";
+      ref?: string;
     }
   | {
       type: "server.refetch-reconciled";

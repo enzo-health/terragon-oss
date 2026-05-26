@@ -4,7 +4,7 @@ import type { Message, State } from "@ag-ui/core";
 import { act, createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAgUiTransport } from "./use-ag-ui-transport";
+import { useAgUiTransport, type AgUiTransport } from "./use-ag-ui-transport";
 
 // Mock @ag-ui/client so we can assert constructor args without pulling in
 // the full RxJS / fetch runtime.
@@ -59,24 +59,28 @@ function requireAgent(value: CapturedValue): CapturedAgent {
 
 function Harness({
   args,
-  onAgent,
+  onTransport,
 }: {
   args: TransportArgs;
-  onAgent: (agent: CapturedValue) => void;
+  onTransport: (
+    agent: CapturedValue,
+    setReplayCursor: AgUiTransport["setReplayCursor"],
+  ) => void;
 }): null {
-  const agent = useAgUiTransport(args);
+  const transport = useAgUiTransport(args);
+  const agent = transport.agent;
   const runIdForObservation = args.runId;
   useEffect(() => {
-    onAgent(agent as unknown as CapturedValue);
-  }, [agent, onAgent]);
+    onTransport(agent as unknown as CapturedValue, transport.setReplayCursor);
+  }, [agent, onTransport, transport.setReplayCursor]);
   // Also capture on URL changes so runId-driven URL mutations are
   // observable to the test harness. The ref-identity-stable agent is
   // mutated in place, so react's effect-deps on the agent alone won't
   // re-fire; we dispatch whenever the args change instead.
   useEffect(() => {
     void runIdForObservation;
-    onAgent(agent as unknown as CapturedValue);
-  }, [agent, onAgent, runIdForObservation]);
+    onTransport(agent as unknown as CapturedValue, transport.setReplayCursor);
+  }, [agent, onTransport, runIdForObservation, transport.setReplayCursor]);
   return null;
 }
 
@@ -84,6 +88,7 @@ async function renderHarness({ args }: { args: TransportArgs }): Promise<{
   container: HTMLDivElement;
   root: Root;
   captured: CapturedValue[];
+  getReplayCursorSetter: () => AgUiTransport["setReplayCursor"];
   rerender: (next: { args: TransportArgs }) => Promise<void>;
 }> {
   const container = document.createElement("div");
@@ -91,21 +96,32 @@ async function renderHarness({ args }: { args: TransportArgs }): Promise<{
   const root = createRoot(container);
 
   const captured: CapturedValue[] = [];
-  const onAgent = (agent: CapturedValue) => {
+  let replayCursorSetter: AgUiTransport["setReplayCursor"] | null = null;
+  const onTransport = (
+    agent: CapturedValue,
+    setReplayCursor: AgUiTransport["setReplayCursor"],
+  ) => {
     captured.push(agent);
+    replayCursorSetter = setReplayCursor;
+  };
+  const getReplayCursorSetter = () => {
+    if (!replayCursorSetter) {
+      throw new Error("expected replay cursor setter");
+    }
+    return replayCursorSetter;
   };
 
   await act(async () => {
-    root.render(createElement(Harness, { args, onAgent }));
+    root.render(createElement(Harness, { args, onTransport }));
   });
 
   const rerender = async (next: { args: TransportArgs }) => {
     await act(async () => {
-      root.render(createElement(Harness, { args: next.args, onAgent }));
+      root.render(createElement(Harness, { args: next.args, onTransport }));
     });
   };
 
-  return { container, root, captured, rerender };
+  return { container, root, captured, getReplayCursorSetter, rerender };
 }
 
 describe("useAgUiTransport", () => {
@@ -311,15 +327,15 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("preserves the history fromSeq cursor while no runId has been captured", async () => {
-    const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", runId: null },
-    });
+  it("applies the typed history fromSeq cursor while no runId has been captured", async () => {
+    const { captured, getReplayCursorSetter, root, container } =
+      await renderHarness({
+        args: { threadId: "t1", threadChatId: "c1", runId: null },
+      });
     const agent = requireAgent(captured.at(-1)!);
-    agent.url = "/api/ag-ui/t1?threadChatId=c1&fromSeq=42";
 
-    await rerender({
-      args: { threadId: "t1", threadChatId: "c1" },
+    await act(async () => {
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
     });
 
     expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42");
@@ -330,12 +346,16 @@ describe("useAgUiTransport", () => {
     container.remove();
   });
 
-  it("preserves the history fromSeq cursor after a synthetic runId is captured", async () => {
-    const { captured, rerender, root, container } = await renderHarness({
-      args: { threadId: "t1", threadChatId: "c1", runId: null },
-    });
+  it("preserves the typed history fromSeq cursor after a synthetic runId is captured", async () => {
+    const { captured, getReplayCursorSetter, rerender, root, container } =
+      await renderHarness({
+        args: { threadId: "t1", threadChatId: "c1", runId: null },
+      });
     const agent = requireAgent(captured.at(-1)!);
-    agent.url = "/api/ag-ui/t1?threadChatId=c1&fromSeq=42";
+
+    await act(async () => {
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
+    });
 
     await rerender({
       args: { threadId: "t1", threadChatId: "c1", runId: "run-xyz" },
@@ -344,6 +364,51 @@ describe("useAgUiTransport", () => {
     expect(agent.url).toBe(
       "/api/ag-ui/t1?threadChatId=c1&fromSeq=42&runId=run-xyz",
     );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("clears the typed history fromSeq cursor", async () => {
+    const { captured, getReplayCursorSetter, root, container } =
+      await renderHarness({
+        args: { threadId: "t1", threadChatId: "c1", runId: "run-xyz" },
+      });
+    const agent = requireAgent(captured.at(-1)!);
+
+    await act(async () => {
+      getReplayCursorSetter()({ seq: 42, projectionIndex: null });
+    });
+    expect(agent.url).toBe(
+      "/api/ag-ui/t1?threadChatId=c1&fromSeq=42&runId=run-xyz",
+    );
+
+    await act(async () => {
+      getReplayCursorSetter()(null);
+    });
+
+    expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&runId=run-xyz");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("serializes projection-aware history cursors", async () => {
+    const { captured, getReplayCursorSetter, root, container } =
+      await renderHarness({
+        args: { threadId: "t1", threadChatId: "c1", runId: null },
+      });
+    const agent = requireAgent(captured.at(-1)!);
+
+    await act(async () => {
+      getReplayCursorSetter()({ seq: 42, projectionIndex: 3 });
+    });
+
+    expect(agent.url).toBe("/api/ag-ui/t1?threadChatId=c1&fromSeq=42%3A3");
 
     await act(async () => {
       root.unmount();

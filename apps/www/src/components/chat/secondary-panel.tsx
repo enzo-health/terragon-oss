@@ -53,6 +53,9 @@ export function SecondaryPanel({
   isReadOnly = false,
   promptBoxRef,
   onOptimisticPermissionModeUpdate,
+  onOpenRepoFile,
+  onOpenRepoTree,
+  activeRepoFilePath,
 }: {
   thread: ThreadInfoFull;
   artifactDescriptors: ArtifactDescriptor[];
@@ -64,6 +67,9 @@ export function SecondaryPanel({
   isReadOnly?: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
+  onOpenRepoFile?: (path: string) => void;
+  onOpenRepoTree?: () => void;
+  activeRepoFilePath?: string | null;
 }) {
   const platform = usePlatform();
   const {
@@ -194,6 +200,9 @@ export function SecondaryPanel({
         isReadOnly={isReadOnly}
         promptBoxRef={promptBoxRef}
         onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+        onOpenRepoFile={onOpenRepoFile}
+        onOpenRepoTree={onOpenRepoTree}
+        activeRepoFilePath={activeRepoFilePath}
       />
     );
   }
@@ -256,6 +265,9 @@ export function SecondaryPanel({
           isReadOnly={isReadOnly}
           promptBoxRef={promptBoxRef}
           onOptimisticPermissionModeUpdate={onOptimisticPermissionModeUpdate}
+          onOpenRepoFile={onOpenRepoFile}
+          onOpenRepoTree={onOpenRepoTree}
+          activeRepoFilePath={activeRepoFilePath}
         />
       </div>
     </>

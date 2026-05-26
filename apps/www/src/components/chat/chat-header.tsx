@@ -118,7 +118,7 @@ export const ChatHeader = memo(function ChatHeader({
         role={isMobile ? "button" : undefined}
         tabIndex={isMobile && onHeaderClick ? 0 : undefined}
         aria-label={isMobile ? "Open task details" : undefined}
-        className={`relative z-10 flex w-full items-center justify-between gap-4 overflow-hidden px-4 md:px-6 ${headerClassName} ${headerSurfaceClassName}`}
+        className={`relative z-10 flex min-h-14 w-full items-center justify-between gap-4 overflow-hidden px-[var(--space-fluid-edge)] ${headerClassName} ${headerSurfaceClassName}`}
         onClick={isMobile ? onHeaderClick : undefined}
         onKeyDown={
           isMobile && onHeaderClick
@@ -133,72 +133,80 @@ export const ChatHeader = memo(function ChatHeader({
         style={isMobile ? { cursor: "pointer" } : undefined}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          {isMobile && <SidebarTrigger className="px-0 size-auto w-fit mr-2" />}
+          {isMobile && <SidebarTrigger className="px-0 size-auto w-fit" />}
           {canCollapseThreadList && isThreadListCollapsed && (
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setThreadListCollapsed(false)}
-              className="w-fit mr-2 flex-shrink-0"
+              className="w-fit flex-shrink-0"
               title="Show task list"
             >
               <PanelRightClose className="h-4 w-4" />
             </Button>
           )}
-          <div className="flex flex-col min-w-0 w-full gap-1.5">
-            <div className="flex items-center gap-3 w-full">
-              <div className="opacity-80">
+          <div className="flex min-w-0 w-full flex-col gap-1.5">
+            <div className="flex w-full min-w-0 items-center gap-2">
+              <div className="flex items-center opacity-80 flex-shrink-0">
                 <ThreadStatusIndicator thread={thread} />
               </div>
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                {isEditing ? (
-                  <Input
-                    ref={inputRef}
-                    value={editedName}
-                    onChange={(e) => setEditedName(e.target.value)}
-                    onBlur={handleSave}
-                    onKeyDown={handleKeyDown}
-                    aria-label="Edit task name"
-                    className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[15px] font-sans font-medium tracking-[-0.01em] focus-visible:ring-1 focus-visible:ring-ring md:text-[17px]"
-                    placeholder={getThreadTitle(thread)}
-                    style={{ minWidth: "150px" }}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                  />
-                ) : (
-                  <span className="truncate font-sans text-[15px] font-medium leading-tight tracking-[-0.01em] text-foreground md:text-[17px]">
-                    {getThreadTitle(thread)}
-                  </span>
-                )}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className="opacity-70">
-                    <ThreadAgentIcon thread={thread} />
-                  </div>
-                  {githubSummary.githubPRNumber && githubSummary.prStatus && (
-                    <PRStatusPill
-                      checksStatus={githubSummary.prChecksStatus}
-                      status={githubSummary.prStatus}
-                      prNumber={githubSummary.githubPRNumber}
-                      repoFullName={githubSummary.githubRepoFullName}
-                    />
-                  )}
+              {isEditing ? (
+                <Input
+                  ref={inputRef}
+                  value={editedName}
+                  onChange={(e) => setEditedName(e.target.value)}
+                  onBlur={handleSave}
+                  onKeyDown={handleKeyDown}
+                  aria-label="Edit task name"
+                  className="h-auto w-full rounded-sm border-0 bg-transparent px-0 py-0 text-[length:var(--text-fluid-title)] font-sans font-semibold tracking-[-0.01em] focus-visible:ring-1 focus-visible:ring-ring"
+                  placeholder={getThreadTitle(thread)}
+                  style={{ minWidth: "150px" }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              ) : (
+                <span className="truncate font-sans text-[length:var(--text-fluid-title)] font-semibold leading-tight tracking-[-0.01em] text-foreground">
+                  {getThreadTitle(thread)}
+                </span>
+              )}
+              <div className="hidden items-center gap-2 flex-shrink-0 @xl/pane:flex">
+                <div className="flex items-center opacity-70">
+                  <ThreadAgentIcon thread={thread} />
                 </div>
+                {githubSummary.githubPRNumber && githubSummary.prStatus && (
+                  <PRStatusPill
+                    checksStatus={githubSummary.prChecksStatus}
+                    status={githubSummary.prStatus}
+                    prNumber={githubSummary.githubPRNumber}
+                    repoFullName={githubSummary.githubRepoFullName}
+                  />
+                )}
               </div>
             </div>
             {/* metadata */}
-            <div className="flex h-5 min-w-0 items-center gap-2 text-[12px] tracking-[0.12px] text-muted-foreground md:text-[13px]">
-              <span className="flex-shrink-0 whitespace-nowrap font-medium text-foreground/80">
+            <div className="flex min-h-6 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px]">
+              <span className="truncate font-medium text-foreground/80 @xl/pane:flex-shrink-0 @xl/pane:whitespace-nowrap">
                 {thread.githubRepoFullName}
               </span>
+              {githubSummary.githubPRNumber && githubSummary.prStatus && (
+                <span className="flex-shrink-0 @xl/pane:hidden">
+                  <PRStatusPill
+                    checksStatus={githubSummary.prChecksStatus}
+                    status={githubSummary.prStatus}
+                    prNumber={githubSummary.githubPRNumber}
+                    repoFullName={githubSummary.githubRepoFullName}
+                  />
+                </span>
+              )}
               {thread.branchName && thread.repoBaseBranchName && (
-                <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden sm:inline-flex">
+                <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden @xl/pane:inline-flex">
                   <a
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.repoBaseBranchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="block max-w-[200px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     title={thread.repoBaseBranchName}
                   >
                     {thread.repoBaseBranchName}
@@ -213,14 +221,14 @@ export const ChatHeader = memo(function ChatHeader({
                     href={`https://github.com/${thread.githubRepoFullName}/tree/${thread.branchName}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2.5 py-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="block min-w-[35px] truncate rounded-full bg-muted/80 px-2 py-0.5 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     title={thread.branchName}
                   >
                     {thread.branchName}
                   </a>
                   <button
                     type="button"
-                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="ml-0.5 inline-flex cursor-pointer items-center rounded-full p-1 transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -254,7 +262,7 @@ export const ChatHeader = memo(function ChatHeader({
                 )}
                 {thread.archived && <Pill label="Archived" />}
               </span>
-              <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="hidden flex-shrink-0 items-center gap-1.5 @xl/pane:flex">
                 <UsageChip tokenUsage={metaSnapshot.tokenUsage} />
                 <RateLimitChip rateLimits={metaSnapshot.rateLimits} />
                 <ModelRoutingChip modelReroute={metaSnapshot.modelReroute} />
@@ -285,7 +293,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
           <div className="flex flex-col gap-0.5 flex-1">
             <div className="flex items-center gap-2">
-              <Split className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+              <Split className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs font-mono font-medium line-clamp-1">
                 Forked from{" "}
                 <Link
@@ -310,7 +318,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
           <div className="flex flex-col gap-0.5 flex-1">
             <div className="flex items-center gap-2">
-              <Eye className="h-2.5 w-2.5 text-muted-foreground" />
+              <Eye className="h-3 w-3 text-muted-foreground" />
               <span className="text-xs font-mono font-medium whitespace-nowrap">
                 View only
               </span>

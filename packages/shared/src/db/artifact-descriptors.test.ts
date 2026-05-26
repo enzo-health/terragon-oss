@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getArtifactDescriptors } from "./artifact-descriptors";
+import {
+  buildRepoFileArtifactId,
+  createRepoFileArtifactDescriptor,
+  getArtifactDescriptors,
+} from "./artifact-descriptors";
 import type { UIMessage } from "./ui-messages";
 
 describe("getArtifactDescriptors", () => {
@@ -432,5 +436,92 @@ describe("getArtifactDescriptors", () => {
         summary: "1 file · +1 · -0",
       },
     ]);
+  });
+});
+
+describe("createRepoFileArtifactDescriptor", () => {
+  it("synthesizes a repo-file descriptor with basename title and path summary", () => {
+    const descriptor = createRepoFileArtifactDescriptor({
+      path: "src/components/foo.ts",
+    });
+
+    expect(descriptor).toMatchObject({
+      id: "artifact:repo-file:working:src/components/foo.ts",
+      kind: "repo-file",
+      title: "foo.ts",
+      status: "ready",
+      summary: "src/components/foo.ts",
+      part: {
+        type: "repo-file",
+        path: "src/components/foo.ts",
+      },
+      origin: {
+        type: "repo-file",
+        path: "src/components/foo.ts",
+        fingerprint: expect.any(String),
+      },
+    });
+    // No ref/lineRange keys when not provided.
+    expect("ref" in descriptor.part).toBe(false);
+    expect("lineRange" in descriptor.part).toBe(false);
+    expect("ref" in descriptor.origin).toBe(false);
+    expect("lineRange" in descriptor.origin).toBe(false);
+  });
+
+  it("carries ref and line range into both part and origin", () => {
+    const descriptor = createRepoFileArtifactDescriptor({
+      path: "README.md",
+      ref: "abc123",
+      lineRange: { start: 3, end: 9 },
+    });
+
+    expect(descriptor.id).toBe("artifact:repo-file:abc123:README.md");
+    expect(descriptor.title).toBe("README.md");
+    expect(descriptor.part).toMatchObject({
+      type: "repo-file",
+      path: "README.md",
+      ref: "abc123",
+      lineRange: { start: 3, end: 9 },
+    });
+    expect(descriptor.origin).toMatchObject({
+      type: "repo-file",
+      path: "README.md",
+      ref: "abc123",
+      lineRange: { start: 3, end: 9 },
+    });
+  });
+});
+
+describe("buildRepoFileArtifactId", () => {
+  it("dedupes by normalized path + ref, treating missing ref as 'working'", () => {
+    const noRef = buildRepoFileArtifactId({ path: "src/a.ts" });
+    const sameNoRef = buildRepoFileArtifactId({ path: "src/a.ts" });
+    expect(noRef).toBe("artifact:repo-file:working:src/a.ts");
+    expect(sameNoRef).toBe(noRef);
+  });
+
+  it("produces distinct ids for the same path at different refs", () => {
+    const working = buildRepoFileArtifactId({ path: "src/a.ts" });
+    const atMain = buildRepoFileArtifactId({ path: "src/a.ts", ref: "main" });
+    const atSha = buildRepoFileArtifactId({
+      path: "src/a.ts",
+      ref: "deadbeef",
+    });
+
+    expect(new Set([working, atMain, atSha]).size).toBe(3);
+    expect(atMain).toBe("artifact:repo-file:main:src/a.ts");
+  });
+
+  it("ignores line range in the dedup id so anchors reuse one artifact", () => {
+    const descriptorA = createRepoFileArtifactDescriptor({
+      path: "src/a.ts",
+      lineRange: { start: 1, end: 2 },
+    });
+    const descriptorB = createRepoFileArtifactDescriptor({
+      path: "src/a.ts",
+      lineRange: { start: 40, end: 50 },
+    });
+
+    expect(descriptorA.id).toBe(descriptorB.id);
   });
 });

@@ -13,8 +13,10 @@ import { countTextLines, formatToolParameters } from "./utils";
 
 export function EditTool({
   toolPart,
+  onToolArgClick,
 }: {
   toolPart: Extract<AllToolParts, { name: "Edit" }>;
+  onToolArgClick?: () => void;
 }) {
   return (
     <GenericToolPart
@@ -24,6 +26,7 @@ export function EditTool({
         excludeKeys: ["old_string", "new_string", "expected_replacements"],
       })}
       toolStatus={toolPart.status}
+      onToolArgClick={onToolArgClick}
     >
       <ToolPartEditResult toolPart={toolPart} />
     </GenericToolPart>

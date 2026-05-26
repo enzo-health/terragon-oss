@@ -1,10 +1,15 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
+import {
+  buildRepoFileArtifactId,
+  buildRepoTreeArtifactId,
+} from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
+import { createThreadViewSidecarEventProjector } from "../use-ag-ui-messages";
 import {
   createThreadViewSnapshot,
   selectThreadViewDbMessages,
@@ -159,6 +164,7 @@ describe("ThreadViewModel reducer", () => {
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "native-msg-1",
+      role: "assistant",
     });
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_CONTENT,
@@ -189,6 +195,7 @@ describe("ThreadViewModel reducer", () => {
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "msg_abc123",
+      role: "assistant",
     });
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_CONTENT,
@@ -294,6 +301,108 @@ describe("ThreadViewModel reducer", () => {
       }),
     });
     expect(projectThreadViewModel(state).permissionMode).toBe("allowAll");
+  });
+
+  it("opens a repo-file descriptor into artifacts, deduped by path+ref", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "feature-branch",
+    });
+    const opened = projectThreadViewModel(state).artifacts.descriptors;
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      id: buildRepoFileArtifactId({
+        path: "src/foo.ts",
+        ref: "feature-branch",
+      }),
+      kind: "repo-file",
+      title: "foo.ts",
+    });
+
+    const before = state.artifacts;
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "feature-branch",
+    });
+    expect(state.artifacts).toBe(before);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+
+    state = threadViewModelReducer(state, {
+      type: "repo-file.opened",
+      path: "src/foo.ts",
+      ref: "other-branch",
+    });
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(2);
+  });
+
+  it("opens a single repo-tree descriptor, deduped by ref", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "feature-branch",
+    });
+    const opened = projectThreadViewModel(state).artifacts.descriptors;
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      id: buildRepoTreeArtifactId({ ref: "feature-branch" }),
+      kind: "repo-tree",
+      title: "Files",
+    });
+
+    // Re-opening the same ref focuses the existing tab, not a duplicate.
+    const before = state.artifacts;
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "feature-branch",
+    });
+    expect(state.artifacts).toBe(before);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+
+    // A different ref is a distinct tree.
+    state = threadViewModelReducer(state, {
+      type: "repo-tree.opened",
+      ref: "other-branch",
+    });
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(2);
+  });
+
+  it("preserves an opened repo-tree descriptor across snapshot hydration", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      { type: "repo-tree.opened", ref: "feature-branch" },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")]),
+    });
+
+    expect(
+      projectThreadViewModel(state).artifacts.descriptors.map((d) => d.id),
+    ).toContain(buildRepoTreeArtifactId({ ref: "feature-branch" }));
+  });
+
+  it("preserves an opened repo-file descriptor across snapshot hydration", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      { type: "repo-file.opened", path: "src/foo.ts", ref: "feature-branch" },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")]),
+    });
+
+    expect(
+      projectThreadViewModel(state).artifacts.descriptors.map((d) => d.id),
+    ).toContain(
+      buildRepoFileArtifactId({ path: "src/foo.ts", ref: "feature-branch" }),
+    );
   });
 
   it("preserves live lifecycle across hydration until durable reconciliation", () => {
@@ -867,6 +976,42 @@ describe("ThreadViewModel reducer", () => {
       role: "agent",
       parts: [{ type: "text", text: "hello world" }],
     });
+  });
+
+  it("keeps transcript state stable when product sidecars receive transcript events", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    const initialTranscript = state.transcript;
+    const projector = createThreadViewSidecarEventProjector();
+    const transcriptEvents: BaseEvent[] = [
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "agent-1",
+        delta: "token",
+      } as BaseEvent,
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "agent-1:reasoning",
+        delta: "thought",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+      } as BaseEvent,
+    ];
+
+    for (const event of transcriptEvents) {
+      const projected = projector(event);
+      if (projected) {
+        state = threadViewModelReducer(state, {
+          type: "ag-ui.event",
+          event: projected,
+        });
+      }
+    }
+
+    expect(state.transcript).toBe(initialTranscript);
+    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 });
 

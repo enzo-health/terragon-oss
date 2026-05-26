@@ -11,7 +11,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSessionOrNull } from "@/lib/auth-server";
 import type { AgentTraceSpan } from "@/lib/agent-trace";
-import { runFollowUpFromAgUiInput } from "@/server-lib/run-from-ag-ui";
+import { dispatchFollowUpFromAppend } from "@/server-lib/follow-up-command";
 import { POST } from "../../src/app/api/ag-ui/[threadId]/route";
 import { replayAgUi } from "./ag-ui-replayer";
 
@@ -69,8 +69,8 @@ vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
 }));
 
-vi.mock("@/server-lib/run-from-ag-ui", () => ({
-  runFollowUpFromAgUiInput: vi.fn(),
+vi.mock("@/server-lib/follow-up-command", () => ({
+  dispatchFollowUpFromAppend: vi.fn(),
 }));
 
 async function readReplayBurst(
@@ -232,13 +232,13 @@ describe("prompt to daemon to client trace", () => {
       runId,
     });
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(runId);
-    vi.mocked(runFollowUpFromAgUiInput).mockImplementation(async () => {
+    vi.mocked(dispatchFollowUpFromAppend).mockImplementation(async () => {
       return { runId };
     });
 
     const response = await POST(
       makePostRequest(
-        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-trace-1",
         {
           threadId: "thread-1",
           runId,
@@ -246,9 +246,11 @@ describe("prompt to daemon to client trace", () => {
           tools: [],
           context: [],
           forwardedProps: {
-            terragon: {
-              intent: "append",
-              traceId,
+            runConfig: {
+              terragon: {
+                intent: "append",
+                traceId,
+              },
             },
           },
         },
@@ -258,14 +260,13 @@ describe("prompt to daemon to client trace", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
-    expect(runFollowUpFromAgUiInput).toHaveBeenCalledWith({
+    expect(dispatchFollowUpFromAppend).toHaveBeenCalledWith({
       threadId: "thread-1",
       threadChatId: "chat-1",
       userId: "user-1",
       body: expect.objectContaining({
         messages: [{ id: "user-trace-1", role: "user", content: prompt }],
       }),
-      isReplayMode: false,
     });
 
     const receivedEvents = await readReplayBurst(response, daemonEvents.length);
@@ -280,16 +281,12 @@ describe("prompt to daemon to client trace", () => {
       runStarted: false,
       threadStatus: "complete",
     });
-    expect(messages).toHaveLength(1);
-    const [message] = messages;
-    expect(message?.role).toBe("agent");
-    if (message?.role !== "agent") {
-      throw new Error("expected agent message");
-    }
-    expect(message.parts).toEqual([
+    expect(messages).toEqual([
       {
-        type: "text",
-        text: assistantText,
+        id: "assistant-trace-1",
+        role: "agent",
+        agent: "claudeCode",
+        parts: [{ type: "text", text: assistantText }],
       },
     ]);
 

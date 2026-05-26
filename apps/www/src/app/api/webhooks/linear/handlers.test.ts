@@ -73,6 +73,7 @@ const mockViewer = {
   id: "app-user-id",
   name: "Terragon Agent",
 };
+const mockViewerAccess = vi.fn();
 const mockIssueState = {
   id: "state-started",
   name: "In Progress",
@@ -111,6 +112,7 @@ const mockLinearClientInstance = {
   issue: vi.fn().mockResolvedValue(mockIssue),
   updateIssue: mockUpdateIssue,
   get viewer() {
+    mockViewerAccess();
     return Promise.resolve(mockViewer);
   },
 };
@@ -227,6 +229,7 @@ describe("handlers", () => {
         tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h from now
         scope: "read,write",
         installerUserId: user.id,
+        appUserId: "stored-app-user-id",
         isActive: true,
       },
     });
@@ -420,7 +423,7 @@ describe("handlers", () => {
       spy.mockRestore();
     });
 
-    it("throws when delivery completion persistence fails so webhook delivery can retry", async () => {
+    it("surfaces delivery completion persistence failures so Linear can retry", async () => {
       const linearModule = await import("@terragon/shared/model/linear");
       const completeSpy = vi
         .spyOn(linearModule, "completeLinearWebhookDelivery")
@@ -433,7 +436,7 @@ describe("handlers", () => {
           createClient: mockClientFactory,
         }),
       ).rejects.toThrow("completion write failed");
-
+      expect(completeSpy).toHaveBeenCalledOnce();
       completeSpy.mockRestore();
     });
 
@@ -465,6 +468,7 @@ describe("handlers", () => {
       await handleAgentSessionEvent(payload, "delivery-reconcile", {
         createClient: mockClientFactory,
       });
+      await waitUntilResolved();
       expect(newThreadInternal).toHaveBeenCalledTimes(1);
       expect(completeSpy).toHaveBeenCalledTimes(2);
 
@@ -542,6 +546,42 @@ describe("handlers", () => {
         createClient: mockClientFactory,
       });
 
+      expect(queueFollowUpInternal).not.toHaveBeenCalled();
+    });
+
+    it("creates the thread from a pre-thread repo selection prompt", async () => {
+      const payload = makePromptedPayload({
+        agentSession: {
+          id: "session-prethread-select",
+          creatorId: "linear-user-1",
+          issueId: "issue-xyz",
+          issue: {
+            id: "issue-xyz",
+            identifier: "ENG-42",
+            title: "Fix the bug",
+            url: "https://linear.app/team/issue/ENG-42",
+          },
+        },
+        agentActivity: {
+          content: { type: "prompt", body: "owner/selected-repo" },
+        },
+        promptContext: "Issue ENG-42: Fix the bug",
+      });
+
+      await handleAgentSessionEvent(payload, undefined, {
+        createClient: mockClientFactory,
+      });
+
+      expect(newThreadInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: user.id,
+          githubRepoFullName: "owner/selected-repo",
+          sourceMetadata: expect.objectContaining({
+            agentSessionId: "session-prethread-select",
+            issueId: "issue-xyz",
+          }),
+        }),
+      );
       expect(queueFollowUpInternal).not.toHaveBeenCalled();
     });
 
@@ -1068,8 +1108,9 @@ describe("handlers", () => {
       // Should have called updateIssue to set the delegate
       expect(mockUpdateIssue).toHaveBeenCalledWith(
         "issue-xyz",
-        expect.objectContaining({ delegateId: "app-user-id" }),
+        expect.objectContaining({ delegateId: "stored-app-user-id" }),
       );
+      expect(mockViewerAccess).not.toHaveBeenCalled();
     });
   });
 
@@ -1147,10 +1188,10 @@ describe("handlers", () => {
       });
       await waitUntilResolved();
 
-      // Should have created a thread using the default repo (not skipped)
+      // Should have created a thread using the explicit user default repo.
       expect(newThreadInternal).toHaveBeenCalledWith(
         expect.objectContaining({
-          githubRepoFullName: "owner/repo-a", // first suggestion used as fallback
+          githubRepoFullName: "owner/default-repo",
         }),
       );
     });
@@ -1186,6 +1227,101 @@ describe("handlers", () => {
       // Should NOT have created a thread
       expect(newThreadInternal).not.toHaveBeenCalled();
 
+      settingsSpy.mockRestore();
+    });
+
+    it("round-trips low-confidence repo selection through prompted idempotency", async () => {
+      const envModule = await import("@terragon/shared/model/environments");
+      const linearModel = await import("@terragon/shared/model/linear");
+      const environments = [
+        { repoFullName: "owner/repo-a" },
+        { repoFullName: "owner/repo-b" },
+      ] as Awaited<ReturnType<typeof envModule.getEnvironments>>;
+      const envSpy = vi
+        .spyOn(envModule, "getEnvironments")
+        .mockResolvedValue(environments);
+      const settingsSpy = vi
+        .spyOn(linearModel, "getLinearSettingsForUserAndOrg")
+        .mockResolvedValue(null);
+      mockIssueRepositorySuggestions.mockResolvedValue({
+        suggestions: [
+          {
+            repositoryFullName: "owner/repo-a",
+            hostname: "github.com",
+            confidence: 0.3,
+          },
+          {
+            repositoryFullName: "owner/repo-b",
+            hostname: "github.com",
+            confidence: 0.25,
+          },
+        ],
+      });
+
+      await handleAgentSessionEvent(
+        makeCreatedPayload({
+          agentSession: {
+            id: "session-select-roundtrip",
+            creatorId: "linear-user-1",
+            issueId: "issue-xyz",
+            issue: {
+              id: "issue-xyz",
+              identifier: "ENG-42",
+              title: "Fix the bug",
+              url: "https://linear.app/team/issue/ENG-42",
+            },
+          },
+        }),
+        "delivery-select-created",
+        { createClient: mockClientFactory },
+      );
+
+      const selectCall = mockCreateAgentActivity.mock.calls.find(
+        (call) => call[0]?.signal === "select",
+      );
+      expect(selectCall).toBeDefined();
+      expect(newThreadInternal).not.toHaveBeenCalled();
+
+      const promptedPayload = makePromptedPayload({
+        agentSession: {
+          id: "session-select-roundtrip",
+          creatorId: "linear-user-1",
+          issueId: "issue-xyz",
+          issue: {
+            id: "issue-xyz",
+            identifier: "ENG-42",
+            title: "Fix the bug",
+            url: "https://linear.app/team/issue/ENG-42",
+          },
+        },
+        agentActivity: {
+          content: { type: "prompt", body: "owner/repo-a" },
+        },
+        promptContext: "Issue ENG-42: Fix the bug",
+      });
+
+      await handleAgentSessionEvent(promptedPayload, "delivery-select-prompt", {
+        createClient: mockClientFactory,
+      });
+
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+      expect(newThreadInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          githubRepoFullName: "owner/repo-a",
+          sourceMetadata: expect.objectContaining({
+            agentSessionId: "session-select-roundtrip",
+            linearDeliveryId: "delivery-select-prompt",
+          }),
+        }),
+      );
+
+      vi.mocked(newThreadInternal).mockClear();
+      await handleAgentSessionEvent(promptedPayload, "delivery-select-prompt", {
+        createClient: mockClientFactory,
+      });
+      expect(newThreadInternal).not.toHaveBeenCalled();
+
+      envSpy.mockRestore();
       settingsSpy.mockRestore();
     });
   });
