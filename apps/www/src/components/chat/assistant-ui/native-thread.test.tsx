@@ -10,7 +10,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NativeThread } from "./native-thread";
 
-// jsdom lacks these browser APIs that assistant-ui's Viewport primitive uses.
 beforeAll(() => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -41,6 +40,13 @@ const SEED_MESSAGES: ThreadMessageLike[] = [
         argsText: '{"command":"ls"}',
         result: "file.txt",
       },
+      // A rich Terragon data part: pure-native NativeThread renders nothing
+      // for it (the bespoke renderers are removed) and must not crash.
+      {
+        type: "data",
+        name: "terragon.terminal",
+        data: { type: "terminal", terminalId: "term-1" },
+      },
     ],
   },
 ];
@@ -62,38 +68,27 @@ function Harness() {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function mount() {
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-  act(() => {
-    root!.render(createElement(Harness));
-  });
-}
-
 afterEach(() => {
-  act(() => {
-    root?.unmount();
-  });
+  act(() => root?.unmount());
   container?.remove();
   container = null;
   root = null;
 });
 
 describe("NativeThread", () => {
-  it("renders user text, assistant text, reasoning, and tool calls from the runtime", () => {
-    mount();
+  it("renders text, reasoning, and tool calls through native assistant-ui primitives", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(createElement(Harness));
+    });
     const text = container?.textContent ?? "";
 
-    // User + assistant text (streamdown markdown slot).
     expect(text).toContain("show me the files");
     expect(text).toContain("Here are the files.");
-
-    // Reasoning renders under a collapsible "Thinking" affordance.
     expect(text).toContain("Thinking");
     expect(text).toContain("I should list the directory");
-
-    // Every tool renders through the single generic tool card.
     expect(text).toContain("Bash");
     expect(text).toContain("file.txt");
   });

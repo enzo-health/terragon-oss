@@ -10,18 +10,13 @@ import {
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 
 /**
- * Native transcript surface (Phase N1 of the native-first strip — see
- * `docs/plans/2026-05-25-native-first-strip-and-rebuild.md`). Renders directly
- * from assistant-ui primitives reading the AG-UI runtime, with no Terragon
- * projector, view-model reducer, coalescing, or per-part custom renderers.
- *
- * Kept leaf-renderer divergences (decided): text/reasoning render through the
- * streamdown `MarkdownRenderer`; the composer stays TipTap and is rendered by
- * the existing prompt box outside this surface, not `ComposerPrimitive`.
- *
- * Rich parts (diff/terminal/plan/...) render through the single generic tool UI
- * below until they are re-added as native `ActivityMessage` renderers (Phase
- * N4). Gated behind the `nativeChatTranscript` flag; default off.
+ * Native transcript surface — pure assistant-ui. The runtime owns the message
+ * list (`ThreadPrimitive.Messages`) and the part dispatch
+ * (`MessagePrimitive.Parts`). Only the native AG-UI part types render: text
+ * (via the streamdown markdown slot), reasoning, and tool calls. The bespoke
+ * Terragon renderers (diff, terminal, plan, delegation, ...) are intentionally
+ * not used here — the composer (TipTap) and markdown (streamdown) are the only
+ * non-library pieces.
  */
 
 const NativeText: TextMessagePartComponent = ({ text }) => (
@@ -65,23 +60,25 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
   );
 };
 
+const ASSISTANT_PART_COMPONENTS = {
+  Text: NativeText,
+  Reasoning: NativeReasoning,
+  tools: { Override: NativeToolCall },
+} as const;
+
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col items-end gap-1 py-2">
-    <div className="max-w-chat rounded-2xl bg-surface-soft px-4 py-2">
+  <MessagePrimitive.Root className="flex flex-col items-end py-2">
+    <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
       <MessagePrimitive.Parts />
     </div>
   </MessagePrimitive.Root>
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col gap-1 py-2">
-    <MessagePrimitive.Parts
-      components={{
-        Text: NativeText,
-        Reasoning: NativeReasoning,
-        tools: { Override: NativeToolCall },
-      }}
-    />
+  <MessagePrimitive.Root className="flex flex-col py-2">
+    <div className="mr-auto w-full break-words text-sm leading-relaxed">
+      <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
+    </div>
   </MessagePrimitive.Root>
 );
 
@@ -89,7 +86,7 @@ export function NativeThread() {
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col">
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 sm:px-6">
-        <div className="mx-auto w-full max-w-chat">
+        <div className="mx-auto flex w-full max-w-chat flex-col gap-4 py-6">
           <ThreadPrimitive.Messages
             components={{
               UserMessage: NativeUserMessage,

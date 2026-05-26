@@ -2,6 +2,7 @@ import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DaemonEventAPIBody,
+  isDeltaStreamedAssistantMessage,
 } from "@terragon/daemon/shared";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
@@ -1585,15 +1586,11 @@ export async function POST(request: Request) {
     const richPartInputs: AssistantMessagePartsInput[] = [];
     let messageIndex = 0;
     for (const claudeMessage of messages) {
-      // Codex messages tagged with `_codexItemId` (agent text, reasoning) are
-      // already streamed and persisted as deltas under that stable item id.
-      // Emitting a second rich-part representation here — keyed on the
-      // envelope-derived id — is what rendered the same content twice. Skip
-      // them: the delta stream is the single persisted/replayed representation.
+      // Codex messages already streamed + persisted as deltas under their item
+      // id contribute no rich-part events here — a second representation keyed
+      // on the envelope-derived id renders the same content twice.
       const isCodexDeltaStreamed =
-        claudeMessage.type === "assistant" &&
-        typeof (claudeMessage as { _codexItemId?: unknown })._codexItemId ===
-          "string";
+        isDeltaStreamedAssistantMessage(claudeMessage);
       for (const dbMsg of toDBMessage(claudeMessage)) {
         const currentIndex = messageIndex++;
         if (dbMsg.type !== "agent") continue;
