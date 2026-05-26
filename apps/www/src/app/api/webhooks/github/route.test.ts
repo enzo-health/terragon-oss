@@ -441,6 +441,7 @@ describe("GitHub webhook route", () => {
       commentId,
       githubAccountId,
       commentBody,
+      commentUserType = "User",
       isPullRequest = true,
       issueTitle = "Default Issue Title",
       issueBody = "Default issue body description",
@@ -451,6 +452,7 @@ describe("GitHub webhook route", () => {
       commentId?: number;
       githubAccountId: number | undefined;
       commentBody: string;
+      commentUserType?: string;
       isPullRequest?: boolean;
       issueTitle?: string;
       issueBody?: string | null;
@@ -473,6 +475,7 @@ describe("GitHub webhook route", () => {
           user: {
             login: "commenter",
             id: githubAccountId,
+            type: commentUserType,
           },
         },
         repository: {
@@ -538,6 +541,29 @@ describe("GitHub webhook route", () => {
 
       expect(response.status).toBe(202);
       expect(data.success).toBe(true);
+      expect(handleAppMention).not.toHaveBeenCalled();
+    });
+
+    it("does not route unmentioned bot PR comments as feedback", async () => {
+      const request = await createMockRequest(
+        createValidIssueCommentBody({
+          repoFullName: "owner/repo",
+          prNumber: 123,
+          githubAccountId,
+          commentBody: "No security or compliance issues detected.",
+          commentUserType: "Bot",
+        }),
+        {
+          "x-github-event": "issue_comment",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
       expect(handleAppMention).not.toHaveBeenCalled();
     });
 
@@ -1258,6 +1284,7 @@ describe("GitHub webhook route", () => {
       prNumber,
       githubAccountId,
       commentBody,
+      commentUserType = "User",
       action = "created",
       prTitle = "Default PR Title",
       prBody = "Default PR body description",
@@ -1266,6 +1293,7 @@ describe("GitHub webhook route", () => {
       prNumber: number;
       githubAccountId: number | null;
       commentBody: string;
+      commentUserType?: string;
       action?: "created" | "edited" | "deleted";
       prTitle?: string;
       prBody?: string | null;
@@ -1285,6 +1313,7 @@ describe("GitHub webhook route", () => {
           user: {
             login: "reviewer",
             id: githubAccountId ?? undefined,
+            type: commentUserType,
           },
         },
         repository: {
@@ -1406,6 +1435,30 @@ describe("GitHub webhook route", () => {
           authorGitHubAccountId: githubAccountId,
         }),
       );
+    });
+
+    it("does not route unmentioned bot review comments as feedback", async () => {
+      const githubPR = await createTestGitHubPR({ db });
+      const request = await createMockRequest(
+        createValidPullRequestReviewCommentBody({
+          repoFullName: githubPR.repoFullName,
+          prNumber: githubPR.number,
+          commentBody: "No security or compliance issues detected.",
+          githubAccountId,
+          commentUserType: "Bot",
+        }),
+        {
+          "x-github-event": "pull_request_review_comment",
+        },
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(data.success).toBe(true);
+      expect(routeGithubFeedbackOrSpawnThread).not.toHaveBeenCalled();
+      expect(handleAppMention).not.toHaveBeenCalled();
     });
 
     it("should ignore edited or deleted review comments", async () => {
