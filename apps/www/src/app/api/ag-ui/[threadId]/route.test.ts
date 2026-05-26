@@ -833,15 +833,94 @@ describe("ag-ui SSE route", () => {
           name: "terragon-user:model=sonnet",
         },
         {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Working.",
+        },
+        {
           id: expect.stringMatching(/^side-effect-user-/),
           role: "user",
           content: "Continue",
+        },
+      ],
+      lastSeq: 3,
+    });
+  });
+
+  it("appends trailing missing db user messages after existing assistant history", async () => {
+    dbMocks.limit.mockResolvedValue([
+      {
+        id: "chat-1",
+        messages: [
+          {
+            type: "user",
+            model: "sonnet",
+            parts: [{ type: "text", text: "first prompt" }],
+            timestamp: "2026-04-29T00:00:00.000Z",
+          },
+          {
+            type: "user",
+            model: "sonnet",
+            parts: [{ type: "text", text: "new follow-up" }],
+            timestamp: "2026-04-29T00:01:00.000Z",
+          },
+        ],
+      },
+    ]);
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        timestamp: 1,
+        messages: [
+          {
+            id: "native-user-1",
+            role: "user",
+            content: "first prompt",
+            name: "terragon-user:model=sonnet",
+          },
+        ],
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 2,
+        messageId: "assistant-1",
+        role: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 3,
+        messageId: "assistant-1",
+        delta: "First response.",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents, [1, 2, 3]);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      messages: [
+        {
+          id: "native-user-1",
+          role: "user",
+          content: "first prompt",
           name: "terragon-user:model=sonnet",
         },
         {
           id: "assistant-1",
           role: "assistant",
-          content: "Working.",
+          content: "First response.",
+        },
+        {
+          id: expect.stringMatching(/^side-effect-user-/),
+          role: "user",
+          content: "new follow-up",
+          name: "terragon-user:model=sonnet",
         },
       ],
       lastSeq: 3,
@@ -1515,12 +1594,92 @@ describe("ag-ui SSE route", () => {
       threadChatId: "chat-1",
       afterSeq: 6,
     });
-    const frames = await readFirstSseFrames(response, 4);
-    expect(frames.map((frame) => frame.id)).toEqual([null, "7:1", "7:2", "8"]);
+    const frames = await readFirstSseFrames(response, 5);
+    expect(frames.map((frame) => frame.id)).toEqual([
+      null,
+      null,
+      "7:1",
+      "7:2",
+      "8",
+    ]);
     expect(frames.map((frame) => frame.event?.type ?? frame.comment)).toEqual([
       "baseline-snapshot",
+      EventType.TEXT_MESSAGE_START,
       EventType.TEXT_MESSAGE_CONTENT,
       EventType.TEXT_MESSAGE_END,
+      EventType.RUN_FINISHED,
+    ]);
+  });
+
+  it("drops orphan text end events when active resume already hydrated the text", async () => {
+    const events: Array<
+      BaseEvent & { projectionIndex?: number; projectionCount?: number }
+    > = [
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        timestamp: 1,
+        messageId: "assistant-1",
+        role: "assistant",
+        projectionIndex: 0,
+        projectionCount: 3,
+      } as BaseEvent & { projectionIndex: number; projectionCount: number },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "assistant-1",
+        delta: "partial",
+        projectionIndex: 1,
+        projectionCount: 3,
+      } as BaseEvent & { projectionIndex: number; projectionCount: number },
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "assistant-1",
+        projectionIndex: 2,
+        projectionCount: 3,
+      } as BaseEvent & { projectionIndex: number; projectionCount: number },
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-1",
+      } as BaseEvent,
+    ];
+    const envelopes = events.map((payload, index) => ({
+      eventId: index < 3 ? "canonical-message-row" : "event-8",
+      seq: index < 3 ? 7 : 8,
+      projectionIndex: payload.projectionIndex,
+      projectionCount: payload.projectionCount,
+      runId: "run-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      timestamp: String(index + 1),
+      idempotencyKey: `event-${index}`,
+      payload,
+    }));
+    vi.mocked(getAgUiEventEnvelopesForThreadChat).mockImplementation(
+      async ({ afterSeq }) =>
+        envelopes.filter(
+          (entry) => afterSeq === undefined || entry.seq > afterSeq,
+        ),
+    );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-1", status: "processing" }),
+    );
+
+    const response = await GET(
+      makeRequestWithHeaders(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-1",
+        { "Last-Event-ID": "7:1" },
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    const frames = await readFirstSseFrames(response, 2);
+    expect(frames.map((frame) => frame.id)).toEqual([null, "8"]);
+    expect(frames.map((frame) => frame.event?.type ?? frame.comment)).toEqual([
+      "baseline-snapshot",
       EventType.RUN_FINISHED,
     ]);
   });

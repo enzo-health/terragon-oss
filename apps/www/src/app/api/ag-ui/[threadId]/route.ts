@@ -33,6 +33,7 @@ import {
   getReplayDedupeKey,
   getReplayEntryRunId,
   isTerminalRunEventType,
+  repairReplayTextMessageLifecycles,
   sseIdForReplayEntry,
   splitHistoryOnlyPrefix,
   toReplayEntries,
@@ -123,7 +124,7 @@ function mergeMissingDbUserMessagesIntoHistory({
   });
 
   const missingBeforeIndex = new Map<number, AgUiUserMessage[]>();
-  const missingAfterIndex = new Map<number, AgUiUserMessage[]>();
+  const appendedMessages: AgUiUserMessage[] = [];
   const pendingMissingUserMessages: AgUiUserMessage[] = [];
   let lastMatchedHistoryIndex: number | null = null;
 
@@ -156,17 +157,14 @@ function mergeMissingDbUserMessagesIntoHistory({
     pendingMissingUserMessages.length > 0 &&
     lastMatchedHistoryIndex !== null
   ) {
-    missingAfterIndex.set(lastMatchedHistoryIndex, [
-      ...(missingAfterIndex.get(lastMatchedHistoryIndex) ?? []),
-      ...pendingMissingUserMessages.splice(0),
-    ]);
+    appendedMessages.push(...pendingMissingUserMessages.splice(0));
   }
 
   const prependedMessages = [...pendingMissingUserMessages];
   if (
     prependedMessages.length === 0 &&
     missingBeforeIndex.size === 0 &&
-    missingAfterIndex.size === 0
+    appendedMessages.length === 0
   ) {
     return historyItems;
   }
@@ -174,8 +172,8 @@ function mergeMissingDbUserMessagesIntoHistory({
   const merged: DurableAgUiHistoryItem[] = [...prependedMessages];
   historyItems.forEach((item, index) => {
     merged.push(...(missingBeforeIndex.get(index) ?? []), item);
-    merged.push(...(missingAfterIndex.get(index) ?? []));
   });
+  merged.push(...appendedMessages);
   return merged;
 }
 
@@ -782,8 +780,12 @@ export async function GET(
         if (!frameResumeReplayEntries(replayEntries)) {
           return true;
         }
+        const repairedReplayEntries =
+          replayCursorSeq !== null && !hasEmittedAgUiDataEvent
+            ? repairReplayTextMessageLifecycles(replayEntries)
+            : replayEntries;
         let emittedReplayEntry = false;
-        for (const entry of replayEntries) {
+        for (const entry of repairedReplayEntries) {
           if (!emitReplayEntry(entry)) {
             return true;
           }
@@ -1214,14 +1216,18 @@ export async function GET(
       ) {
         return;
       }
+      const streamReplayEntries =
+        replayCursorSeq !== null
+          ? repairReplayTextMessageLifecycles(replayEntries)
+          : replayEntries;
       if (syntheticTerminalEntry !== null) {
-        replayEntries.push(syntheticTerminalEntry);
+        streamReplayEntries.push(syntheticTerminalEntry);
       }
 
       const isRunComplete =
         resolvedRunHasTerminalEvent || syntheticTerminalEntry !== null;
 
-      for (const entry of replayEntries) {
+      for (const entry of streamReplayEntries) {
         if (!emitReplayEntry(entry)) {
           return;
         }
