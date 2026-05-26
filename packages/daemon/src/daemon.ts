@@ -37,6 +37,7 @@ import {
   SILENTLY_IGNORED_ITEM_TYPES,
   type ThreadMetaEvent,
 } from "./codex-app-server";
+import { routeCodexNotification } from "./codex-notification-router";
 import {
   createGeminiParserState,
   geminiCommand,
@@ -388,37 +389,6 @@ function isCodexTurnOutputMessage(message: ClaudeMessage): boolean {
     default:
       return false;
   }
-}
-
-/**
- * Codex item types whose text is streamed live as deltas and persisted under
- * the item id. On `item.completed` any tail the deltas missed is flushed under
- * the same id; the canonical/rich-part representation is then suppressed (see
- * `isDeltaStreamedAssistantMessage`). `agent_message` streams as "text",
- * `reasoning` as "thinking".
- */
-function codexStreamedTextChannel(
-  context: AppServerRunContext,
-  itemType: string | undefined,
-): { accumulated: Map<string, string>; kind: "text" | "thinking" } | null {
-  switch (itemType) {
-    case "agent_message":
-      return { accumulated: context.agentMessageTextById, kind: "text" };
-    case "reasoning":
-      return { accumulated: context.reasoningTextById, kind: "thinking" };
-    default:
-      return null;
-  }
-}
-
-/**
- * The text not yet covered by the streamed deltas. Empty when the stream
- * already holds the full text, or when it diverged from the final text (in
- * which case we trust the stream rather than risk appending a duplicate).
- */
-function unstreamedDeltaTail(streamed: string, final: string): string {
-  if (streamed.length === 0) return final;
-  return final.startsWith(streamed) ? final.slice(streamed.length) : "";
 }
 
 type DaemonEventRunState = {
@@ -1660,178 +1630,42 @@ export class TerragonDaemon {
             return;
           }
 
-          // Intercept agentMessage deltas before they reach parseCodexLine.
-          // Route them through the delta buffer for ephemeral streaming to
-          // clients, then short-circuit to avoid persisting a DBMessage per
-          // character-level accumulation.
-          //
-          // INVARIANT: this guard's `item.type === "agent_message"` check
-          // MUST stay in sync with parseCodexLine's `agent_message` case
-          // under `item.updated`. If codex-app-server ever renames this
-          // item type, both branches must be updated atomically — otherwise
-          // the parser's fall-through default path (which treats unknown
-          // types as no-ops) will silently double-persist deltas via the
-          // daemon's pass-through to parseCodexLine. A parser unit test
-          // asserts the unknown-item-type default is a no-op so the
-          // surface area of this invariant is explicit.
-          if (
-            threadEvent.type === "item.updated" &&
-            threadEvent.item &&
-            (threadEvent.item as Record<string, unknown>).type ===
-              "agent_message"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item.id as string | undefined;
-            const messageText = item.text as string | undefined;
-            if (itemId && messageText) {
-              const previousText =
-                context.agentMessageTextById.get(itemId) ?? "";
-              const isExplicitDeltaMethod =
-                notification.method === "item/agentMessage/delta";
-              const deltaText = isExplicitDeltaMethod
-                ? messageText
-                : messageText.startsWith(previousText)
-                  ? messageText.slice(previousText.length)
-                  : messageText;
-              if (isExplicitDeltaMethod) {
-                context.agentMessageTextById.set(
-                  itemId,
-                  previousText + messageText,
-                );
-              } else {
-                context.agentMessageTextById.set(itemId, messageText);
-              }
-              if (deltaText) {
-                this.enqueueDelta({
-                  threadId: input.threadId,
-                  threadChatId: input.threadChatId,
-                  token: input.token,
-                  messageId: itemId,
-                  partIndex: 0,
-                  kind: "text",
-                  text: deltaText,
-                });
-              }
-            }
-            // Deltas were routed through the broadcast buffer above; skip
-            // parseCodexLine for agent_message item.updated so we don't
-            // also persist a DBMessage per character-level accumulation
-            // (parseCodexLine now emits intermediate agent_message rows
-            // for replay / test harnesses, but the production daemon
-            // already streams deltas and persists the final item.completed).
+          // Compute the per-item routing decision (delta-enqueue / skip /
+          // flush-then-parse / parse) in a pure router, then execute the side
+          // effects here. The router owns the streamed-text accumulation
+          // (agent_message / reasoning maps on `context`) and the
+          // `item.completed` tail flush; this handler owns the actual
+          // `enqueueDelta` calls and the fall-through to parseCodexLine.
+          const decision = routeCodexNotification({
+            threadEvent,
+            method: notification.method,
+            context,
+          });
+          if (decision.kind === "skip") {
             return;
           }
-
-          // commandExecution/outputDelta carries live command output. We do
-          // NOT stream it as a "text" delta: the delta channel only renders as
-          // assistant text, so the command's stdout would surface as a raw
-          // standalone text blob next to the Bash tool card instead of inside
-          // it (the delta's messageId is the command item id, but a TEXT
-          // message under that id is a separate thing from the TOOL_CALL under
-          // the same id). The command's full output still lands in the Bash
-          // card via the `command_execution` completed -> tool_result path.
-          // Streaming it live INTO the card needs a tool-progress delta kind
-          // (TOOL_CALL_CHUNK), which the delta channel does not yet carry.
-          if (
-            threadEvent.type === "item.updated" &&
-            notification.method === "item/commandExecution/outputDelta"
-          ) {
+          if (decision.kind === "enqueue-delta") {
+            this.enqueueDelta({
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+              messageId: decision.delta.messageId,
+              partIndex: decision.delta.partIndex,
+              kind: decision.delta.kind,
+              text: decision.delta.text,
+            });
             return;
           }
-
-          // Route fileChange/outputDelta through the delta buffer as "text"
-          // kind so the client can stream unified-diff output progressively.
-          if (
-            threadEvent.type === "item.updated" &&
-            notification.method === "item/fileChange/outputDelta"
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const delta = item?._delta as string | undefined;
-            if (itemId && delta) {
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "text",
-                text: delta,
-              });
-            }
-            return;
-          }
-
-          // Route reasoning deltas through the delta buffer as "thinking" kind,
-          // accumulating per item id so the `item.completed` flush below can
-          // detect any tail the deltas did not cover.
-          if (
-            threadEvent.type === "item.updated" &&
-            (notification.method === "item/reasoning/summaryTextDelta" ||
-              notification.method === "item/reasoning/textDelta" ||
-              notification.method === "item/reasoning/summaryPartAdded")
-          ) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const itemId = item?.id as string | undefined;
-            const text = item?.text as string | undefined;
-            if (itemId && text) {
-              const previous = context.reasoningTextById.get(itemId) ?? "";
-              context.reasoningTextById.set(itemId, previous + text);
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: itemId,
-                partIndex: 0,
-                kind: "thinking",
-                text,
-              });
-            }
-            return;
-          }
-
-          // mcpToolCall/progress updates are delta-only — don't persist them
-          // as messages; future sprints will surface progress via the UI layer.
-          if (notification.method === "item/mcpToolCall/progress") {
-            return;
-          }
-
-          // On `item.completed` for a streamed-text item (agent_message /
-          // reasoning), flush any tail the live deltas missed under the SAME
-          // item id, so the delta stream holds the complete text even when a
-          // message completes without prior `item.updated` deltas. We do NOT
-          // return: the event falls through to parseCodexLine so the
-          // DBAgentMessage is still persisted. That parsed message carries
-          // `_codexItemId`, so its canonical / rich-part representation is
-          // suppressed — the delta stream is the single persisted/replayed
-          // copy, and a second one under a fresh id is exactly what stacked
-          // identical text in the transcript.
-          if (threadEvent.type === "item.completed" && threadEvent.item) {
-            const item = threadEvent.item as Record<string, unknown>;
-            const channel = codexStreamedTextChannel(
-              context,
-              item.type as string | undefined,
-            );
-            const itemId = item.id as string | undefined;
-            const finalText = item.text as string | undefined;
-            if (channel && itemId && finalText) {
-              const tail = unstreamedDeltaTail(
-                channel.accumulated.get(itemId) ?? "",
-                finalText,
-              );
-              if (tail) {
-                this.enqueueDelta({
-                  threadId: input.threadId,
-                  threadChatId: input.threadChatId,
-                  token: input.token,
-                  messageId: itemId,
-                  partIndex: 0,
-                  kind: channel.kind,
-                  text: tail,
-                });
-              }
-              channel.accumulated.delete(itemId);
-            }
+          if (decision.kind === "flush-then-parse" && decision.delta) {
+            this.enqueueDelta({
+              threadId: input.threadId,
+              threadChatId: input.threadChatId,
+              token: input.token,
+              messageId: decision.delta.messageId,
+              partIndex: decision.delta.partIndex,
+              kind: decision.delta.kind,
+              text: decision.delta.text,
+            });
           }
 
           // autoApprovalReview events are surfaced as chat messages containing
