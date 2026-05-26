@@ -78,7 +78,6 @@ const ctx: PartRegistryContext = {
   toolProps: {
     threadId: "t1",
     threadChatId: "c1",
-    messagesRef: { current: [] },
     isReadOnly: false,
     childThreads: [],
     githubRepoFullName: "owner/repo",

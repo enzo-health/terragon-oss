@@ -1,5 +1,5 @@
 import { normalizeToolCall } from "@terragon/agent/tool-calls";
-import { AllToolParts, type UIMessage, type UIPart } from "@terragon/shared";
+import { AllToolParts, type UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ChildThreadInfo } from "@terragon/shared/db/types";
 import React, { memo, type ReactNode, useCallback, useMemo } from "react";
@@ -46,7 +46,6 @@ import { WriteTool } from "./tools/write-tool";
 export type ToolRenderContext = {
   threadId: string;
   threadChatId: string;
-  messagesRef: { current: UIMessage[] };
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   childThreads: ChildThreadInfo[];
@@ -192,7 +191,6 @@ const TOOL_DISPATCH: ToolDispatchTable = {
       toolPart={tp}
       threadId={ctx.threadId}
       threadChatId={ctx.threadChatId}
-      messages={ctx.messagesRef.current}
       isReadOnly={ctx.isReadOnly}
       onOptimisticPermissionModeUpdate={ctx.onOptimisticPermissionModeUpdate}
       artifactDescriptors={ctx.artifactDescriptors}
@@ -254,7 +252,6 @@ export type ToolPartProps = {
   toolPart: AllToolParts;
   threadId: string;
   threadChatId: string;
-  messagesRef: { current: UIMessage[] };
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   childThreads: ChildThreadInfo[];
@@ -421,7 +418,6 @@ const ToolPart = memo(function ToolPart({
   toolPart: rawToolPart,
   threadId,
   threadChatId,
-  messagesRef,
   isReadOnly,
   promptBoxRef,
   childThreads,
@@ -444,7 +440,6 @@ const ToolPart = memo(function ToolPart({
         toolPart={childToolPart}
         threadId={threadId}
         threadChatId={threadChatId}
-        messagesRef={messagesRef}
         isReadOnly={isReadOnly}
         promptBoxRef={promptBoxRef}
         childThreads={childThreads}
@@ -461,7 +456,6 @@ const ToolPart = memo(function ToolPart({
     [
       threadId,
       threadChatId,
-      messagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads,
@@ -485,7 +479,6 @@ const ToolPart = memo(function ToolPart({
     () => ({
       threadId,
       threadChatId,
-      messagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads,
@@ -502,7 +495,6 @@ const ToolPart = memo(function ToolPart({
     [
       threadId,
       threadChatId,
-      messagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads,
@@ -531,7 +523,6 @@ function areToolPartPropsEqual(
   if (
     prevProps.threadId !== nextProps.threadId ||
     prevProps.threadChatId !== nextProps.threadChatId ||
-    prevProps.messagesRef !== nextProps.messagesRef ||
     prevProps.isReadOnly !== nextProps.isReadOnly ||
     prevProps.promptBoxRef !== nextProps.promptBoxRef ||
     prevProps.githubRepoFullName !== nextProps.githubRepoFullName ||

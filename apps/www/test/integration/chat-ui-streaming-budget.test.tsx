@@ -571,7 +571,6 @@ function mountToolPart(toolPart: AllToolParts): void {
       toolPart,
       threadId: THREAD_ID,
       threadChatId: CHAT_ID,
-      messagesRef: { current: [] },
       isReadOnly: true,
       childThreads: [],
       githubRepoFullName: "acme/app",

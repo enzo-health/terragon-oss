@@ -38,7 +38,7 @@ type ChatMessageProps = {
   artifactDescriptors?: ArtifactDescriptor[];
   artifactDescriptorLookup?: ArtifactDescriptorLookup;
   onOpenArtifact?: (artifactId: string) => void;
-  /** Thread-global plan occurrence map (from ChatMessages). */
+  /** Thread-global plan occurrence map for legacy Terragon part rendering. */
   planOccurrences?: Map<UIPart, number>;
 };
 

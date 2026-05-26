@@ -1,11 +1,15 @@
 "use client";
 
+import {
+  useAuiState,
+  type ThreadAssistantMessagePart,
+  type ThreadMessage,
+} from "@assistant-ui/react";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type {
   ThreadInfoFull,
   ThreadStatus,
-  UIUserMessage,
   UISystemMessage,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
@@ -20,7 +24,6 @@ import type {
   RedoDialogData,
 } from "../chat-message.types";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
@@ -33,7 +36,6 @@ import {
   getWorkingFooterFreshness,
   shouldSuppressPreStartLifecycleFooter,
 } from "./working-footer-freshness";
-import { useTerragonTranscript } from "./use-terragon-transcript";
 
 export type TerragonThreadRuntimeContentProps = {
   lifecycleMessages: UISystemMessage[];
@@ -62,9 +64,35 @@ export type TerragonThreadRuntimeContentProps = {
   threadChatId?: string;
   scheduleAt?: Date | null;
   threadChatStatus?: ThreadStatus;
-  optimisticUserMessages?: UIUserMessage[];
   children?: React.ReactNode;
 };
+
+function threadMessageHasRenderableParts(message: ThreadMessage): boolean {
+  return message.content.some((part) => {
+    switch (part.type) {
+      case "text":
+      case "reasoning":
+        return part.text.trim().length > 0;
+      case "tool-call":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+function isPendingToolCall(part: ThreadAssistantMessagePart): boolean {
+  return (
+    part.type === "tool-call" && (!("result" in part) || part.result === null)
+  );
+}
+
+function threadMessageHasPendingToolCall(message: ThreadMessage): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+  return message.content.some(isPendingToolCall);
+}
 
 export function TerragonThreadRuntimeContent({
   lifecycleMessages,
@@ -93,24 +121,23 @@ export function TerragonThreadRuntimeContent({
   threadChatId,
   scheduleAt,
   threadChatStatus,
-  optimisticUserMessages = [],
   children,
 }: TerragonThreadRuntimeContentProps) {
-  const useNativeTranscript = useFeatureFlag("nativeChatTranscript");
-  const transcript = useTerragonTranscript({
-    chatAgent,
-    optimisticUserMessages,
-  });
-  const messages = transcript.messages;
-  toolProps.messagesRef.current = messages;
+  const runtimeMessages = useAuiState((state) => state.thread.messages);
+  const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
+  const isRuntimeHydrating = runtimeIsLoading && runtimeMessages.length === 0;
+  const hasRenderableAgentParts = runtimeMessages.some(
+    (message) =>
+      message.role === "assistant" && threadMessageHasRenderableParts(message),
+  );
+  const hasPendingToolCall = runtimeMessages.some(
+    threadMessageHasPendingToolCall,
+  );
   useScrollToHashMessageOnce({
-    messages: transcript.isRuntimeHydrating ? [] : messages,
+    messages: [],
     resetKey: thread.id,
   });
-  const planOccurrences = useStableRef(
-    transcript.planOccurrencesRaw,
-    isEqualPlanMap,
-  );
+  const planOccurrences = useStableRef(new Map(), isEqualPlanMap);
   const stableArtifactDescriptors = useStableRef(
     artifactDescriptors,
     isEqualArtifactList,
@@ -131,12 +158,12 @@ export function TerragonThreadRuntimeContent({
   const suppressPreStartLifecycleFooter = shouldSuppressPreStartLifecycleFooter(
     {
       threadStatus,
-      hasAgentMessages: transcript.hasRenderableAgentParts,
+      hasAgentMessages: hasRenderableAgentParts,
     },
   );
   const baseShowWorking =
     isAgentWorking &&
-    (!transcript.hasPendingToolCall || !transcript.hasRenderableAgentParts) &&
+    (!hasPendingToolCall || !hasRenderableAgentParts) &&
     !hasSandboxError &&
     !suppressPreStartLifecycleFooter;
   const shouldCheckWorkingFooterFreshness =
@@ -240,11 +267,8 @@ export function TerragonThreadRuntimeContent({
     <TerragonThreadProvider value={ctx}>
       <TerragonMessageRenderProvider value={messageRenderCtx}>
         <TerragonTranscriptSurface
-          useNativeMessages={useNativeTranscript}
           lifecycleMessages={lifecycleMessages}
-          isRuntimeHydrating={transcript.isRuntimeHydrating}
-          messages={messages}
-          latestAgentMessageIndex={transcript.latestAgentMessageIndex}
+          isRuntimeHydrating={isRuntimeHydrating}
           chatAgent={chatAgent}
           error={error}
           errorType={errorType}

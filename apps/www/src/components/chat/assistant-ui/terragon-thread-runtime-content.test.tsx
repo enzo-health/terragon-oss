@@ -4,11 +4,7 @@ import type {
   ThreadAssistantMessagePart,
   ThreadMessage,
 } from "@assistant-ui/react";
-import type {
-  DBUserMessage,
-  ThreadInfoFull,
-  UIMessage,
-} from "@terragon/shared";
+import type { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +21,6 @@ const runtimeState = vi.hoisted(() => ({
 const transcriptSurfaceProps = vi.hoisted(
   () =>
     [] as Array<{
-      messages: UIMessage[];
       isRuntimeHydrating: boolean;
       passiveWait: { message: string; reason: null } | null;
       reserveWorkingMessageSlot: boolean;
@@ -43,7 +38,6 @@ vi.mock("./terragon-transcript-surface", async () => {
   const React = await import("react");
   return {
     TerragonTranscriptSurface: (props: {
-      messages: UIMessage[];
       isRuntimeHydrating: boolean;
       passiveWait: { message: string; reason: null } | null;
       reserveWorkingMessageSlot: boolean;
@@ -53,11 +47,7 @@ vi.mock("./terragon-transcript-surface", async () => {
       return React.createElement(
         "div",
         { "data-testid": "runtime-transcript-surface" },
-        props.messages.flatMap((message) =>
-          message.parts.map((part) =>
-            part.type === "text" ? part.text : part.type,
-          ),
-        ),
+        props.isRuntimeHydrating ? "hydrating" : "native transcript",
       );
     },
   };
@@ -189,9 +179,7 @@ describe("TerragonThreadRuntimeContent", () => {
     vi.restoreAllMocks();
   });
 
-  it("feeds active chat transcript rendering from assistant-ui runtime state, not DB view-model messages", () => {
-    const messagesRef = { current: [] as UIMessage[] };
-
+  it("keeps transcript rendering native instead of passing DB view-model messages", () => {
     mount(
       createElement(TerragonThreadRuntimeContent, {
         lifecycleMessages: [],
@@ -205,7 +193,6 @@ describe("TerragonThreadRuntimeContent", () => {
           ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messagesRef,
           githubRepoFullName: "acme/app",
           repoBaseBranchName: "main",
           branchName: "feature/runtime-contract",
@@ -219,77 +206,7 @@ describe("TerragonThreadRuntimeContent", () => {
     );
 
     expect(transcriptSurfaceProps).toHaveLength(1);
-    expect(transcriptSurfaceProps[0]?.messages).toEqual([
-      {
-        id: "runtime-user-1",
-        role: "user",
-        parts: [{ type: "text", text: "Runtime-owned transcript renders" }],
-      },
-    ]);
-    expect(messagesRef.current).toBe(transcriptSurfaceProps[0]?.messages);
-    expect(container!.textContent).toContain(
-      "Runtime-owned transcript renders",
-    );
-    expect(container!.textContent).not.toContain(
-      "DB threadViewModel.messages must not render",
-    );
-  });
-
-  it("layers optimistic user messages onto the assistant-ui transcript", () => {
-    const messagesRef = { current: [] as UIMessage[] };
-
-    mount(
-      createElement(TerragonThreadRuntimeContent, {
-        lifecycleMessages: [],
-        optimisticUserMessages: [
-          {
-            id: "user-optimistic-chat-1-1",
-            role: "user",
-            parts: [{ type: "text", text: "Optimistic follow-up renders" }],
-            timestamp: new Date(1).toISOString(),
-            model: null,
-          },
-        ],
-        threadStatus: "complete",
-        thread: makeThreadWithDbTranscriptSentinel(),
-        latestGitDiffTimestamp: null,
-        isAgentWorking: false,
-        artifactDescriptors: [],
-        onOpenArtifact: vi.fn(),
-        toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messagesRef,
-          githubRepoFullName: "acme/app",
-          repoBaseBranchName: "main",
-          branchName: "feature/runtime-contract",
-        },
-        hasCheckpoint: false,
-        chatAgent: "codex",
-        metaSnapshot: createInitialThreadMetaSnapshot(),
-        reattemptQueueAt: null,
-        threadChatId: "chat-1",
-      }),
-    );
-
-    expect(transcriptSurfaceProps).toHaveLength(1);
-    expect(transcriptSurfaceProps[0]?.messages).toEqual([
-      {
-        id: "runtime-user-1",
-        role: "user",
-        parts: [{ type: "text", text: "Runtime-owned transcript renders" }],
-      },
-      {
-        id: "user-optimistic-chat-1-1",
-        role: "user",
-        parts: [{ type: "text", text: "Optimistic follow-up renders" }],
-        timestamp: new Date(1).toISOString(),
-        model: null,
-      },
-    ]);
-    expect(messagesRef.current).toBe(transcriptSurfaceProps[0]?.messages);
-    expect(container!.textContent).toContain("Optimistic follow-up renders");
+    expect(container!.textContent).toContain("native transcript");
     expect(container!.textContent).not.toContain(
       "DB threadViewModel.messages must not render",
     );
@@ -298,7 +215,6 @@ describe("TerragonThreadRuntimeContent", () => {
   it("does not use DB view-model messages while runtime history is hydrating", () => {
     runtimeState.thread.messages = [];
     runtimeState.thread.isLoading = true;
-    const messagesRef = { current: [] as UIMessage[] };
 
     mount(
       createElement(TerragonThreadRuntimeContent, {
@@ -313,7 +229,6 @@ describe("TerragonThreadRuntimeContent", () => {
           ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messagesRef,
           githubRepoFullName: "acme/app",
           repoBaseBranchName: "main",
           branchName: "feature/runtime-contract",
@@ -328,8 +243,6 @@ describe("TerragonThreadRuntimeContent", () => {
 
     expect(transcriptSurfaceProps).toHaveLength(1);
     expect(transcriptSurfaceProps[0]?.isRuntimeHydrating).toBe(true);
-    expect(transcriptSurfaceProps[0]?.messages).toEqual([]);
-    expect(messagesRef.current).toBe(transcriptSurfaceProps[0]?.messages);
     expect(container!.textContent).not.toContain(
       "DB threadViewModel.messages must not render",
     );
@@ -360,8 +273,6 @@ describe("TerragonThreadRuntimeContent", () => {
         },
       },
     ];
-    const messagesRef = { current: [] as UIMessage[] };
-
     mount(
       createElement(TerragonThreadRuntimeContent, {
         lifecycleMessages: [],
@@ -375,7 +286,6 @@ describe("TerragonThreadRuntimeContent", () => {
           ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messagesRef,
           githubRepoFullName: "acme/app",
           repoBaseBranchName: "main",
           branchName: "feature/runtime-contract",
@@ -408,8 +318,6 @@ describe("TerragonThreadRuntimeContent", () => {
         },
       },
     ];
-    const messagesRef = { current: [] as UIMessage[] };
-
     mount(
       createElement(TerragonThreadRuntimeContent, {
         lifecycleMessages: [],
@@ -423,7 +331,6 @@ describe("TerragonThreadRuntimeContent", () => {
           ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messagesRef,
           githubRepoFullName: "acme/app",
           repoBaseBranchName: "main",
           branchName: "feature/runtime-contract",
@@ -464,8 +371,6 @@ describe("TerragonThreadRuntimeContent", () => {
         },
       },
     ];
-    const messagesRef = { current: [] as UIMessage[] };
-
     mount(
       createElement(TerragonThreadRuntimeContent, {
         lifecycleMessages: [],
@@ -479,7 +384,6 @@ describe("TerragonThreadRuntimeContent", () => {
           ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
           threadId: "thread-1",
           threadChatId: "chat-1",
-          messagesRef,
           githubRepoFullName: "acme/app",
           repoBaseBranchName: "main",
           branchName: "feature/runtime-contract",

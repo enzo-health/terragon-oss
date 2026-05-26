@@ -95,19 +95,14 @@ function resolveThreadRuntimeErrorProps({
 }
 
 function AssistantRuntimeBoundary({
-  runtimeKey,
   runtimeOptions,
   children,
 }: {
-  runtimeKey: string;
   runtimeOptions: UseAgUiRuntimeOptions;
   children: React.ReactNode;
 }) {
   return (
-    <AssistantRuntimeProviderBoundary
-      key={runtimeKey}
-      runtimeOptions={runtimeOptions}
-    >
+    <AssistantRuntimeProviderBoundary runtimeOptions={runtimeOptions}>
       {children}
     </AssistantRuntimeProviderBoundary>
   );
@@ -274,6 +269,8 @@ export function AssistantRuntimeSession({
       agent,
       showThinking,
       onError: handleRuntimeError,
+      historyLoadKey: runtimeResumePolicy.historyLoadKey,
+      externalMessagesStrategy: "merge-after-local-mutations",
       ...(threadChatId && {
         onCancel: () => {
           void postRuntimeCancel({
@@ -287,7 +284,15 @@ export function AssistantRuntimeSession({
         history,
       },
     }),
-    [agent, handleRuntimeError, history, showThinking, threadId, threadChatId],
+    [
+      agent,
+      handleRuntimeError,
+      history,
+      runtimeResumePolicy.historyLoadKey,
+      showThinking,
+      threadId,
+      threadChatId,
+    ],
   );
 
   const resolvedErrorProps = resolveThreadRuntimeErrorProps({
@@ -299,10 +304,7 @@ export function AssistantRuntimeSession({
   });
 
   return (
-    <AssistantRuntimeBoundary
-      runtimeKey={runtimeResumePolicy.historyLoadKey}
-      runtimeOptions={runtimeOptions}
-    >
+    <AssistantRuntimeBoundary runtimeOptions={runtimeOptions}>
       {children({
         errorInfo: resolvedErrorProps.errorInfo,
         errorType: resolvedErrorProps.errorType,

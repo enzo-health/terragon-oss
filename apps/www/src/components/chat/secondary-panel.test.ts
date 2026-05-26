@@ -250,7 +250,6 @@ describe("secondary-panel artifact shell helpers", () => {
     const toolTree = renderToolPartContent(toolPart, {
       threadId: "thread-1",
       threadChatId: "chat-1",
-      messagesRef: { current: [] },
       isReadOnly: false,
       childThreads: [],
       githubRepoFullName: "acme/app",
