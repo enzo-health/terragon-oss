@@ -12,12 +12,17 @@ import { ChatError } from "../chat-error";
 import { LeafLoading } from "../leaf-loading";
 import { MessageScheduled, WorkingMessage } from "../chat-messages";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
+import { NativeThread } from "./native-thread";
 import { RuntimeTerragonMessage } from "./runtime-terragon-message";
 import { TerragonSystemMessage } from "./system-message";
 import { useStablePrefix } from "./use-stable-prefix";
 import { TerragonUserMessage } from "./user-message";
 
 type TerragonTranscriptSurfaceProps = {
+  /** When true, render the message rows via assistant-ui primitives
+   * (`NativeThread`) instead of the Terragon projector rows. The surrounding
+   * chrome (lifecycle / boot / working / error / scheduled) is shared. */
+  useNativeMessages?: boolean;
   lifecycleMessages: UISystemMessage[];
   isRuntimeHydrating: boolean;
   messages: UIMessage[];
@@ -43,6 +48,7 @@ type TerragonTranscriptSurfaceProps = {
 };
 
 export function TerragonTranscriptSurface({
+  useNativeMessages,
   lifecycleMessages,
   isRuntimeHydrating,
   messages,
@@ -94,6 +100,8 @@ export function TerragonTranscriptSurface({
         <div className="pt-2">
           <LeafLoading message="Connecting to live task…" />
         </div>
+      ) : useNativeMessages ? (
+        <NativeThread />
       ) : messages.length > 0 ? (
         <>
           <StaticTranscriptHistory
