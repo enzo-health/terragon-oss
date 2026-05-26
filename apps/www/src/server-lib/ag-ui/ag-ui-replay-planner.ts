@@ -199,6 +199,105 @@ function dropDuplicateRunStarted(entries: ReplayEntry[]): ReplayEntry[] {
   });
 }
 
+export function repairReplayTextMessageLifecycles(
+  entries: ReplayEntry[],
+): ReplayEntry[] {
+  const repaired: ReplayEntry[] = [];
+  const activeTextMessageIds = new Set<string>();
+  const activeReasoningMessageIds = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.event.type === EventType.RUN_STARTED) {
+      activeTextMessageIds.clear();
+      activeReasoningMessageIds.clear();
+      repaired.push(entry);
+      continue;
+    }
+
+    if (entry.event.type === EventType.TEXT_MESSAGE_START) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId !== null) {
+        activeTextMessageIds.add(messageId);
+      }
+      repaired.push(entry);
+      continue;
+    }
+
+    if (
+      entry.event.type === EventType.TEXT_MESSAGE_CONTENT ||
+      entry.event.type === EventType.TEXT_MESSAGE_CHUNK
+    ) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId !== null && !activeTextMessageIds.has(messageId)) {
+        repaired.push({
+          seq: null,
+          event: {
+            type: EventType.TEXT_MESSAGE_START,
+            messageId,
+            role: "assistant",
+          },
+        });
+        activeTextMessageIds.add(messageId);
+      }
+      repaired.push(entry);
+      continue;
+    }
+
+    if (entry.event.type === EventType.TEXT_MESSAGE_END) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId === null || !activeTextMessageIds.has(messageId)) {
+        continue;
+      }
+      activeTextMessageIds.delete(messageId);
+      repaired.push(entry);
+      continue;
+    }
+
+    if (entry.event.type === EventType.REASONING_MESSAGE_START) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId !== null) {
+        activeReasoningMessageIds.add(messageId);
+      }
+      repaired.push(entry);
+      continue;
+    }
+
+    if (
+      entry.event.type === EventType.REASONING_MESSAGE_CONTENT ||
+      entry.event.type === EventType.REASONING_MESSAGE_CHUNK
+    ) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId !== null && !activeReasoningMessageIds.has(messageId)) {
+        repaired.push({
+          seq: null,
+          event: {
+            type: EventType.REASONING_MESSAGE_START,
+            messageId,
+            role: "reasoning",
+          },
+        });
+        activeReasoningMessageIds.add(messageId);
+      }
+      repaired.push(entry);
+      continue;
+    }
+
+    if (entry.event.type === EventType.REASONING_MESSAGE_END) {
+      const messageId = getStringEventField(entry.event, "messageId");
+      if (messageId === null || !activeReasoningMessageIds.has(messageId)) {
+        continue;
+      }
+      activeReasoningMessageIds.delete(messageId);
+      repaired.push(entry);
+      continue;
+    }
+
+    repaired.push(entry);
+  }
+
+  return repaired;
+}
+
 export function dropEventsAfterTerminalUntilNextRun(
   entries: ReplayEntry[],
   options: { keepInterRunUserAndSystemSnapshots: boolean } = {

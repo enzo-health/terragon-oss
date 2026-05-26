@@ -103,6 +103,48 @@ describe("queueFollowUpInternal", () => {
     expect(threadMocks.updateThreadChat).toHaveBeenCalledTimes(1);
     expect(queueMocks.maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
+
+  it("skips GitHub follow-ups already present in the transcript", async () => {
+    threadMocks.getThreadChat.mockResolvedValue({
+      id: "chat-1",
+      status: "working",
+      messages: [TEST_USER_MESSAGE],
+      queuedMessages: [],
+    });
+
+    await queueFollowUpInternal({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messages: [TEST_USER_MESSAGE],
+      appendOrReplace: "append",
+      source: "github",
+    });
+
+    expect(threadMocks.updateThreadChat).not.toHaveBeenCalled();
+    expect(queueMocks.maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("dedupes repeated GitHub follow-ups within the existing queue", async () => {
+    threadMocks.getThreadChat.mockResolvedValue({
+      id: "chat-1",
+      status: "working",
+      messages: [],
+      queuedMessages: [TEST_USER_MESSAGE],
+    });
+
+    await queueFollowUpInternal({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messages: [TEST_USER_MESSAGE],
+      appendOrReplace: "append",
+      source: "github",
+    });
+
+    expect(threadMocks.updateThreadChat).not.toHaveBeenCalled();
+    expect(queueMocks.maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
 });
 
 describe("followUpInternal", () => {

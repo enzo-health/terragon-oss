@@ -158,9 +158,67 @@ describe("AssistantRuntimeSession", () => {
     const opts = lastRuntimeOptions();
     expect(opts.agent).toBe(agent);
     expect(opts.showThinking).toBe(false);
-    expect(opts).not.toHaveProperty("historyLoadKey");
-    expect(opts).not.toHaveProperty("externalMessagesStrategy");
+    expect(opts.historyLoadKey).toBe("chat-xyz:active");
+    expect(opts.externalMessagesStrategy).toBe("merge-after-local-mutations");
     expect(opts.adapters?.history).toBeDefined();
+  });
+
+  it("keeps the runtime provider mounted across idle to active history reloads", () => {
+    const agent = makeAgent();
+    const loadAgUiHistoryMessages = vi.fn(async () => ({
+      messages: [],
+      lastSeq: 0,
+    }));
+    const lifecycle = {
+      mountCount: 0,
+      unmountCount: 0,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    function Child() {
+      React.useEffect(() => {
+        lifecycle.mountCount += 1;
+        return () => {
+          lifecycle.unmountCount += 1;
+        };
+      }, []);
+      return <div>child</div>;
+    }
+
+    function Harness({ isAgentWorking }: { isAgentWorking: boolean }) {
+      return (
+        <AssistantRuntimeSession
+          agent={agent}
+          loadAgUiHistoryMessages={loadAgUiHistoryMessages}
+          chatAgent="codex"
+          isAgentWorking={isAgentWorking}
+          threadId="thread-abc"
+          threadChatId="chat-xyz"
+          setReplayCursor={vi.fn()}
+        >
+          {() => <Child />}
+        </AssistantRuntimeSession>
+      );
+    }
+
+    try {
+      act(() => {
+        root.render(<Harness isAgentWorking={false} />);
+      });
+      expect(lastRuntimeOptions().historyLoadKey).toBe("chat-xyz:idle");
+
+      act(() => {
+        root.render(<Harness isAgentWorking={true} />);
+      });
+
+      expect(lastRuntimeOptions().historyLoadKey).toBe("chat-xyz:active");
+      expect(lifecycle).toEqual({ mountCount: 1, unmountCount: 0 });
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
   });
 
   it("enables thinking for Codex and Claude Code agents", () => {

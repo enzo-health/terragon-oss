@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { DBMessage } from "@terragon/shared";
 import {
   formatPlanForDisplay,
-  findPlanFromWriteToolCall,
-  resolvePlanText,
+  resolvePlanTextFromLegacyMessages,
 } from "./plan-utils";
-import type { UIAgentMessage, UIMessage } from "@terragon/shared";
 
 describe("formatPlanForDisplay", () => {
   it("returns raw text for non-JSON plans", () => {
@@ -43,122 +42,65 @@ describe("formatPlanForDisplay", () => {
   });
 });
 
-describe("findPlanFromWriteToolCall", () => {
-  it("finds a Write to plans/*.md before ExitPlanMode", () => {
-    const messages = agentMessages([
-      writeTool("write-1", "/workspace/plans/my-plan.md", "# Plan from Write"),
-      exitPlanModeTool("exit-1"),
-    ]);
-
-    expect(
-      findPlanFromWriteToolCall({
-        messages,
-        exitPlanModeToolId: "exit-1",
-      }),
-    ).toBe("# Plan from Write");
-  });
-
-  it("returns null when no Write to plans/ is found", () => {
-    const messages = agentMessages([exitPlanModeTool("exit-1")]);
-
-    expect(
-      findPlanFromWriteToolCall({
-        messages,
-        exitPlanModeToolId: "exit-1",
-      }),
-    ).toBeNull();
-  });
-
-  it("stops at user messages when searching backwards", () => {
-    const messages: UIMessage[] = [
-      ...agentMessages([
-        writeTool("write-old", "/workspace/plans/old-plan.md", "# Old Plan"),
-      ]),
-      {
-        id: "user-1",
-        role: "user",
-        parts: [{ type: "text", text: "new task" }],
-      },
-      ...agentMessages([exitPlanModeTool("exit-1")]),
-    ];
-
-    expect(
-      findPlanFromWriteToolCall({
-        messages,
-        exitPlanModeToolId: "exit-1",
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("resolvePlanText", () => {
-  it("returns formatted plan from parameters.plan when available", () => {
-    const result = resolvePlanText({
-      planParam: "## Direct Plan",
-      messages: null,
-      exitPlanModeToolId: "exit-1",
-    });
-    expect(result).toBe("## Direct Plan");
-  });
-
-  it("falls back to Write tool call when planParam is empty", () => {
-    const messages = agentMessages([
-      writeTool("write-1", "/workspace/plans/fallback.md", "# Fallback Plan"),
-      exitPlanModeTool("exit-1"),
-    ]);
-
-    const result = resolvePlanText({
-      planParam: "",
-      messages,
-      exitPlanModeToolId: "exit-1",
-    });
-    expect(result).toBe("# Fallback Plan");
-  });
-
-  it("returns empty string when no plan source is available", () => {
-    const result = resolvePlanText({
-      planParam: "",
-      messages: null,
-      exitPlanModeToolId: "exit-1",
-    });
-    expect(result).toBe("");
-  });
-});
-
-function agentMessages(parts: UIAgentMessage["parts"]): UIMessage[] {
-  return [
-    {
-      id: "agent-message",
-      role: "agent",
-      agent: "claudeCode",
-      parts,
-    },
-  ];
-}
-
-function writeTool(id: string, filePath: string, content: string) {
-  return {
-    type: "tool",
-    id,
-    agent: "claudeCode",
+describe("resolvePlanTextFromLegacyMessages", () => {
+  const writePlan: DBMessage = {
+    type: "tool-call",
+    id: "write-plan",
     name: "Write",
     parameters: {
-      file_path: filePath,
-      content,
+      file_path: "docs/plans/implementation.md",
+      content: "# Legacy write plan\n\n- Keep it readable",
     },
-    parts: [],
-    status: "pending",
-  } satisfies UIAgentMessage["parts"][number];
-}
-
-function exitPlanModeTool(id: string) {
-  return {
-    type: "tool",
-    id,
-    agent: "claudeCode",
+    parent_tool_use_id: null,
+  };
+  const exitPlanMode: DBMessage = {
+    type: "tool-call",
+    id: "exit-plan",
     name: "ExitPlanMode",
-    parameters: { plan: "" },
-    parts: [],
-    status: "pending",
-  } satisfies UIAgentMessage["parts"][number];
-}
+    parameters: {},
+    parent_tool_use_id: null,
+  };
+
+  it("prefers the explicit ExitPlanMode plan parameter", () => {
+    expect(
+      resolvePlanTextFromLegacyMessages({
+        planParam: "Explicit plan",
+        messages: [writePlan, exitPlanMode],
+        exitPlanModeToolId: "exit-plan",
+      }),
+    ).toBe("Explicit plan");
+  });
+
+  it("falls back to the preceding legacy Write plan for secondary-panel artifacts", () => {
+    expect(
+      resolvePlanTextFromLegacyMessages({
+        messages: [writePlan, exitPlanMode],
+        exitPlanModeToolId: "exit-plan",
+      }),
+    ).toBe("# Legacy write plan\n\n- Keep it readable");
+  });
+
+  it("stops scanning legacy writes at the previous user turn", () => {
+    const userMessage: DBMessage = {
+      type: "user",
+      model: null,
+      parts: [{ type: "text", text: "new turn" }],
+    };
+
+    expect(
+      resolvePlanTextFromLegacyMessages({
+        messages: [writePlan, userMessage, exitPlanMode],
+        exitPlanModeToolId: "exit-plan",
+      }),
+    ).toBe("");
+  });
+
+  it("returns an empty string when no matching legacy Write exists", () => {
+    expect(
+      resolvePlanTextFromLegacyMessages({
+        messages: [exitPlanMode],
+        exitPlanModeToolId: "exit-plan",
+      }),
+    ).toBe("");
+  });
+});

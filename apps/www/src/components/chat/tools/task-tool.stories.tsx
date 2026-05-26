@@ -13,7 +13,6 @@ const renderToolPart = (
     toolPart={toolPart}
     threadId="thread-1"
     threadChatId="chat-1"
-    messagesRef={{ current: [] }}
     isReadOnly={false}
     childThreads={[]}
     githubRepoFullName="terragonlabs/terragon"

@@ -3,7 +3,11 @@ import { DBUserMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { estimateMessageSize, imageCount } from "@/lib/db-message-helpers";
+import {
+  convertToPlainText,
+  estimateMessageSize,
+  imageCount,
+} from "@/lib/db-message-helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   getThreadChat,
@@ -193,19 +197,30 @@ export async function queueFollowUpInternal({
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
+  const messagesToQueue =
+    source === "github"
+      ? filterAlreadyQueuedOrSubmittedMessages({
+          incomingMessages: messages,
+          existingMessages: threadChat.messages ?? [],
+          existingQueuedMessages: threadChat.queuedMessages ?? [],
+        })
+      : messages;
+  if (messagesToQueue.length === 0) {
+    return;
+  }
   getPostHogServer().capture({
     distinctId: userId,
     event: "queue_follow_up",
     properties: {
       threadId,
       source,
-      model: messages[0]?.model ?? null,
-      agentType: modelToAgent(messages[0]?.model ?? null),
-      imageCount: messages.reduce(
+      model: messagesToQueue[0]?.model ?? null,
+      agentType: modelToAgent(messagesToQueue[0]?.model ?? null),
+      imageCount: messagesToQueue.reduce(
         (acc, message) => acc + imageCount(message),
         0,
       ),
-      promptTextSize: messages.reduce(
+      promptTextSize: messagesToQueue.reduce(
         (acc, message) => acc + estimateMessageSize(message),
         0,
       ),
@@ -217,9 +232,10 @@ export async function queueFollowUpInternal({
     threadId,
     threadChatId,
     updates: {
-      appendQueuedMessages: appendOrReplace === "append" ? messages : undefined,
+      appendQueuedMessages:
+        appendOrReplace === "append" ? messagesToQueue : undefined,
       replaceQueuedMessages:
-        appendOrReplace === "replace" ? messages : undefined,
+        appendOrReplace === "replace" ? messagesToQueue : undefined,
     },
   });
   const shouldProcessImmediately =
@@ -240,4 +256,46 @@ export async function queueFollowUpInternal({
       ),
     );
   }
+}
+
+function filterAlreadyQueuedOrSubmittedMessages({
+  incomingMessages,
+  existingMessages,
+  existingQueuedMessages,
+}: {
+  incomingMessages: DBUserMessage[];
+  existingMessages: unknown[];
+  existingQueuedMessages: DBUserMessage[];
+}): DBUserMessage[] {
+  const existingText = new Set<string>();
+  for (const message of existingMessages) {
+    if (isUserMessage(message)) {
+      existingText.add(normalizedUserMessageText(message));
+    }
+  }
+  for (const message of existingQueuedMessages) {
+    existingText.add(normalizedUserMessageText(message));
+  }
+
+  return incomingMessages.filter((message) => {
+    const text = normalizedUserMessageText(message);
+    if (existingText.has(text)) {
+      return false;
+    }
+    existingText.add(text);
+    return true;
+  });
+}
+
+function isUserMessage(message: unknown): message is DBUserMessage {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === "user"
+  );
+}
+
+function normalizedUserMessageText(message: DBUserMessage): string {
+  return convertToPlainText({ message }).trim();
 }

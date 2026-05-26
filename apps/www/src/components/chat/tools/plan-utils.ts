@@ -1,9 +1,4 @@
-import type {
-  AllToolParts,
-  DBMessage,
-  UIAgentMessage,
-  UIMessage,
-} from "@terragon/shared";
+import type { DBMessage } from "@terragon/shared";
 
 // Aliases matching parse-plan-spec.ts
 const PLAN_TEXT_ALIASES = ["planText", "plan_text", "summary", "overview"];
@@ -77,104 +72,6 @@ function formatTasksAsMarkdown(
   return parts.join("\n");
 }
 
-/**
- * Find the plan content from a recent Write tool call for a plans/*.md file.
- * This is used by newer agents that write the plan to a file before calling ExitPlanMode.
- */
-export function findPlanFromWriteToolCall({
-  messages,
-  exitPlanModeToolId,
-}: {
-  messages: UIMessage[] | null;
-  exitPlanModeToolId: string;
-}): string | null {
-  if (!messages) return null;
-
-  let exitPlanModeLocation: ToolPartLocation | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (!message || message.role !== "agent") {
-      continue;
-    }
-    const partIndex = findToolPartIndex({
-      message,
-      name: "ExitPlanMode",
-      id: exitPlanModeToolId,
-    });
-    if (partIndex !== null) {
-      exitPlanModeLocation = { messageIndex: i, partIndex };
-      break;
-    }
-  }
-
-  if (!exitPlanModeLocation) return null;
-
-  for (let i = exitPlanModeLocation.messageIndex; i >= 0; i--) {
-    const message = messages[i];
-    if (!message) continue;
-
-    if (message.role === "user") {
-      break;
-    }
-
-    if (message.role !== "agent") {
-      continue;
-    }
-
-    const startPartIndex =
-      i === exitPlanModeLocation.messageIndex
-        ? exitPlanModeLocation.partIndex - 1
-        : message.parts.length - 1;
-
-    for (let partIndex = startPartIndex; partIndex >= 0; partIndex--) {
-      const part = message.parts[partIndex];
-      if (!isToolPartNamed(part, "Write")) {
-        continue;
-      }
-      const filePath = getStringParam(part.parameters, "file_path");
-      const content = getStringParam(part.parameters, "content");
-      if (
-        filePath &&
-        /plans\/[^/]+\.md$/.test(filePath) &&
-        content &&
-        content.trim()
-      ) {
-        return content;
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
- * Resolve the plan text for an ExitPlanMode tool call.
- * Checks parameters.plan first (old agent behavior), then falls back to
- * looking for a preceding Write tool call to plans/*.md (new agent behavior).
- */
-export function resolvePlanText({
-  planParam,
-  messages,
-  exitPlanModeToolId,
-}: {
-  planParam?: string;
-  messages: UIMessage[] | null;
-  exitPlanModeToolId: string;
-}): string {
-  let raw = "";
-  const trimmedPlan = planParam?.trim();
-  if (trimmedPlan) {
-    raw = trimmedPlan;
-  } else {
-    raw =
-      findPlanFromWriteToolCall({
-        messages,
-        exitPlanModeToolId,
-      }) || "";
-  }
-  return formatPlanForDisplay(raw);
-}
-
 export function resolvePlanTextFromLegacyMessages({
   planParam,
   messages,
@@ -196,44 +93,6 @@ export function resolvePlanTextFromLegacyMessages({
       }) || "";
   }
   return formatPlanForDisplay(raw);
-}
-
-type ToolPartLocation = {
-  messageIndex: number;
-  partIndex: number;
-};
-
-function findToolPartIndex({
-  message,
-  name,
-  id,
-}: {
-  message: UIAgentMessage;
-  name: string;
-  id: string;
-}): number | null {
-  for (let index = message.parts.length - 1; index >= 0; index--) {
-    const part = message.parts[index];
-    if (isToolPartNamed(part, name) && part.id === id) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function isToolPartNamed(
-  part: UIAgentMessage["parts"][number] | undefined,
-  name: string,
-): part is AllToolParts {
-  return part?.type === "tool" && part.name === name;
-}
-
-function getStringParam(
-  params: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = params[key];
-  return typeof value === "string" ? value : null;
 }
 
 function findPlanFromLegacyWriteToolCall({

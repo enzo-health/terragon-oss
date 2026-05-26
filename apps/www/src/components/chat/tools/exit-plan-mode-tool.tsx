@@ -1,4 +1,3 @@
-import type { UIMessage } from "@terragon/shared";
 import { AllToolParts } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
@@ -10,7 +9,7 @@ import { useSecondaryPanel } from "../hooks";
 import { findArtifactDescriptorForPart } from "../secondary-panel-helpers";
 import type { PromptBoxRef } from "../thread-context";
 import { GenericToolPart } from "./generic-ui";
-import { resolvePlanText } from "./plan-utils";
+import { formatPlanForDisplay } from "./plan-utils";
 
 export function truncateAtWordBoundary(text: string, maxChars = 300): string {
   if (text.length <= maxChars) return text;
@@ -22,7 +21,6 @@ export function truncateAtWordBoundary(text: string, maxChars = 300): string {
 
 export function ExitPlanModeTool({
   toolPart,
-  messages,
   artifactDescriptors = [],
   artifactDescriptorLookup,
   onOpenArtifact,
@@ -30,7 +28,6 @@ export function ExitPlanModeTool({
   toolPart: Extract<AllToolParts, { name: "ExitPlanMode" }>;
   threadId: string;
   threadChatId: string;
-  messages: UIMessage[];
   isReadOnly: boolean;
   promptBoxRef?: React.RefObject<PromptBoxRef | null>;
   onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
@@ -43,13 +40,8 @@ export function ExitPlanModeTool({
   useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const plan = useMemo(
-    () =>
-      resolvePlanText({
-        planParam: toolPart.parameters.plan,
-        messages,
-        exitPlanModeToolId: toolPart.id,
-      }),
-    [toolPart.parameters.plan, toolPart.id, messages],
+    () => formatPlanForDisplay(toolPart.parameters.plan?.trim() ?? ""),
+    [toolPart.parameters.plan],
   );
 
   const artifactDescriptor = useMemo(

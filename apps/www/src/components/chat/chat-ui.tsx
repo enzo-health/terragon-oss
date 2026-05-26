@@ -7,8 +7,6 @@ import {
   ThreadErrorMessage,
   ThreadInfoFull,
   ThreadStatus,
-  UIMessage,
-  UIUserMessage,
 } from "@terragon/shared";
 import {
   buildRepoFileArtifactId,
@@ -71,53 +69,6 @@ import {
   useRetryThreadMutation,
 } from "./use-thread-mutations";
 
-function submittedUserMessageToOptimisticUiMessage({
-  message,
-  index,
-  threadChatId,
-}: {
-  message: DBUserMessage;
-  index: number;
-  threadChatId: string;
-}): UIUserMessage {
-  return {
-    id: `user-optimistic-local-${threadChatId}-${index}-${message.timestamp ?? "pending"}`,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
-}
-
-function isSameUiUserMessage(
-  left: UIUserMessage,
-  right: UIUserMessage,
-): boolean {
-  return (
-    left.parts.length === right.parts.length &&
-    left.parts.every(
-      (part, index) =>
-        JSON.stringify(part) === JSON.stringify(right.parts[index]),
-    )
-  );
-}
-
-function appendUniqueUiUserMessages(
-  baseMessages: UIUserMessage[],
-  nextMessages: UIUserMessage[],
-): UIUserMessage[] {
-  let didAppend = false;
-  const out = [...baseMessages];
-  for (const message of nextMessages) {
-    if (out.some((existing) => isSameUiUserMessage(existing, message))) {
-      continue;
-    }
-    out.push(message);
-    didAppend = true;
-  }
-  return didAppend ? out : baseMessages;
-}
-
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
 // active thread. Bootstrap queries + loading gate live in <ThreadProvider/>;
 // JSX layout in <ChatUILayout/>; reusable effects in use-chat-effects.ts.
@@ -148,15 +99,6 @@ function ChatUIContent() {
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  const [submittedOptimisticUserState, setSubmittedOptimisticUserState] =
-    useState<{ threadChatId: string; messages: UIUserMessage[] }>(() => ({
-      threadChatId,
-      messages: [],
-    }));
-  const submittedOptimisticUserMessages =
-    submittedOptimisticUserState.threadChatId === threadChatId
-      ? submittedOptimisticUserState.messages
-      : [];
   // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
   const [hasInitialized, setHasInitialized] = useState(false);
   useEffect(() => {
@@ -295,7 +237,6 @@ function ChatUIContent() {
     threadChatId,
     dispatchThreadViewEvent: threadViewModel.dispatchThreadViewEvent,
   });
-  const runtimeMessagesRef = useRef<UIMessage[]>([]);
   const queuedMessages = threadViewModel.queuedMessages;
   const artifactDescriptors = threadViewModel.artifacts.descriptors;
   const shouldAutoRenderSecondaryPanel =
@@ -394,7 +335,6 @@ function ChatUIContent() {
     () => ({
       threadId,
       threadChatId: threadViewModel.threadChatId,
-      messagesRef: runtimeMessagesRef,
       isReadOnly,
       promptBoxRef,
       childThreads: shell.childThreads ?? [],
@@ -476,20 +416,6 @@ function ChatUIContent() {
 
   const onOptimisticUserSubmit = useCallback(
     (userMessage: DBUserMessage, optimisticStatus: ThreadStatus) => {
-      setSubmittedOptimisticUserState((current) => {
-        const currentMessages =
-          current.threadChatId === threadChatId ? current.messages : [];
-        return {
-          threadChatId,
-          messages: appendUniqueUiUserMessages(currentMessages, [
-            submittedUserMessageToOptimisticUiMessage({
-              message: userMessage,
-              index: currentMessages.length,
-              threadChatId,
-            }),
-          ]),
-        };
-      });
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
@@ -497,7 +423,7 @@ function ChatUIContent() {
         }),
       );
     },
-    [dispatch, threadChatId],
+    [dispatch],
   );
 
   const onOptimisticQueuedMessagesUpdate = useCallback(
@@ -545,7 +471,6 @@ function ChatUIContent() {
       threadViewModel,
       loadAgUiHistoryMessages,
       queuedMessages,
-      optimisticUserMessages: submittedOptimisticUserMessages,
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
@@ -567,7 +492,6 @@ function ChatUIContent() {
       lastUsedModel,
       loadAgUiHistoryMessages,
       queuedMessages,
-      submittedOptimisticUserMessages,
       threadViewModel,
       toolProps,
     ],

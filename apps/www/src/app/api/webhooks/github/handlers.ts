@@ -45,6 +45,18 @@ const TERRAGON_RUNTIME_CHECK_RUN_NAME = "Terragon Runtime";
 const TERRAGON_RUNTIME_CHECK_RUN_EXTERNAL_ID_PREFIX =
   "terragon-runtime-check-run:";
 
+function shouldSkipUnmentionedBotFeedback({
+  isMention,
+  login,
+  type,
+}: {
+  isMention: boolean;
+  login: string;
+  type?: string | null;
+}): boolean {
+  return !isMention && (type === "Bot" || login.endsWith("[bot]"));
+}
+
 function isActionableCheckFailure(conclusion: string | null): boolean {
   if (!conclusion) {
     return false;
@@ -636,12 +648,17 @@ export async function handleIssueCommentEvent(
     const commentUserId = event.comment.user.id;
     const repoFullName = event.repository.full_name;
     const isMention = isAppMentioned(commentBody);
+    const shouldSkipBotFeedback = shouldSkipUnmentionedBotFeedback({
+      isMention,
+      login: commentUsername,
+      type: event.comment.user.type,
+    });
 
     // PR comments (not issue comments) should wake the agent for triage even
     // without an @mention — the author posted a comment on their thread's PR,
     // the agent should see it. Route through the feedback queue like
     // pull_request_review_comment does.
-    if (issueType === "pull_request") {
+    if (issueType === "pull_request" && !shouldSkipBotFeedback) {
       const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
         repoFullName,
         prNumber: issueNumber,
@@ -657,6 +674,12 @@ export async function handleIssueCommentEvent(
         prNumber: issueNumber,
         routeUserId: null,
         ...feedbackRoutingResult,
+      });
+    } else if (issueType === "pull_request" && shouldSkipBotFeedback) {
+      console.log("Ignoring unmentioned bot PR comment feedback", {
+        repoFullName,
+        prNumber: issueNumber,
+        commentUsername,
       });
     }
 
@@ -719,9 +742,14 @@ export async function handlePullRequestReviewCommentEvent(
     const commentUsername = event.comment.user.login;
     const commentUserId = event.comment.user.id;
     const isMention = isAppMentioned(commentBody);
+    const shouldSkipBotFeedback = shouldSkipUnmentionedBotFeedback({
+      isMention,
+      login: commentUsername,
+      type: event.comment.user.type,
+    });
     const routeUserIds: Array<string | null> = [null];
 
-    if (routeUserIds.length > 0) {
+    if (routeUserIds.length > 0 && !shouldSkipBotFeedback) {
       await Promise.all(
         routeUserIds.map(async (routeUserId) => {
           const feedbackRoutingResult = await routeGithubFeedbackOrSpawnThread({
@@ -746,6 +774,12 @@ export async function handlePullRequestReviewCommentEvent(
           return feedbackRoutingResult;
         }),
       );
+    } else if (shouldSkipBotFeedback) {
+      console.log("Ignoring unmentioned bot review comment feedback", {
+        repoFullName,
+        prNumber,
+        commentUsername,
+      });
     }
     // Check if the comment mentions our app
     if (!isMention) {

@@ -52,7 +52,6 @@ const DEFAULT_TOOL_PROPS = {
   githubRepoFullName: "test/repo",
   repoBaseBranchName: "main",
   branchName: null,
-  messagesRef: { current: [] },
 };
 
 export function renderMessagePart(part: UIPart): string {
