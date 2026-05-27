@@ -195,6 +195,14 @@ export type ClaudeMessage =
        * transcript. Absent for Claude/ACP messages.
        */
       _codexItemId?: string;
+      /**
+       * W-ID.3: Content block indices (0-based) in this assistant message
+       * whose text/thinking was already streamed as deltas. The canonical-
+       * event builder skips these blocks to prevent duplicate transcript
+       * messages. Set by ClaudeCodeParser; absent when no deltas were
+       * streamed or for non-Claude transports.
+       */
+      _claudeStreamedBlockIndices?: number[];
     }
 
   // A user message
@@ -430,7 +438,11 @@ export type DaemonDelta = {
 export function isDeltaStreamedAssistantMessage(
   message: ClaudeMessage,
 ): boolean {
-  return message.type === "assistant" && message._codexItemId !== undefined;
+  return (
+    message.type === "assistant" &&
+    (message._codexItemId !== undefined ||
+      message._claudeStreamedBlockIndices !== undefined)
+  );
 }
 
 export type DaemonEventAPIBody = {

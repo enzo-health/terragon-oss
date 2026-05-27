@@ -1278,6 +1278,51 @@ describe("daemon-event route", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("filters delta-streamed text/thinking blocks for Claude messages with _claudeStreamedBlockIndices", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-claude-streamed",
+        runId: "run-1",
+        seq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "pondered" },
+                { type: "text", text: "answer" },
+                {
+                  type: "tool_use",
+                  id: "toolu_1",
+                  name: "Bash",
+                  input: { cmd: "ls" },
+                },
+              ],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+            // Blocks 0 and 1 (thinking + text) were already streamed as deltas.
+            _claudeStreamedBlockIndices: [0, 1],
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // The DBAgentMessage's text/thinking parts are all delta-streamed,
+    // leaving no rich parts. The DBToolCall is a separate message type
+    // (not "agent") so it doesn't go through the rich-part path.
+    // No rich-part emission should occur.
+    expect(
+      agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
+    ).not.toHaveBeenCalled();
+  });
+
   it("fails closed when native-runtime merged persistence fails", async () => {
     agUiPublisherMocks.dbAgentMessagePartsToAgUiRows.mockReturnValueOnce([
       {

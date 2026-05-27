@@ -2,7 +2,6 @@ import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DaemonEventAPIBody,
-  isDeltaStreamedAssistantMessage,
 } from "@terragon/daemon/shared";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
@@ -1125,7 +1124,17 @@ export async function POST(request: Request) {
     let messageIndex = 0;
     for (const claudeMessage of messages) {
       const isCodexDeltaStreamed =
-        isDeltaStreamedAssistantMessage(claudeMessage);
+        claudeMessage.type === "assistant" &&
+        claudeMessage._codexItemId !== undefined;
+      // W-ID.3: For Claude/ACP messages with _claudeStreamedBlockIndices,
+      // text/thinking at those indices was already delta-streamed. Filter
+      // those parts from the rich-part input so we don't emit duplicate
+      // CUSTOM events for content the delta stream already owns.
+      const claudeStreamedBlockSet = new Set<number>(
+        claudeMessage.type === "assistant"
+          ? (claudeMessage._claudeStreamedBlockIndices ?? [])
+          : [],
+      );
       const dbMsgs = toDBMessage(claudeMessage);
       precomputedDBMessages.set(messageIndex, dbMsgs);
       for (const dbMsg of dbMsgs) {
@@ -1133,11 +1142,22 @@ export async function POST(request: Request) {
         messageIndex++;
         if (dbMsg.type !== "agent") continue;
         if (isCodexDeltaStreamed) continue;
-        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
+        // Filter out text/thinking parts whose block index was delta-streamed.
+        const filteredParts =
+          claudeStreamedBlockSet.size > 0
+            ? dbMsg.parts.filter(
+                (part, idx) =>
+                  !(
+                    (part.type === "text" || part.type === "thinking") &&
+                    claudeStreamedBlockSet.has(idx)
+                  ),
+              )
+            : dbMsg.parts;
+        const hasRichParts = filteredParts.some((part) => part.type !== "text");
         if (!hasRichParts) continue;
         richPartInputs.push({
           messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
-          parts: dbMsg.parts,
+          parts: filteredParts,
         });
       }
     }
