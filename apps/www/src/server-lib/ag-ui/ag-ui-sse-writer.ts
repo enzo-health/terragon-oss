@@ -5,6 +5,23 @@ const ENCODER = new TextEncoder();
 
 export const STREAM_LOG_PREFIX = "[ag-ui][stream]";
 
+// XREAD poll tuning. Adaptive backoff: start at MIN_XREAD_BLOCK_MS and
+// grow linearly up to MAX_XREAD_BLOCK_MS while the stream is idle, then
+// reset on any received event. This cuts Upstash read costs on long-idle
+// SSE streams without trading off live-tail latency on active threads.
+export const MIN_XREAD_BLOCK_MS = 2_000;
+export const MAX_XREAD_BLOCK_MS = 10_000;
+export const XREAD_COUNT = 32;
+export const KEEPALIVE_INTERVAL_MS = 15_000;
+export const XREAD_BACKOFF_MS = 1_000;
+export const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
+// When Redis live-tail misses the daemon's terminal marker, we still need to
+// converge on terminal truth once durable run status flips. Tie checks to idle
+// polls (not wall-clock time) so tests stay deterministic.
+export const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
+export const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
+export const XREAD_ERROR_LOG_EVERY_N = 20;
+
 export type StreamCloseReason =
   | "client_abort"
   | "client_abort_before_start"

@@ -29,6 +29,15 @@ import {
   isXreadTimeoutError,
   type StreamCloseReason,
   type StreamDiagnostics,
+  MIN_XREAD_BLOCK_MS,
+  MAX_XREAD_BLOCK_MS,
+  XREAD_COUNT,
+  KEEPALIVE_INTERVAL_MS,
+  XREAD_BACKOFF_MS,
+  BASELINE_SNAPSHOT_COMMENT,
+  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS,
+  XREAD_ERROR_LOG_INITIAL_BUDGET,
+  XREAD_ERROR_LOG_EVERY_N,
 } from "@/server-lib/ag-ui/ag-ui-sse-writer";
 import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
 import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
@@ -57,28 +66,6 @@ export const dynamic = "force-dynamic";
 // time (Vercel Pro cap). Client-side aborts close the stream early, so
 // typical usage will not hit this ceiling.
 export const maxDuration = 300;
-
-// XREAD poll tuning. Adaptive backoff: start at MIN_XREAD_BLOCK_MS and
-// grow linearly up to MAX_XREAD_BLOCK_MS while the stream is idle, then
-// reset on any received event. This cuts Upstash read costs on long-idle
-// SSE streams without trading off live-tail latency on active threads.
-//
-// Note: production Upstash HTTP timeout permits up to ~30s block windows;
-// dev's resilient-redis client caps at ~3s (localHttpCommandTimeoutMs)
-// so the MIN value stays under that ceiling to avoid noisy warnings.
-const MIN_XREAD_BLOCK_MS = 2_000;
-const MAX_XREAD_BLOCK_MS = 10_000;
-const XREAD_COUNT = 32;
-const KEEPALIVE_INTERVAL_MS = 15_000;
-const XREAD_BACKOFF_MS = 1_000;
-const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
-// When Redis live-tail misses the daemon's terminal marker, we still need to
-// converge on terminal truth once durable run status flips. Tie checks to idle
-// polls (not wall-clock time) so tests stay deterministic.
-const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
-
-const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
-const XREAD_ERROR_LOG_EVERY_N = 20;
 
 export async function GET(
   request: NextRequest,
