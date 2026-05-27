@@ -1,6 +1,5 @@
-import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
+import { type BaseEvent, EventType } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
-import type { DBMessage } from "@terragon/shared";
 import {
   type AgUiEventEnvelope,
   agUiStreamKey,
@@ -20,13 +19,18 @@ import {
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
-import {
-  dbMessagesToNativeAgUiSnapshotMessages,
-  type DurableAgUiHistoryItem,
-  getDurableAgUiHistoryItemsFromEvents,
-} from "@/server-lib/ag-ui-side-effect-messages";
+import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
+import {
+  encodeSseComment,
+  encodeSseEvent,
+  emitStreamDiagnostic,
+  isXreadTimeoutError,
+  type StreamCloseReason,
+  type StreamDiagnostics,
+} from "@/server-lib/ag-ui/ag-ui-sse-writer";
+import { mergeMissingDbUserMessagesIntoHistory } from "@/server-lib/ag-ui/ag-ui-user-message-backfill";
 import {
   buildResumeRunStartedEvent,
   dropEventsAfterTerminalUntilNextRun,
@@ -74,169 +78,8 @@ const BASELINE_SNAPSHOT_COMMENT = "baseline-snapshot";
 // polls (not wall-clock time) so tests stay deterministic.
 const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
 
-const ENCODER = new TextEncoder();
-
-type AgUiUserMessage = Extract<Message, { role: "user" }>;
-
-function isAgUiUserMessage(
-  item: DurableAgUiHistoryItem,
-): item is AgUiUserMessage {
-  return Reflect.get(item, "role") === "user";
-}
-
-function agUiMessageContentText(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content.trim();
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  return content
-    .map((part) => {
-      if (part === null || typeof part !== "object") {
-        return "";
-      }
-      const type = Reflect.get(part, "type");
-      const text = Reflect.get(part, "text");
-      return type === "text" && typeof text === "string" ? text : "";
-    })
-    .filter((text) => text.length > 0)
-    .join("\n")
-    .trim();
-}
-
-function mergeMissingDbUserMessagesIntoHistory({
-  historyItems,
-  dbMessages,
-}: {
-  historyItems: DurableAgUiHistoryItem[];
-  dbMessages: readonly DBMessage[];
-}): DurableAgUiHistoryItem[] {
-  const historyUserIndicesBySignature = new Map<string, number[]>();
-  historyItems.forEach((item, index) => {
-    if (!isAgUiUserMessage(item)) {
-      return;
-    }
-    const signature = agUiUserMessageSignature(item);
-    const indices = historyUserIndicesBySignature.get(signature) ?? [];
-    indices.push(index);
-    historyUserIndicesBySignature.set(signature, indices);
-  });
-
-  const missingBeforeIndex = new Map<number, AgUiUserMessage[]>();
-  const appendedMessages: AgUiUserMessage[] = [];
-  const pendingMissingUserMessages: AgUiUserMessage[] = [];
-  let lastMatchedHistoryIndex: number | null = null;
-
-  for (const message of dbMessagesToNativeAgUiSnapshotMessages(dbMessages)) {
-    if (!isAgUiUserMessage(message)) {
-      continue;
-    }
-    const content = agUiMessageContentText(message.content);
-    if (content.length === 0) {
-      continue;
-    }
-    const matchingHistoryIndices = historyUserIndicesBySignature.get(
-      agUiUserMessageSignature(message),
-    );
-    const matchingHistoryIndex = matchingHistoryIndices?.shift();
-    if (matchingHistoryIndex === undefined) {
-      pendingMissingUserMessages.push(message);
-      continue;
-    }
-    if (pendingMissingUserMessages.length > 0) {
-      missingBeforeIndex.set(matchingHistoryIndex, [
-        ...(missingBeforeIndex.get(matchingHistoryIndex) ?? []),
-        ...pendingMissingUserMessages.splice(0),
-      ]);
-    }
-    lastMatchedHistoryIndex = matchingHistoryIndex;
-  }
-
-  if (
-    pendingMissingUserMessages.length > 0 &&
-    lastMatchedHistoryIndex !== null
-  ) {
-    appendedMessages.push(...pendingMissingUserMessages.splice(0));
-  }
-
-  const prependedMessages = [...pendingMissingUserMessages];
-  if (
-    prependedMessages.length === 0 &&
-    missingBeforeIndex.size === 0 &&
-    appendedMessages.length === 0
-  ) {
-    return historyItems;
-  }
-
-  const merged: DurableAgUiHistoryItem[] = [...prependedMessages];
-  historyItems.forEach((item, index) => {
-    merged.push(...(missingBeforeIndex.get(index) ?? []), item);
-  });
-  merged.push(...appendedMessages);
-  return merged;
-}
-
-function agUiUserMessageSignature(message: AgUiUserMessage): string {
-  return agUiMessageContentText(message.content);
-}
-
-const STREAM_LOG_PREFIX = "[ag-ui][stream]";
 const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
 const XREAD_ERROR_LOG_EVERY_N = 20;
-
-type StreamCloseReason =
-  | "client_abort_before_start"
-  | "client_abort"
-  | "controller_enqueue_failed"
-  | "durable_terminal_idle"
-  | "durable_terminal_after_xread_error"
-  | "terminal_event"
-  | "replay_failed"
-  | "run_not_found"
-  | "malformed_replay"
-  | "replay_already_terminal";
-
-type StreamDiagnostics = {
-  openedAtMs: number;
-  firstFrameLatencyMs: number | null;
-  replayCount: number;
-  dedupeCount: number;
-  xreadTimeoutCount: number;
-  xreadBackoffCount: number;
-  xreadErrorCount: number;
-};
-
-function isXreadTimeoutError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("local redis-http command timeout") ||
-    message.includes("timeout") ||
-    message.includes("time out")
-  );
-}
-
-function emitStreamDiagnostic(
-  event: "stream_open" | "first_frame" | "stream_close",
-  payload: Record<string, unknown>,
-): void {
-  console.info(STREAM_LOG_PREFIX, {
-    event,
-    ...payload,
-  });
-}
-
-function encodeSseEvent(event: BaseEvent, id?: string): Uint8Array {
-  const idLine = id ? `id: ${id}\n` : "";
-  return ENCODER.encode(`${idLine}data: ${JSON.stringify(event)}\n\n`);
-}
-
-function encodeSseComment(comment: string): Uint8Array {
-  return ENCODER.encode(`: ${comment}\n\n`);
-}
 
 /**
  * Capture the stream's current last ID BEFORE the DB replay query so that
