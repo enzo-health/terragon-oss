@@ -13,6 +13,7 @@ export type AgentTraceSpanName =
   | "server.daemon_event.received"
   | "server.daemon_event.canonical.persisted"
   | "server.daemon_event.delta.persisted"
+  | "server.daemon_event.merged.persisted"
   | "server.agui.event_log.persisted"
   | "server.agui.redis.published"
   | "server.agui.sse.opened"

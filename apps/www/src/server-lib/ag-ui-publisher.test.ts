@@ -190,10 +190,12 @@ describe("ag-ui-publisher", () => {
       const call = redisMocks.pipelineXadd.mock.calls[i]!;
       expect(call[0]).toBe(streamKey);
       expect(call[1]).toBe("*");
-      const data = call[2] as { event: string; envelope: string };
-      const parsed = JSON.parse(data.event);
-      expect(parsed.type).toBe(rows[i]!.event.type);
+      const data = call[2] as { event?: string; envelope: string };
+      // When an envelope is present, the standalone event field is omitted
+      // to cut Redis memory per event by ~50%. Parse from envelope.payload.
       const envelope = JSON.parse(data.envelope);
+      const parsed = envelope.payload;
+      expect(parsed.type).toBe(rows[i]!.event.type);
       expect(envelope).toMatchObject({
         eventId: rows[i]!.eventId,
         seq: i,
@@ -275,12 +277,13 @@ describe("ag-ui-publisher", () => {
     // XADD only called for the fresh insert.
     expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(1);
     const xaddData = redisMocks.pipelineXadd.mock.calls[0]![2] as {
-      event: string;
+      event?: string;
       envelope: string;
     };
-    const payload = JSON.parse(xaddData.event);
-    expect(payload.delta).toBe("extra");
+    // Event field omitted when envelope is present — parse from envelope.payload
     const liveEnvelope = JSON.parse(xaddData.envelope);
+    const payload = liveEnvelope.payload;
+    expect(payload.delta).toBe("extra");
     expect(liveEnvelope).toMatchObject({
       eventId: "ce-2:TEXT_MESSAGE_CONTENT:0",
       seq: 6,
@@ -1097,19 +1100,20 @@ describe("ag-ui-publisher", () => {
 
     expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(2);
     const firstData = redisMocks.pipelineXadd.mock.calls[0]?.[2] as {
-      event: string;
+      event?: string;
       envelope: string;
     };
     const secondData = redisMocks.pipelineXadd.mock.calls[1]?.[2] as {
-      event: string;
+      event?: string;
       envelope: string;
     };
 
-    expect(JSON.parse(firstData.event)).toMatchObject({
+    // Event field omitted when envelope is present — parse from envelope.payload
+    expect(JSON.parse(firstData.envelope).payload).toMatchObject({
       type: EventType.TEXT_MESSAGE_END,
     });
     expect(JSON.parse(firstData.envelope)).toMatchObject({ seq: 11 });
-    expect(JSON.parse(secondData.event)).toMatchObject({
+    expect(JSON.parse(secondData.envelope).payload).toMatchObject({
       type: EventType.RUN_FINISHED,
     });
     expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 12 });
@@ -1155,18 +1159,19 @@ describe("ag-ui-publisher", () => {
 
     expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(2);
     const firstData = redisMocks.pipelineXadd.mock.calls[0]?.[2] as {
-      event: string;
+      event?: string;
       envelope: string;
     };
     const secondData = redisMocks.pipelineXadd.mock.calls[1]?.[2] as {
-      event: string;
+      event?: string;
       envelope: string;
     };
-    expect(JSON.parse(firstData.event)).toMatchObject({
+    // Event field omitted when envelope is present — parse from envelope.payload
+    expect(JSON.parse(firstData.envelope).payload).toMatchObject({
       type: EventType.TEXT_MESSAGE_END,
     });
     expect(JSON.parse(firstData.envelope)).toMatchObject({ seq: 21 });
-    expect(JSON.parse(secondData.event)).toMatchObject({
+    expect(JSON.parse(secondData.envelope).payload).toMatchObject({
       type: EventType.RUN_FINISHED,
     });
     expect(JSON.parse(secondData.envelope)).toMatchObject({ seq: 22 });

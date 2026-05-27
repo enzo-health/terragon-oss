@@ -6,6 +6,7 @@ import {
 } from "@terragon/daemon/shared";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
+import { type DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
 import {
   assignThreadChatMessageSeqToCanonicalEvents,
@@ -47,6 +48,7 @@ import {
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import {
+  type AgUiPublishRow,
   type AssistantMessagePartsInput,
   broadcastAgUiEventEphemeral,
   buildDeltaRunEndRows,
@@ -232,123 +234,6 @@ function hasRequiredDaemonProviderScopes(params: {
   return requiredDaemonProviderScopesForAgent(params.agent).every((provider) =>
     hasDaemonProviderScope(params.claims, provider),
   );
-}
-
-async function persistCanonicalEventsOrResponse(params: {
-  canonicalEvents: CanonicalEventsPayload | null;
-  canPersistCanonicalEvents: boolean;
-  runId: string;
-  threadId: string;
-  threadChatId: string;
-  publishLive: boolean;
-}): Promise<
-  | { summary: CanonicalPersistenceSummary; response?: undefined }
-  | { summary?: undefined; response: Response }
-> {
-  const canonicalEvents = params.canonicalEvents;
-  if (!canonicalEvents || canonicalEvents.length === 0) {
-    return {
-      summary: {
-        attempted: 0,
-        inserted: 0,
-        deduplicated: 0,
-        insertedEventIds: [],
-        persistedEvents: [],
-        persistedEnvelopes: [],
-      },
-    };
-  }
-
-  if (!params.canPersistCanonicalEvents) {
-    return {
-      response: Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_persistence_unavailable",
-        },
-        { status: 503 },
-      ),
-    };
-  }
-
-  const contextMismatch = findCanonicalEventContextMismatch({
-    canonicalEvents,
-    runId: params.runId,
-    threadId: params.threadId,
-    threadChatId: params.threadChatId,
-  });
-  if (contextMismatch) {
-    return {
-      response: Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_context_mismatch",
-          eventId: contextMismatch.eventId,
-          reason: contextMismatch.reason,
-        },
-        { status: 409 },
-      ),
-    };
-  }
-
-  const rows = canonicalEventsToAgUiRows(canonicalEvents);
-  try {
-    if (params.publishLive) {
-      const result = await persistAndPublishAgUiEvents({
-        db,
-        runId: params.runId,
-        threadId: params.threadId,
-        threadChatId: params.threadChatId,
-        rows,
-      });
-      return {
-        summary: {
-          attempted: canonicalEvents.length,
-          inserted: result.inserted,
-          deduplicated: result.skipped,
-          insertedEventIds: result.insertedEventIds,
-          persistedEvents: [],
-          persistedEnvelopes: [],
-        },
-      };
-    }
-
-    const result = await persistAgUiEvents({
-      db,
-      runId: params.runId,
-      threadId: params.threadId,
-      threadChatId: params.threadChatId,
-      rows,
-    });
-    return {
-      summary: {
-        attempted: canonicalEvents.length,
-        inserted: result.inserted,
-        deduplicated: result.skipped,
-        insertedEventIds: result.insertedEventIds,
-        persistedEvents: result.persistedEvents,
-        persistedEnvelopes: result.persistedEnvelopes,
-      },
-    };
-  } catch (error) {
-    console.error("[daemon-event] AG-UI canonical persistence failed", {
-      runId: params.runId,
-      threadId: params.threadId,
-      threadChatId: params.threadChatId,
-      error,
-    });
-    return {
-      response: Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_persist_failed",
-          code: "database_error",
-          detail: error instanceof Error ? error.message : String(error),
-        },
-        { status: 500 },
-      ),
-    };
-  }
 }
 
 async function deactivateAcceptedTerminalRun(params: {
@@ -1216,29 +1101,135 @@ export async function POST(request: Request) {
     terminalCanonicalEventsForPersistence = [synthesizedTerminal];
   }
 
-  const canonicalPersistence = await persistCanonicalEventsOrResponse({
-    canonicalEvents: canonicalEventsForPersistence,
-    canPersistCanonicalEvents,
-    runId: runContext.runId,
-    threadId,
-    threadChatId,
-    publishLive: daemonRunStatusFromMessages === "processing",
-  });
-  if (canonicalPersistence.response) {
-    return canonicalPersistence.response;
+  // --- Build all non-terminal AG-UI rows upfront for a single merged persist ---
+  // Merging canonical + delta + rich-part rows into one persistAndPublishAgUiEvents
+  // call reduces advisory-lock acquisitions from 3 to 1 and cuts DB round-trips.
+  // Rich-part rows are computed from toDBMessage (pure, deterministic) before
+  // handleDaemonEvent — the second toDBMessage call in the old code is eliminated.
+
+  const canonicalRows = canonicalEventsForPersistence
+    ? canonicalEventsToAgUiRows(canonicalEventsForPersistence)
+    : [];
+  const deltaRows =
+    deltas && deltas.length > 0
+      ? daemonDeltasToAgUiRows({ runId: authoritativeRunId, deltas })
+      : [];
+
+  // Pre-compute toDBMessage results once for rich-part extraction.
+  // This eliminates the redundant second call that previously ran after
+  // handleDaemonEvent. toDBMessage is pure, so the output is identical.
+  let richPartRows: AgUiPublishRow[] = [];
+  const precomputedDBMessages: Map<number, DBMessage[]> = new Map();
+  if (canPersistCanonicalEvents && envelopeV2) {
+    const richPartInputs: AssistantMessagePartsInput[] = [];
+    let messageIndex = 0;
+    for (const claudeMessage of messages) {
+      const isCodexDeltaStreamed =
+        isDeltaStreamedAssistantMessage(claudeMessage);
+      const dbMsgs = toDBMessage(claudeMessage);
+      precomputedDBMessages.set(messageIndex, dbMsgs);
+      for (const dbMsg of dbMsgs) {
+        const currentIndex = messageIndex;
+        messageIndex++;
+        if (dbMsg.type !== "agent") continue;
+        if (isCodexDeltaStreamed) continue;
+        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
+        if (!hasRichParts) continue;
+        richPartInputs.push({
+          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
+          parts: dbMsg.parts,
+        });
+      }
+    }
+    if (richPartInputs.length > 0) {
+      richPartRows = dbAgentMessagePartsToAgUiRows(richPartInputs);
+    }
   }
-  recordAgentTraceSpan({
-    traceId: runContext.runId,
-    name: "server.daemon_event.canonical.persisted",
-    attributes: {
-      threadId,
-      threadChatId,
-      runId: runContext.runId,
-      attempted: canonicalPersistence.summary.attempted,
-      inserted: canonicalPersistence.summary.inserted,
-      deduplicated: canonicalPersistence.summary.deduplicated,
-    },
-  });
+
+  const hasPersistableRows =
+    canonicalEventsForPersistence != null ||
+    (deltas != null && deltas.length > 0) ||
+    richPartRows.length > 0;
+  const mergedRows = [...canonicalRows, ...deltaRows, ...richPartRows];
+  let canonicalPersistence: {
+    summary: CanonicalPersistenceSummary;
+    response?: undefined;
+  };
+
+  if (!canPersistCanonicalEvents && hasPersistableRows) {
+    return Response.json(
+      {
+        success: false,
+        error: "daemon_event_canonical_persistence_unavailable",
+      },
+      { status: 503 },
+    );
+  }
+
+  if (hasPersistableRows) {
+    try {
+      const mergedResult = await persistAndPublishAgUiEvents({
+        db,
+        runId: runContext.runId,
+        threadId,
+        threadChatId,
+        rows: mergedRows,
+      });
+      canonicalPersistence = {
+        summary: {
+          attempted: canonicalEventsForPersistence?.length ?? 0,
+          inserted: mergedResult.inserted,
+          deduplicated: mergedResult.skipped,
+          insertedEventIds: mergedResult.insertedEventIds,
+          persistedEvents: [],
+          persistedEnvelopes: [],
+        },
+      };
+      recordAgentTraceSpan({
+        traceId: runContext.runId,
+        name: "server.daemon_event.merged.persisted",
+        attributes: {
+          threadId,
+          threadChatId,
+          runId: runContext.runId,
+          canonicalRowCount: canonicalRows.length,
+          deltaRowCount: deltaRows.length,
+          richPartRowCount: richPartRows.length,
+          totalRows: mergedRows.length,
+          inserted: mergedResult.inserted,
+          deduplicated: mergedResult.skipped,
+        },
+      });
+    } catch (error) {
+      console.error("[daemon-event] AG-UI merged persistence failed", {
+        runId: runContext.runId,
+        threadId,
+        threadChatId,
+        error,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_canonical_event_persist_failed",
+          code: "database_error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 500 },
+      );
+    }
+  } else {
+    canonicalPersistence = {
+      summary: {
+        attempted: 0,
+        inserted: 0,
+        deduplicated: 0,
+        insertedEventIds: [],
+        persistedEvents: [],
+        persistedEnvelopes: [],
+      },
+    };
+  }
+
   let terminalCanonicalPersistence:
     | { summary: CanonicalPersistenceSummary; response?: undefined }
     | { summary?: undefined; response: Response }
@@ -1265,67 +1256,14 @@ export async function POST(request: Request) {
     });
   }
 
-  // Daemon deltas → AG-UI TEXT_MESSAGE_CONTENT / REASONING_MESSAGE_CONTENT
-  // rows. Persisted to agent_event_log with per-thread-chat seq and
-  // XADD'd to the live-tail stream. The legacy token_stream_event table
-  // and the deltaSeq broadcast patch are gone — AG-UI replay via
-  // /api/ag-ui/[threadId] covers both live tail and reconnection catch-up.
-  if (deltas && deltas.length > 0) {
-    if (!canPersistCanonicalEvents) {
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_persistence_unavailable",
-        },
-        { status: 503 },
-      );
-    }
-    try {
-      const deltaPersistence = await persistAndPublishAgUiEvents({
-        db,
-        runId: authoritativeRunId,
-        threadId,
-        threadChatId,
-        rows: daemonDeltasToAgUiRows({
-          runId: authoritativeRunId,
-          deltas,
-        }),
-      });
-      recordAgentTraceSpan({
-        traceId: authoritativeRunId,
-        name: "server.daemon_event.delta.persisted",
-        attributes: {
-          threadId,
-          threadChatId,
-          runId: authoritativeRunId,
-          deltaCount: deltas.length,
-          inserted: deltaPersistence.inserted,
-          deduplicated: deltaPersistence.skipped,
-        },
-      });
-    } catch (error) {
-      console.error("[daemon-event] AG-UI delta persistence failed", {
-        threadId,
-        threadChatId,
-        runId: authoritativeRunId,
-        error,
-      });
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_persist_failed",
-          code: "database_error",
-          detail: error instanceof Error ? error.message : String(error),
-        },
-        { status: 500 },
-      );
-    }
-  }
-
   // Before the terminal marker, close any (messageId, kind) lifecycles that
   // the delta ingestion path opened for this run but never closed. Without
   // the synthetic ENDs the AG-UI event log is not protocol-compliant and the
   // SSE reader can close on RUN_FINISHED before clients see the END rows.
+  // These are persisted alongside terminal canonical events in a single call
+  // below (both are terminal-only operations that need higher seq than the
+  // main merged persist above).
+  let deltaEndRows: AgUiPublishRow[] = [];
   if (
     canPersistCanonicalEvents &&
     daemonRunStatusFromMessages !== "processing"
@@ -1336,16 +1274,9 @@ export async function POST(request: Request) {
         runId: authoritativeRunId,
       });
       if (openMessages.length > 0) {
-        const endRows = buildDeltaRunEndRows({
+        deltaEndRows = buildDeltaRunEndRows({
           runId: authoritativeRunId,
           openMessages,
-        });
-        await persistAndPublishAgUiEvents({
-          db,
-          runId: authoritativeRunId,
-          threadId,
-          threadChatId,
-          rows: endRows,
         });
       }
     } catch (error) {
@@ -1361,16 +1292,16 @@ export async function POST(request: Request) {
     }
   }
 
-  // Terminal canonical events (RUN_FINISHED / RUN_ERROR) are persisted
-  // AFTER handleDaemonEvent + rich-part persistence below so they acquire a
-  // higher per-thread-chat seq than any side-effect MESSAGES_SNAPSHOT or
-  // rich-part rows written for this same batch. Replay is ordered by seq
-  // ASC, and AG-UI's client-side verifyEvents forbids any event after
-  // RUN_ERROR / RUN_FINISHED — out-of-order seq would surface as
-  // "Cannot send event type 'MESSAGES_SNAPSHOT': The run has already
-  // errored with 'RUN_ERROR'" on reconnect. Live publish at the bottom of
-  // the route also reads from `terminalCanonicalPersistence.summary`, so
-  // the persist call still happens before the broadcast loop.
+  // Terminal canonical events (RUN_FINISHED / RUN_ERROR) and delta-end rows
+  // are persisted AFTER handleDaemonEvent so they acquire a higher
+  // per-thread-chat seq than any side-effect MESSAGES_SNAPSHOT or rich-part
+  // rows written for this same batch. Replay is ordered by seq ASC, and
+  // AG-UI's client-side verifyEvents forbids any event after RUN_ERROR /
+  // RUN_FINISHED — out-of-order seq would surface as "Cannot send event type
+  // 'MESSAGES_SNAPSHOT': The run has already errored with 'RUN_ERROR'" on
+  // reconnect. Live publish at the bottom of the route also reads from
+  // `terminalCanonicalPersistence.summary`, so the persist call still happens
+  // before the broadcast loop.
 
   // Heartbeat shortcut: empty messages skip message/event persistence,
   // envelope validation, and run-context status transitions.
@@ -1574,76 +1505,10 @@ export async function POST(request: Request) {
     }
   }
 
-  // Emit AG-UI events for rich DBAgentMessage parts that are NOT covered by
-  // the canonical-events pipeline (thinking, terminal, diff, image, audio,
-  // pdf, text-file, resource-link, auto-approval-review, plan,
-  // plan-structured, server-tool-use, web-search-result, rich-text). We
-  // rebuild the DBMessages here rather than threading them back from
-  // `handleDaemonEvent` — `toDBMessage` is pure, so the second call is
-  // deterministic, and the stable (envelope eventId + messageIndex)
-  // messageId pattern means retried POSTs dedupe on (runId, eventId).
-  if (canPersistCanonicalEvents && envelopeV2) {
-    const richPartInputs: AssistantMessagePartsInput[] = [];
-    let messageIndex = 0;
-    for (const claudeMessage of messages) {
-      // Codex messages already streamed + persisted as deltas under their item
-      // id contribute no rich-part events here — a second representation keyed
-      // on the envelope-derived id renders the same content twice.
-      const isCodexDeltaStreamed =
-        isDeltaStreamedAssistantMessage(claudeMessage);
-      for (const dbMsg of toDBMessage(claudeMessage)) {
-        const currentIndex = messageIndex++;
-        if (dbMsg.type !== "agent") continue;
-        if (isCodexDeltaStreamed) continue;
-        // DBAgentMessage parts never contain tool-use/tool-result — those
-        // are separate top-level DBMessage variants. The mapper's skip set
-        // is a superset; here we only need to filter out pure-text parts.
-        const hasRichParts = dbMsg.parts.some((part) => part.type !== "text");
-        if (!hasRichParts) continue;
-        richPartInputs.push({
-          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
-          parts: dbMsg.parts,
-        });
-      }
-    }
-    if (richPartInputs.length > 0) {
-      try {
-        await persistAndPublishAgUiEvents({
-          db,
-          runId: authoritativeRunId,
-          threadId,
-          threadChatId,
-          rows: dbAgentMessagePartsToAgUiRows(richPartInputs),
-        });
-      } catch (error) {
-        if (skipLegacyRuntimeTranscriptPersistence) {
-          console.error(
-            "[daemon-event] AG-UI rich-part persistence failed for native-runtime batch",
-            {
-              threadId,
-              threadChatId,
-              runId: authoritativeRunId,
-              error,
-            },
-          );
-          return Response.json(
-            { error: "daemon_event_ag_ui_rich_part_persist_failed" },
-            { status: 500 },
-          );
-        }
-
-        // Rich-part emission remains best-effort only for legacy transcript
-        // batches, where the DBMessages are still durably available to the
-        // legacy snapshot fallback.
-        console.warn("[daemon-event] AG-UI rich-part persistence failed", {
-          threadId,
-          threadChatId,
-          runId: authoritativeRunId,
-          error,
-        });
-      }
-    }
-  }
+  // Rich-part AG-UI rows were already persisted in the merged persist call
+  // above (canonical + delta + rich-part rows in a single transaction).
+  // The old second toDBMessage call is eliminated — the precomputed
+  // results were used to build richPartRows before handleDaemonEvent.
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
   const resolvedStatus = daemonRunStatusFromMessages;
@@ -1994,44 +1859,88 @@ export async function POST(request: Request) {
 
   // Deferred terminal-event persistence (see note above the heartbeat
   // shortcut). At this point handleDaemonEvent has already written any
-  // side-effect MESSAGES_SNAPSHOT / rich-part rows, so the terminal marker
-  // is guaranteed to receive a higher seq and replay in the correct order.
+  // side-effect MESSAGES_SNAPSHOT rows, so the terminal marker is guaranteed
+  // to receive a higher seq and replay in the correct order.
+  // Delta-end rows (synthetic TEXT_MESSAGE_END / REASONING_MESSAGE_END for
+  // unclosed delta lifecycles) are merged into the same persist call to
+  // reduce transaction count.
   if (
     daemonRunStatusFromMessages !== "processing" &&
-    terminalCanonicalEventsForPersistence
+    (terminalCanonicalEventsForPersistence || deltaEndRows.length > 0)
   ) {
-    terminalCanonicalPersistence = await persistCanonicalEventsOrResponse({
-      canonicalEvents: terminalCanonicalEventsForPersistence,
-      canPersistCanonicalEvents,
-      runId: runContext.runId,
-      threadId,
-      threadChatId,
-      publishLive: false,
-    });
-    if (terminalCanonicalPersistence.response) {
-      return terminalCanonicalPersistence.response;
+    const terminalCanonicalRows = terminalCanonicalEventsForPersistence
+      ? canonicalEventsToAgUiRows(terminalCanonicalEventsForPersistence)
+      : [];
+    // Delta-end rows must come BEFORE terminal events in the array so they
+    // receive lower seq numbers (replay is seq-ordered; END must precede
+    // RUN_FINISHED).
+    const terminalMergedRows = [...deltaEndRows, ...terminalCanonicalRows];
+    if (terminalMergedRows.length > 0) {
+      if (!canPersistCanonicalEvents) {
+        return Response.json(
+          {
+            success: false,
+            error: "daemon_event_canonical_persistence_unavailable",
+          },
+          { status: 503 },
+        );
+      }
+      try {
+        const terminalPersistResult = await persistAgUiEvents({
+          db,
+          runId: runContext.runId,
+          threadId,
+          threadChatId,
+          rows: terminalMergedRows,
+        });
+        terminalCanonicalPersistence = {
+          summary: {
+            attempted:
+              terminalCanonicalEventsForPersistence?.length ??
+              0 + deltaEndRows.length,
+            inserted: terminalPersistResult.inserted,
+            deduplicated: terminalPersistResult.skipped,
+            insertedEventIds: terminalPersistResult.insertedEventIds,
+            persistedEvents: terminalPersistResult.persistedEvents,
+            persistedEnvelopes: terminalPersistResult.persistedEnvelopes,
+          },
+        };
+      } catch (error) {
+        console.error("[daemon-event] AG-UI terminal persistence failed", {
+          runId: runContext.runId,
+          threadId,
+          threadChatId,
+          error,
+        });
+        return Response.json(
+          {
+            success: false,
+            error: "daemon_event_canonical_event_persist_failed",
+            code: "database_error",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+          { status: 500 },
+        );
+      }
+    } else {
+      terminalCanonicalPersistence = null;
     }
   }
 
+  // Publish terminal events (delta-end + RUN_FINISHED/ERROR) that were
+  // persisted above but not yet published to Redis. Non-terminal events
+  // were already published in the merged persistAndPublishAgUiEvents call.
   if (
     daemonRunStatusFromMessages !== "processing" &&
-    (canonicalPersistence.summary.persistedEvents.length > 0 ||
-      (terminalCanonicalPersistence?.summary?.persistedEvents.length ?? 0) > 0)
+    terminalCanonicalPersistence?.summary?.persistedEvents.length
   ) {
-    for (const summary of [
-      canonicalPersistence.summary,
-      terminalCanonicalPersistence?.summary,
-    ]) {
-      if (!summary || summary.persistedEvents.length === 0) {
-        continue;
-      }
-      await publishPersistedAgUiEvents({
-        threadChatId,
-        persistedEvents: summary.persistedEvents,
-        insertedEventIds: summary.insertedEventIds,
-        persistedEnvelopes: summary.persistedEnvelopes,
-      });
-    }
+    await publishPersistedAgUiEvents({
+      threadChatId,
+      persistedEvents: terminalCanonicalPersistence.summary.persistedEvents,
+      insertedEventIds: terminalCanonicalPersistence.summary.insertedEventIds,
+      persistedEnvelopes:
+        terminalCanonicalPersistence.summary.persistedEnvelopes,
+    });
   }
 
   const shouldReturnDuplicateTerminalIgnored =
