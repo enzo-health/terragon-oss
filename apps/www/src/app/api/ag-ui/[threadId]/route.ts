@@ -22,6 +22,7 @@ import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
 import {
+  captureStreamCursor,
   encodeSseComment,
   encodeSseEvent,
   emitStreamDiagnostic,
@@ -77,31 +78,6 @@ const TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS = 2;
 
 const XREAD_ERROR_LOG_INITIAL_BUDGET = 3;
 const XREAD_ERROR_LOG_EVERY_N = 20;
-
-/**
- * Capture the stream's current last ID BEFORE the DB replay query so that
- * events XADD'd while the replay is in flight are not dropped by the live
- * tail's `$` cursor. Empty/missing streams fall back to `"0"` so the first
- * XREAD picks up any entry published after this moment.
- */
-async function captureStreamCursor(streamKey: string): Promise<string> {
-  try {
-    const latest = await redis.xrevrange(streamKey, "+", "-", 1);
-    if (latest && typeof latest === "object") {
-      const ids = Object.keys(latest);
-      if (ids.length > 0 && typeof ids[0] === "string") {
-        return ids[0]!;
-      }
-    }
-    return "0";
-  } catch (err) {
-    console.warn("[ag-ui] captureStreamCursor failed; falling back to 0", {
-      streamKey,
-      err,
-    });
-    return "0";
-  }
-}
 
 export async function GET(
   request: NextRequest,
