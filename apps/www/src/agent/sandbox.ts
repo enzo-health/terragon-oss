@@ -735,7 +735,11 @@ async function getOrCreateSandboxForThread({
       message.includes("sandbox not found") ||
       message.includes("not found") ||
       message.includes("no such sandbox") ||
-      message.includes("does not exist")
+      message.includes("does not exist") ||
+      message.includes("no space left on device") ||
+      message.includes("disk full") ||
+      message.includes("overlay2") ||
+      message.includes("errored state")
     );
   };
 
