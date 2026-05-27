@@ -14,7 +14,7 @@ export async function handleThreadFinish(params: {
   shouldSkipCheckpoint: boolean;
   sourceType: string | null;
   sourceMetadata: ThreadSourceMetadata | null;
-  runId: string;
+  runId: string | null;
   followUpRunId: string | null;
 }): Promise<void> {
   const {

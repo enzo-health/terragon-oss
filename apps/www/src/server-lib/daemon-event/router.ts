@@ -422,11 +422,14 @@ export async function routeDaemonEvent(
     suppressTerminalRecoverySideEffects,
   });
 
+  const terminalRecoveryQueued =
+    (threadChatUpdates.appendQueuedMessages?.length ?? 0) > 0;
+
   if (skipThreadChatPersistence) {
     return {
       success: true,
       threadChatMessageSeq: null,
-      terminalRecoveryQueued: false,
+      terminalRecoveryQueued,
     };
   }
 
@@ -456,10 +459,12 @@ export async function routeDaemonEvent(
         },
       })
       .catch((error) => {
-        console.warn("[handle-daemon-event] pre-broadcast failed", {
-          threadId,
-          error,
-        });
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[handle-daemon-event] pre-broadcast failed", {
+            threadId,
+            error,
+          });
+        }
       });
   }
 
@@ -544,10 +549,15 @@ export async function routeDaemonEvent(
           },
         })
         .catch((broadcastError) => {
-          console.warn("[handle-daemon-event] error-refetch broadcast failed", {
-            threadId,
-            broadcastError,
-          });
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "[handle-daemon-event] error-refetch broadcast failed",
+              {
+                threadId,
+                broadcastError,
+              },
+            );
+          }
         });
     }
     throw dbError;
@@ -576,10 +586,12 @@ export async function routeDaemonEvent(
   if (broadcastData) {
     waitUntil(
       deps.publishBroadcastUserMessage(broadcastData).catch((error) => {
-        console.warn("[handle-daemon-event] async broadcast failed", {
-          threadId,
-          error,
-        });
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[handle-daemon-event] async broadcast failed", {
+            threadId,
+            error,
+          });
+        }
       }),
     );
   }

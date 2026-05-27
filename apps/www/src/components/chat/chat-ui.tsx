@@ -47,6 +47,8 @@ import {
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
+import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
+import { useCreateThreadIntentSubscriber } from "./use-thread-intent-handler";
 import { LeafLoading } from "./leaf-loading";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
@@ -567,16 +569,23 @@ function ChatUIContent() {
     );
   }
 
+  const subscriber = useCreateThreadIntentSubscriber({
+    setError,
+    refetch: reconcileActiveChatFromServer,
+  });
+
   return (
-    <ChatUILayout
-      coreData={coreData}
-      viewModel={viewModel}
-      scrollState={scrollState}
-      panelState={panelState}
-      dialogData={dialogData}
-      optimisticHandlers={optimisticHandlers}
-      errorState={errorState}
-    />
+    <ThreadIntentProvider subscriber={subscriber}>
+      <ChatUILayout
+        coreData={coreData}
+        viewModel={viewModel}
+        scrollState={scrollState}
+        panelState={panelState}
+        dialogData={dialogData}
+        optimisticHandlers={optimisticHandlers}
+        errorState={errorState}
+      />
+    </ThreadIntentProvider>
   );
 }
 

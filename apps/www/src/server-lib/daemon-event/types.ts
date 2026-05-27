@@ -166,13 +166,13 @@ export type RouterDependencies = {
   hasOtherActiveRuns: (params: {
     sandboxId: string;
     threadChatId: string;
-    excludeRunId: string;
+    excludeRunId: string | null;
   }) => Promise<boolean>;
   setActiveThreadChat: (params: {
     sandboxId: string;
     threadChatId: string;
     isActive: boolean;
-    runId: string;
+    runId: string | null;
   }) => Promise<void>;
   emitLinearActivitiesForDaemonEvent: typeof import("@/server-lib/linear-agent-activity").emitLinearActivitiesForDaemonEvent;
   refreshLinearTokenIfNeeded: typeof import("@/server-lib/linear-oauth").refreshLinearTokenIfNeeded;

@@ -310,6 +310,7 @@ export function createProxyHandler(config: ProxyProviderConfig) {
       headers,
       body,
       redirect: "manual",
+      signal: request.signal,
     });
 
     let responseBody: BodyInit | null = response.body;
@@ -395,9 +396,11 @@ export function createProxyHandler(config: ProxyProviderConfig) {
 
     const apiKey = config.getApiKey();
     if (!apiKey) {
-      console.log(
-        `${config.providerName} proxy access denied: API key not configured`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `${config.providerName} proxy access denied: API key not configured`,
+        );
+      }
       return {
         response: new Response(
           `${config.providerName} provider not configured on this server`,
@@ -411,7 +414,9 @@ export function createProxyHandler(config: ProxyProviderConfig) {
         headers: new Headers({ "X-Daemon-Token": token }),
       });
       if (!daemonAuth || !daemonAuth.claims) {
-        console.log(`Unauthorized ${config.providerName} proxy request`);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Unauthorized ${config.providerName} proxy request`);
+        }
         return { response: new Response("Unauthorized", { status: 401 }) };
       }
       const userId = daemonAuth.userId;
@@ -420,13 +425,15 @@ export function createProxyHandler(config: ProxyProviderConfig) {
         !hasDaemonProviderScope(claims, config.providerName) ||
         claims.exp <= Date.now()
       ) {
-        console.log(
-          `${config.providerName} proxy access denied: provider scope mismatch`,
-          {
-            userId,
-            runId: claims.runId,
-          },
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `${config.providerName} proxy access denied: provider scope mismatch`,
+            {
+              userId,
+              runId: claims.runId,
+            },
+          );
+        }
         return { response: new Response("Unauthorized", { status: 401 }) };
       }
       const runContext = await getAgentRunContextByRunId({
@@ -453,13 +460,15 @@ export function createProxyHandler(config: ProxyProviderConfig) {
         runContext.status === "failed" ||
         runContext.status === "stopped"
       ) {
-        console.log(
-          `${config.providerName} proxy access denied: run context mismatch`,
-          {
-            userId,
-            runId: claims.runId,
-          },
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `${config.providerName} proxy access denied: run context mismatch`,
+            {
+              userId,
+              runId: claims.runId,
+            },
+          );
+        }
         return { response: new Response("Unauthorized", { status: 401 }) };
       }
 
@@ -470,13 +479,15 @@ export function createProxyHandler(config: ProxyProviderConfig) {
       });
       waitUntil(maybeTriggerCreditAutoReload({ userId, balanceCents }));
       if (balanceCents <= 0) {
-        console.log(
-          `${config.providerName} proxy access denied: insufficient credits`,
-          {
-            userId,
-            balanceCents,
-          },
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `${config.providerName} proxy access denied: insufficient credits`,
+            {
+              userId,
+              balanceCents,
+            },
+          );
+        }
         return {
           response: new Response("Insufficient credits", { status: 402 }),
         };

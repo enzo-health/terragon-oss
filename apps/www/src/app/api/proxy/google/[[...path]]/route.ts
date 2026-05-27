@@ -103,7 +103,9 @@ async function logGoogleEventStreamUsage({
             return true;
           }
         } catch (_error) {
-          console.log("Failed to parse event stream payload:", payload);
+          if (process.env.NODE_ENV !== "production") {
+            console.error("Failed to parse event stream payload:", payload);
+          }
         }
       }
       separator = findEventSeparator(buffer);

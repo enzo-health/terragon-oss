@@ -31,12 +31,14 @@ export async function logAnthropicUsage({
   model?: string | null;
   messageId?: string | null;
 }) {
-  console.log("Anthropic usage", {
-    path,
-    usage,
-    ...(model ? { model } : {}),
-    ...(messageId ? { messageId } : {}),
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.log("Anthropic usage", {
+      path,
+      usage,
+      ...(model ? { model } : {}),
+      ...(messageId ? { messageId } : {}),
+    });
+  }
   if (!userId || !usage) {
     return;
   }

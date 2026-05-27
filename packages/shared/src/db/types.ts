@@ -97,8 +97,6 @@ export type UserInfoServerSide = typeof schema.userInfoServerSide.$inferSelect;
 export type UserInfoServerSideInsert =
   typeof schema.userInfoServerSide.$inferInsert;
 
-export type FeedbackType = "bug" | "feature" | "feedback";
-
 export type SlackAccountWithMetadata = SlackAccount & {
   installation: SlackInstallation | null;
   settings: SlackSettings | null;
