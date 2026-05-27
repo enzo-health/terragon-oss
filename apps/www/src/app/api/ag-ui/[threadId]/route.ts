@@ -47,6 +47,7 @@ import {
   getReplayEntryRunId,
   isTerminalRunEventType,
   repairReplayTextMessageLifecycles,
+  resolveEffectiveRunId,
   sseIdForReplayEntry,
   splitHistoryOnlyPrefix,
   toReplayEntries,
@@ -125,36 +126,14 @@ export async function GET(
   // identity on the client.
   const initialLastId = await captureStreamCursor(streamKey);
 
-  // Resolve the effective runId:
-  //  - If the client supplied `?runId=X`, use it verbatim (reconnect path).
-  //  - If the client supplied only a seq cursor, replay from that cursor
-  //    thread-chat-wide. This is the history-adapter resume path; binding it
-  //    to a guessed latest run can strand terminal events for delayed-start
-  //    runs behind an unrelated older run.
-  //  - Otherwise the connect is fresh; default to the thread chat's latest
-  //    run. Clients that land on an empty thread chat (no runs yet) get a
-  //    live-tailing stream with no history — the first RUN_STARTED written by
-  //    a new daemon-event will naturally be the first event on the wire.
-  let resolvedRunId: string | null = runIdParam;
-  if (
-    resolvedRunId === null &&
-    replayCursorSeq === null &&
-    request.method === "GET"
-  ) {
-    try {
-      resolvedRunId = await getLatestRunIdForThreadChat({
-        db,
-        threadChatId,
-      });
-    } catch (error) {
-      console.error(
-        "[ag-ui] getLatestRunIdForThreadChat failed; defaulting to live-tail",
-        { threadId, threadChatId },
-        error,
-      );
-      resolvedRunId = null;
-    }
-  }
+  // Resolve the effective runId for the SSE stream.
+  let resolvedRunId = await resolveEffectiveRunId({
+    runIdParam,
+    replayCursorSeq,
+    isGetMethod: request.method === "GET",
+    threadChatId,
+    threadId,
+  });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
