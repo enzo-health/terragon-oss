@@ -29,6 +29,7 @@ import {
 } from "@/hooks/use-current-run-id";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
+import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
 import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
@@ -47,8 +48,6 @@ import {
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
-import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
-import { useCreateThreadIntentSubscriber } from "./use-thread-intent-handler";
 import { LeafLoading } from "./leaf-loading";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
@@ -66,6 +65,7 @@ import {
 } from "./use-chat-effects";
 import { useChatViewSnapshot } from "./use-chat-view-snapshot";
 import { useProductSidecars } from "./use-product-sidecars";
+import { useCreateThreadIntentSubscriber } from "./use-thread-intent-handler";
 import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
@@ -557,6 +557,11 @@ function ChatUIContent() {
     [error, handleRetry, isRetrying],
   );
 
+  const subscriber = useCreateThreadIntentSubscriber({
+    setError,
+    refetch: reconcileActiveChatFromServer,
+  });
+
   if (!coreData) {
     // `useAgUiTransport` returns null only when `threadChatId` is falsy,
     // which the provider has already gated against. Keep this guard so
@@ -568,11 +573,6 @@ function ChatUIContent() {
       </div>
     );
   }
-
-  const subscriber = useCreateThreadIntentSubscriber({
-    setError,
-    refetch: reconcileActiveChatFromServer,
-  });
 
   return (
     <ThreadIntentProvider subscriber={subscriber}>

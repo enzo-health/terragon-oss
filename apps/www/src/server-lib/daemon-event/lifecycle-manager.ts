@@ -1,5 +1,5 @@
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import type { ThreadStatus } from "@terragon/shared";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 import type { RouterDependencies } from "./types";
 
 export async function handleThreadFinish(params: {

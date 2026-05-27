@@ -1,70 +1,70 @@
+import { extendSandboxLife } from "@terragon/sandbox";
 import type { DBMessage } from "@terragon/shared";
-import { waitUntil } from "@vercel/functions";
-import { isQueuedStatus } from "@/agent/thread-status";
-import { db } from "@/lib/db";
-import { toDBMessage } from "@/agent/msg/toDBMessage";
+import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
+import { findOpenAgUiToolCallsForRun } from "@terragon/shared/model/agent-event-log";
+import {
+  getAgentRunContextByRunId,
+  updateAgentRunContext,
+} from "@terragon/shared/model/agent-run-context";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
-  updateThreadChat,
   updateThread,
+  updateThreadChat,
 } from "@terragon/shared/model/threads";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
-import { extendSandboxLife } from "@terragon/sandbox";
-import {
-  persistSideEffectAgUiMessages,
-  persistInvalidTokenRetrySideEffectMarker,
-  hasInvalidTokenRetrySideEffectMarker,
-} from "@/server-lib/ag-ui-side-effect-messages";
-import { findOpenAgUiToolCallsForRun } from "@terragon/shared/model/agent-event-log";
-import {
-  updateAgentRunContext,
-  getAgentRunContextByRunId,
-} from "@terragon/shared/model/agent-run-context";
-import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
-import { getPostHogServer } from "@/lib/posthog-server";
-import {
-  isAnthropicDownPOST,
-  internalPOST,
-} from "@/server-lib/internal-request";
-import { trackUsageEvents } from "@/server-lib/usage-events";
-import { compactThreadChat } from "@/server-lib/compact";
-import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import { checkpointThread } from "@/server-lib/checkpoint-thread";
-import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
+import { waitUntil } from "@vercel/functions";
+import { toDBMessage } from "@/agent/msg/toDBMessage";
 import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
+import { isQueuedStatus } from "@/agent/thread-status";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { db } from "@/lib/db";
+import { getPostHogServer } from "@/lib/posthog-server";
+import {
+  hasInvalidTokenRetrySideEffectMarker,
+  persistInvalidTokenRetrySideEffectMarker,
+  persistSideEffectAgUiMessages,
+} from "@/server-lib/ag-ui-side-effect-messages";
+import { checkpointThread } from "@/server-lib/checkpoint-thread";
+import { compactThreadChat } from "@/server-lib/compact";
+import {
+  internalPOST,
+  isAnthropicDownPOST,
+} from "@/server-lib/internal-request";
 import {
   emitLinearActivitiesForDaemonEvent,
   updateAgentSession,
 } from "@/server-lib/linear-agent-activity";
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
-import {
-  classifyMessages,
-  buildRunContextFailureUpdates,
-  deriveTerminalFailureSource,
-  deriveDaemonTerminalErrorInfo,
-} from "./message-parser";
+import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
+import { trackUsageEvents } from "@/server-lib/usage-events";
 import {
   maybeTrackFirstAssistantLatency,
   reportDaemonEventMetrics,
-  reportThreadErrorMetrics,
   reportMcpToolCalls,
+  reportThreadErrorMetrics,
 } from "./analytics-reporter";
-import { tryAutoCompactRecovery } from "./recovery/auto-compact";
-import { tryOAuthRetryRecovery } from "./recovery/oauth-retry";
+import {
+  buildInterruptedToolResultMessages,
+  handleThreadFinish,
+} from "./lifecycle-manager";
 import { maybeEmitLinearActivities } from "./linear-activity-emitter";
 import {
-  handleThreadFinish,
-  buildInterruptedToolResultMessages,
-} from "./lifecycle-manager";
+  buildRunContextFailureUpdates,
+  classifyMessages,
+  deriveDaemonTerminalErrorInfo,
+  deriveTerminalFailureSource,
+} from "./message-parser";
+import { tryAutoCompactRecovery } from "./recovery/auto-compact";
+import { tryOAuthRetryRecovery } from "./recovery/oauth-retry";
 import type {
-  DaemonEventResult,
   DaemonEventContext,
+  DaemonEventResult,
   RouterDependencies,
   ThreadChatUpdateAccumulator,
 } from "./types";

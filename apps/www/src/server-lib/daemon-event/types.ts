@@ -4,8 +4,8 @@ import type {
   DBUserMessage,
   ThreadChatInsert,
 } from "@terragon/shared";
-import type { SandboxProvider } from "@terragon/types/sandbox";
 import type { FeatureFlagName } from "@terragon/shared/model/feature-flags-definitions";
+import type { SandboxProvider } from "@terragon/types/sandbox";
 
 type BroadcastUserMessage = Parameters<
   typeof import("@terragon/shared/broadcast-server").publishBroadcastUserMessage
