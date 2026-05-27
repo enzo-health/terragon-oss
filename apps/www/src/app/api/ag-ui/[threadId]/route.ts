@@ -31,6 +31,7 @@ import {
   type StreamDiagnostics,
 } from "@/server-lib/ag-ui/ag-ui-sse-writer";
 import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
+import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
   buildResumeRunStartedEvent,
   getReplayDedupeKey,
@@ -929,30 +930,15 @@ export async function GET(
         return;
       }
 
-      const resolvedRunHasTerminalEvent =
-        resolvedRunId === null
-          ? false
-          : replayEnvelopes.some(
-              (entry) =>
-                entry.runId === resolvedRunId &&
-                isTerminalRunEventType(entry.payload.type),
-            );
-
-      let syntheticTerminalEntry: ReplayEntry | null = null;
-      if (
-        !resolvedRunHasTerminalEvent &&
-        terminalRunContext !== null &&
-        isTerminalAgentRunStatus(terminalRunContext.status)
-      ) {
-        const terminalEvent = buildRunTerminalAgUi({
-          threadId,
-          runId: resolvedRunId,
-          daemonRunStatus: terminalRunContext.status,
-          errorMessage: terminalRunContext.failureTerminalReason ?? null,
-          errorCode: terminalRunContext.failureCategory ?? null,
-        });
-        syntheticTerminalEntry = { seq: null, event: terminalEvent };
-      }
+      const {
+        hasTerminalEvent: resolvedRunHasTerminalEvent,
+        syntheticTerminalEntry,
+      } = synthesizeTerminalEntry({
+        runId: resolvedRunId,
+        envelopes: replayEnvelopes,
+        runContext: terminalRunContext,
+        threadId,
+      });
 
       const historyPrefix =
         replayCursorSeq === null
