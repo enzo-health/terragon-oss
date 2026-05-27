@@ -19,7 +19,6 @@ import {
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
-import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui-side-effect-messages";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
 import {
@@ -30,10 +29,9 @@ import {
   type StreamCloseReason,
   type StreamDiagnostics,
 } from "@/server-lib/ag-ui/ag-ui-sse-writer";
-import { mergeMissingDbUserMessagesIntoHistory } from "@/server-lib/ag-ui/ag-ui-user-message-backfill";
+import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
 import {
   buildResumeRunStartedEvent,
-  dropEventsAfterTerminalUntilNextRun,
   getReplayDedupeKey,
   getReplayEntryRunId,
   isTerminalRunEventType,
@@ -41,7 +39,6 @@ import {
   sseIdForReplayEntry,
   splitHistoryOnlyPrefix,
   toReplayEntries,
-  toReplayEntriesWithoutTerminalFilter,
   type ReplayEntry,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
 import {
@@ -147,36 +144,11 @@ export async function GET(
   }
 
   if (request.nextUrl.searchParams.get("history") === "messages") {
-    const envelopes = await getAgUiEventEnvelopesForThreadChat({
-      db,
+    const projection = await projectThreadHistory({
       threadChatId,
-    });
-    const historyEntries = dropEventsAfterTerminalUntilNextRun(
-      toReplayEntriesWithoutTerminalFilter(envelopes, null),
-      { keepInterRunUserAndSystemSnapshots: true },
-    );
-    const historyEvents = historyEntries.map((entry) => entry.event);
-    const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
-    const messages = mergeMissingDbUserMessagesIntoHistory({
-      historyItems: history.items,
       dbMessages: ownership.messages,
     });
-    const includedCursor =
-      history.lastSeqOffset >= 0
-        ? historyEntries[history.lastSeqOffset]
-        : undefined;
-    return NextResponse.json({
-      messages,
-      lastSeq: includedCursor?.seq ?? -1,
-      lastCursor:
-        includedCursor?.seq != null &&
-        includedCursor.identity?.projectionIndex !== undefined
-          ? {
-              seq: includedCursor.seq,
-              projectionIndex: includedCursor.identity.projectionIndex,
-            }
-          : undefined,
-    });
+    return NextResponse.json(projection);
   }
 
   const streamKey = agUiStreamKey(threadChatId);
