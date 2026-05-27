@@ -40,10 +40,7 @@ RUN apt-get update && apt-get install -y \\
     && rm -rf /var/lib/apt/lists/*
 
 # Configure PostgreSQL for passwordless local dev access
-RUN printf 'local all all trust\\nhost all all 127.0.0.1/32 trust\\nhost all all ::1/128 trust\\n' > /etc/postgresql/16/main/pg_hba.conf \
-host all all 127.0.0.1/32 trust\\
-host all all ::1/128 trust\\
-' > /etc/postgresql/16/main/pg_hba.conf \\
+RUN printf 'local all all trust\\nhost all all 127.0.0.1/32 trust\\nhost all all ::1/128 trust\\n' > /etc/postgresql/16/main/pg_hba.conf \\
     && sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" /etc/postgresql/16/main/postgresql.conf
 
 # Install Node.js 22
@@ -68,11 +65,11 @@ RUN curl -fsSL https://bun.sh/install | bash \\
 # Install pnpm, sandbox-agent, claude code, and codex
 # Clean npm cache and strip dev-only files in the SAME RUN to keep the layer small.
 RUN npm install -g pnpm \\
-    @anthropic-ai/claude-code@2.1.107 \\
+    @anthropic-ai/claude-code@2.1.126 \\
     @openai/codex@0.128.0 \\
     @sandbox-agent/cli@0.2.1 \\
     && npm cache clean --force \\
-    && find /usr/lib/node_modules -type d \( -name 'docs' -o -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'examples' -o -name '.github' \) -exec rm -rf {} + 2>/dev/null || true \\
+    && find /usr/lib/node_modules -type d \\( -name 'docs' -o -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'examples' -o -name '.github' \\) -exec rm -rf {} + 2>/dev/null || true \\
     && find /usr/lib/node_modules -name '*.map' -delete 2>/dev/null || true \\
     && find /usr/lib/node_modules -name '*.d.ts' -delete 2>/dev/null || true \\
     && rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/locale/* 2>/dev/null || true
