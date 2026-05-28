@@ -53,10 +53,12 @@ export function SidebarThreadList() {
 
   if (repoGroups.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-        <p className="text-xs text-muted-foreground">No tasks yet.</p>
-        <p className="text-[10px] text-muted-foreground/70 mt-1">
-          Create a task to get started.
+      <div className="flex flex-col items-center justify-center px-3 py-6 text-center group-data-[collapsible=icon]:hidden">
+        <p className="text-xs font-medium text-sidebar-foreground/80 text-balance">
+          No tasks yet
+        </p>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground text-pretty">
+          Create one from the dashboard to get started.
         </p>
       </div>
     );
@@ -96,21 +98,23 @@ function RepoSection({
     <div className="flex flex-col group-data-[collapsible=icon]:hidden">
       <button
         onClick={handleToggle}
+        aria-expanded={!isCollapsed}
         className={cn(
-          "flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground",
-          "hover:text-foreground transition-colors text-left select-none",
-          "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
+          "group/repo flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground text-left select-none",
+          "transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:text-sidebar-foreground hover:bg-sidebar-accent/40",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
         )}
         title={repoName}
       >
         <ChevronRight
+          aria-hidden
           className={cn(
-            "size-3 flex-shrink-0 text-muted-foreground transition-transform duration-200 ease-[var(--ease-standard)]",
+            "size-3 flex-shrink-0 text-muted-foreground/70 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] group-hover/repo:text-sidebar-foreground",
             !isCollapsed && "rotate-90",
           )}
         />
         <span className="truncate">{repoName}</span>
-        <span className="text-muted-foreground/60 text-[10px] font-medium tabular-nums flex-shrink-0 ml-auto">
+        <span className="ml-auto text-[10px] font-medium tabular-nums text-muted-foreground/60 flex-shrink-0">
           {threads.length}
         </span>
       </button>
@@ -135,19 +139,19 @@ function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
     <Link
       href={`/task/${thread.id}`}
       prefetch={!isOptimistic}
+      aria-current={isActive ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors relative",
-        "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+        "group/thread flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
         isActive
-          ? "bg-sidebar-accent text-sidebar-primary-foreground font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-sidebar-primary"
+          ? "bg-sidebar-accent text-sidebar-primary-foreground font-medium"
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        isOptimistic && "opacity-60 cursor-default",
+        isOptimistic && "opacity-60 pointer-events-none",
       )}
     >
       <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
         <ThreadStatusIndicator thread={thread} isOptimistic={isOptimistic} />
       </div>
-      <span className="truncate leading-snug">{title}</span>
+      <span className="truncate leading-snug text-pretty">{title}</span>
     </Link>
   );
 }
