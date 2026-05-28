@@ -240,22 +240,26 @@ export function BootChecklist({
                     filter: isPending ? "blur(0px)" : "blur(4px)",
                   }}
                 />
-                <Loader2
-                  className="absolute w-3.5 h-3.5 animate-spin transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+                <span
+                  className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
                   style={{
                     opacity: isActive ? 1 : 0,
                     transform: isActive ? "scale(1)" : "scale(0.25)",
                     filter: isActive ? "blur(0px)" : "blur(4px)",
                   }}
-                />
-                <Check
-                  className="absolute w-3.5 h-3.5 stroke-[2.5] transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+                >
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                </span>
+                <span
+                  className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
                   style={{
                     opacity: isCompleted ? 1 : 0,
                     transform: isCompleted ? "scale(1)" : "scale(0.25)",
                     filter: isCompleted ? "blur(0px)" : "blur(4px)",
                   }}
-                />
+                >
+                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                </span>
               </span>
 
               {/* Step label */}
