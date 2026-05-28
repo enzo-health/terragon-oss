@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult, UserFacingError } from "@/lib/server-actions";
 import {
   DBUserMessage,
   ThreadChatInsert,
@@ -45,10 +45,10 @@ export const updateDraftThread = userOnlyAction(
     },
   ) {
     console.log("updateDraftThread", threadId);
-    const thread = await getThread({ db, threadId, userId });
-    if (!thread) {
-      throw new UserFacingError("Task not found");
-    }
+    const thread = await requireResult(
+      () => getThread({ db, threadId, userId }),
+      "Task not found",
+    );
     if (!thread.draftMessage) {
       throw new UserFacingError("Task is not a draft");
     }
@@ -111,10 +111,10 @@ export const submitDraftThread = userOnlyAction(
       scheduleAt?: number | null;
     },
   ) {
-    const thread = await getThread({ db, threadId, userId });
-    if (!thread) {
-      throw new UserFacingError("Task not found");
-    }
+    const thread = await requireResult(
+      () => getThread({ db, threadId, userId }),
+      "Task not found",
+    );
     if (!thread.draftMessage) {
       throw new UserFacingError("Task is not a draft");
     }

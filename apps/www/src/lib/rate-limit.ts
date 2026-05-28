@@ -158,7 +158,7 @@ export async function trackSandboxCreation(userId: string) {
 }
 
 // CLI task creation rate limiting (by user ID)
-export const cliTaskCreationRateLimit = new Ratelimit({
+const cliTaskCreationRateLimit = new Ratelimit({
   redis,
   limiter: Ratelimit.slidingWindow(
     50, // 50 tasks
@@ -197,7 +197,7 @@ export async function checkCliTaskCreationRateLimit(userId: string) {
 }
 
 // Shadow-banned users: 3 tasks per hour (applies across sources)
-export const shadowBanTaskCreationRateLimit = new Ratelimit({
+const shadowBanTaskCreationRateLimit = new Ratelimit({
   redis,
   limiter: Ratelimit.slidingWindow(3, "1h"),
   prefix: `${PREFIX}:shadowban-task-creation`,

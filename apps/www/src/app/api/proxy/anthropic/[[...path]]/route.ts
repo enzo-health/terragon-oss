@@ -1,168 +1,33 @@
-import { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
-import { db } from "@/lib/db";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
-import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
-import { logAnthropicUsage } from "../log-anthropic-usage";
-import { waitUntil } from "@vercel/functions";
-import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
 import {
-  getDaemonTokenAuthContextOrNull,
-  hasDaemonProviderScope,
-} from "@/lib/auth-server";
-import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-
-const ANTHROPIC_API_BASE = "https://api.anthropic.com/";
-const DEFAULT_ANTHROPIC_PATH = "v1/messages";
-const ANTHROPIC_API_VERSION = "2023-06-01";
-const ANTHROPIC_API_ORIGIN = new URL(ANTHROPIC_API_BASE).origin;
+  getBearerDaemonTokenFromHeaders,
+  createProxyHandler,
+} from "@/server-lib/proxy-handler";
+import { logAnthropicUsage } from "../log-anthropic-usage";
 
 export const dynamic = "force-dynamic";
 
-type HandlerArgs = { params: Promise<{ path?: string[] }> };
-type AuthContext = { userId: string };
-
-type StreamEvent = {
-  eventType: string | null;
-  payload: unknown;
-};
-
-type StreamPayload = {
-  type?: string;
+type AnthropicUsagePayload = {
   usage?: {
     input_tokens?: number | null;
     cache_creation_input_tokens?: number | null;
     cache_read_input_tokens?: number | null;
     output_tokens?: number | null;
   } | null;
+  model?: string | null;
+  id?: string | null;
   message?: {
     id?: string | null;
     model?: string | null;
-    usage?: StreamPayload["usage"];
+    usage?: AnthropicUsagePayload["usage"];
   } | null;
-  model?: string | null;
 };
-
-type UsagePayloadFields = {
-  input_tokens?: number | null;
-  cache_creation_input_tokens?: number | null;
-  cache_read_input_tokens?: number | null;
-  output_tokens?: number | null;
-};
-
-type UsageKey = keyof UsagePayloadFields;
-
-const STREAM_USAGE_KEYS: UsageKey[] = [
-  "input_tokens",
-  "cache_creation_input_tokens",
-  "cache_read_input_tokens",
-  "output_tokens",
-];
-
-type UsageTotals = Record<UsageKey, number>;
-
-function buildTargetUrl(
-  request: NextRequest,
-  pathSegments: string[] | undefined,
-) {
-  const pathname =
-    pathSegments && pathSegments.length > 0
-      ? pathSegments.join("/")
-      : DEFAULT_ANTHROPIC_PATH;
-
-  if (/^\s*https?:\/\//i.test(pathname) || pathname.startsWith("//")) {
-    throw new Error("invalid proxy path");
-  }
-
-  const targetUrl = new URL(pathname, ANTHROPIC_API_BASE);
-  if (targetUrl.origin !== ANTHROPIC_API_ORIGIN) {
-    throw new Error("invalid proxy origin");
-  }
-  if (!targetUrl.pathname.startsWith("/v1/")) {
-    throw new Error("invalid proxy path");
-  }
-  const search = request.nextUrl.search;
-  if (search) {
-    targetUrl.search = search;
-  }
-
-  return targetUrl;
-}
 
 function isMessagesPath(pathname: string) {
   return pathname === "/v1/messages" || pathname.startsWith("/v1/messages/");
 }
 
-function isJsonContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("application/json"));
-}
-
-function isEventStreamContentType(contentType: string | null) {
-  return Boolean(contentType && contentType.includes("text/event-stream"));
-}
-
-function findEventSeparator(buffer: string) {
-  const lfIndex = buffer.indexOf("\n\n");
-  const crlfIndex = buffer.indexOf("\r\n\r\n");
-  if (lfIndex === -1 && crlfIndex === -1) {
-    return null;
-  }
-  if (lfIndex !== -1 && (crlfIndex === -1 || lfIndex < crlfIndex)) {
-    return { index: lfIndex, length: 2 } as const;
-  }
-  return { index: crlfIndex, length: 4 } as const;
-}
-
-function parseStreamEvent(rawEvent: string): StreamEvent | null {
-  const lines = rawEvent.split(/\r?\n/);
-  const dataLines: string[] = [];
-  let eventType: string | null = null;
-
-  for (const line of lines) {
-    if (line.startsWith("event:")) {
-      eventType = line.slice(6).trim();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
-    }
-  }
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-
-  const payloadText = dataLines.join("\n");
-
-  try {
-    const payload = JSON.parse(payloadText);
-    return { eventType, payload };
-  } catch (_error) {
-    return null;
-  }
-}
-
-function extractUsageFromStreamPayload(payload: StreamPayload): {
-  usage:
-    | {
-        input_tokens?: number | null;
-        cache_creation_input_tokens?: number | null;
-        cache_read_input_tokens?: number | null;
-        output_tokens?: number | null;
-      }
-    | null
-    | undefined;
-  model?: string | null;
-  messageId?: string | null;
-} {
-  const usage = payload.usage ?? payload.message?.usage;
-  const model = payload.message?.model ?? payload.model;
-  const messageId = payload.message?.id ?? null;
-
-  return { usage, model, messageId };
-}
-
-async function logMessagesUsageFromEventStream({
+export async function logAnthropicEventStreamUsage({
   stream,
   targetUrl,
   userId,
@@ -171,19 +36,36 @@ async function logMessagesUsageFromEventStream({
   targetUrl: URL;
   userId: string;
 }) {
+  const { findEventSeparator, parseStreamEvent } = await import(
+    "@/server-lib/proxy-handler"
+  );
+
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let doneReading = false;
   let knownModel: string | null | undefined;
   let knownMessageId: string | null | undefined;
-  const aggregatedUsageTotals: UsageTotals = {
+  const aggregatedUsageTotals: Record<
+    | "input_tokens"
+    | "cache_creation_input_tokens"
+    | "cache_read_input_tokens"
+    | "output_tokens",
+    number
+  > = {
     input_tokens: 0,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
     output_tokens: 0,
   };
   let sawUsageEvent = false;
+
+  const STREAM_USAGE_KEYS = [
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+  ] as const;
 
   const processBuffer = async () => {
     let separator = findEventSeparator(buffer);
@@ -201,9 +83,10 @@ async function logMessagesUsageFromEventStream({
         continue;
       }
 
-      const payload = parsed.payload as StreamPayload;
-      const { usage, model, messageId } =
-        extractUsageFromStreamPayload(payload);
+      const payload = parsed.payload as AnthropicUsagePayload;
+      const usage = payload?.usage ?? payload?.message?.usage;
+      const model = payload?.message?.model ?? payload?.model;
+      const messageId = payload?.message?.id ?? payload?.id;
 
       if (!knownModel && model) {
         knownModel = model;
@@ -214,17 +97,11 @@ async function logMessagesUsageFromEventStream({
 
       if (usage) {
         sawUsageEvent = true;
-        const incomingUsage = usage as UsagePayloadFields;
-
         for (const key of STREAM_USAGE_KEYS) {
-          const rawValue = incomingUsage[key];
-          if (rawValue == null) {
-            continue;
-          }
+          const rawValue = (usage as Record<string, unknown>)[key];
+          if (rawValue == null) continue;
           const parsedValue = Number(rawValue);
-          if (!Number.isFinite(parsedValue)) {
-            continue;
-          }
+          if (!Number.isFinite(parsedValue)) continue;
           const value = Math.max(parsedValue, 0);
           if (value > aggregatedUsageTotals[key]) {
             aggregatedUsageTotals[key] = value;
@@ -264,9 +141,8 @@ async function logMessagesUsageFromEventStream({
   }
 
   if (sawUsageEvent) {
-    const aggregatedUsageForLogging: UsagePayloadFields = {};
+    const aggregatedUsageForLogging: Record<string, number> = {};
     let hasUsage = false;
-
     for (const key of STREAM_USAGE_KEYS) {
       const total = aggregatedUsageTotals[key];
       if (total > 0) {
@@ -274,7 +150,6 @@ async function logMessagesUsageFromEventStream({
         hasUsage = true;
       }
     }
-
     if (hasUsage) {
       try {
         await logAnthropicUsage({
@@ -294,300 +169,35 @@ async function logMessagesUsageFromEventStream({
   }
 }
 
-async function proxyRequest(
-  request: NextRequest,
-  args: HandlerArgs,
-  authContext: AuthContext,
-) {
-  const params = await args.params;
-  let targetUrl: URL;
-  try {
-    targetUrl = buildTargetUrl(request, params.path);
-  } catch {
-    return new Response("Invalid proxy path", { status: 400 });
-  }
-
-  const validation = await validateProxyRequestModel({
-    request,
-    provider: "anthropic",
-  });
-  if (!validation.valid) {
-    return new Response(validation.error, { status: 400 });
-  }
-
-  const headers = new Headers();
-  for (const [key, value] of request.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "host" ||
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "x-api-key" ||
-      lowerKey === "authorization"
-    ) {
-      continue;
+const { GET, POST, PUT, PATCH, DELETE, OPTIONS } = createProxyHandler({
+  baseUrl: "https://api.anthropic.com/",
+  defaultPath: "v1/messages",
+  providerName: "anthropic",
+  pathPrefix: "/v1/",
+  getDaemonTokenFromHeaders: getBearerDaemonTokenFromHeaders,
+  getApiKey: () => env.ANTHROPIC_API_KEY,
+  stripRequestHeaders: ["x-api-key", "authorization", "x-daemon-token"],
+  prepareRequestHeaders: (headers, apiKey) => {
+    headers.set("x-api-key", apiKey);
+    if (!headers.has("anthropic-version")) {
+      headers.set("anthropic-version", "2023-06-01");
     }
-    headers.set(key, value);
-  }
-  headers.set("x-api-key", env.ANTHROPIC_API_KEY);
-  if (!headers.has("anthropic-version")) {
-    headers.set("anthropic-version", ANTHROPIC_API_VERSION);
-  }
-
-  const body =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer();
-
-  const response = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body,
-    redirect: "manual",
-  });
-
-  let responseBody: BodyInit | null = response.body;
-  if (isMessagesPath(targetUrl.pathname)) {
-    const contentType = response.headers.get("content-type");
-    if (isEventStreamContentType(contentType) && response.body) {
-      const [clientStream, loggingStream] = response.body.tee();
-      responseBody = clientStream;
-      void logMessagesUsageFromEventStream({
-        stream: loggingStream,
-        targetUrl,
-        userId: authContext.userId,
-      }).catch((error) => {
-        console.error(
-          "Failed to log Anthropic messages usage (event-stream handler)",
-          error,
-        );
-      });
-    } else if (isJsonContentType(contentType)) {
-      try {
-        const buffer = await response.arrayBuffer();
-        responseBody = buffer;
-        const decoded = new TextDecoder().decode(buffer);
-        const json = JSON.parse(decoded) as {
-          usage?: StreamPayload["usage"];
-          model?: string | null;
-          id?: string | null;
-        };
-        if (json?.usage) {
-          await logAnthropicUsage({
-            path: targetUrl.pathname,
-            usage: json.usage,
-            userId: authContext.userId,
-            model: json.model ?? null,
-            messageId: json.id ?? null,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to log Anthropic messages usage (json)", error);
-      }
-    }
-  }
-
-  const responseHeaders = new Headers();
-  for (const [key, value] of response.headers.entries()) {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey === "content-length" ||
-      lowerKey === "connection" ||
-      lowerKey === "transfer-encoding" ||
-      lowerKey === "content-encoding"
-    ) {
-      continue;
-    }
-    responseHeaders.set(key, value);
-  }
-
-  const origin = request.headers.get("origin");
-  if (origin) {
-    responseHeaders.set("Access-Control-Allow-Origin", origin);
-    responseHeaders.set("Access-Control-Allow-Credentials", "true");
-    responseHeaders.append("Vary", "Origin");
-  } else {
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-  }
-
-  return new Response(responseBody, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: responseHeaders,
-  });
-}
-
-async function authorize(
-  request: NextRequest,
-): Promise<
-  | { response: Response; userId?: undefined }
-  | { response: null; userId: string }
-> {
-  const token = getDaemonTokenFromHeaders(request.headers);
-
-  if (!token) {
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-
-  // Check if API key is configured
-  if (!env.ANTHROPIC_API_KEY) {
-    console.log("Anthropic proxy access denied: API key not configured");
-    return {
-      response: new Response(
-        "Anthropic provider not configured on this server",
-        { status: 503 },
-      ),
-    };
-  }
-
-  try {
-    const daemonAuth = await getDaemonTokenAuthContextOrNull({
-      headers: new Headers({ "X-Daemon-Token": token }),
-    });
-    if (!daemonAuth || !daemonAuth.claims) {
-      console.log("Unauthorized Anthropic proxy request");
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    const userId = daemonAuth.userId;
-    const claims = daemonAuth.claims;
-    if (
-      !hasDaemonProviderScope(claims, "anthropic") ||
-      claims.exp <= Date.now()
-    ) {
-      console.log("Anthropic proxy access denied: provider scope mismatch", {
+  },
+  shouldLogUsage: isMessagesPath,
+  logEventStreamUsage: logAnthropicEventStreamUsage,
+  logJsonUsage: async ({ buffer, targetUrl, userId }) => {
+    const decoded = new TextDecoder().decode(buffer);
+    const json = JSON.parse(decoded) as AnthropicUsagePayload;
+    if (json?.usage) {
+      await logAnthropicUsage({
+        path: targetUrl.pathname,
+        usage: json.usage,
         userId,
-        runId: claims.runId,
+        model: json.model ?? json.message?.model ?? null,
+        messageId: json.id ?? json.message?.id ?? null,
       });
-      return { response: new Response("Unauthorized", { status: 401 }) };
     }
-    const runContext = await getAgentRunContextByRunId({
-      db,
-      runId: claims.runId,
-      userId,
-    });
-    if (!runContext) {
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
-    if (
-      !daemonAuth.keyId ||
-      !runContext.daemonTokenKeyId ||
-      daemonAuth.keyId !== runContext.daemonTokenKeyId ||
-      runContext.runId !== claims.runId ||
-      runContext.threadId !== claims.threadId ||
-      runContext.threadChatId !== claims.threadChatId ||
-      runContext.sandboxId !== claims.sandboxId ||
-      runContext.agent !== claims.agent ||
-      runContext.transportMode !== claims.transportMode ||
-      runContext.protocolVersion !== claims.protocolVersion ||
-      runContext.tokenNonce !== claims.nonce ||
-      runContext.status === "completed" ||
-      runContext.status === "failed" ||
-      runContext.status === "stopped"
-    ) {
-      console.log("Anthropic proxy access denied: run context mismatch", {
-        userId,
-        runId: claims.runId,
-      });
-      return { response: new Response("Unauthorized", { status: 401 }) };
-    }
+  },
+});
 
-    const { balanceCents } = await getUserCreditBalance({
-      db,
-      userId,
-      skipAggCache: false,
-    });
-    waitUntil(maybeTriggerCreditAutoReload({ userId, balanceCents }));
-    if (balanceCents <= 0) {
-      console.log("Anthropic proxy access denied: insufficient credits", {
-        userId,
-        balanceCents,
-      });
-      return {
-        response: new Response("Insufficient credits", { status: 402 }),
-      };
-    }
-    return { response: null, userId };
-  } catch (err) {
-    console.error("Failed to verify Anthropic proxy request", err);
-    return { response: new Response("Unauthorized", { status: 401 }) };
-  }
-}
-
-async function handleWithAuth(
-  request: NextRequest,
-  args: HandlerArgs,
-  handler: (
-    request: NextRequest,
-    args: HandlerArgs,
-    context: AuthContext,
-  ) => Promise<Response>,
-) {
-  const authResult = await authorize(request);
-  if (authResult.response) {
-    return authResult.response;
-  }
-  return handler(request, args, { userId: authResult.userId });
-}
-
-export async function GET(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function POST(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PUT(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function PATCH(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function DELETE(request: NextRequest, args: HandlerArgs) {
-  return handleWithAuth(request, args, proxyRequest);
-}
-
-export async function OPTIONS(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  const allowOrigin = origin ?? "*";
-  const allowHeaders =
-    request.headers.get("access-control-request-headers") ??
-    "authorization, content-type";
-
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": allowHeaders,
-    Vary: "Origin",
-  };
-
-  if (allowOrigin !== "*") {
-    headers["Access-Control-Allow-Credentials"] = "true";
-  }
-
-  return new Response(null, {
-    status: 204,
-    headers,
-  });
-}
-function getDaemonTokenFromHeaders(headers: Headers) {
-  const directToken = headers.get("X-Daemon-Token");
-  if (directToken && directToken.trim() !== "") {
-    return directToken.trim();
-  }
-
-  const authHeader = headers.get("authorization");
-  if (!authHeader) {
-    return null;
-  }
-
-  const match = authHeader.match(/^\s*Bearer\s+(.*)$/i);
-  if (match && match[1]) {
-    const token = match[1]!.trim();
-    return token === "" ? null : token;
-  }
-
-  return null;
-}
+export { GET, POST, PUT, PATCH, DELETE, OPTIONS };

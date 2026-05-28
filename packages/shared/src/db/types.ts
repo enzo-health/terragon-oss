@@ -52,7 +52,7 @@ export type AgentEventLog = typeof schema.agentEventLog.$inferSelect;
 export type AgentEventLogInsert = typeof schema.agentEventLog.$inferInsert;
 export type UserSettings = typeof schema.userSettings.$inferSelect;
 export type Environment = typeof schema.environment.$inferSelect;
-export type Waitlist = typeof schema.waitlist.$inferSelect;
+
 export type GithubWebhookDelivery =
   typeof schema.githubWebhookDeliveries.$inferSelect;
 export type GithubWebhookDeliveryInsert =
@@ -96,9 +96,6 @@ export type UserFlagsInsert = typeof schema.userFlags.$inferInsert;
 export type UserInfoServerSide = typeof schema.userInfoServerSide.$inferSelect;
 export type UserInfoServerSideInsert =
   typeof schema.userInfoServerSide.$inferInsert;
-export type Feedback = typeof schema.feedback.$inferSelect;
-export type FeedbackInsert = typeof schema.feedback.$inferInsert;
-export type FeedbackType = "bug" | "feature" | "feedback";
 
 export type SlackAccountWithMetadata = SlackAccount & {
   installation: SlackInstallation | null;

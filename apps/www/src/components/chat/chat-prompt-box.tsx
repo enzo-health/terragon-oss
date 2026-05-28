@@ -17,8 +17,7 @@ import {
   convertToPlainText,
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
-import { followUp, queueFollowUp } from "@/server-actions/follow-up";
-import { stopThread } from "@/server-actions/stop-thread";
+import { useThreadIntent } from "@/hooks/use-thread-intent";
 import { HandleSubmit } from "../promptbox/use-promptbox";
 import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
@@ -86,6 +85,8 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   const chatAgent = ensureAgent(agent);
   const showContextUsageChip = useFeatureFlag("contextUsageChip");
 
+  const { publish } = useThreadIntent();
+
   const handleSubmit = useCallback<HandleSubmit>(
     async ({ userMessage }) => {
       const plainText = convertToPlainText({ message: userMessage });
@@ -98,13 +99,14 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       const isClearContext = plainText.trim() === "/clear";
       const optimisticStatus = isClearContext ? "complete" : "booting";
       onOptimisticUserSubmit(userMessage, optimisticStatus);
-      const followUpResult = await followUp({
-        threadId,
-        threadChatId,
-        message: userMessage,
-      });
-      if (!followUpResult.success) {
-        setError(followUpResult.errorMessage);
+      try {
+        await publish({
+          type: "send-message",
+          threadId,
+          threadChatId,
+          message: userMessage,
+        });
+      } catch {
         await refetch();
         return;
       }
@@ -119,29 +121,35 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       setError,
       forceScrollToBottom,
       onOptimisticUserSubmit,
+      publish,
     ],
   );
 
   const handleStop = useCallback(async () => {
-    const stopResult = await stopThread({ threadId, threadChatId });
-    if (!stopResult.success) {
-      setError(stopResult.errorMessage);
+    try {
+      await publish({
+        type: "stop-thread",
+        threadId,
+        threadChatId,
+      });
+    } catch {
       await refetch();
       return;
     }
     await refetch();
-  }, [threadId, threadChatId, refetch, setError]);
+  }, [threadId, threadChatId, refetch, publish]);
 
   const updateQueuedMessages = useCallback(
     async (messages: DBUserMessage[]) => {
       onOptimisticQueuedMessagesUpdate(messages);
-      const queueFollowUpResult = await queueFollowUp({
-        threadId,
-        threadChatId,
-        messages,
-      });
-      if (!queueFollowUpResult.success) {
-        setError(queueFollowUpResult.errorMessage);
+      try {
+        await publish({
+          type: "queue-message",
+          threadId,
+          threadChatId,
+          messages,
+        });
+      } catch {
         await refetch();
         return;
       }
@@ -151,7 +159,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       threadId,
       threadChatId,
       refetch,
-      setError,
+      publish,
       onOptimisticQueuedMessagesUpdate,
     ],
   );

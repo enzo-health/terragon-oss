@@ -62,3 +62,18 @@ export function unwrapError(error: unknown) {
     ? error.message
     : "An unexpected error occurred";
 }
+
+/**
+ * Execute a getter and throw a UserFacingError if the result is nullish.
+ * This is the standard guard used across server-actions for "not found" checks.
+ */
+export async function requireResult<T>(
+  getter: () => Promise<T | null | undefined>,
+  errorMessage: string,
+): Promise<NonNullable<T>> {
+  const result = await getter();
+  if (!result) {
+    throw new UserFacingError(errorMessage);
+  }
+  return result as NonNullable<T>;
+}

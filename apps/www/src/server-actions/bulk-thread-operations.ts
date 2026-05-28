@@ -7,7 +7,7 @@ import { archiveAndStopThread } from "@/server-lib/archive-thread";
 import { deleteThreadById, getThread } from "@terragon/shared/model/threads";
 import { isAgentWorking } from "@/agent/thread-status";
 import { stopThread } from "@/server-actions/stop-thread";
-import { unwrapResult, UserFacingError } from "@/lib/server-actions";
+import { unwrapResult, requireResult } from "@/lib/server-actions";
 
 export type BulkOperationResult = {
   succeeded: string[];
@@ -109,15 +109,15 @@ export const bulkDeleteThreads = userOnlyAction(
 
     for (const threadId of threadIds) {
       try {
-        const thread = await getThread({
-          db,
-          userId,
-          threadId,
-        });
-
-        if (!thread) {
-          throw new UserFacingError("Task not found");
-        }
+        const thread = await requireResult(
+          () =>
+            getThread({
+              db,
+              userId,
+              threadId,
+            }),
+          "Task not found",
+        );
 
         // Stop any active agents
         await Promise.all(

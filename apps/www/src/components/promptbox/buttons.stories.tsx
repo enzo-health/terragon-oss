@@ -12,7 +12,7 @@ export const ButtonsSideBySide: Story = () => {
     <div className="grid grid-cols-2 gap-4 p-4 max-w-2xl mx-auto">
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Disabled</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -27,7 +27,7 @@ export const ButtonsSideBySide: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Default (Enabled)</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -42,7 +42,7 @@ export const ButtonsSideBySide: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Submitting</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -57,7 +57,7 @@ export const ButtonsSideBySide: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Recording</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -73,7 +73,7 @@ export const ButtonsSideBySide: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Processing Audio</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -98,7 +98,7 @@ export const ButtonsSideBySideWithDraftsAndSchedules: Story = () => {
     <div className="grid grid-cols-2 gap-4 p-4 max-w-2xl mx-auto">
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Disabled</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -113,7 +113,7 @@ export const ButtonsSideBySideWithDraftsAndSchedules: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Default (Enabled)</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -128,7 +128,7 @@ export const ButtonsSideBySideWithDraftsAndSchedules: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Submitting</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -143,7 +143,7 @@ export const ButtonsSideBySideWithDraftsAndSchedules: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Recording</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}
@@ -159,7 +159,7 @@ export const ButtonsSideBySideWithDraftsAndSchedules: Story = () => {
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-sm font-medium">Processing Audio</label>
-        <div className="flex items-center gap-1 border border-gray-200 rounded-md p-2">
+        <div className="flex items-center gap-1 border border-hairline rounded-md p-2">
           <SubmitComboButton
             onTranscript={() => console.log("Transcript clicked")}
             submitForm={() => console.log("Submit clicked")}

@@ -12,7 +12,7 @@ import {
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult } from "@/lib/server-actions";
 import {
   EnvironmentVariable,
   validateEnvironmentVariables,
@@ -38,14 +38,15 @@ export const updateEnvironmentVariables = userOnlyAction(
     });
 
     // Verify the user owns this environment
-    const environment = await getEnvironment({
-      db,
-      environmentId,
-      userId,
-    });
-    if (!environment) {
-      throw new UserFacingError("Environment not found");
-    }
+    const environment = await requireResult(
+      () =>
+        getEnvironment({
+          db,
+          environmentId,
+          userId,
+        }),
+      "Environment not found",
+    );
     await validateEnvironmentVariables(variables);
     // Update the environment with the new variables
     await updateEnvironment({

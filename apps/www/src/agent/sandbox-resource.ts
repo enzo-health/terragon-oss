@@ -289,7 +289,7 @@ export async function hasOtherActiveRuns({
 }: {
   sandboxId: string;
   threadChatId: string;
-  excludeRunId: string;
+  excludeRunId: string | null;
 }): Promise<boolean> {
   if (isLocalRedisHttpMode()) {
     return false;

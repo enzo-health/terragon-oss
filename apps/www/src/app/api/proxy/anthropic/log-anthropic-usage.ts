@@ -1,9 +1,13 @@
-import { db } from "@/lib/db";
 import { trackUsageEventBatched } from "@terragon/shared/model/usage-events";
 import {
   calculateUsageCostUsd,
   getAnthropicMessagesSkuForModel,
 } from "@terragon/shared/model/usage-pricing";
+import { db } from "@/lib/db";
+import {
+  findEventSeparator,
+  parseStreamEvent,
+} from "@/server-lib/proxy-handler";
 
 type UsagePayload = {
   input_tokens?: number | null;
@@ -11,6 +15,8 @@ type UsagePayload = {
   cache_read_input_tokens?: number | null;
   output_tokens?: number | null;
 };
+
+export { findEventSeparator, parseStreamEvent };
 
 export async function logAnthropicUsage({
   path,
@@ -25,12 +31,14 @@ export async function logAnthropicUsage({
   model?: string | null;
   messageId?: string | null;
 }) {
-  console.log("Anthropic usage", {
-    path,
-    usage,
-    ...(model ? { model } : {}),
-    ...(messageId ? { messageId } : {}),
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.log("Anthropic usage", {
+      path,
+      usage,
+      ...(model ? { model } : {}),
+      ...(messageId ? { messageId } : {}),
+    });
+  }
   if (!userId || !usage) {
     return;
   }

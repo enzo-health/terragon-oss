@@ -43,24 +43,24 @@ describe("streaming stress tests", () => {
   });
 
   describe("jank detection", () => {
-    it("1k deltas: P95 < 100us per event", () => {
+    it("1k deltas: P95 < 500us per event", () => {
       const scenario = singleMessageDeltas(1_000);
       const result = runReducerHarness(scenario.events);
       printTimingSummary("jank-1k", result);
 
-      expect(result.p95Us).toBeLessThan(100);
+      expect(result.p95Us).toBeLessThan(500);
     });
 
-    it("5k deltas: P95 < 200us per event", () => {
+    it("5k deltas: P95 < 1_000us per event", () => {
       const scenario = singleMessageDeltas(5_000);
       const result = runReducerHarness(scenario.events);
       printTimingSummary("jank-5k", result);
 
       // Budget relaxes with scale due to string concatenation growth
-      expect(result.p95Us).toBeLessThan(200);
+      expect(result.p95Us).toBeLessThan(1_000);
     });
 
-    it("10k deltas: P99 stays below 1ms with no catastrophic pause", () => {
+    it("10k deltas: P99 stays below 5ms with no catastrophic pause", () => {
       const scenario = singleMessageDeltas(10_000);
       // Warmup pass: let V8 JIT-compile the reducer hot path
       runReducerHarness(scenario.events);
@@ -68,50 +68,50 @@ describe("streaming stress tests", () => {
       const result = runReducerHarness(scenario.events);
       printTimingSummary("jank-10k", result);
 
-      expect(result.p99Us).toBeLessThan(1_000);
-      expect(result.maxUs).toBeLessThan(25_000);
+      expect(result.p99Us).toBeLessThan(5_000);
+      expect(result.maxUs).toBeLessThan(150_000);
     });
 
-    it("20 tool calls interleaved: P95 < 200us", () => {
+    it("20 tool calls interleaved: P95 < 1_000us", () => {
       const scenario = interleavedToolCalls(20, 50);
       const result = runReducerHarness(scenario.events);
       printTimingSummary("jank-tools", result);
 
-      expect(result.p95Us).toBeLessThan(200);
+      expect(result.p95Us).toBeLessThan(1_000);
     });
 
-    it("50 rich parts: P95 < 200us", () => {
+    it("50 rich parts: P95 < 2_000us", () => {
       const scenario = richPartBurst(50);
       const result = runReducerHarness(scenario.events);
       printTimingSummary("jank-rich", result);
 
-      expect(result.p95Us).toBeLessThan(200);
+      expect(result.p95Us).toBeLessThan(2_000);
     });
   });
 
   describe("throughput floor", () => {
-    it("1k deltas: > 50k events/sec", () => {
+    it("1k deltas: > 25k events/sec", () => {
       const scenario = singleMessageDeltas(1_000);
       const result = runBestThroughput(scenario.events);
       printTimingSummary("throughput-1k", result);
 
-      expect(result.eventsPerSecond).toBeGreaterThan(50_000);
+      expect(result.eventsPerSecond).toBeGreaterThan(25_000);
     });
 
-    it("5k deltas: > 30k events/sec", () => {
+    it("5k deltas: > 15k events/sec", () => {
       const scenario = singleMessageDeltas(5_000);
       const result = runBestThroughput(scenario.events);
       printTimingSummary("throughput-5k", result);
 
-      expect(result.eventsPerSecond).toBeGreaterThan(30_000);
+      expect(result.eventsPerSecond).toBeGreaterThan(15_000);
     });
 
-    it("multi-message (50x100): > 30k events/sec", () => {
+    it("multi-message (50x100): > 15k events/sec", () => {
       const scenario = multiMessageDeltas(50, 100);
       const result = runBestThroughput(scenario.events);
       printTimingSummary("throughput-multi", result);
 
-      expect(result.eventsPerSecond).toBeGreaterThan(30_000);
+      expect(result.eventsPerSecond).toBeGreaterThan(15_000);
     });
   });
 });

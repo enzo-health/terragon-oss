@@ -9,7 +9,7 @@ import {
   updateGitHubPR,
 } from "@/lib/github";
 import { getPostHogServer } from "@/lib/posthog-server";
-import { UserFacingError } from "@/lib/server-actions";
+import { requireResult, UserFacingError } from "@/lib/server-actions";
 
 export const markPRReadyForReview = userOnlyAction(
   async function markPRReadyForReview(
@@ -21,10 +21,10 @@ export const markPRReadyForReview = userOnlyAction(
     },
   ) {
     console.log("markPRReadyForReview", threadId);
-    const thread = await getThreadMinimal({ db, threadId, userId });
-    if (!thread) {
-      throw new UserFacingError("Task not found");
-    }
+    const thread = await requireResult(
+      () => getThreadMinimal({ db, threadId, userId }),
+      "Task not found",
+    );
     if (!thread.githubPRNumber) {
       throw new UserFacingError("Task has no PR number");
     }

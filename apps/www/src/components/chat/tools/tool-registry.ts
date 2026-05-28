@@ -33,7 +33,11 @@
  * name for it. `DefaultTool` accepts the raw `parameters` JSON.
  */
 
-import type { AllToolParts } from "@terragon/shared";
+import type { ReactNode } from "react";
+import type { AllToolParts, UIMessage } from "@terragon/shared";
+import type { ChildThreadInfo } from "@terragon/shared/db/types";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 
 export const FILE_CHANGE_DIFF_RESULT_TYPE = "terragon.diff";
 
@@ -142,6 +146,81 @@ const _toolNamesAreExhaustive: [
   _AssertToolNamesHaveNoExtras,
 ] = [true, true];
 void _toolNamesAreExhaustive;
+
+export type PermissionMode = "allowAll" | "plan";
+
+export type ToolCapability =
+  | { kind: "basic"; toolPart: AllToolParts }
+  | { kind: "threadAccess"; threadId: string; threadChatId: string }
+  | { kind: "childThreads"; childThreads: ChildThreadInfo[] }
+  | {
+      kind: "permissionMode";
+      mode: PermissionMode;
+      onUpdate: (mode: PermissionMode) => void;
+    }
+  | { kind: "githubContext"; repoFullName: string; repoBaseBranchName: string }
+  | { kind: "messagesRef"; messagesRef: { current: UIMessage[] } }
+  | { kind: "readOnly"; isReadOnly: boolean }
+  | {
+      kind: "artifactAccess";
+      artifactDescriptors: ArtifactDescriptor[];
+      artifactDescriptorLookup?: ArtifactDescriptorLookup;
+      onOpenArtifact?: (artifactId: string) => void;
+    }
+  | {
+      kind: "renderChild";
+      renderChildToolPart: (childToolPart: AllToolParts) => ReactNode;
+    };
+
+/**
+ * Narrow helper: extract a specific capability from the array by kind.
+ * Throws if the capability is not present (callers should only request
+ * capabilities they declared in TOOL_CAPABILITY_REQUIREMENTS).
+ */
+export function getCapability<K extends ToolCapability["kind"]>(
+  capabilities: ToolCapability[],
+  kind: K,
+): Extract<ToolCapability, { kind: K }> {
+  const cap = capabilities.find(
+    (c): c is Extract<ToolCapability, { kind: K }> => c.kind === kind,
+  );
+  if (!cap) {
+    throw new Error(`Missing required capability: ${kind}`);
+  }
+  return cap;
+}
+
+/**
+ * Declares which capabilities each tool requires. Tools not listed here
+ * default to `["basic"]` (simple tools that only need their toolPart).
+ */
+export const TOOL_CAPABILITY_REQUIREMENTS: {
+  readonly [N in ToolName]?: readonly ToolCapability["kind"][];
+} = {
+  Task: ["basic", "renderChild"],
+  SuggestFollowupTask: [
+    "basic",
+    "threadAccess",
+    "childThreads",
+    "githubContext",
+  ],
+  mcp__terry__SuggestFollowupTask: [
+    "basic",
+    "threadAccess",
+    "childThreads",
+    "githubContext",
+  ],
+  ExitPlanMode: ["basic", "messagesRef", "artifactAccess"],
+  PermissionRequest: ["basic", "threadAccess", "readOnly"],
+} as const;
+
+const _defaultCapabilities: readonly ToolCapability["kind"][] = ["basic"];
+
+export function getToolCapabilities(
+  name: ToolName,
+): readonly ToolCapability["kind"][] {
+  return TOOL_CAPABILITY_REQUIREMENTS[name] ?? _defaultCapabilities;
+}
 
 const TOOL_NAME_SET: ReadonlySet<string> = new Set(TOOL_NAMES);
 

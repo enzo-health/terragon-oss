@@ -23,7 +23,7 @@ describe("handleDaemonEvent async optimizations", () => {
   it("uses skipBroadcast parameter for async broadcast", async () => {
     const fs = await import("fs");
     const content = fs.readFileSync(
-      new URL("./handle-daemon-event.ts", import.meta.url),
+      new URL("./daemon-event/router.ts", import.meta.url),
       "utf-8",
     );
 
@@ -37,7 +37,7 @@ describe("handleDaemonEvent async optimizations", () => {
   it("uses waitUntil for post-DB broadcast", async () => {
     const fs = await import("fs");
     const content = fs.readFileSync(
-      new URL("./handle-daemon-event.ts", import.meta.url),
+      new URL("./daemon-event/router.ts", import.meta.url),
       "utf-8",
     );
 
@@ -52,7 +52,7 @@ describe("handleDaemonEvent async optimizations", () => {
   it("writes to DB before triggering async broadcast", async () => {
     const fs = await import("fs");
     const content = fs.readFileSync(
-      new URL("./handle-daemon-event.ts", import.meta.url),
+      new URL("./daemon-event/router.ts", import.meta.url),
       "utf-8",
     );
 
@@ -64,7 +64,8 @@ describe("handleDaemonEvent async optimizations", () => {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (
-        line?.includes("await updateThreadChatWithTransition") &&
+        (line?.includes("await updateThreadChatWithTransition") ||
+          line?.includes("await deps.updateThreadChatWithTransition")) &&
         dbWriteLine === -1
       ) {
         dbWriteLine = i;
@@ -95,7 +96,7 @@ describe("handleDaemonEvent async optimizations", () => {
   it("uses fire-and-forget pattern for pre-broadcast", async () => {
     const fs = await import("fs");
     const content = fs.readFileSync(
-      new URL("./handle-daemon-event.ts", import.meta.url),
+      new URL("./daemon-event/router.ts", import.meta.url),
       "utf-8",
     );
 
@@ -110,7 +111,7 @@ describe("handleDaemonEvent async optimizations", () => {
   it("handles async broadcast failures gracefully", async () => {
     const fs = await import("fs");
     const content = fs.readFileSync(
-      new URL("./handle-daemon-event.ts", import.meta.url),
+      new URL("./daemon-event/router.ts", import.meta.url),
       "utf-8",
     );
 

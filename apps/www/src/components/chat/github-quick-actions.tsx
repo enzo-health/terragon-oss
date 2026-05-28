@@ -1,7 +1,6 @@
+import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PRStatusPill } from "@/components/pr-status-pill";
-import { fixGithubChecks } from "@/server-actions/fix-github-checks";
-import { markPRReadyForReview } from "@/server-actions/mark-pr-ready";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAgentWorking } from "@/agent/thread-status";
@@ -10,7 +9,7 @@ import {
   GithubPRStatus,
   ThreadStatus,
 } from "@terragon/shared";
-import { useServerActionMutation } from "@/queries/server-action-helpers";
+import { useThreadIntent } from "@/hooks/use-thread-intent";
 
 export function GitHubQuickActions({
   threadId,
@@ -29,22 +28,35 @@ export function GitHubQuickActions({
   prStatus: GithubPRStatus | null;
   prChecksStatus: GithubCheckStatus | null;
 }) {
-  const { mutate: fixChecks, isPending: isFixing } = useServerActionMutation({
-    mutationFn: async () => {
-      const result = await fixGithubChecks({ threadId, threadChatId });
+  const { publish } = useThreadIntent();
+  const [isFixing, setIsFixing] = useState(false);
+  const [isMarking, setIsMarking] = useState(false);
+
+  const handleFixChecks = useCallback(async () => {
+    setIsFixing(true);
+    try {
+      await publish({ type: "fix-checks", threadId, threadChatId });
       // Give the system message a chance to be sent
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      return result;
-    },
-  });
-  const { mutate: markReady, isPending: isMarking } = useServerActionMutation({
-    mutationFn: async () => {
-      const result = await markPRReadyForReview({ threadId });
+    } catch {
+      // Error handled by subscriber
+    } finally {
+      setIsFixing(false);
+    }
+  }, [publish, threadId, threadChatId]);
+
+  const handleMarkReady = useCallback(async () => {
+    setIsMarking(true);
+    try {
+      await publish({ type: "mark-pr-ready", threadId });
       // Give the system a chance to update
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      return result;
-    },
-  });
+    } catch {
+      // Error handled by subscriber
+    } finally {
+      setIsMarking(false);
+    }
+  }, [publish, threadId]);
 
   const shouldShowBanner = githubPRNumber && prStatus;
   if (!shouldShowBanner) {
@@ -81,7 +93,7 @@ export function GitHubQuickActions({
           <Button
             size="sm"
             variant="link"
-            onClick={() => fixChecks()}
+            onClick={handleFixChecks}
             disabled={isFixingChecks}
             className="underline !px-0 cursor-pointer !bg-transparent flex items-center gap-1"
           >
@@ -99,7 +111,7 @@ export function GitHubQuickActions({
           <Button
             size="sm"
             variant="link"
-            onClick={() => markReady()}
+            onClick={handleMarkReady}
             disabled={isMarkingReady}
             className="underline !px-0 cursor-pointer !bg-transparent flex items-center gap-1"
           >

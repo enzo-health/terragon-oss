@@ -8,7 +8,9 @@ import { archiveAndStopThread } from "@/server-lib/archive-thread";
 
 export const archiveThread = userOnlyAction(
   async function archiveThread(userId: string, threadId: string) {
-    console.log("archiveThread", threadId);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("archiveThread", threadId);
+    }
     await archiveAndStopThread({ userId, threadId });
   },
   { defaultErrorMessage: "Failed to archive task" },
@@ -16,7 +18,9 @@ export const archiveThread = userOnlyAction(
 
 export const unarchiveThread = userOnlyAction(
   async function unarchiveThread(userId: string, threadId: string) {
-    console.log("unarchiveThread", threadId);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("unarchiveThread", threadId);
+    }
     getPostHogServer().capture({
       distinctId: userId,
       event: "unarchive_thread",
