@@ -1,33 +1,36 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { headerClassName, headerSurfaceClassName } from "../shared/header";
+import { cn } from "@/lib/utils";
 
 export function ChatUISkeleton() {
   return (
-    <div className="flex h-full flex-col">
-      {/* Header skeleton */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
+    <div
+      className="flex h-full flex-col animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
+      aria-hidden
+    >
+      <div
+        className={cn(
+          headerClassName,
+          headerSurfaceClassName,
+          "flex items-center justify-between px-3",
+        )}
+      >
         <div className="flex items-center gap-2">
-          <Skeleton className="h-5 w-32" />
-          <Skeleton className="h-4 w-16" />
+          <Skeleton className="size-8 rounded-md" />
+          <Skeleton className="size-5 rounded-full" />
+          <Skeleton className="h-4 w-40 rounded-sm" />
+          <Skeleton className="h-5 w-14 rounded-full" />
         </div>
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-8 w-8 rounded-lg" />
-          <Skeleton className="h-8 w-8 rounded-lg" />
+        <div className="flex items-center gap-1.5">
+          <Skeleton className="size-8 rounded-md" />
+          <Skeleton className="size-8 rounded-md" />
         </div>
       </div>
 
-      {/* Chat area skeleton */}
-      <div className="flex-1 p-4 space-y-4">
-        <Skeleton className="h-16 w-[85%] rounded-lg" />
-        <Skeleton className="h-24 w-[75%] rounded-lg" />
-        <Skeleton className="h-12 w-[60%] rounded-lg" />
-        <div className="flex justify-end">
-          <Skeleton className="h-16 w-[70%] rounded-lg" />
-        </div>
-      </div>
+      <div className="flex-1" />
 
-      {/* Input area skeleton */}
-      <div className="border-t p-4">
-        <Skeleton className="h-20 w-full rounded-lg" />
+      <div className="max-w-chat w-full mx-auto px-4 pb-3 pt-2">
+        <Skeleton className="h-24 w-full rounded-xl" />
       </div>
     </div>
   );

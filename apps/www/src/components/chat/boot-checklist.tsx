@@ -221,10 +221,9 @@ export function BootChecklist({
         return (
           <div key={step.substatus} role="listitem" className="relative">
             <div className="flex items-center gap-2.5 py-1 min-h-[26px]">
-              {/* Status icon (chip over the rail) */}
               <span
                 className={cn(
-                  "relative z-10 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-background transition-colors duration-200",
+                  "relative z-10 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-background transition-[color,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
                   {
                     "text-primary": isCompleted,
                     "text-foreground": isActive,
@@ -233,13 +232,30 @@ export function BootChecklist({
                 )}
                 aria-hidden
               >
-                {isCompleted ? (
-                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                ) : isActive ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                )}
+                <span
+                  className="absolute w-1.5 h-1.5 rounded-full bg-current transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+                  style={{
+                    opacity: isPending ? 1 : 0,
+                    transform: isPending ? "scale(1)" : "scale(0.25)",
+                    filter: isPending ? "blur(0px)" : "blur(4px)",
+                  }}
+                />
+                <Loader2
+                  className="absolute w-3.5 h-3.5 animate-spin transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+                  style={{
+                    opacity: isActive ? 1 : 0,
+                    transform: isActive ? "scale(1)" : "scale(0.25)",
+                    filter: isActive ? "blur(0px)" : "blur(4px)",
+                  }}
+                />
+                <Check
+                  className="absolute w-3.5 h-3.5 stroke-[2.5] transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+                  style={{
+                    opacity: isCompleted ? 1 : 0,
+                    transform: isCompleted ? "scale(1)" : "scale(0.25)",
+                    filter: isCompleted ? "blur(0px)" : "blur(4px)",
+                  }}
+                />
               </span>
 
               {/* Step label */}
@@ -253,10 +269,9 @@ export function BootChecklist({
                 {step.label}
               </span>
 
-              {/* Duration: static badge for completed steps, live timer for active */}
               {isCompleted && durationMs !== undefined && (
                 <span
-                  className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums"
+                  className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums animate-in fade-in slide-in-from-right-1 duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}
