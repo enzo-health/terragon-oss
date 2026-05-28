@@ -99,17 +99,17 @@ describe("sandbox-setup", () => {
         },
       });
 
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
-        "PNPM_STORE_DIR=/mnt/terragon/cache/pnpm-store",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "PNPM_STORE_DIR",
       );
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
-        "pnpm_config_store_dir=/mnt/terragon/cache/pnpm-store",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "pnpm_config_store_dir",
       );
       expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
         "pnpm_config_virtual_store_dir",
       );
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
-        "TERRAGON_PNPM_VIRTUAL_STORE_DIR=/mnt/terragon/workspace/pnpm-virtual-store",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "TERRAGON_PNPM_VIRTUAL_STORE_DIR",
       );
       expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
         "XDG_CACHE_HOME=/mnt/terragon/cache/xdg",
@@ -123,15 +123,6 @@ describe("sandbox-setup", () => {
       expect(runCommandSpy).toHaveBeenCalledWith(
         expect.stringContaining("'\/mnt\/terragon\/cache\/ms-playwright'"),
         { cwd: "/" },
-      );
-      expect(runCommandSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "'\/mnt\/terragon\/workspace\/pnpm-virtual-store'",
-        ),
-        { cwd: "/" },
-      );
-      expect(writes.get("/root/.terragon/volume-bin/pnpm")).toContain(
-        'export pnpm_config_virtual_store_dir="$virtual_store"',
       );
       expect(runCommandSpy).toHaveBeenCalledWith(
         "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git repo",
@@ -698,36 +689,6 @@ npm run build`;
       });
     });
 
-    it("passes Daytona pnpm virtual store only to setup script env", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async () => "");
-      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
-
-      await setupSandboxOneTime(session, {
-        ...defaultOptions,
-        setupScript: "pnpm install",
-        daytonaVolume: {
-          volumeName: "terragon-workspaces",
-          cacheMountPath: "/mnt/terragon/cache",
-          cacheSubpath: "users/user-123/cache",
-          workspaceMountPath: "/mnt/terragon/workspace",
-          workspaceSubpath:
-            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-        },
-      });
-
-      const setupScriptCall = runCommandSpy.mock.calls.find((call) =>
-        call[0].includes("bash -x /tmp/terragon-setup-custom.sh"),
-      );
-
-      expect(setupScriptCall?.[1]?.env).toMatchObject({
-        pnpm_config_virtual_store_dir:
-          "/mnt/terragon/workspace/pnpm-virtual-store",
-      });
-    });
-
     it("should capture setup script output", async () => {
       const session = new MockSession("mock-sandbox");
 
@@ -914,31 +875,6 @@ npm run build`;
         `echo "$code" > /root/.terragon/setup-exit-code`,
       );
       expect(runner).toContain(`touch ${SENTINEL}`);
-    });
-
-    it("scopes the Daytona pnpm virtual store to the detached repo setup", async () => {
-      const { session, writes } = setupSpies();
-      await launchSetupScriptInBackground({
-        session,
-        options: {
-          environmentVariables: [],
-          githubAccessToken: "tok",
-          agentCredentials: null,
-          setupScript: null,
-          daytonaVolume: {
-            volumeName: "terragon-workspaces",
-            cacheMountPath: "/mnt/terragon/cache",
-            cacheSubpath: "users/user-123/cache",
-            workspaceMountPath: "/mnt/terragon/workspace",
-            workspaceSubpath:
-              "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-          },
-        },
-      });
-
-      expect(writes.get(RUNNER)).toContain(
-        "export pnpm_config_virtual_store_dir='/mnt/terragon/workspace/pnpm-virtual-store'",
-      );
     });
 
     it("launches the runner detached and returns without awaiting setup", async () => {
