@@ -776,6 +776,8 @@ describe("daemon-event route", () => {
         ]),
       }),
     );
+    // Merged persist: canonical + delta + rich-part rows are now persisted
+    // in a single persistAndPublishAgUiEvents call
     expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "run-1",
@@ -1276,7 +1278,52 @@ describe("daemon-event route", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("fails closed when native-runtime rich-part persistence fails", async () => {
+  it("filters delta-streamed text/thinking blocks for Claude messages with _claudeStreamedBlockIndices", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-claude-streamed",
+        runId: "run-1",
+        seq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "pondered" },
+                { type: "text", text: "answer" },
+                {
+                  type: "tool_use",
+                  id: "toolu_1",
+                  name: "Bash",
+                  input: { cmd: "ls" },
+                },
+              ],
+            },
+            session_id: "s-1",
+            parent_tool_use_id: null,
+            // Blocks 0 and 1 (thinking + text) were already streamed as deltas.
+            _claudeStreamedBlockIndices: [0, 1],
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // The DBAgentMessage's text/thinking parts are all delta-streamed,
+    // leaving no rich parts. The DBToolCall is a separate message type
+    // (not "agent") so it doesn't go through the rich-part path.
+    // No rich-part emission should occur.
+    expect(
+      agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when native-runtime merged persistence fails", async () => {
     agUiPublisherMocks.dbAgentMessagePartsToAgUiRows.mockReturnValueOnce([
       {
         event: { type: "CUSTOM" },
@@ -1284,14 +1331,9 @@ describe("daemon-event route", () => {
         timestamp: new Date("2026-04-29T00:00:00.000Z"),
       },
     ]);
-    agUiPublisherMocks.persistAndPublishAgUiEvents
-      .mockResolvedValueOnce({
-        inserted: 1,
-        skipped: 0,
-        insertedEventIds: ["canonical-start-for-rich-fail:STUB:0"],
-        persistedEnvelopes: [],
-      })
-      .mockRejectedValueOnce(new Error("rich publish failed"));
+    agUiPublisherMocks.persistAndPublishAgUiEvents.mockRejectedValueOnce(
+      new Error("merged persist failed"),
+    );
 
     const response = await POST(
       createDaemonRequest({
@@ -1327,11 +1369,12 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
-      error: "daemon_event_ag_ui_rich_part_persist_failed",
+      success: false,
+      error: "daemon_event_canonical_event_persist_failed",
+      code: "database_error",
+      detail: "merged persist failed",
     });
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ skipThreadChatPersistence: true }),
-    );
+    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("skips rich-part emission when assistant message has only text parts", async () => {
@@ -3444,47 +3487,25 @@ describe("daemon-event route", () => {
       canonicalEventLogMocks.findOpenAgUiMessagesForRun.mockResolvedValueOnce([
         { messageId: "msg-open", kind: "text" },
       ]);
-      agUiPublisherMocks.persistAgUiEvents
-        .mockResolvedValueOnce({
-          inserted: 1,
-          skipped: 0,
-          insertedEventIds: ["canonical-start:RUN_STARTED:0"],
-          persistedEvents: [{ type: "RUN_STARTED" }],
-          persistedEnvelopes: [
-            {
-              eventId: "canonical-start:RUN_STARTED:0",
-              seq: 0,
-              runId: "run-1",
-              threadId: "thread-1",
-              threadChatId: "chat-1",
-              timestamp: "2026-04-27T00:00:00.000Z",
-              idempotencyKey: "run-1:canonical-start:RUN_STARTED:0",
-              payload: { type: "RUN_STARTED" },
-            },
-          ],
-        })
-        .mockResolvedValueOnce({
-          inserted: 1,
-          skipped: 0,
-          insertedEventIds: ["canonical-terminal:RUN_FINISHED:0"],
-          persistedEvents: [{ type: "RUN_FINISHED" }],
-          persistedEnvelopes: [
-            {
-              eventId: "canonical-terminal:RUN_FINISHED:0",
-              seq: 2,
-              runId: "run-1",
-              threadId: "thread-1",
-              threadChatId: "chat-1",
-              timestamp: "2026-04-27T00:00:02.000Z",
-              idempotencyKey: "run-1:canonical-terminal:RUN_FINISHED:0",
-              payload: { type: "RUN_FINISHED" },
-            },
-          ],
-        });
+      // Merged persist for canonical (non-terminal) events
       agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
         inserted: 1,
         skipped: 0,
-        insertedEventIds: ["delta-end:run-1:msg-open:text"],
+        insertedEventIds: ["canonical-start:RUN_STARTED:0"],
+        persistedEnvelopes: [],
+      });
+      // Terminal persist (delta-end + terminal canonical) — merged into one call
+      agUiPublisherMocks.persistAgUiEvents.mockResolvedValueOnce({
+        inserted: 2,
+        skipped: 0,
+        insertedEventIds: [
+          "delta-end:run-1:msg-open:text",
+          "canonical-terminal:RUN_FINISHED:0",
+        ],
+        persistedEvents: [
+          { type: "TEXT_MESSAGE_END", messageId: "msg-open" },
+          { type: "RUN_FINISHED" },
+        ],
         persistedEnvelopes: [
           {
             eventId: "delta-end:run-1:msg-open:text",
@@ -3495,6 +3516,16 @@ describe("daemon-event route", () => {
             timestamp: "2026-04-27T00:00:01.000Z",
             idempotencyKey: "run-1:delta-end:run-1:msg-open:text",
             payload: { type: "TEXT_MESSAGE_END", messageId: "msg-open" },
+          },
+          {
+            eventId: "canonical-terminal:RUN_FINISHED:0",
+            seq: 2,
+            runId: "run-1",
+            threadId: "thread-1",
+            threadChatId: "chat-1",
+            timestamp: "2026-04-27T00:00:02.000Z",
+            idempotencyKey: "run-1:canonical-terminal:RUN_FINISHED:0",
+            payload: { type: "RUN_FINISHED" },
           },
         ],
       });
@@ -3520,9 +3551,10 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(
-        agUiPublisherMocks.persistAndPublishAgUiEvents,
-      ).toHaveBeenCalledWith(
+      // Delta-end rows and terminal canonical events are merged into a
+      // single persistAgUiEvents call, with delta-end rows first in the
+      // array (lower seq) so they replay before RUN_FINISHED.
+      expect(agUiPublisherMocks.persistAgUiEvents).toHaveBeenCalledWith(
         expect.objectContaining({
           rows: expect.arrayContaining([
             expect.objectContaining({
@@ -3532,23 +3564,10 @@ describe("daemon-event route", () => {
         }),
       );
       expect(
-        agUiPublisherMocks.persistAndPublishAgUiEvents.mock
-          .invocationCallOrder[0] ?? 0,
-      ).toBeLessThan(
-        agUiPublisherMocks.persistAgUiEvents.mock.invocationCallOrder[1] ??
-          Infinity,
-      );
-      expect(
         agUiPublisherMocks.publishPersistedAgUiEvents,
       ).toHaveBeenCalledWith(
         expect.objectContaining({
-          persistedEvents: [{ type: "RUN_FINISHED" }],
-          persistedEnvelopes: [
-            expect.objectContaining({
-              eventId: "canonical-terminal:RUN_FINISHED:0",
-              seq: 2,
-            }),
-          ],
+          threadChatId: "chat-1",
         }),
       );
       expect(
@@ -3644,6 +3663,45 @@ describe("daemon-event route", () => {
       );
     });
 
+    it("force-writes the error when the failed-terminal metadata write is gated out", async () => {
+      // Simulate the terminal-transition race: the chat was not in a terminal
+      // status, so the status-gated write reports it did not update.
+      vi.mocked(
+        updateThreadChatTerminalMetadataIfTerminal,
+      ).mockResolvedValueOnce({ didUpdate: false });
+
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "You've hit your usage limit.",
+            } as any,
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-pure-v2-fenced-force-error",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      // First attempt is status-gated (no force); the fallback forces the write.
+      expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          force: true,
+          updates: expect.objectContaining({
+            errorMessage: "agent-generic-error",
+            errorMessageInfo: "You've hit your usage limit.",
+          }),
+        }),
+      );
+    });
+
     it("persists canonical events before legacy handling", async () => {
       const response = await POST(
         createDaemonRequest({
@@ -3660,7 +3718,10 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(agUiPublisherMocks.persistAgUiEvents).toHaveBeenCalledWith(
+      // Merged persist: canonical events are now persisted via
+      // persistAndPublishAgUiEvents (not persistAgUiEvents) in a single
+      // merged call with delta + rich-part rows.
+      expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
         expect.objectContaining({
           runId: "run-1",
           threadId: "thread-1",
@@ -3669,7 +3730,8 @@ describe("daemon-event route", () => {
       );
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
       expect(
-        agUiPublisherMocks.persistAgUiEvents.mock.invocationCallOrder[0] ?? 0,
+        agUiPublisherMocks.persistAndPublishAgUiEvents.mock
+          .invocationCallOrder[0] ?? 0,
       ).toBeLessThan(
         vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
       );
@@ -3689,11 +3751,11 @@ describe("daemon-event route", () => {
         "canonical-event-1:RUN_STARTED:0",
         "canonical-event-1:RUN_STARTED:1",
       ];
-      agUiPublisherMocks.persistAgUiEvents.mockResolvedValueOnce({
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
         inserted: persistedEventIds.length,
         skipped: 0,
         insertedEventIds: persistedEventIds,
-        persistedEvents: [],
+        persistedEnvelopes: [],
       });
 
       const canonicalEvent = createCanonicalRunStartedEvent();
@@ -3918,7 +3980,7 @@ describe("daemon-event route", () => {
     });
 
     it("fails closed when canonical persistence fails", async () => {
-      agUiPublisherMocks.persistAgUiEvents.mockRejectedValueOnce(
+      agUiPublisherMocks.persistAndPublishAgUiEvents.mockRejectedValueOnce(
         new Error("Sequence collision"),
       );
 

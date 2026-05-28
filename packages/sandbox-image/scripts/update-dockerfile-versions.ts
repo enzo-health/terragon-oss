@@ -3,8 +3,6 @@
  * Updates packages/sandbox-image/Dockerfile to the latest npm versions of:
  * - @anthropic-ai/claude-code
  * - @openai/codex
- * - @sourcegraph/amp
- * - opencode-ai
  *
  * Fetches versions using `npm view <pkg> version --json`.
  * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run]
@@ -35,21 +33,6 @@ const PACKAGES: Pkg[] = [
     name: "@openai/codex",
     // Matches @openai/codex@<semver>
     regex: /@openai\/codex@([0-9]+\.[0-9]+\.[0-9]+)/g,
-  },
-  {
-    name: "@sourcegraph/amp",
-    // Matches @sourcegraph/amp@<timestamp>-<commit> (e.g., 0.0.1758988883-g43f50b)
-    regex: /@sourcegraph\/amp@([0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]+)/g,
-  },
-  {
-    name: "opencode-ai",
-    // Matches opencode-ai@<semver>
-    regex: /opencode-ai@([0-9]+\.[0-9]+\.[0-9]+)/g,
-  },
-  {
-    name: "@google/gemini-cli",
-    // Matches @google/gemini-cli@<semver>
-    regex: /@google\/gemini-cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
   },
 ];
 

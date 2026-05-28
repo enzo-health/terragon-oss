@@ -62,19 +62,18 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN curl -fsSL https://bun.sh/install | bash \\
     && ln -s /root/.bun/bin/bun /usr/local/bin/bun
 
-# Install pnpm, sandbox-agent, claude code, gemini cli, amp, codex, and opencode
+# Install pnpm, sandbox-agent, claude code, and codex
+# Clean npm cache and strip dev-only files in the SAME RUN to keep the layer small.
 RUN npm install -g pnpm \\
-    @anthropic-ai/claude-code@2.1.107 \\
-    @google/gemini-cli@0.29.7 \\
-    @sourcegraph/amp@0.0.1771963583-ga618c9 \\
+    @anthropic-ai/claude-code@2.1.126 \\
     @openai/codex@0.128.0 \\
-    opencode-ai@1.2.10 \\
-    @sandbox-agent/cli@0.2.1
+    @sandbox-agent/cli@0.2.1 \\
+    && npm cache clean --force \\
+    && find /usr/lib/node_modules -type d \\( -name 'docs' -o -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'examples' -o -name '.github' \\) -exec rm -rf {} + 2>/dev/null || true \\
+    && find /usr/lib/node_modules -name '*.map' -delete 2>/dev/null || true \\
+    && find /usr/lib/node_modules -name '*.d.ts' -delete 2>/dev/null || true \\
+    && rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/locale/* 2>/dev/null || true
 
-
-# Patch gemini cli to disable console.debug
-RUN sed -i.bak -e '1a\\
-console.debug = () => {};' "$(readlink -f "$(which gemini)")"
 
 # Patch claude code
 RUN sed -i.bak -e '1a\\
@@ -83,7 +82,8 @@ Object.defineProperty(process, "getuid", {\\
   writable: false,\\
   enumerable: true,\\
   configurable: true\\
-});' -e 's/![a-zA-Z_$][a-zA-Z0-9_$]*()[.]bypassPermissionsModeAccepted/false/g' "$(readlink -f "$(which claude)")"
+});' -e 's/![a-zA-Z_$][a-zA-Z0-9_$]*()[.]bypassPermissionsModeAccepted/false/g' "$(readlink -f "$(which claude)")" \\
+    && rm -f "$(readlink -f "$(which claude)")".bak
 
 {{#if (eq sandboxProvider "daytona")}}
 # Start Supervisor in the foreground (PID 1)

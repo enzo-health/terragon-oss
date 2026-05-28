@@ -1,7 +1,9 @@
 import { type BaseEvent, EventType } from "@ag-ui/core";
 import type { AgUiEventEnvelope } from "@terragon/shared/model/agent-event-log";
+import { getLatestRunIdForThreadChat } from "@terragon/shared/model/agent-event-log";
 import type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 import { shouldReplayEnvelope } from "@/lib/ag-ui-replay-cursor";
+import { db } from "@/lib/db";
 import { stableSerialize } from "@/lib/stable-serialize";
 import { getStringEventField, type ReplayIdentity } from "./ag-ui-stream-entry";
 
@@ -391,4 +393,49 @@ export function buildResumeRunStartedEvent({
     threadId,
     runId,
   };
+}
+
+/**
+ * Resolve the effective runId for an SSE connection.
+ *
+ * Resolution order:
+ * 1. If the client supplied `?runId=X`, use it verbatim (reconnect path).
+ * 2. If the client supplied only a seq cursor, return null — the caller
+ *    will replay thread-chat-wide from that cursor.
+ * 3. Otherwise the connect is fresh (GET, no cursor); default to the
+ *    thread chat's latest run. Empty thread chats get null — the first
+ *    RUN_STARTED from a new daemon-event will naturally be the first event.
+ */
+export async function resolveEffectiveRunId(params: {
+  runIdParam: string | null;
+  replayCursorSeq: number | null;
+  isGetMethod: boolean;
+  threadChatId: string;
+  threadId: string;
+}): Promise<string | null> {
+  const { runIdParam, replayCursorSeq, isGetMethod, threadChatId, threadId } =
+    params;
+
+  if (runIdParam !== null) {
+    return runIdParam;
+  }
+
+  if (replayCursorSeq !== null) {
+    return null;
+  }
+
+  if (!isGetMethod) {
+    return null;
+  }
+
+  try {
+    return await getLatestRunIdForThreadChat({ db, threadChatId });
+  } catch (error) {
+    console.error(
+      "[ag-ui] getLatestRunIdForThreadChat failed; defaulting to live-tail",
+      { threadId, threadChatId },
+      error,
+    );
+    return null;
+  }
 }
