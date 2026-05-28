@@ -4,6 +4,7 @@ import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   buildResumeRunStartedEvent,
   getReplayDedupeKey,
+  getReplayEntryRunId,
   isTerminalRunEventType,
   sseIdForReplayEntry,
   type ReplayEntry,
@@ -302,6 +303,101 @@ export class AgUiSseSession {
           : Math.max(this.lastDeliveredSeq, entry.seq);
     }
     return this.emitAgUiEvent(entry.event, entry.seq, entry.identity);
+  }
+
+  frameResumeReplayEntries(replayEntries: ReplayEntry[]): boolean {
+    if (
+      this.replayCursorSeq === null ||
+      !this.shouldFrameRunAgentResume ||
+      replayEntries.length === 0
+    ) {
+      return true;
+    }
+
+    while (replayEntries[0]?.event.type === EventType.MESSAGES_SNAPSHOT) {
+      const [entry] = replayEntries.splice(0, 1);
+      if (entry?.seq !== null && entry?.seq !== undefined) {
+        this.lastDeliveredSeq =
+          this.lastDeliveredSeq === null
+            ? entry.seq
+            : Math.max(this.lastDeliveredSeq, entry.seq);
+      }
+    }
+
+    if (
+      replayEntries.length === 0 ||
+      replayEntries[0]?.event.type === EventType.RUN_STARTED
+    ) {
+      return true;
+    }
+
+    const resumeRunId =
+      this.resolvedRunId ??
+      (replayEntries[0] ? getReplayEntryRunId(replayEntries[0]) : null);
+    if (resumeRunId === null) {
+      console.error(
+        "[ag-ui] cursored resume cannot infer run id for synthetic RUN_STARTED",
+        {
+          threadId: this.threadId,
+          threadChatId: this.threadChatId,
+          firstType: replayEntries[0]?.event.type,
+        },
+      );
+      const errorEvent = mapRunErrorToAgui(
+        `Thread chat ${this.threadChatId} resume log is malformed: first event has no run id`,
+        "replay_failed",
+      );
+      this.enqueue(encodeSseEvent(errorEvent));
+      this.close("malformed_replay");
+      return false;
+    }
+
+    this.resolvedRunId = resumeRunId;
+    replayEntries.unshift({
+      seq: null,
+      event: buildResumeRunStartedEvent({
+        threadId: this.threadId,
+        runId: resumeRunId,
+      }),
+    });
+    let syntheticFrameIsTerminal = false;
+    for (let index = 1; index < replayEntries.length; index += 1) {
+      const entry = replayEntries[index]!;
+      const entryRunId = getReplayEntryRunId(entry);
+      if (
+        entry.event.type === EventType.RUN_STARTED &&
+        entryRunId === resumeRunId
+      ) {
+        replayEntries.splice(index, 1);
+        index -= 1;
+        continue;
+      }
+      if (
+        !syntheticFrameIsTerminal &&
+        entry.event.type === EventType.RUN_STARTED &&
+        entryRunId !== null &&
+        entryRunId !== resumeRunId
+      ) {
+        replayEntries.splice(index, 0, {
+          seq: null,
+          event: {
+            type: EventType.RUN_FINISHED,
+            threadId: this.threadId,
+            runId: resumeRunId,
+          },
+        });
+        syntheticFrameIsTerminal = true;
+        index += 1;
+        continue;
+      }
+      if (
+        entryRunId === resumeRunId &&
+        isTerminalRunEventType(entry.event.type)
+      ) {
+        syntheticFrameIsTerminal = true;
+      }
+    }
+    return true;
   }
 
   private markFirstFrameIfNeeded(): void {

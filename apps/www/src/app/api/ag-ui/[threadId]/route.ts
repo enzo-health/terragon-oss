@@ -39,13 +39,11 @@ import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projecto
 import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
   buildResumeRunStartedEvent,
-  getReplayEntryRunId,
   isTerminalRunEventType,
   repairReplayTextMessageLifecycles,
   resolveEffectiveRunId,
   splitHistoryOnlyPrefix,
   toReplayEntries,
-  type ReplayEntry,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
 import { parseStreamEntries } from "@/server-lib/ag-ui/ag-ui-stream-entry";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
@@ -150,104 +148,6 @@ export async function GET(
       // replay or live-tail frames so clients can align first-paint lifecycle.
       sse.emitBaselineComment();
 
-      const frameResumeReplayEntries = (
-        replayEntries: ReplayEntry[],
-      ): boolean => {
-        if (
-          replayCursorSeq === null ||
-          !shouldFrameRunAgentResume ||
-          replayEntries.length === 0
-        ) {
-          return true;
-        }
-
-        while (replayEntries[0]?.event.type === EventType.MESSAGES_SNAPSHOT) {
-          const [entry] = replayEntries.splice(0, 1);
-          if (entry?.seq !== null && entry?.seq !== undefined) {
-            sse.lastDeliveredSeq =
-              sse.lastDeliveredSeq === null
-                ? entry.seq
-                : Math.max(sse.lastDeliveredSeq, entry.seq);
-          }
-        }
-
-        if (
-          replayEntries.length === 0 ||
-          replayEntries[0]?.event.type === EventType.RUN_STARTED
-        ) {
-          return true;
-        }
-
-        const resumeRunId =
-          resolvedRunId ??
-          (replayEntries[0] ? getReplayEntryRunId(replayEntries[0]) : null);
-        if (resumeRunId === null) {
-          console.error(
-            "[ag-ui] cursored resume cannot infer run id for synthetic RUN_STARTED",
-            {
-              threadId,
-              threadChatId,
-              firstType: replayEntries[0]?.event.type,
-            },
-          );
-          const errorEvent = mapRunErrorToAgui(
-            `Thread chat ${threadChatId} resume log is malformed: first event has no run id`,
-            "replay_failed",
-          );
-          sse.enqueue(encodeSseEvent(errorEvent));
-          sse.close("malformed_replay");
-          return false;
-        }
-
-        resolvedRunId = resumeRunId;
-        sse.resolvedRunId = resumeRunId;
-        replayEntries.unshift({
-          seq: null,
-          event: buildResumeRunStartedEvent({
-            threadId,
-            runId: resumeRunId,
-          }),
-        });
-        let syntheticFrameIsTerminal = false;
-        for (let index = 1; index < replayEntries.length; index += 1) {
-          const entry = replayEntries[index]!;
-          const entryRunId = getReplayEntryRunId(entry);
-          if (
-            entry.event.type === EventType.RUN_STARTED &&
-            entryRunId === resumeRunId
-          ) {
-            replayEntries.splice(index, 1);
-            index -= 1;
-            continue;
-          }
-          if (
-            !syntheticFrameIsTerminal &&
-            entry.event.type === EventType.RUN_STARTED &&
-            entryRunId !== null &&
-            entryRunId !== resumeRunId
-          ) {
-            replayEntries.splice(index, 0, {
-              seq: null,
-              event: {
-                type: EventType.RUN_FINISHED,
-                threadId,
-                runId: resumeRunId,
-              },
-            });
-            syntheticFrameIsTerminal = true;
-            index += 1;
-            continue;
-          }
-          if (
-            entryRunId === resumeRunId &&
-            isTerminalRunEventType(entry.event.type)
-          ) {
-            syntheticFrameIsTerminal = true;
-          }
-        }
-        return true;
-      };
-
       const replayDurableEventsAfterCursor = async (): Promise<boolean> => {
         let replayEnvelopes: AgUiEventEnvelope[];
         try {
@@ -270,7 +170,7 @@ export async function GET(
         }
 
         const replayEntries = toReplayEntries(replayEnvelopes, null);
-        if (!frameResumeReplayEntries(replayEntries)) {
+        if (!sse.frameResumeReplayEntries(replayEntries)) {
           return true;
         }
         const repairedReplayEntries =
@@ -699,7 +599,7 @@ export async function GET(
 
       if (
         replayCursorSeq !== null &&
-        !frameResumeReplayEntries(replayEntries)
+        !sse.frameResumeReplayEntries(replayEntries)
       ) {
         return;
       }
