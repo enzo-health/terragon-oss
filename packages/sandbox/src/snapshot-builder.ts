@@ -52,14 +52,16 @@ export async function buildRepoSnapshot({
   const baseImageRef: string = templateSnapshot.ref ?? baseTemplateId;
   let image = Image.base(baseImageRef);
 
-  // Set environment variables for build
-  if (environmentVariables.length > 0) {
-    const envObj: Record<string, string> = {};
-    for (const { key, value } of environmentVariables) {
-      envObj[key] = value;
-    }
-    image = image.env(envObj);
+  // Match the production worker images: install dependencies first, then run
+  // repo setup for explicit generated artifacts.
+  const envObj: Record<string, string> = {
+    PRISMA_SKIP_POSTINSTALL_GENERATE: "true",
+    NODE_OPTIONS: "--max-old-space-size=12288",
+  };
+  for (const { key, value } of environmentVariables) {
+    envObj[key] = value;
   }
+  image = image.env(envObj);
 
   // Clone the repo (filter=blob:none for faster partial clone)
   const cloneUrl = `https://${githubAccessToken}@github.com/${repoFullName}.git`;
