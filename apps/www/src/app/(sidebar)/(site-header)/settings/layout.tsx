@@ -8,7 +8,7 @@ export default async function Layout({
 }) {
   await getUserIdOrRedirect();
   return (
-    <div className="flex flex-col justify-start w-full max-w-5xl">
+    <div className="flex flex-col w-full">
       <SettingsLayout>{children}</SettingsLayout>
     </div>
   );

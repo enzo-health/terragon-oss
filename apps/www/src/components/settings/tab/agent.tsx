@@ -50,7 +50,7 @@ export function AgentSettings() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-12">
+    <div className="flex flex-col gap-8">
       <SettingsSection
         label="Agent Configuration"
         description="Customize how the coding agent behaves across all your tasks"
@@ -213,20 +213,20 @@ function CustomSystemPromptSetting() {
   };
   return (
     <SettingsWithCTA label="Custom System Prompt" direction="col">
-      <div className="flex flex-col gap-2 w-full">
+      <div className="flex flex-col gap-3 w-full">
         <Textarea
           value={customSystemPrompt}
           onChange={(e) => handleChange(e.target.value)}
           placeholder="Eg. Always use descriptive variable names..."
-          className="min-h-48"
+          className="min-h-48 rounded-xl"
         />
         <Button
           disabled={!hasChanges || isSaving}
           onClick={handleSave}
           size="sm"
-          className="self-start"
+          className="self-start transition-[transform,opacity,background-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
         >
-          {isSaving ? "Saving..." : "Save Changes"}
+          {isSaving ? "Saving…" : "Save Changes"}
         </Button>
       </div>
     </SettingsWithCTA>
@@ -323,18 +323,25 @@ function AgentModelItem({
 
   return (
     <div
-      className={cn("grid grid-cols-[auto_1fr_auto] gap-3", {
-        "opacity-75": !isEnabled,
-      })}
+      className={cn(
+        "grid grid-cols-[auto_1fr_auto] gap-3 rounded-xl border border-hairline-soft bg-canvas/40 p-4 transition-[opacity,background-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+        isEnabled ? "opacity-100" : "opacity-60",
+      )}
     >
       <div className="mt-0.5">
         <AgentIcon agent={agent} sessionId={null} />
       </div>
-      <div>
-        <p className="text-sm font-medium text-strong">{agentLabel}</p>
-        {agentInfo && <p className="text-xs text-mid mt-0.5">{agentInfo}</p>}
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-strong text-balance">
+          {agentLabel}
+        </p>
+        {agentInfo && (
+          <p className="text-xs text-mid mt-1 text-pretty leading-relaxed">
+            {agentInfo}
+          </p>
+        )}
         {models.length > 1 && (
-          <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
+          <div className="mt-3 flex flex-col">
             {models.map((model) => (
               <ModelItem key={model} model={model} agentEnabled={isEnabled} />
             ))}
@@ -345,6 +352,7 @@ function AgentModelItem({
         checked={isEnabled}
         onCheckedChange={onToggle}
         className="mt-0.5"
+        aria-label={`Enable ${agentLabel}`}
       />
     </div>
   );
@@ -365,28 +373,31 @@ function ModelItem({
     modelPreferences[model] ??
     isModelEnabledByDefault({ model, agentVersion: "latest" });
   return (
-    <>
+    <label
+      htmlFor={`model-${model}`}
+      className={cn(
+        "group/model flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+        agentEnabled ? "hover:bg-canvas/70" : "cursor-not-allowed opacity-60",
+        !isEnabled && agentEnabled && "opacity-70",
+      )}
+    >
       <Checkbox
         id={`model-${model}`}
         checked={isEnabled}
         onCheckedChange={(checked) => updateModelPreference(model, !!checked)}
         disabled={!agentEnabled}
-        className={cn("mt-0.5", {
-          "opacity-75": !agentEnabled || !isEnabled,
-        })}
+        className="mt-0.5 shrink-0"
       />
-      <label
-        htmlFor={`model-${model}`}
-        className={cn(
-          "cursor-pointer text-sm peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
-          {
-            "opacity-75": !agentEnabled || !isEnabled,
-          },
+      <span className="flex flex-col gap-0.5 min-w-0">
+        <span className="text-sm font-medium text-strong text-balance">
+          {displayName.fullName}
+        </span>
+        {modelInfo && (
+          <span className="text-xs text-mid text-pretty leading-relaxed">
+            {modelInfo}
+          </span>
         )}
-      >
-        <span className="font-medium">{displayName.fullName}</span>
-        {modelInfo && <p className="text-xs text-mid mt-0.5">{modelInfo}</p>}
-      </label>
-    </>
+      </span>
+    </label>
   );
 }

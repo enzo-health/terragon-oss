@@ -19,15 +19,21 @@ export function SettingsCheckbox({
   onCheckedChange,
 }: SettingsCheckboxProps) {
   return (
-    <Label className="flex items-start justify-between gap-4 cursor-pointer">
+    <Label className="group/row flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-canvas/70">
       <Checkbox
         checked={value}
         onCheckedChange={onCheckedChange}
-        className="mt-0.5"
+        className="mt-0.5 shrink-0"
       />
-      <div className="flex flex-col gap-1 flex-1">
-        <span className="text-sm font-medium text-strong">{label}</span>
-        {description && <span className="text-xs text-mid">{description}</span>}
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+        <span className="text-sm font-medium text-strong text-balance">
+          {label}
+        </span>
+        {description && (
+          <span className="text-xs text-mid text-pretty leading-relaxed">
+            {description}
+          </span>
+        )}
       </div>
     </Label>
   );
@@ -47,16 +53,22 @@ export function SettingsWithCTA({
   return (
     <div
       className={cn(
-        "flex items-start justify-between gap-4 rounded-md px-2 -mx-2",
+        "flex items-start justify-between gap-4 rounded-lg px-2 py-1.5 -mx-2",
         {
           "flex-col gap-2": direction === "col",
           "flex-col sm:flex-row gap-4": direction === "row",
         },
       )}
     >
-      <div className="flex flex-col gap-1 flex-1">
-        <Label className="text-sm font-medium text-strong">{label}</Label>
-        {description && <span className="text-xs text-mid">{description}</span>}
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+        <Label className="text-sm font-medium text-strong text-balance">
+          {label}
+        </Label>
+        {description && (
+          <span className="text-xs text-mid text-pretty leading-relaxed">
+            {description}
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -75,20 +87,20 @@ export function SettingsSection({
   cta?: React.ReactNode;
 }) {
   return (
-    <div className="bg-card rounded-[1.25rem] p-6 space-y-6 shadow-inset-edge">
+    <section className="bg-card rounded-[1.25rem] p-6 space-y-6 border border-hairline shadow-inset-edge animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <h3 className="text-base font-semibold tracking-[-0.01em] text-strong">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-base font-semibold tracking-[-0.01em] text-strong text-balance">
             {label}
           </h3>
           {description && (
-            <p className="text-sm text-mid mt-1">{description}</p>
+            <p className="text-sm text-mid mt-1 text-pretty">{description}</p>
           )}
         </div>
         {cta && <div className="flex-shrink-0">{cta}</div>}
       </div>
       <div className="space-y-6">{children}</div>
-    </div>
+    </section>
   );
 }
 
@@ -114,7 +126,7 @@ export function SettingsWithExternalLink({
             window.open(href, "_blank");
           }
         }}
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 transition-[transform,background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
       >
         Manage
         <ExternalLink className="w-3 h-3" />

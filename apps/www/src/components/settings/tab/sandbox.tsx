@@ -22,7 +22,7 @@ export function SandboxSettings() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-12">
+    <div className="flex flex-col gap-8">
       {/* Sandbox Configuration */}
       <SettingsSection
         label="Sandbox Configuration"
