@@ -26,7 +26,6 @@ export type DaytonaVolumeConfig = {
   cacheSubpath: string;
   workspaceMountPath: string;
   workspaceSubpath: string;
-  repoOnVolume: boolean;
 };
 
 export type CreateSandboxOptions = {

@@ -31,7 +31,7 @@ import path from "path";
 
 const DAYTONA_VOLUME_PROFILE_PATH = "/etc/profile.d/00-terragon-volume.sh";
 const DAYTONA_VOLUME_ARTIFACTS_DIR = "artifacts";
-const DAYTONA_VOLUME_REPO_DIR = "repo";
+const DAYTONA_VOLUME_PNPM_VIRTUAL_STORE_DIR = "pnpm-virtual-store";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -234,10 +234,9 @@ export async function setupSandboxOneTime(
 
   await setupDaytonaVolumePaths(session, options);
 
-  const reusedDaytonaVolumeRepo = options.snapshotTemplateId
-    ? await moveSnapshotRepoToDaytonaVolume(session, options)
-    : await gitCloneRepo(session, options);
-  if (options.snapshotTemplateId) {
+  if (!options.snapshotTemplateId) {
+    await gitCloneRepo(session, options);
+  } else {
     // Repo already cloned in snapshot — just update git remote with fresh token
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,
@@ -256,9 +255,7 @@ export async function setupSandboxOneTime(
       `git config core.pager cat`,
     ].join(" && "),
   );
-  if (reusedDaytonaVolumeRepo) {
-    console.log("Reusing existing Daytona volume repo checkout");
-  } else if (options.createNewBranch) {
+  if (options.createNewBranch) {
     await createNewBranch({
       session,
       threadName: options.threadName,
@@ -268,9 +265,7 @@ export async function setupSandboxOneTime(
     // Checkout specific branch when createNewBranch is false but branchName is provided
     await session.runCommand(`git checkout ${bashQuote(options.branchName)}`);
   }
-  if (!reusedDaytonaVolumeRepo) {
-    await session.runCommand(`git clean -fxd`);
-  }
+  await session.runCommand(`git clean -fxd`);
 
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
@@ -323,22 +318,11 @@ export async function setupSandboxOneTime(
           agentCredentials: options.agentCredentials,
           setupScript: options.setupScript,
           onInstallProgress: options.onInstallProgress,
+          daytonaVolume: options.daytonaVolume,
         },
       }),
     ]);
   }
-}
-
-function getDaytonaVolumeRepoPath(
-  options: CreateSandboxOptions,
-): string | null {
-  if (!options.daytonaVolume?.repoOnVolume) {
-    return null;
-  }
-  return path.posix.join(
-    options.daytonaVolume.workspaceMountPath,
-    DAYTONA_VOLUME_REPO_DIR,
-  );
 }
 
 function getDaytonaVolumeArtifactsPath(
@@ -350,6 +334,18 @@ function getDaytonaVolumeArtifactsPath(
   return path.posix.join(
     options.daytonaVolume.workspaceMountPath,
     DAYTONA_VOLUME_ARTIFACTS_DIR,
+  );
+}
+
+function getDaytonaPnpmVirtualStorePath(
+  options: Pick<CreateSandboxOptions, "daytonaVolume">,
+): string | null {
+  if (!options.daytonaVolume) {
+    return null;
+  }
+  return path.posix.join(
+    options.daytonaVolume.workspaceMountPath,
+    DAYTONA_VOLUME_PNPM_VIRTUAL_STORE_DIR,
   );
 }
 
@@ -373,15 +369,30 @@ async function setupDaytonaVolumePaths(
     "go/pkg/mod",
     "go/build",
     "composer",
+    "xdg",
+    "corepack",
+    "turbo",
+    "ms-playwright",
+    "puppeteer",
+    "cypress",
+    "huggingface/transformers",
+    "huggingface/sentence-transformers",
+    "matplotlib",
+    "eslint",
   ];
   const cachePaths = cacheDirs.map((dir) =>
     path.posix.join(volume.cacheMountPath, dir),
   );
   const artifactsPath = getDaytonaVolumeArtifactsPath(options);
+  const pnpmVirtualStorePath = getDaytonaPnpmVirtualStorePath(options);
+  const volumeBinDir = `/${session.homeDir}/.terragon/volume-bin`;
+  const pnpmShimPath = `${volumeBinDir}/pnpm`;
   const dirs = [
     volume.cacheMountPath,
     volume.workspaceMountPath,
     ...cachePaths,
+    volumeBinDir,
+    ...(pnpmVirtualStorePath ? [pnpmVirtualStorePath] : []),
     ...(artifactsPath ? [artifactsPath] : []),
   ];
 
@@ -392,6 +403,7 @@ async function setupDaytonaVolumePaths(
   const profileContents = [
     `export PNPM_STORE_DIR=${path.posix.join(volume.cacheMountPath, "pnpm-store")}`,
     `export npm_config_store_dir=${path.posix.join(volume.cacheMountPath, "pnpm-store")}`,
+    `export pnpm_config_store_dir=${path.posix.join(volume.cacheMountPath, "pnpm-store")}`,
     `export npm_config_cache=${path.posix.join(volume.cacheMountPath, "npm")}`,
     `export YARN_CACHE_FOLDER=${path.posix.join(volume.cacheMountPath, "yarn")}`,
     `export BUN_INSTALL_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "bun")}`,
@@ -402,46 +414,51 @@ async function setupDaytonaVolumePaths(
     `export GOMODCACHE=${path.posix.join(volume.cacheMountPath, "go/pkg/mod")}`,
     `export GOCACHE=${path.posix.join(volume.cacheMountPath, "go/build")}`,
     `export COMPOSER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "composer")}`,
+    `export XDG_CACHE_HOME=${path.posix.join(volume.cacheMountPath, "xdg")}`,
+    `export COREPACK_HOME=${path.posix.join(volume.cacheMountPath, "corepack")}`,
+    `export TURBO_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "turbo")}`,
+    `export PLAYWRIGHT_BROWSERS_PATH=${path.posix.join(volume.cacheMountPath, "ms-playwright")}`,
+    `export PUPPETEER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "puppeteer")}`,
+    `export CYPRESS_CACHE_FOLDER=${path.posix.join(volume.cacheMountPath, "cypress")}`,
+    `export HF_HOME=${path.posix.join(volume.cacheMountPath, "huggingface")}`,
+    `export TRANSFORMERS_CACHE=${path.posix.join(volume.cacheMountPath, "huggingface/transformers")}`,
+    `export SENTENCE_TRANSFORMERS_HOME=${path.posix.join(volume.cacheMountPath, "huggingface/sentence-transformers")}`,
+    `export MPLCONFIGDIR=${path.posix.join(volume.cacheMountPath, "matplotlib")}`,
+    `export ESLINT_CACHE_LOCATION=${path.posix.join(volume.cacheMountPath, "eslint/.eslintcache")}`,
+    `export TERRAGON_PNPM_VIRTUAL_STORE_DIR=${pnpmVirtualStorePath}`,
+    `export PATH=${volumeBinDir}:$PATH`,
     ...(artifactsPath
       ? [`export TERRAGON_ARTIFACTS_DIR=${artifactsPath}`]
       : []),
   ].join("\n");
 
+  const pnpmShim = [
+    "#!/usr/bin/env bash",
+    `repo_path=${bashQuote(`/${session.homeDir}/${session.repoDir}`)}`,
+    `virtual_store=${bashQuote(pnpmVirtualStorePath ?? "")}`,
+    'cwd="$(pwd -P 2>/dev/null || pwd)"',
+    'if [ -n "$virtual_store" ]; then',
+    '  case "$cwd" in',
+    '    "$repo_path"|"$repo_path"/*)',
+    '      export pnpm_config_virtual_store_dir="$virtual_store"',
+    "      ;;",
+    "  esac",
+    "fi",
+    `real="$(PATH="$(printf %s "$PATH" | tr ':' '\\n' | grep -vx '${volumeBinDir}' | paste -sd: -)" command -v pnpm)"`,
+    'if [ -z "$real" ]; then',
+    '  echo "terragon: could not resolve real pnpm" >&2',
+    "  exit 127",
+    "fi",
+    'exec "$real" "$@"',
+    "",
+  ].join("\n");
+
+  await session.writeTextFile(pnpmShimPath, pnpmShim);
   await session.writeTextFile(DAYTONA_VOLUME_PROFILE_PATH, profileContents);
   await session.runCommand(
-    `chmod 644 ${bashQuote(DAYTONA_VOLUME_PROFILE_PATH)} && grep -qs 'terragon-volume' /${session.homeDir}/.bashrc 2>/dev/null || echo '. ${DAYTONA_VOLUME_PROFILE_PATH} # terragon-volume' >> /${session.homeDir}/.bashrc`,
+    `chmod +x ${bashQuote(pnpmShimPath)} && chmod 644 ${bashQuote(DAYTONA_VOLUME_PROFILE_PATH)} && grep -qs 'terragon-volume' /${session.homeDir}/.bashrc 2>/dev/null || echo '. ${DAYTONA_VOLUME_PROFILE_PATH} # terragon-volume' >> /${session.homeDir}/.bashrc`,
     { cwd: "/" },
   );
-}
-
-async function moveSnapshotRepoToDaytonaVolume(
-  session: ISandboxSession,
-  options: CreateSandboxOptions,
-): Promise<boolean> {
-  const repoPath = getDaytonaVolumeRepoPath(options);
-  if (!repoPath) {
-    return false;
-  }
-
-  const localRepoPath = `/${session.homeDir}/${session.repoDir}`;
-  const existingVolumeRepo = await session.runCommand(
-    `test -d ${bashQuote(repoPath + "/.git")} && echo "exists" || echo "missing"`,
-    { cwd: "/" },
-  );
-  const shouldReuseVolumeRepo = existingVolumeRepo.trim() === "exists";
-  const command = [
-    `mkdir -p ${bashQuote(path.posix.dirname(repoPath))}`,
-    ...(shouldReuseVolumeRepo
-      ? []
-      : [
-          `rm -rf ${bashQuote(repoPath)}`,
-          `cp -a ${bashQuote(localRepoPath)} ${bashQuote(repoPath)}`,
-        ]),
-    `rm -rf ${bashQuote(localRepoPath)}`,
-    `ln -s ${bashQuote(repoPath)} ${bashQuote(localRepoPath)}`,
-  ].join(" && ");
-  await session.runCommand(command, { cwd: "/" });
-  return shouldReuseVolumeRepo;
 }
 
 /**
@@ -474,6 +491,7 @@ export async function launchSetupScriptInBackground({
     | "githubAccessToken"
     | "agentCredentials"
     | "setupScript"
+    | "daytonaVolume"
   >;
 }): Promise<void> {
   const stateDir = `/${session.homeDir}/.terragon`;
@@ -486,6 +504,7 @@ export async function launchSetupScriptInBackground({
   const runnerPath = "/tmp/terragon-bg-setup-runner.sh";
   const shimPath = `${binDir}/terragon-barrier-shim.sh`;
   const installerPath = "/tmp/terragon-bg-install-barrier.sh";
+  const pnpmVirtualStorePath = getDaytonaPnpmVirtualStorePath(options);
 
   const env = getEnv({
     userEnv: options.environmentVariables ?? [],
@@ -502,6 +521,11 @@ export async function launchSetupScriptInBackground({
     "#!/usr/bin/env bash",
     `mkdir -p ${stateDir}`,
     `cd ${repoPath} || { echo 1 > ${exitCodeFile}; touch ${sentinel}; exit 1; }`,
+    ...(pnpmVirtualStorePath
+      ? [
+          `export pnpm_config_virtual_store_dir=${bashQuote(pnpmVirtualStorePath)}`,
+        ]
+      : []),
     runSetupBlock,
     "code=$?",
     `echo "$code" > ${exitCodeFile}`,
@@ -564,7 +588,7 @@ export async function launchSetupScriptInBackground({
 export async function gitCloneRepo(
   session: ISandboxSession,
   options: CreateSandboxOptions,
-): Promise<boolean> {
+): Promise<void> {
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",
@@ -576,40 +600,8 @@ export async function gitCloneRepo(
   if (options.repoBaseBranchName) {
     cloneCommand += ` --branch ${bashQuote(options.repoBaseBranchName)}`;
   }
-  const repoPath = getDaytonaVolumeRepoPath(options);
-  const cloneTarget = repoPath ?? session.repoDir;
-  if (repoPath) {
-    await session.runCommand(
-      `mkdir -p ${bashQuote(path.posix.dirname(repoPath))}`,
-      {
-        cwd: "/",
-      },
-    );
-    const existingVolumeRepo = await session.runCommand(
-      `test -d ${bashQuote(repoPath + "/.git")} && echo "exists" || echo "missing"`,
-      { cwd: "/" },
-    );
-    if (existingVolumeRepo.trim() === "exists") {
-      await session.runCommand(
-        `rm -rf /${session.homeDir}/${session.repoDir} && ln -s ${bashQuote(repoPath)} ${bashQuote(`/${session.homeDir}/${session.repoDir}`)}`,
-        { cwd: "/" },
-      );
-      return true;
-    }
-    await session.runCommand(
-      `rm -rf /${session.homeDir}/${session.repoDir} ${bashQuote(repoPath)}`,
-      { cwd: "/" },
-    );
-  }
-  const quotedCloneTarget = repoPath ? bashQuote(cloneTarget) : cloneTarget;
-  cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${quotedCloneTarget}`;
+  cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
   await session.runCommand(cloneCommand, { cwd: `/${session.homeDir}` });
-  if (repoPath) {
-    await session.runCommand(
-      `ln -s ${bashQuote(repoPath)} ${bashQuote(`/${session.homeDir}/${session.repoDir}`)}`,
-      { cwd: "/" },
-    );
-  }
 
   // Exclude core dumps from git status to prevent accidental commits.
   // Core dumps from crashing binaries (e.g. ESLint custom-rules) pollute the
@@ -620,7 +612,6 @@ export async function gitCloneRepo(
     `mkdir -p $(dirname ${bashQuote(excludeFile)}) && echo "core.*" >> ${bashQuote(excludeFile)}`,
     { cwd: `/${session.homeDir}` },
   );
-  return false;
 }
 
 export async function setupGitCredentials(
@@ -949,6 +940,7 @@ async function executeSetupScriptCommand({
   environmentVariables,
   agentCredentials,
   githubAccessToken,
+  daytonaVolume,
   onUpdate,
 }: {
   session: ISandboxSession;
@@ -956,8 +948,12 @@ async function executeSetupScriptCommand({
   environmentVariables: CreateSandboxOptions["environmentVariables"];
   agentCredentials: CreateSandboxOptions["agentCredentials"];
   githubAccessToken: string;
+  daytonaVolume?: CreateSandboxOptions["daytonaVolume"];
   onUpdate?: OnUpdateCallback;
 }) {
+  const pnpmVirtualStorePath = getDaytonaPnpmVirtualStorePath({
+    daytonaVolume,
+  });
   // To debug some corrupted images issue, lets log the git status before and
   // after the setup script runs.
   await session.runCommand("git status");
@@ -976,6 +972,9 @@ async function executeSetupScriptCommand({
           overrides: {
             CI: "true",
             TERM: "xterm",
+            ...(pnpmVirtualStorePath
+              ? { pnpm_config_virtual_store_dir: pnpmVirtualStorePath }
+              : {}),
           },
         }),
       });
@@ -1067,6 +1066,7 @@ export async function runSetupScript({
     | "githubAccessToken"
     | "agentCredentials"
     | "onInstallProgress"
+    | "daytonaVolume"
   > & {
     setupScript?: string | null;
     setupScriptPath?: string;
@@ -1116,6 +1116,7 @@ export async function runSetupScript({
         environmentVariables: options.environmentVariables,
         agentCredentials: options.agentCredentials,
         githubAccessToken: options.githubAccessToken,
+        daytonaVolume: options.daytonaVolume,
         onUpdate: onUpdateWrapped,
       });
     } else {
@@ -1127,6 +1128,7 @@ export async function runSetupScript({
         environmentVariables: options.environmentVariables,
         agentCredentials: options.agentCredentials,
         githubAccessToken: options.githubAccessToken,
+        daytonaVolume: options.daytonaVolume,
         onUpdate: onUpdateWrapped,
       });
     }
