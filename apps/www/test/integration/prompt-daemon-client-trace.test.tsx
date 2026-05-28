@@ -7,6 +7,7 @@ import {
   getLatestRunIdForThreadChat,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getAuthorizedThreadAccess } from "@terragon/shared/model/thread-auth";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSessionOrNull } from "@/lib/auth-server";
@@ -21,7 +22,7 @@ const dbMocks = vi.hoisted(() => {
   const limit = vi.fn();
   const where = vi.fn(() => ({ limit }));
   const innerJoin = vi.fn(() => ({ where }));
-  const from = vi.fn(() => ({ innerJoin }));
+  const from = vi.fn(() => ({ innerJoin, where }));
   const select = vi.fn(() => ({ from }));
   return {
     limit,
@@ -42,6 +43,7 @@ const redisMocks = vi.hoisted(() => {
 
 vi.mock("@/lib/auth-server", () => ({
   getSessionOrNull: vi.fn(),
+  userOnlyAction: vi.fn((fn: unknown) => fn),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -67,6 +69,10 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
 
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/thread-auth", () => ({
+  getAuthorizedThreadAccess: vi.fn(),
 }));
 
 vi.mock("@/server-lib/follow-up-command", () => ({
@@ -169,6 +175,12 @@ describe("prompt to daemon to client trace", () => {
     redisMocks.isLocalRedisHttpMode.mockReturnValue(false);
     vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(null);
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(null);
+    vi.mocked(getAuthorizedThreadAccess).mockResolvedValue({
+      ownerUserId: "user-1",
+      isOwner: true,
+      viaVisibility: false,
+      viaRepoPermission: false,
+    });
     vi.mocked(getSessionOrNull).mockResolvedValue({
       session: {
         id: "session-1",
