@@ -20,6 +20,15 @@ export type BootingSubstatus =
   | "running-setup-script"
   | "booting-done";
 
+export type DaytonaVolumeConfig = {
+  volumeName: string;
+  cacheMountPath: string;
+  cacheSubpath: string;
+  workspaceMountPath: string;
+  workspaceSubpath: string;
+  repoOnVolume: boolean;
+};
+
 export type CreateSandboxOptions = {
   threadName: string | null;
   agent: AIAgent | null;
@@ -41,6 +50,7 @@ export type CreateSandboxOptions = {
   skipLocalQualityChecks?: boolean; // Skip local lint/typecheck/test enforcement hooks and gates
   skipSetupScript?: boolean; // Skip running terragon-setup.sh during sandbox setup
   snapshotTemplateId?: string; // Per-repo Daytona snapshot name to use instead of generic template
+  daytonaVolume?: DaytonaVolumeConfig; // Daytona volume mount config for persistent caches/workspace data
   setupScript?: string | null; // Custom setup script to override repository's terragon-setup.sh
   backgroundSetupScript?: boolean; // Run the setup script detached + install a dependency barrier, so the agent dispatches without waiting for setup to finish
   fastResume?: boolean; // Fast resume mode - skips unnecessary setup steps that run everytime (claude credentials, daemon update, etc)

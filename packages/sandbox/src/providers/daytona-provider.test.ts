@@ -3,6 +3,7 @@ import type { CreateSandboxOptions } from "../types";
 
 const daytonaCreateMock = vi.fn();
 const daytonaGetMock = vi.fn();
+const daytonaVolumeGetMock = vi.fn();
 
 vi.mock("@daytonaio/sdk", () => {
   class MockDaytona {
@@ -10,6 +11,9 @@ vi.mock("@daytonaio/sdk", () => {
 
     create = daytonaCreateMock;
     get = daytonaGetMock;
+    volume = {
+      get: daytonaVolumeGetMock,
+    };
   }
 
   return {
@@ -117,6 +121,10 @@ describe("DaytonaProvider lifecycle policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("DAYTONA_API_KEY", "test-api-key");
+    daytonaVolumeGetMock.mockResolvedValue({
+      id: "volume-123",
+      name: "terragon-workspaces",
+    });
   });
 
   afterEach(() => {
@@ -137,6 +145,51 @@ describe("DaytonaProvider lifecycle policy", () => {
       user: "root",
       snapshot: "snapshot-template",
       envVars: {},
+      autoStopInterval: 15,
+      autoArchiveInterval: 360,
+      autoDeleteInterval: 60 * 24 * 30,
+    });
+  });
+
+  it("mounts configured Daytona cache and workspace volume subpaths", async () => {
+    const sandbox = createMockSandbox();
+    daytonaCreateMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    await provider.getOrCreateSandbox(null, {
+      ...defaultOptions,
+      snapshotTemplateId: "snapshot-template",
+      daytonaVolume: {
+        volumeName: "terragon-workspaces",
+        cacheMountPath: "/mnt/terragon/cache",
+        cacheSubpath: "users/user-123/cache",
+        workspaceMountPath: "/mnt/terragon/workspace",
+        workspaceSubpath:
+          "users/user-123/environments/env-123/threads/thread-1",
+        repoOnVolume: true,
+      },
+    });
+
+    expect(daytonaVolumeGetMock).toHaveBeenCalledWith(
+      "terragon-workspaces",
+      true,
+    );
+    expect(daytonaCreateMock).toHaveBeenCalledWith({
+      user: "root",
+      snapshot: "snapshot-template",
+      envVars: {},
+      volumes: [
+        {
+          volumeId: "volume-123",
+          mountPath: "/mnt/terragon/cache",
+          subpath: "users/user-123/cache",
+        },
+        {
+          volumeId: "volume-123",
+          mountPath: "/mnt/terragon/workspace",
+          subpath: "users/user-123/environments/env-123/threads/thread-1",
+        },
+      ],
       autoStopInterval: 15,
       autoArchiveInterval: 360,
       autoDeleteInterval: 60 * 24 * 30,
