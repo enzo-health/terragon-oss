@@ -17,24 +17,36 @@ export function GeneralSettings() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-12">
-      {/* Appearance Section */}
-      <SettingsSection label="General">
-        <div className="flex flex-col gap-4">
-          <SettingsWithCTA
-            label="Theme"
-            description="Choose between light, dark, or system theme"
-          >
-            <ThemeSelector />
-          </SettingsWithCTA>
-          <SettingsWithCTA
-            label="Default task visibility"
-            description="Set the default visibility of new tasks. You can always change this within a task."
-          >
-            <ThreadVisibilitySelector />
-          </SettingsWithCTA>
-          <NotificationSettings />
-        </div>
+    <div className="flex flex-col gap-8">
+      <SettingsSection
+        label="Appearance"
+        description="Choose how Terragon looks across your devices."
+      >
+        <SettingsWithCTA
+          label="Theme"
+          description="Switch between light, dark, or follow your system."
+        >
+          <ThemeSelector />
+        </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Tasks"
+        description="Defaults for new tasks you create."
+      >
+        <SettingsWithCTA
+          label="Default visibility"
+          description="Who can see new tasks. You can change this within a task at any time."
+        >
+          <ThreadVisibilitySelector />
+        </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Notifications"
+        description="Decide when Terragon nudges you."
+      >
+        <NotificationSettings />
       </SettingsSection>
     </div>
   );

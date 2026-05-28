@@ -780,6 +780,15 @@
 
 /* Reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
   .animate-shimmer,
   .animate-pulse-subtle,
   .animate-in,
@@ -787,21 +796,14 @@
   .animate-progress-indeterminate,
   .animate-blink,
   .animate-pulse,
-  .animate-ping {
-    animation: none !important;
-    transition: none !important;
-  }
-
+  .animate-ping,
   .animate-spin {
     animation: none !important;
-    transition: none !important;
   }
 
-  /* Sidebar transitions */
   [data-slot="sidebar-gap"],
   [data-slot="sidebar-container"],
   [data-slot="sidebar-inner"] {
-    transition-duration: 0.01ms !important;
     transition-timing-function: step-end !important;
   }
 }

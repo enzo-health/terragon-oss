@@ -63,7 +63,7 @@ export function TerragonTranscriptSurface({
   return (
     <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-6 sm:mt-8 mb-8">
       {lifecycleMessages.length > 0 ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
           {lifecycleMessages.map((message, index) => (
             <TerragonSystemMessage
               key={`lifecycle-${message.id}`}
@@ -75,11 +75,13 @@ export function TerragonTranscriptSurface({
         </div>
       ) : null}
       {isRuntimeHydrating ? (
-        <div className="pt-2">
+        <div className="pt-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
           <LeafLoading message="Connecting to live task…" />
         </div>
       ) : (
-        <NativeThread />
+        <div className="animate-in fade-in duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
+          <NativeThread />
+        </div>
       )}
       {(error || errorType || errorInfo) && (
         <ChatError
@@ -94,14 +96,16 @@ export function TerragonTranscriptSurface({
       {reserveWorkingMessageSlot && (
         <div className={workingMessageSlotClassName}>
           {shouldRenderWorkingMessage ? (
-            <WorkingMessage
-              agent={chatAgent}
-              status={threadStatus ?? "working"}
-              bootingSubstatus={bootingSubstatus}
-              reattemptQueueAt={reattemptQueueAt}
-              metaSnapshot={metaSnapshot}
-              passiveWait={passiveWait}
-            />
+            <div className="animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+              <WorkingMessage
+                agent={chatAgent}
+                status={threadStatus ?? "working"}
+                bootingSubstatus={bootingSubstatus}
+                reattemptQueueAt={reattemptQueueAt}
+                metaSnapshot={metaSnapshot}
+                passiveWait={passiveWait}
+              />
+            </div>
           ) : null}
         </div>
       )}

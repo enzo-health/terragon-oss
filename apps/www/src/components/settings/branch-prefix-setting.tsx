@@ -41,11 +41,24 @@ export function BranchPrefixSetting({
           className="w-40"
           placeholder="e.g. terragon/"
         />
-        {isDirty && (
-          <Button size="sm" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? "Saving..." : "Save"}
+        <div
+          className="transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+          style={{
+            opacity: isDirty ? 1 : 0,
+            transform: isDirty ? "translateX(0)" : "translateX(-4px)",
+            pointerEvents: isDirty ? "auto" : "none",
+          }}
+          aria-hidden={!isDirty}
+        >
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={isSaving || !isDirty}
+            className="transition-[transform,opacity,background-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
+          >
+            {isSaving ? "Saving…" : "Save"}
           </Button>
-        )}
+        </div>
       </div>
     </SettingsWithCTA>
   );

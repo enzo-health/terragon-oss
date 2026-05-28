@@ -2,11 +2,9 @@
 
 import { useNotifications } from "@/hooks/use-notifications";
 import { Button } from "@/components/ui/button";
-import { Label } from "@radix-ui/react-label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Bell } from "lucide-react";
 import { toast } from "sonner";
-import { SettingsWithCTA } from "./settings-row";
+import { SettingsCheckbox, SettingsWithCTA } from "./settings-row";
 
 export function NotificationSettings() {
   const { isSupported, permission, enabled, setEnabled, requestPermission } =
@@ -46,7 +44,12 @@ export function NotificationSettings() {
         }
         direction="col"
       >
-        <Button variant="outline" size="sm" onClick={() => requestPermission()}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => requestPermission()}
+          className="transition-[transform,background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
+        >
           Try again
         </Button>
       </SettingsWithCTA>
@@ -68,7 +71,7 @@ export function NotificationSettings() {
               toast.success("Settings updated.");
             }
           }}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 transition-[transform,background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
         >
           <Bell className="w-3 h-3" />
           Enable
@@ -78,24 +81,14 @@ export function NotificationSettings() {
   }
 
   return (
-    <Label className="flex items-start justify-between gap-4 cursor-pointer">
-      <Checkbox
-        checked={enabled}
-        onCheckedChange={(checked) => {
-          setEnabled(!!checked);
-          toast.success("Settings updated.");
-        }}
-        className="mt-0.5"
-      />
-      <div className="flex flex-col gap-1 flex-1">
-        <span className="text-sm font-medium text-strong">
-          Browser notifications
-        </span>
-        <span className="text-xs text-mid">
-          Get notified when tasks are complete. You may also need to enable
-          notifications for your browser in your operating system settings.
-        </span>
-      </div>
-    </Label>
+    <SettingsCheckbox
+      label="Browser notifications"
+      description="Get notified when tasks are complete. You may also need to enable notifications for your browser in your operating system settings."
+      value={enabled}
+      onCheckedChange={(checked) => {
+        setEnabled(!!checked);
+        toast.success("Settings updated.");
+      }}
+    />
   );
 }

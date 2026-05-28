@@ -260,7 +260,7 @@ const ASSISTANT_PART_COMPONENTS = {
 } as const;
 
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col items-end py-2">
+  <MessagePrimitive.Root className="flex flex-col items-end py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
     <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
       <MessagePrimitive.Parts />
     </div>
@@ -268,7 +268,7 @@ const NativeUserMessage = () => (
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col py-2">
+  <MessagePrimitive.Root className="flex flex-col py-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
     <div className="mr-auto w-full break-words text-sm leading-relaxed">
       <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
     </div>

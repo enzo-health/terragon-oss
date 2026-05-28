@@ -6,7 +6,7 @@ import {
 } from "./promptbox/dashboard-promptbox";
 import { ThreadListMain } from "./thread-list/main";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
@@ -40,30 +40,71 @@ function DashboardLaunchStatus({
     <div
       role="status"
       aria-live="polite"
-      className="rounded-xl border border-hairline bg-card/80 px-4 py-3 shadow-[var(--shadow-warm-lift)] animate-in fade-in slide-in-from-bottom-1 duration-200"
+      className="rounded-xl border border-hairline bg-card/80 px-4 py-3 shadow-[var(--shadow-warm-lift)] animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
     >
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
-          {isOpening ? (
-            <Check className="size-3.5" aria-hidden />
+        <div className="relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
+          <span
+            aria-hidden
+            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            style={{
+              opacity: isOpening ? 0 : 1,
+              transform: isOpening ? "scale(0.25)" : "scale(1)",
+              filter: isOpening ? "blur(4px)" : "blur(0px)",
+            }}
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+          </span>
+          <span
+            aria-hidden
+            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            style={{
+              opacity: isOpening ? 1 : 0,
+              transform: isOpening ? "scale(1)" : "scale(0.25)",
+              filter: isOpening ? "blur(0px)" : "blur(4px)",
+            }}
+          >
+            <Check className="size-3.5" />
+          </span>
+        </div>
+        <div className="relative min-w-0 flex-1">
+          <div
+            key={state.kind}
+            className="animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
+          >
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-foreground text-balance">
+                {state.title}
+              </p>
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-coral/70 transition-opacity duration-[var(--duration-base)]"
+                style={{ opacity: isOpening ? 0 : 1 }}
+              />
+            </div>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground text-pretty">
+              {state.detail}
+            </p>
+          </div>
+        </div>
+        <div
+          className="shrink-0 transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+          style={{
+            opacity: state.taskHref ? 1 : 0,
+            transform: state.taskHref ? "translateX(0)" : "translateX(4px)",
+            pointerEvents: state.taskHref ? "auto" : "none",
+          }}
+          aria-hidden={!state.taskHref}
+        >
+          {state.taskHref ? (
+            <Button asChild variant="outline" size="xs">
+              <a href={state.taskHref}>Open</a>
+            </Button>
           ) : (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            <Button variant="outline" size="xs" disabled tabIndex={-1}>
+              Open
+            </Button>
           )}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-foreground">{state.title}</p>
-            <span className="h-1.5 w-1.5 rounded-full bg-coral/70 animate-pulse" />
-          </div>
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            {state.detail}
-          </p>
-        </div>
-        {state.taskHref ? (
-          <Button asChild variant="outline" size="xs" className="shrink-0">
-            <a href={state.taskHref}>Open</a>
-          </Button>
-        ) : null}
       </div>
     </div>
   );
@@ -129,14 +170,16 @@ export function Dashboard({
             : "Task created. Opening the live agent workspace now.",
           taskHref,
         });
-        toast.success(
-          scheduleAt ? "Task scheduled." : "Task created! Opening task...",
-          {
+        if (scheduleAt) {
+          toast.success("Task scheduled.", {
             icon: <Rocket className="size-4" />,
             duration: 2000,
-          },
-        );
-        router.push(taskHref);
+          });
+          router.push(taskHref);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 140));
+          router.push(taskHref);
+        }
       }
     },
     [createThreadMutation, router],
@@ -171,6 +214,21 @@ export function Dashboard({
 
   const { data: threadPages } = useInfiniteThreadList({ archived: false });
   const showRecommendedTasks = (threadPages?.pages[0]?.length ?? 0) < 3;
+  const isLaunching = launchState.kind !== "idle";
+  const showRecommendedExpanded = showRecommendedTasks && !isLaunching;
+
+  const [visibleLaunchState, setVisibleLaunchState] = useState<Exclude<
+    LaunchState,
+    { kind: "idle" }
+  > | null>(null);
+  useEffect(() => {
+    if (launchState.kind !== "idle") {
+      setVisibleLaunchState(launchState);
+      return;
+    }
+    const timeout = setTimeout(() => setVisibleLaunchState(null), 240);
+    return () => clearTimeout(timeout);
+  }, [launchState]);
 
   return (
     <div
@@ -180,10 +238,10 @@ export function Dashboard({
       )}
     >
       <div className="flex flex-col gap-3">
-        <h1 className="font-display text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground">
+        <h1 className="font-display text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
           What would you like to build?
         </h1>
-        <p className="text-[15px] leading-relaxed text-muted-foreground">
+        <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
           Describe a task and I&apos;ll get to work.
         </p>
       </div>
@@ -198,29 +256,49 @@ export function Dashboard({
           handleSubmit={handlePromptSubmit}
           promptText={promptText ?? undefined}
         />
-        {launchState.kind !== "idle" ? (
-          <DashboardLaunchStatus state={launchState} />
-        ) : null}
-      </div>
-      {showRecommendedTasks && launchState.kind === "idle" && (
-        <div className="space-y-3 hidden md:block">
-          <h2 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground">
-            Suggested tasks
-          </h2>
-          <RecommendedTasks
-            onTaskSelect={setPromptText}
-            selectedModel={selectedModel}
-          />
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+            isLaunching
+              ? "grid-rows-[1fr] opacity-100"
+              : "grid-rows-[0fr] opacity-0",
+          )}
+          aria-hidden={!isLaunching}
+        >
+          <div className="overflow-hidden">
+            {visibleLaunchState ? (
+              <DashboardLaunchStatus state={visibleLaunchState} />
+            ) : null}
+          </div>
         </div>
-      )}
+      </div>
+      <div
+        className={cn(
+          "hidden md:grid transition-[grid-template-rows,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+          showRecommendedExpanded
+            ? "grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0",
+        )}
+        aria-hidden={!showRecommendedExpanded}
+      >
+        <div className="overflow-hidden">
+          <div className="space-y-3">
+            <h2 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground">
+              Suggested tasks
+            </h2>
+            <RecommendedTasks
+              onTaskSelect={setPromptText}
+              selectedModel={selectedModel}
+            />
+          </div>
+        </div>
+      </div>
       <div className="md:hidden">
         <ThreadListMain
           queryFilters={{ archived: showArchived }}
           viewFilter={showArchived ? "archived" : "active"}
           allowGroupBy={true}
-          showSuggestedTasks={
-            showRecommendedTasks && launchState.kind === "idle"
-          }
+          showSuggestedTasks={showRecommendedExpanded}
           setPromptText={setPromptText}
         />
       </div>

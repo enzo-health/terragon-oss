@@ -185,6 +185,20 @@ export function SecondaryPanel({
     setWidth(clampSecondaryPanelWidth(nextWidth));
   };
 
+  const [renderPanel, setRenderPanel] = useState(isOpen);
+  const [isEntered, setIsEntered] = useState(isOpen);
+  useEffect(() => {
+    if (platform !== "desktop") return;
+    if (isOpen) {
+      setRenderPanel(true);
+      const frame = requestAnimationFrame(() => setIsEntered(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    setIsEntered(false);
+    const timeout = setTimeout(() => setRenderPanel(false), 240);
+    return () => clearTimeout(timeout);
+  }, [isOpen, platform]);
+
   if (platform === "mobile") {
     return (
       <MobileArtifactDrawer
@@ -207,17 +221,18 @@ export function SecondaryPanel({
     );
   }
 
-  if (!isOpen) return null;
+  if (!renderPanel) return null;
 
   return (
     <>
       <div
         className={cn(
-          "group/resize relative w-2 transition-colors duration-[var(--duration-quick)] flex-shrink-0 flex items-center justify-center",
+          "group/resize relative w-2 transition-[background-color,opacity] duration-[var(--duration-quick)] flex-shrink-0 flex items-center justify-center",
           isMaximized
             ? "cursor-default"
             : "cursor-col-resize hover:bg-border/50",
           isResizing && !isMaximized && "bg-border/60",
+          isEntered ? "opacity-100" : "opacity-0",
         )}
         onMouseDown={isMaximized ? undefined : handleMouseDown}
         onKeyDown={isMaximized ? undefined : handleResizeKeyDown}
@@ -249,8 +264,12 @@ export function SecondaryPanel({
         )}
       </div>
       <div
-        className="flex-shrink-0 border-l bg-background flex flex-col h-full"
-        style={{ width: `${width}px` }}
+        className={cn(
+          "flex-shrink-0 border-l bg-background flex flex-col h-full overflow-hidden",
+          !isResizing &&
+            "transition-[width] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+        )}
+        style={{ width: `${isEntered ? width : 0}px` }}
       >
         <SecondaryPanelContent
           artifacts={artifacts}

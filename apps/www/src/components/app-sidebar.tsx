@@ -78,7 +78,8 @@ function SidebarHeaderContent() {
           variant="ghost"
           size="icon"
           onClick={toggleSidebar}
-          className="size-8 rounded-md border border-border/70 bg-background/90 text-foreground shadow-[var(--shadow-outline-ring)] hover:bg-accent/80"
+          aria-label="Expand sidebar"
+          className="size-8 rounded-md text-foreground transition-[background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-sidebar-accent active:scale-[0.96]"
         >
           <WordmarkLogo size="md" />
         </Button>
@@ -118,7 +119,6 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-1.5 pb-2 pt-0 group-data-[collapsible=icon]:px-1.5">
-        {/* New Task Button */}
         <SidebarGroup className="py-1">
           <SidebarGroupContent>
             <SidebarMenu>
@@ -126,10 +126,10 @@ export function AppSidebar() {
                 <SidebarMenuButton
                   asChild
                   tooltip="New Task"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+                  className="bg-primary text-primary-foreground transition-[background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-primary/90 hover:text-primary-foreground active:scale-[0.98]"
                 >
                   <Link href="/dashboard" className="font-medium text-xs">
-                    <SquarePen className="h-3.5 w-3.5" />
+                    <SquarePen className="size-4" />
                     <span>New Task</span>
                   </Link>
                 </SidebarMenuButton>
@@ -138,23 +138,21 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Home nav */}
         <SidebarGroup className="py-0.5">
           <SidebarGroupContent>
             <SidebarMenu>
               <NavItem
                 title="Home"
                 href="/dashboard"
-                icon={<Home className="h-3.5 w-3.5" />}
+                icon={<Home className="size-4" />}
                 isActive={pathname === "/dashboard"}
               />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Sessions grouped by repo */}
         <SidebarGroup className="flex-1 min-h-0 overflow-hidden">
-          <SidebarGroupLabel className="mb-0.5 px-2.5 text-[10px]">
+          <SidebarGroupLabel className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
             Sessions
           </SidebarGroupLabel>
           <SidebarGroupContent className="overflow-y-auto">
@@ -167,86 +165,79 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border/70 px-2 pb-2 pt-2 group-data-[collapsible=icon]:px-1.5">
         <SidebarMenu>
-          {/* Settings gear */}
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
                   size="lg"
                   tooltip="Settings"
-                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  className="transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
                   <Settings className="size-4 text-muted-foreground" />
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">Settings</span>
-                  </div>
-                  <ChevronUp className="ml-auto size-4 text-muted-foreground" />
+                  <span className="flex-1 truncate text-left text-sm font-medium leading-tight group-data-[collapsible=icon]:hidden">
+                    Settings
+                  </span>
+                  <ChevronUp
+                    aria-hidden
+                    className="ml-auto size-4 text-muted-foreground transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] group-data-[state=open]/menu-button:rotate-180 group-data-[collapsible=icon]:hidden"
+                  />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 side="top"
                 align="end"
-                className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
-                sideOffset={4}
+                className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg p-1"
+                sideOffset={6}
               >
-                <DropdownMenuItem
-                  onClick={() => router.push("/settings")}
-                  className="rounded-lg"
-                >
-                  <span>General</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/settings/github")}
-                  className="rounded-lg"
-                >
-                  <GitBranch className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>GitHub & Pull Requests</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/settings/agent")}
-                  className="rounded-lg"
-                >
-                  <Bot className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>Agent</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/settings/integrations")}
-                  className="rounded-lg"
-                >
-                  <Blocks className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>Integrations</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/automations")}
-                  className="rounded-lg"
-                >
-                  <Workflow className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>Automations</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/stats")}
-                  className="rounded-lg"
-                >
-                  <ChartColumnBig className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>Stats</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push("/environments")}
-                  className="rounded-lg"
-                >
-                  <Container className="size-3.5 mr-2 text-muted-foreground" />
-                  <span>Environments</span>
-                </DropdownMenuItem>
+                <SettingsDropdownItem
+                  href="/settings"
+                  icon={<Settings className="size-4" />}
+                  label="General"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/settings/github"
+                  icon={<GitBranch className="size-4" />}
+                  label="GitHub & Pull Requests"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/settings/agent"
+                  icon={<Bot className="size-4" />}
+                  label="Agent"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/settings/integrations"
+                  icon={<Blocks className="size-4" />}
+                  label="Integrations"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/automations"
+                  icon={<Workflow className="size-4" />}
+                  label="Automations"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/stats"
+                  icon={<ChartColumnBig className="size-4" />}
+                  label="Stats"
+                  onSelect={router.push}
+                />
+                <SettingsDropdownItem
+                  href="/environments"
+                  icon={<Container className="size-4" />}
+                  label="Environments"
+                  onSelect={router.push}
+                />
                 {isAdmin && (
-                  <>
-                    <DropdownMenuItem
-                      onClick={() => router.push("/internal/admin")}
-                      className="rounded-lg"
-                    >
-                      <Shield className="size-3.5 mr-2 text-muted-foreground" />
-                      <span>Admin Panel</span>
-                    </DropdownMenuItem>
-                  </>
+                  <SettingsDropdownItem
+                    href="/internal/admin"
+                    icon={<Shield className="size-4" />}
+                    label="Admin Panel"
+                    onSelect={router.push}
+                  />
                 )}
                 {mounted && (
                   <DropdownMenuItem
@@ -254,23 +245,22 @@ export function AppSidebar() {
                       e.preventDefault();
                       setTheme(resolvedTheme === "light" ? "dark" : "light");
                     }}
-                    className="rounded-lg"
+                    className="rounded-md gap-2 text-sm"
                   >
                     <ThemeToggle resolvedTheme={resolvedTheme} />
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
                   onClick={() => signOut()}
-                  className="rounded-lg"
+                  className="rounded-md gap-2 text-sm"
                 >
-                  <LogOut className="size-3.5 mr-2 text-muted-foreground" />
+                  <LogOut className="size-4 text-muted-foreground" />
                   <span>Sign out</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>
 
-          {/* User account */}
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" tooltip={user?.name ?? "Account"}>
               <Avatar className="size-7 rounded-md">
@@ -279,11 +269,9 @@ export function AppSidebar() {
                   {user?.name?.charAt(0) ?? "?"}
                 </AvatarFallback>
               </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">
-                  {user?.name ?? "Account"}
-                </span>
-              </div>
+              <span className="flex-1 truncate text-left text-sm font-medium leading-tight group-data-[collapsible=icon]:hidden">
+                {user?.name ?? "Account"}
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -309,7 +297,8 @@ function NavItem({
       <SidebarMenuButton asChild isActive={isActive} tooltip={title}>
         <Link
           href={href}
-          className="font-normal text-xs transition-colors duration-150"
+          aria-current={isActive ? "page" : undefined}
+          className="font-normal text-xs transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
         >
           {icon}
           <span>{title}</span>
@@ -319,15 +308,61 @@ function NavItem({
   );
 }
 
-function ThemeToggle({ resolvedTheme }: { resolvedTheme: string | undefined }) {
+function SettingsDropdownItem({
+  href,
+  icon,
+  label,
+  onSelect,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  onSelect: (href: string) => void;
+}) {
   return (
-    <span className="flex w-full items-center gap-2 text-sm text-muted-foreground">
-      {resolvedTheme === "light" ? "Light Mode" : "Dark Mode"}
-      {resolvedTheme === "light" ? (
-        <SunIcon className="size-4 text-foreground/55" />
-      ) : (
-        <MoonIcon className="size-4 text-foreground/55" />
-      )}
+    <DropdownMenuItem
+      onClick={() => onSelect(href)}
+      className="group/item rounded-md gap-2 text-sm transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
+    >
+      <span className="text-muted-foreground transition-colors duration-[var(--duration-quick)] group-hover/item:text-foreground group-focus/item:text-foreground">
+        {icon}
+      </span>
+      <span>{label}</span>
+    </DropdownMenuItem>
+  );
+}
+
+function ThemeToggle({ resolvedTheme }: { resolvedTheme: string | undefined }) {
+  const isLight = resolvedTheme === "light";
+  return (
+    <span className="flex w-full items-center gap-2 text-sm text-foreground">
+      <span className="relative size-4 text-muted-foreground">
+        <span
+          aria-hidden
+          className="absolute inset-0 inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+          style={{
+            opacity: isLight ? 1 : 0,
+            transform: isLight
+              ? "scale(1) rotate(0deg)"
+              : "scale(0.5) rotate(-90deg)",
+          }}
+        >
+          <SunIcon className="size-4" />
+        </span>
+        <span
+          aria-hidden
+          className="absolute inset-0 inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+          style={{
+            opacity: isLight ? 0 : 1,
+            transform: isLight
+              ? "scale(0.5) rotate(90deg)"
+              : "scale(1) rotate(0deg)",
+          }}
+        >
+          <MoonIcon className="size-4" />
+        </span>
+      </span>
+      <span>{isLight ? "Light mode" : "Dark mode"}</span>
     </span>
   );
 }
