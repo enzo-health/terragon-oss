@@ -39,6 +39,21 @@ describe("MarkdownRenderer code rendering", () => {
     expect(html).toContain("pnpm lint");
   });
 
+  it("renders markdown images without block wrappers inside paragraphs", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        content={
+          'Priority badge <sub><img src="https://example.com/p1.png" alt="P1 Badge" /></sub>'
+        }
+      />,
+    );
+
+    expect(html).toContain("<img");
+    expect(html).toContain('alt="P1 Badge"');
+    expect(html).toContain("image-outline");
+    expect(html).not.toContain("<p><div");
+  });
+
   it("splits long streaming markdown by Streamdown block boundaries", () => {
     const content = `# Summary\n\n${longParagraph}\n\n## Live\n\nStill streaming`;
 

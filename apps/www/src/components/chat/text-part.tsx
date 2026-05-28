@@ -14,7 +14,6 @@ import { createPortal } from "react-dom";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ImagePart } from "./image-part";
 
 interface TextPartProps {
   text: string;
@@ -642,10 +641,6 @@ const TextPart = memo(function TextPart({
     streaming,
     usedIncrementalAppend,
   ]);
-  const renderImage = useCallback(
-    (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,
-    [],
-  );
   const streamingSegmentation =
     hasCompleteProposedPlan || hasProposedPlanStart ? "off" : "auto";
 
@@ -685,7 +680,6 @@ const TextPart = memo(function TextPart({
             content={visibleText}
             controls={MARKDOWN_CONTROLS}
             streaming={streaming}
-            renderImage={renderImage}
             onOpenFile={onOpenRepoFile}
             streamingSegmentation={streamingSegmentation}
           />

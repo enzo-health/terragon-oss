@@ -24,7 +24,6 @@ type MathPlugin = ReturnType<
 >;
 
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
-import { ImagePart } from "@/components/chat/image-part";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -341,6 +340,18 @@ function getLanguageLabel(className?: string): string | null {
   return match[1] ?? null;
 }
 
+function MarkdownImage({ src, alt }: { src: string; alt?: string }) {
+  return (
+    <img
+      src={src}
+      alt={alt ?? "Image"}
+      className="max-w-[200px] rounded-lg image-outline"
+      loading="lazy"
+      decoding="async"
+    />
+  );
+}
+
 function findNestedClassName(node: ReactNode): string | null {
   if (!node) return null;
   if (Array.isArray(node)) {
@@ -599,7 +610,7 @@ function getResponseComponents(
       if (renderImage) {
         return renderImage(src, alt);
       }
-      return <ImagePart imageUrl={src} alt={alt} />;
+      return <MarkdownImage src={src} alt={alt} />;
     },
     hr() {
       return <hr className="my-4 border-t border-border" />;
