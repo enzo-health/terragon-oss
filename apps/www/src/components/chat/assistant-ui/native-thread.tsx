@@ -8,9 +8,11 @@ import {
   type TextMessagePartComponent,
   type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
-import { ChevronDown, Loader2, Wrench } from "lucide-react";
-import { useState, type PropsWithChildren } from "react";
+import { Check, ChevronDown, Copy, Link, Loader2, Wrench } from "lucide-react";
+import { useCallback, useState, type PropsWithChildren } from "react";
+import { toast } from "sonner";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 /**
@@ -259,19 +261,117 @@ const ASSISTANT_PART_COMPONENTS = {
   ToolGroup: NativeToolGroup,
 } as const;
 
+type MessageContentPart = {
+  readonly type: string;
+  readonly text?: string;
+};
+
+const messageTextFromParts = (parts: readonly MessageContentPart[]): string =>
+  parts
+    .filter((part) => part.type === "text" || part.type === "reasoning")
+    .map((part) => part.text ?? "")
+    .join("\n")
+    .trim();
+
+const NATIVE_ACTION_BTN =
+  "flex items-center justify-center min-h-[32px] min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.98] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
+
+const NativeMessageActions = ({
+  align,
+}: {
+  align: "start" | "end";
+}) => {
+  const messageId = useAuiState((state) => state.message.id);
+  const parts = useAuiState(
+    (state) => state.message.parts as readonly MessageContentPart[],
+  );
+  const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    const text = messageTextFromParts(parts);
+    if (!text) return;
+    try {
+      await copyTextToClipboard(text);
+      toast.success("Copied");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy message");
+    }
+  }, [parts]);
+
+  const handleLink = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    try {
+      await copyTextToClipboard(
+        `${window.location.origin}${window.location.pathname}#message-${messageId}`,
+      );
+      toast.success("Link copied");
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy link");
+    }
+  }, [messageId]);
+
+  const hasText = parts.some(
+    (part) => part.type === "text" || part.type === "reasoning",
+  );
+  if (!hasText) return null;
+
+  return (
+    <div
+      className={cn(
+        "mt-1 flex min-h-[32px] gap-1.5 opacity-0 transition-opacity group-hover/native-msg:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
+        align === "end" ? "justify-end" : "justify-start",
+      )}
+    >
+      <button
+        type="button"
+        onClick={handleCopy}
+        className={NATIVE_ACTION_BTN}
+        title="Copy message"
+        aria-label={copied ? "Message copied" : "Copy message"}
+      >
+        {copied ? (
+          <Check className="h-3.5 w-3.5" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={handleLink}
+        className={NATIVE_ACTION_BTN}
+        title="Copy link to message"
+        aria-label={linkCopied ? "Link copied" : "Copy link to message"}
+      >
+        {linkCopied ? (
+          <Check className="h-3.5 w-3.5" />
+        ) : (
+          <Link className="h-3.5 w-3.5" />
+        )}
+      </button>
+    </div>
+  );
+};
+
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col items-end py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
+  <MessagePrimitive.Root className="group/native-msg flex flex-col items-end py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
     <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
       <MessagePrimitive.Parts />
     </div>
+    <NativeMessageActions align="end" />
   </MessagePrimitive.Root>
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="flex flex-col py-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+  <MessagePrimitive.Root className="group/native-msg flex flex-col py-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
     <div className="mr-auto w-full break-words text-sm leading-relaxed">
       <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
     </div>
+    <NativeMessageActions align="start" />
   </MessagePrimitive.Root>
 );
 
