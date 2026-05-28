@@ -177,9 +177,7 @@ describe("prompt to daemon to client trace", () => {
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(null);
     vi.mocked(getAuthorizedThreadAccess).mockResolvedValue({
       ownerUserId: "user-1",
-      isOwner: true,
-      viaVisibility: false,
-      viaRepoPermission: false,
+      visibility: "private",
     });
     vi.mocked(getSessionOrNull).mockResolvedValue({
       session: {
