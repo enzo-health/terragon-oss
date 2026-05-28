@@ -9,11 +9,7 @@ import {
   AIModelSchema,
 } from "@terragon/agent/types";
 import { readBoolean, readString, toRecord } from "./json-read";
-import {
-  type ClaudeMessage,
-  type DaemonTransportMode,
-  isDeltaStreamedAssistantMessage,
-} from "./shared";
+import { type ClaudeMessage, type DaemonTransportMode } from "./shared";
 
 function stringifyCanonicalToolResult(value: unknown): string {
   if (typeof value === "string") {
@@ -181,16 +177,25 @@ export function buildCanonicalEventsForBatch(
   const canonicalModel = toCanonicalModelOrNull(model);
   for (const message of messages) {
     if (message.type === "assistant") {
-      // A Codex agent_message / reasoning whose text already streamed as
-      // deltas under `_codexItemId` is represented solely by that delta
-      // stream; a canonical event here would render the same text twice.
-      // Such messages carry only text/thinking blocks (never tool_use), so
-      // skipping the whole message loses nothing.
-      if (isDeltaStreamedAssistantMessage(message)) {
+      // A Codex agent_message whose text already streamed as deltas under
+      // `_codexItemId` is represented solely by that delta stream; skipping
+      // the whole message is safe because Codex delta-streamed messages
+      // carry only text/thinking blocks (never tool_use).
+      if (message._codexItemId !== undefined) {
         continue;
       }
+      // W-ID.3: For Claude/ACP messages with `_claudeStreamedBlockIndices`,
+      // skip only the text/thinking blocks at those indices. Tool-use blocks
+      // and un-streamed text blocks still need canonical events.
+      const streamedBlockSet = new Set<number>(
+        message._claudeStreamedBlockIndices ?? [],
+      );
       const content = message.message.content;
       if (typeof content === "string") {
+        // String content maps to block index 0. If that was streamed, skip.
+        if (streamedBlockSet.has(0)) {
+          continue;
+        }
         if (content.length === 0) {
           continue;
         }
@@ -211,11 +216,18 @@ export function buildCanonicalEventsForBatch(
         continue;
       }
 
-      for (const block of content) {
+      for (let blockIndex = 0; blockIndex < content.length; blockIndex += 1) {
+        const block = content[blockIndex]!;
         const blockRecord = toRecord(block);
         const blockType = readString(blockRecord, "type");
-        if (blockType === "text") {
-          const text = readString(blockRecord, "text");
+        if (blockType === "text" || blockType === "thinking") {
+          // Skip this block if its text/thinking was already delta-streamed.
+          if (streamedBlockSet.has(blockIndex)) {
+            continue;
+          }
+          const text =
+            readString(blockRecord, "text") ??
+            readString(blockRecord, "thinking");
           if (!text || text.length === 0) {
             continue;
           }

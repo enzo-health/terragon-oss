@@ -796,4 +796,12 @@
     animation: none !important;
     transition: none !important;
   }
+
+  /* Sidebar transitions */
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"],
+  [data-slot="sidebar-inner"] {
+    transition-duration: 0.01ms !important;
+    transition-timing-function: step-end !important;
+  }
 }

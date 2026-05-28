@@ -191,6 +191,16 @@ export const defaultConfig: ArchitectureLintConfig = {
     },
     {
       rule: "no-unsafe-runtime-boundary-casts",
+      file: "packages/daemon/src/claude.ts",
+      line: 586,
+      owner: "smooth-runtime-rewrite",
+      reason:
+        "Claude adapter still hydrates provider JSON into Claude message types",
+      deletionCriterion:
+        "remove after Claude streaming parser is schema-backed",
+    },
+    {
+      rule: "no-unsafe-runtime-boundary-casts",
       file: "packages/daemon/src/codex-app-server.ts",
       line: 854,
       owner: "smooth-runtime-rewrite",

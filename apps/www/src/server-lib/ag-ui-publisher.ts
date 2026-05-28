@@ -252,11 +252,14 @@ export async function publishPersistedAgUiEvents(
   const startedAtMs = Date.now();
   const publishPayloads = publishEntries.map(({ event, envelope }) => ({
     event,
+    // When an envelope is present, it already contains the full event as its
+    // `payload` field. The SSE reader (readEventField) prefers the envelope
+    // field over the event field, so the standalone event is redundant.
+    // Omitting it cuts Redis memory per event by ~50%.
     data:
       envelope === undefined
         ? { event: serializeAgUiEvent(event) }
         : {
-            event: serializeAgUiEvent(event),
             envelope: serializeAgUiTransportEnvelope(envelope),
           },
   }));
@@ -286,7 +289,7 @@ export async function publishPersistedAgUiEvents(
 type AgUiRedisPublishPayload = {
   event: BaseEvent;
   data: {
-    event: string;
+    event?: string;
     envelope?: string;
   };
 };

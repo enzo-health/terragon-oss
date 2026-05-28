@@ -41,6 +41,13 @@ export type PersistSideEffectAgUiMessagesParams = {
   source: string;
   chatSequence?: number;
   runId?: string | null;
+  /**
+   * When true, the native AG-UI runtime (canonical events + deltas + rich
+   * parts) already covers all transcript content in agent_event_log. The
+   * MESSAGES_SNAPSHOT side-effect is redundant and can be skipped, saving
+   * one DB transaction + advisory lock + Redis pipeline per batch.
+   */
+  skipForNativeRuntime?: boolean;
 };
 
 export type NativeAgUiTranscript = {
@@ -94,7 +101,15 @@ export async function persistSideEffectAgUiMessages({
   source,
   chatSequence,
   runId,
+  skipForNativeRuntime = false,
 }: PersistSideEffectAgUiMessagesParams): Promise<void> {
+  // When the native AG-UI runtime already covers transcript content via
+  // canonical events + deltas + rich parts, the MESSAGES_SNAPSHOT is
+  // redundant — skipping it saves one DB transaction + advisory lock +
+  // Redis pipeline per batch.
+  if (skipForNativeRuntime) {
+    return;
+  }
   const agUiMessages = dbMessagesToNativeAgUiSnapshotMessages(messages);
   if (agUiMessages.length === 0) {
     return;

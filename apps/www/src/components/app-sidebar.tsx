@@ -1,23 +1,26 @@
 "use client";
 
-import { publicDocsUrl } from "@terragon/env/next-public";
 import { useAtomValue } from "jotai";
 import {
-  BookOpen,
+  Bot,
+  Blocks,
   ChartColumnBig,
   ChevronUp,
   Container,
+  GitBranch,
   Home,
+  LogOut,
   MoonIcon,
   Settings,
   Shield,
+  SquarePen,
   SunIcon,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { userAtom } from "@/atoms/user";
 import { signOut } from "@/components/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -37,7 +40,6 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -47,6 +49,25 @@ import {
 import { cn } from "@/lib/utils";
 import { headerClassName } from "./shared/header";
 import { Wordmark, WordmarkLogo } from "./shared/wordmark";
+import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+
+const SidebarThreadList = dynamic(
+  () => import("./sidebar-thread-list").then((mod) => mod.SidebarThreadList),
+  { ssr: false, loading: () => <SidebarThreadListLoading /> },
+);
+
+// Loading fallback — used in the Suspense boundary inside the sidebar
+function SidebarThreadListLoading() {
+  return (
+    <div className="flex flex-col gap-2 px-3 py-3">
+      <div className="h-3 w-20 rounded bg-muted animate-pulse" />
+      <div className="h-8 rounded-md bg-muted/70 animate-pulse" />
+      <div className="h-8 rounded-md bg-muted/50 animate-pulse" />
+      <div className="h-8 rounded-md bg-muted/40 animate-pulse" />
+    </div>
+  );
+}
 
 function SidebarHeaderContent() {
   const { open, isMobile, toggleSidebar } = useSidebar();
@@ -73,35 +94,13 @@ function SidebarHeaderContent() {
   );
 }
 
-function AppMenuItem({
-  children,
-  onClick,
-  ...props
-}: React.ComponentProps<"li">) {
-  const { isMobile, setOpenMobile } = useSidebar();
-
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLLIElement>) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      onClick?.(e);
-    },
-    [isMobile, setOpenMobile, onClick],
-  );
-
-  return (
-    <SidebarMenuItem onClick={handleClick} {...props}>
-      {children}
-    </SidebarMenuItem>
-  );
-}
-
 export function AppSidebar() {
   const user = useAtomValue(userAtom);
   const isAdmin = user?.role === "admin";
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     setMounted(true);
@@ -117,98 +116,69 @@ export function AppSidebar() {
       >
         <SidebarHeaderContent />
       </SidebarHeader>
-      <SidebarContent className="px-1.5 pb-3 pt-0 group-data-[collapsible=icon]:px-1.5">
-        <SidebarGroup>
+
+      <SidebarContent className="px-1.5 pb-2 pt-0 group-data-[collapsible=icon]:px-1.5">
+        {/* New Task Button */}
+        <SidebarGroup className="py-1">
           <SidebarGroupContent>
             <SidebarMenu>
-              <Item
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="New Task"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+                >
+                  <Link href="/dashboard" className="font-medium text-xs">
+                    <SquarePen className="h-3.5 w-3.5" />
+                    <span>New Task</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Home nav */}
+        <SidebarGroup className="py-0.5">
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <NavItem
                 title="Home"
                 href="/dashboard"
                 icon={<Home className="h-3.5 w-3.5" />}
-              />
-              <Item
-                title="Automations"
-                href="/automations"
-                icon={<Workflow className="h-3.5 w-3.5" />}
-              />
-              <Item
-                title="Stats"
-                href="/stats"
-                icon={<ChartColumnBig className="h-3.5 w-3.5" />}
+                isActive={pathname === "/dashboard"}
               />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup className="mt-0.5">
-          <SidebarGroupLabel className="mb-0.5 px-2.5">
-            Configure
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <Item
-                title="Environments"
-                href="/environments"
-                icon={<Container className="h-3.5 w-3.5" />}
-              />
-              <Item
-                title="Settings"
-                href="/settings"
-                icon={<Settings className="h-3.5 w-3.5" />}
-              />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        {isAdmin && (
-          <SidebarGroup className="mt-1.5">
-            <SidebarGroupLabel className="mb-0.5 px-2.5">
-              Admin
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <Item
-                  title="Admin Panel"
-                  href="/internal/admin"
-                  icon={<Shield className="h-3.5 w-3.5" />}
-                />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
 
-        <SidebarGroup className="mt-auto pt-0.5">
-          <SidebarGroupLabel className="mb-0.5 px-2.5">
-            Support
+        {/* Sessions grouped by repo */}
+        <SidebarGroup className="flex-1 min-h-0 overflow-hidden">
+          <SidebarGroupLabel className="mb-0.5 px-2.5 text-[10px]">
+            Sessions
           </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <Item
-                title="Documentation"
-                href={publicDocsUrl()}
-                icon={<BookOpen className="h-3.5 w-3.5" />}
-                external
-              />
-            </SidebarMenu>
+          <SidebarGroupContent className="overflow-y-auto">
+            <Suspense fallback={<SidebarThreadListLoading />}>
+              <SidebarThreadList />
+            </Suspense>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="sidebar-footer-pwa border-t border-sidebar-border/70 px-2 pb-2 pt-2 group-data-[collapsible=icon]:px-1.5">
+
+      <SidebarFooter className="border-t border-sidebar-border/70 px-2 pb-2 pt-2 group-data-[collapsible=icon]:px-1.5">
         <SidebarMenu>
-          <AppMenuItem>
+          {/* Settings gear */}
+          <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
                   size="lg"
-                  tooltip={user?.name ?? "Account"}
+                  tooltip="Settings"
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
-                  <Avatar className="size-7 rounded-md">
-                    <AvatarImage src={user?.image ?? undefined} />
-                    <AvatarFallback className="rounded-md bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
-                      {user?.name.charAt(0)}
-                    </AvatarFallback>
-                  </Avatar>
+                  <Settings className="size-4 text-muted-foreground" />
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user?.name}</span>
+                    <span className="truncate font-medium">Settings</span>
                   </div>
                   <ChevronUp className="ml-auto size-4 text-muted-foreground" />
                 </SidebarMenuButton>
@@ -219,6 +189,65 @@ export function AppSidebar() {
                 className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
                 sideOffset={4}
               >
+                <DropdownMenuItem
+                  onClick={() => router.push("/settings")}
+                  className="rounded-lg"
+                >
+                  <span>General</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/settings/github")}
+                  className="rounded-lg"
+                >
+                  <GitBranch className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>GitHub & Pull Requests</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/settings/agent")}
+                  className="rounded-lg"
+                >
+                  <Bot className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>Agent</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/settings/integrations")}
+                  className="rounded-lg"
+                >
+                  <Blocks className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>Integrations</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/automations")}
+                  className="rounded-lg"
+                >
+                  <Workflow className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>Automations</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/stats")}
+                  className="rounded-lg"
+                >
+                  <ChartColumnBig className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>Stats</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push("/environments")}
+                  className="rounded-lg"
+                >
+                  <Container className="size-3.5 mr-2 text-muted-foreground" />
+                  <span>Environments</span>
+                </DropdownMenuItem>
+                {isAdmin && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => router.push("/internal/admin")}
+                      className="rounded-lg"
+                    >
+                      <Shield className="size-3.5 mr-2 text-muted-foreground" />
+                      <span>Admin Panel</span>
+                    </DropdownMenuItem>
+                  </>
+                )}
                 {mounted && (
                   <DropdownMenuItem
                     onSelect={(e) => {
@@ -234,11 +263,29 @@ export function AppSidebar() {
                   onClick={() => signOut()}
                   className="rounded-lg"
                 >
+                  <LogOut className="size-3.5 mr-2 text-muted-foreground" />
                   <span>Sign out</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </AppMenuItem>
+          </SidebarMenuItem>
+
+          {/* User account */}
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" tooltip={user?.name ?? "Account"}>
+              <Avatar className="size-7 rounded-md">
+                <AvatarImage src={user?.image ?? undefined} />
+                <AvatarFallback className="rounded-md bg-[var(--warm-stone)] text-foreground text-xs font-semibold">
+                  {user?.name?.charAt(0) ?? "?"}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">
+                  {user?.name ?? "Account"}
+                </span>
+              </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
@@ -246,54 +293,29 @@ export function AppSidebar() {
   );
 }
 
-function Item({
+function NavItem({
   title,
   href,
   icon,
-  count,
-  external = false,
-  prefetch = true,
+  isActive,
 }: {
   title: string;
   href: string;
   icon: React.ReactNode;
-  count?: number;
-  external?: boolean;
-  prefetch?: boolean;
+  isActive: boolean;
 }) {
-  const pathname = usePathname();
-  const isActive = pathname === href;
-
   return (
-    <AppMenuItem>
+    <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={isActive} tooltip={title}>
-        {external ? (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-normal text-xs transition-colors duration-150"
-          >
-            {icon}
-            <span>{title}</span>
-          </a>
-        ) : (
-          <Link
-            href={href}
-            prefetch={prefetch}
-            className="font-normal text-xs transition-colors duration-150"
-          >
-            {icon}
-            <span>{title}</span>
-          </Link>
-        )}
+        <Link
+          href={href}
+          className="font-normal text-xs transition-colors duration-150"
+        >
+          {icon}
+          <span>{title}</span>
+        </Link>
       </SidebarMenuButton>
-      {!!count && (
-        <SidebarMenuBadge className="right-2 rounded-full border border-sidebar-border/60 bg-[var(--warm-stone)] px-1.5 text-[10px] font-semibold text-foreground">
-          {count}
-        </SidebarMenuBadge>
-      )}
-    </AppMenuItem>
+    </SidebarMenuItem>
   );
 }
 

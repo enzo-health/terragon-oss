@@ -981,6 +981,7 @@ export async function handleDaemonEvent({
     source: "daemon-side-effect",
     chatSequence: threadChatMessageSeq ?? undefined,
     runId,
+    skipForNativeRuntime: skipThreadChatPersistence,
   });
   if (invalidTokenRetryQueued) {
     await persistInvalidTokenRetrySideEffectMarker({
