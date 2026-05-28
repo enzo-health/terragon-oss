@@ -74,7 +74,7 @@ describe("sandbox-setup", () => {
       expect(checkoutNewBranchIndex).toBeGreaterThan(cloneIndex);
     });
 
-    it("clones the repo onto the Daytona workspace volume when enabled", async () => {
+    it("configures Daytona volume cache paths while keeping the repo local", async () => {
       const session = new MockSession("mock-sandbox");
       const writes = new Map<string, string>();
       const runCommandSpy = vi
@@ -96,146 +96,32 @@ describe("sandbox-setup", () => {
           workspaceMountPath: "/mnt/terragon/workspace",
           workspaceSubpath:
             "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-          repoOnVolume: true,
         },
       });
 
       expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
         "PNPM_STORE_DIR=/mnt/terragon/cache/pnpm-store",
       );
-      expect(runCommandSpy).toHaveBeenCalledWith(
-        "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git '/mnt/terragon/workspace/repo'",
-        { cwd: "/root" },
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "XDG_CACHE_HOME=/mnt/terragon/cache/xdg",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "PLAYWRIGHT_BROWSERS_PATH=/mnt/terragon/cache/ms-playwright",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "TURBO_CACHE_DIR=/mnt/terragon/cache/turbo",
       );
       expect(runCommandSpy).toHaveBeenCalledWith(
-        "ln -s '/mnt/terragon/workspace/repo' '/root/repo'",
+        expect.stringContaining("'\/mnt\/terragon\/cache\/ms-playwright'"),
         { cwd: "/" },
       );
-    });
-
-    it("moves a snapshot checkout onto the Daytona workspace volume when enabled", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async () => "");
-      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
-
-      await setupSandboxOneTime(session, {
-        ...defaultOptions,
-        snapshotTemplateId: "snapshot-template",
-        sandboxProvider: "daytona",
-        daytonaVolume: {
-          volumeName: "terragon-workspaces",
-          cacheMountPath: "/mnt/terragon/cache",
-          cacheSubpath: "users/user-123/cache",
-          workspaceMountPath: "/mnt/terragon/workspace",
-          workspaceSubpath:
-            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-          repoOnVolume: true,
-        },
-      });
-
-      const moveCommand = runCommandSpy.mock.calls.find((call) =>
-        call[0].includes(
-          "rm -rf '/mnt/terragon/workspace/repo' && cp -a '/root/repo' '/mnt/terragon/workspace/repo'",
-        ),
-      );
-      expect(moveCommand).toBeDefined();
-      expect(moveCommand?.[0]).toContain(
-        "ln -s '/mnt/terragon/workspace/repo' '/root/repo'",
-      );
       expect(runCommandSpy).toHaveBeenCalledWith(
-        'git remote set-url origin "https://${GITHUB_ACCESS_TOKEN}@github.com/owner/repo.git"',
-        { env: { GITHUB_ACCESS_TOKEN: "test-token" } },
-      );
-    });
-
-    it("reuses an existing Daytona snapshot volume repo without cleaning it", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async (command) => {
-          if (command.includes("test -d '/mnt/terragon/workspace/repo/.git'")) {
-            return "exists\n";
-          }
-          return "";
-        });
-      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
-
-      await setupSandboxOneTime(session, {
-        ...defaultOptions,
-        snapshotTemplateId: "snapshot-template",
-        sandboxProvider: "daytona",
-        daytonaVolume: {
-          volumeName: "terragon-workspaces",
-          cacheMountPath: "/mnt/terragon/cache",
-          cacheSubpath: "users/user-123/cache",
-          workspaceMountPath: "/mnt/terragon/workspace",
-          workspaceSubpath:
-            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-          repoOnVolume: true,
-        },
-      });
-
-      const commands = runCommandSpy.mock.calls.map((call) => call[0]);
-      expect(commands).toContain(
-        "mkdir -p '/mnt/terragon/workspace' && rm -rf '/root/repo' && ln -s '/mnt/terragon/workspace/repo' '/root/repo'",
+        "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git repo",
+        { cwd: "/root" },
       );
       expect(
-        commands.some((command) =>
-          command.includes("cp -a '/root/repo' '/mnt/terragon/workspace/repo'"),
-        ),
-      ).toBe(false);
-      expect(
-        commands.some((command) => command.includes("git checkout -b")),
-      ).toBe(false);
-      expect(commands.some((command) => command === "git clean -fxd")).toBe(
-        false,
-      );
-    });
-
-    it("reuses an existing Daytona volume repo without deleting workspace state", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async (command) => {
-          if (command.includes("test -d '/mnt/terragon/workspace/repo/.git'")) {
-            return "exists\n";
-          }
-          return "";
-        });
-      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
-
-      await setupSandboxOneTime(session, {
-        ...defaultOptions,
-        sandboxProvider: "daytona",
-        daytonaVolume: {
-          volumeName: "terragon-workspaces",
-          cacheMountPath: "/mnt/terragon/cache",
-          cacheSubpath: "users/user-123/cache",
-          workspaceMountPath: "/mnt/terragon/workspace",
-          workspaceSubpath:
-            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
-          repoOnVolume: true,
-        },
-      });
-
-      const commands = runCommandSpy.mock.calls.map((call) => call[0]);
-      expect(commands).toContain(
-        "rm -rf /root/repo && ln -s '/mnt/terragon/workspace/repo' '/root/repo'",
-      );
-      expect(commands.some((command) => command.includes("git clone"))).toBe(
-        false,
-      );
-      expect(
-        commands.some((command) => command.includes("git checkout -b")),
-      ).toBe(false);
-      expect(commands.some((command) => command === "git clean -fxd")).toBe(
-        false,
-      );
-      expect(
-        commands.some((command) =>
-          command.includes("rm -rf '/mnt/terragon/workspace/repo'"),
+        runCommandSpy.mock.calls.some((call) =>
+          call[0].includes("/mnt/terragon/workspace/repo"),
         ),
       ).toBe(false);
     });

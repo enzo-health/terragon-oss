@@ -103,7 +103,6 @@ export const env = envsafe(
     E2B_API_KEY: str({ allowEmpty: true, default: "" }),
     DAYTONA_API_KEY: str({ default: "", allowEmpty: true }),
     DAYTONA_VOLUME_NAME: str({ default: "", allowEmpty: true }),
-    DAYTONA_VOLUME_REPO_STORAGE: str({ default: "local", allowEmpty: true }),
 
     // GitHub App
     GITHUB_CLIENT_ID: str(),

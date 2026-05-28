@@ -31,7 +31,6 @@ import path from "path";
 
 const DAYTONA_VOLUME_PROFILE_PATH = "/etc/profile.d/00-terragon-volume.sh";
 const DAYTONA_VOLUME_ARTIFACTS_DIR = "artifacts";
-const DAYTONA_VOLUME_REPO_DIR = "repo";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -234,10 +233,9 @@ export async function setupSandboxOneTime(
 
   await setupDaytonaVolumePaths(session, options);
 
-  const reusedDaytonaVolumeRepo = options.snapshotTemplateId
-    ? await moveSnapshotRepoToDaytonaVolume(session, options)
-    : await gitCloneRepo(session, options);
-  if (options.snapshotTemplateId) {
+  if (!options.snapshotTemplateId) {
+    await gitCloneRepo(session, options);
+  } else {
     // Repo already cloned in snapshot — just update git remote with fresh token
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,
@@ -256,9 +254,7 @@ export async function setupSandboxOneTime(
       `git config core.pager cat`,
     ].join(" && "),
   );
-  if (reusedDaytonaVolumeRepo) {
-    console.log("Reusing existing Daytona volume repo checkout");
-  } else if (options.createNewBranch) {
+  if (options.createNewBranch) {
     await createNewBranch({
       session,
       threadName: options.threadName,
@@ -268,9 +264,7 @@ export async function setupSandboxOneTime(
     // Checkout specific branch when createNewBranch is false but branchName is provided
     await session.runCommand(`git checkout ${bashQuote(options.branchName)}`);
   }
-  if (!reusedDaytonaVolumeRepo) {
-    await session.runCommand(`git clean -fxd`);
-  }
+  await session.runCommand(`git clean -fxd`);
 
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
@@ -329,18 +323,6 @@ export async function setupSandboxOneTime(
   }
 }
 
-function getDaytonaVolumeRepoPath(
-  options: CreateSandboxOptions,
-): string | null {
-  if (!options.daytonaVolume?.repoOnVolume) {
-    return null;
-  }
-  return path.posix.join(
-    options.daytonaVolume.workspaceMountPath,
-    DAYTONA_VOLUME_REPO_DIR,
-  );
-}
-
 function getDaytonaVolumeArtifactsPath(
   options: CreateSandboxOptions,
 ): string | null {
@@ -373,6 +355,16 @@ async function setupDaytonaVolumePaths(
     "go/pkg/mod",
     "go/build",
     "composer",
+    "xdg",
+    "corepack",
+    "turbo",
+    "ms-playwright",
+    "puppeteer",
+    "cypress",
+    "huggingface/transformers",
+    "huggingface/sentence-transformers",
+    "matplotlib",
+    "eslint",
   ];
   const cachePaths = cacheDirs.map((dir) =>
     path.posix.join(volume.cacheMountPath, dir),
@@ -402,6 +394,17 @@ async function setupDaytonaVolumePaths(
     `export GOMODCACHE=${path.posix.join(volume.cacheMountPath, "go/pkg/mod")}`,
     `export GOCACHE=${path.posix.join(volume.cacheMountPath, "go/build")}`,
     `export COMPOSER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "composer")}`,
+    `export XDG_CACHE_HOME=${path.posix.join(volume.cacheMountPath, "xdg")}`,
+    `export COREPACK_HOME=${path.posix.join(volume.cacheMountPath, "corepack")}`,
+    `export TURBO_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "turbo")}`,
+    `export PLAYWRIGHT_BROWSERS_PATH=${path.posix.join(volume.cacheMountPath, "ms-playwright")}`,
+    `export PUPPETEER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "puppeteer")}`,
+    `export CYPRESS_CACHE_FOLDER=${path.posix.join(volume.cacheMountPath, "cypress")}`,
+    `export HF_HOME=${path.posix.join(volume.cacheMountPath, "huggingface")}`,
+    `export TRANSFORMERS_CACHE=${path.posix.join(volume.cacheMountPath, "huggingface/transformers")}`,
+    `export SENTENCE_TRANSFORMERS_HOME=${path.posix.join(volume.cacheMountPath, "huggingface/sentence-transformers")}`,
+    `export MPLCONFIGDIR=${path.posix.join(volume.cacheMountPath, "matplotlib")}`,
+    `export ESLINT_CACHE_LOCATION=${path.posix.join(volume.cacheMountPath, "eslint/.eslintcache")}`,
     ...(artifactsPath
       ? [`export TERRAGON_ARTIFACTS_DIR=${artifactsPath}`]
       : []),
@@ -412,36 +415,6 @@ async function setupDaytonaVolumePaths(
     `chmod 644 ${bashQuote(DAYTONA_VOLUME_PROFILE_PATH)} && grep -qs 'terragon-volume' /${session.homeDir}/.bashrc 2>/dev/null || echo '. ${DAYTONA_VOLUME_PROFILE_PATH} # terragon-volume' >> /${session.homeDir}/.bashrc`,
     { cwd: "/" },
   );
-}
-
-async function moveSnapshotRepoToDaytonaVolume(
-  session: ISandboxSession,
-  options: CreateSandboxOptions,
-): Promise<boolean> {
-  const repoPath = getDaytonaVolumeRepoPath(options);
-  if (!repoPath) {
-    return false;
-  }
-
-  const localRepoPath = `/${session.homeDir}/${session.repoDir}`;
-  const existingVolumeRepo = await session.runCommand(
-    `test -d ${bashQuote(repoPath + "/.git")} && echo "exists" || echo "missing"`,
-    { cwd: "/" },
-  );
-  const shouldReuseVolumeRepo = existingVolumeRepo.trim() === "exists";
-  const command = [
-    `mkdir -p ${bashQuote(path.posix.dirname(repoPath))}`,
-    ...(shouldReuseVolumeRepo
-      ? []
-      : [
-          `rm -rf ${bashQuote(repoPath)}`,
-          `cp -a ${bashQuote(localRepoPath)} ${bashQuote(repoPath)}`,
-        ]),
-    `rm -rf ${bashQuote(localRepoPath)}`,
-    `ln -s ${bashQuote(repoPath)} ${bashQuote(localRepoPath)}`,
-  ].join(" && ");
-  await session.runCommand(command, { cwd: "/" });
-  return shouldReuseVolumeRepo;
 }
 
 /**
@@ -564,7 +537,7 @@ export async function launchSetupScriptInBackground({
 export async function gitCloneRepo(
   session: ISandboxSession,
   options: CreateSandboxOptions,
-): Promise<boolean> {
+): Promise<void> {
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",
@@ -576,40 +549,8 @@ export async function gitCloneRepo(
   if (options.repoBaseBranchName) {
     cloneCommand += ` --branch ${bashQuote(options.repoBaseBranchName)}`;
   }
-  const repoPath = getDaytonaVolumeRepoPath(options);
-  const cloneTarget = repoPath ?? session.repoDir;
-  if (repoPath) {
-    await session.runCommand(
-      `mkdir -p ${bashQuote(path.posix.dirname(repoPath))}`,
-      {
-        cwd: "/",
-      },
-    );
-    const existingVolumeRepo = await session.runCommand(
-      `test -d ${bashQuote(repoPath + "/.git")} && echo "exists" || echo "missing"`,
-      { cwd: "/" },
-    );
-    if (existingVolumeRepo.trim() === "exists") {
-      await session.runCommand(
-        `rm -rf /${session.homeDir}/${session.repoDir} && ln -s ${bashQuote(repoPath)} ${bashQuote(`/${session.homeDir}/${session.repoDir}`)}`,
-        { cwd: "/" },
-      );
-      return true;
-    }
-    await session.runCommand(
-      `rm -rf /${session.homeDir}/${session.repoDir} ${bashQuote(repoPath)}`,
-      { cwd: "/" },
-    );
-  }
-  const quotedCloneTarget = repoPath ? bashQuote(cloneTarget) : cloneTarget;
-  cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${quotedCloneTarget}`;
+  cloneCommand += ` https://github.com/${options.githubRepoFullName}.git ${session.repoDir}`;
   await session.runCommand(cloneCommand, { cwd: `/${session.homeDir}` });
-  if (repoPath) {
-    await session.runCommand(
-      `ln -s ${bashQuote(repoPath)} ${bashQuote(`/${session.homeDir}/${session.repoDir}`)}`,
-      { cwd: "/" },
-    );
-  }
 
   // Exclude core dumps from git status to prevent accidental commits.
   // Core dumps from crashing binaries (e.g. ESLint custom-rules) pollute the
@@ -620,7 +561,6 @@ export async function gitCloneRepo(
     `mkdir -p $(dirname ${bashQuote(excludeFile)}) && echo "core.*" >> ${bashQuote(excludeFile)}`,
     { cwd: `/${session.homeDir}` },
   );
-  return false;
 }
 
 export async function setupGitCredentials(

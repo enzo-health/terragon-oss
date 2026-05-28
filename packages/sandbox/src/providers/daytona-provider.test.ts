@@ -151,7 +151,7 @@ describe("DaytonaProvider lifecycle policy", () => {
     });
   });
 
-  it("mounts configured Daytona cache and workspace volume subpaths", async () => {
+  it("mounts configured Daytona cache and artifact volume subpaths", async () => {
     const sandbox = createMockSandbox();
     daytonaCreateMock.mockResolvedValue(sandbox);
 
@@ -166,7 +166,6 @@ describe("DaytonaProvider lifecycle policy", () => {
         workspaceMountPath: "/mnt/terragon/workspace",
         workspaceSubpath:
           "users/user-123/environments/env-123/threads/thread-1",
-        repoOnVolume: true,
       },
     });
 

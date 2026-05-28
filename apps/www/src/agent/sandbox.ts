@@ -84,14 +84,12 @@ export function resolveDaytonaVolumeConfig({
   threadId,
   repoFullName,
   volumeName = env.DAYTONA_VOLUME_NAME,
-  repoStorage = env.DAYTONA_VOLUME_REPO_STORAGE,
 }: {
   userId: string;
   environmentId: string;
   threadId: string;
   repoFullName: string | null;
   volumeName?: string;
-  repoStorage?: string;
 }): DaytonaVolumeConfig | undefined {
   const trimmedVolumeName = volumeName.trim();
   if (!trimmedVolumeName) {
@@ -99,7 +97,6 @@ export function resolveDaytonaVolumeConfig({
   }
 
   const repoSegment = sanitizeVolumeSubpathSegment(repoFullName || "no-repo");
-  const repoOnVolume = repoStorage === "volume";
   return {
     volumeName: trimmedVolumeName,
     cacheMountPath: DAYTONA_VOLUME_CACHE_MOUNT_PATH,
@@ -115,7 +112,6 @@ export function resolveDaytonaVolumeConfig({
       "threads",
       sanitizeVolumeSubpathSegment(threadId),
     ].join("/"),
-    repoOnVolume,
   };
 }
 
@@ -149,6 +145,38 @@ export function getDaytonaVolumeEnvironmentEntries(
     {
       key: "COMPOSER_CACHE_DIR",
       value: `${daytonaVolume.cacheMountPath}/composer`,
+    },
+    { key: "XDG_CACHE_HOME", value: `${daytonaVolume.cacheMountPath}/xdg` },
+    { key: "COREPACK_HOME", value: `${daytonaVolume.cacheMountPath}/corepack` },
+    { key: "TURBO_CACHE_DIR", value: `${daytonaVolume.cacheMountPath}/turbo` },
+    {
+      key: "PLAYWRIGHT_BROWSERS_PATH",
+      value: `${daytonaVolume.cacheMountPath}/ms-playwright`,
+    },
+    {
+      key: "PUPPETEER_CACHE_DIR",
+      value: `${daytonaVolume.cacheMountPath}/puppeteer`,
+    },
+    {
+      key: "CYPRESS_CACHE_FOLDER",
+      value: `${daytonaVolume.cacheMountPath}/cypress`,
+    },
+    { key: "HF_HOME", value: `${daytonaVolume.cacheMountPath}/huggingface` },
+    {
+      key: "TRANSFORMERS_CACHE",
+      value: `${daytonaVolume.cacheMountPath}/huggingface/transformers`,
+    },
+    {
+      key: "SENTENCE_TRANSFORMERS_HOME",
+      value: `${daytonaVolume.cacheMountPath}/huggingface/sentence-transformers`,
+    },
+    {
+      key: "MPLCONFIGDIR",
+      value: `${daytonaVolume.cacheMountPath}/matplotlib`,
+    },
+    {
+      key: "ESLINT_CACHE_LOCATION",
+      value: `${daytonaVolume.cacheMountPath}/eslint/.eslintcache`,
     },
     {
       key: "TERRAGON_ARTIFACTS_DIR",
