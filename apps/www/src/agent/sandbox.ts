@@ -130,6 +130,10 @@ export function getDaytonaVolumeEnvironmentEntries(
       key: "npm_config_store_dir",
       value: `${daytonaVolume.cacheMountPath}/pnpm-store`,
     },
+    {
+      key: "pnpm_config_store_dir",
+      value: `${daytonaVolume.cacheMountPath}/pnpm-store`,
+    },
     { key: "npm_config_cache", value: `${daytonaVolume.cacheMountPath}/npm` },
     { key: "YARN_CACHE_FOLDER", value: `${daytonaVolume.cacheMountPath}/yarn` },
     {
