@@ -5,6 +5,7 @@ import { HttpAgent } from "@ag-ui/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { serializeAgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 import type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
+import { createAgUiDeltaCoalescingMiddleware } from "./ag-ui-delta-coalescing";
 
 export type { AgUiReplayCursor } from "@/lib/ag-ui-replay-cursor";
 
@@ -12,6 +13,28 @@ export type AgUiTransport = {
   agent: HttpAgent | null;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
 };
+
+const SYNTHETIC_AG_UI_BENCHMARK_STORAGE_KEY =
+  "__terragonSyntheticAgUiBenchmarkStream";
+const SYNTHETIC_AG_UI_BENCHMARK_QUERY_VALUE = "long-stream";
+
+export function shouldUseSyntheticAgUiBenchmarkStream(): boolean {
+  try {
+    return (
+      globalThis.sessionStorage?.getItem(
+        SYNTHETIC_AG_UI_BENCHMARK_STORAGE_KEY,
+      ) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function applySyntheticAgUiBenchmarkQuery(query: URLSearchParams): void {
+  if (shouldUseSyntheticAgUiBenchmarkStream()) {
+    query.set("syntheticBenchmark", SYNTHETIC_AG_UI_BENCHMARK_QUERY_VALUE);
+  }
+}
 
 function syncAgentUrl({
   agent,
@@ -27,6 +50,7 @@ function syncAgentUrl({
   replayCursor: AgUiReplayCursor | null;
 }): void {
   const query = new URLSearchParams({ threadChatId });
+  applySyntheticAgUiBenchmarkQuery(query);
   if (replayCursor) {
     query.set("fromSeq", serializeAgUiReplayCursor(replayCursor));
   }
@@ -100,6 +124,7 @@ export function useAgUiTransport(args: {
   const agent = useMemo(() => {
     if (!threadChatId) return null;
     const query = new URLSearchParams({ threadChatId });
+    applySyntheticAgUiBenchmarkQuery(query);
     const url = `/api/ag-ui/${encodeURIComponent(threadId)}?${query.toString()}`;
 
     return new HttpAgent({
@@ -107,7 +132,7 @@ export function useAgUiTransport(args: {
       threadId,
       initialMessages,
       initialState,
-    });
+    }).use(createAgUiDeltaCoalescingMiddleware());
   }, [initialMessages, initialState, threadChatId, threadId]);
 
   const setReplayCursor = useCallback(

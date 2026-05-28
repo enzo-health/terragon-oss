@@ -59,6 +59,8 @@ export function useScrollToBottom({
   const resizeScrollFrameRef = useRef<number | null>(null);
   const imperativeScrollFrameRef = useRef<number | null>(null);
   const lastUserScrollUpAtRef = useRef(0);
+  const initialAutoPinGraceUntilRef = useRef(0);
+  const initialAutoPinnedScrollTopRef = useRef(0);
 
   const updateContainer = useCallback(() => {
     const nextContainer = getScrollParentOrNull(endRef.current);
@@ -67,14 +69,21 @@ export function useScrollToBottom({
     );
   }, []);
 
-  const updateIsAtBottom = useCallback((nextContainer: HTMLElement) => {
-    const atBottom = isContainerAtBottom(nextContainer);
+  const setIsAtBottom = useCallback((atBottom: boolean) => {
     isAtBottom.current = atBottom;
     setIsAtBottomState((current) =>
       current === atBottom ? current : atBottom,
     );
-    return atBottom;
   }, []);
+
+  const updateIsAtBottom = useCallback(
+    (nextContainer: HTMLElement) => {
+      const atBottom = isContainerAtBottom(nextContainer);
+      setIsAtBottom(atBottom);
+      return atBottom;
+    },
+    [setIsAtBottom],
+  );
 
   const scrollContainerToBottom = useCallback((nextContainer: HTMLElement) => {
     nextContainer.scrollTop = nextContainer.scrollHeight;
@@ -154,7 +163,8 @@ export function useScrollToBottom({
         imperativeScrollFrameRef.current = requestAnimationFrame(() => {
           imperativeScrollFrameRef.current = null;
           scrollContainerToBottom(nextContainer);
-          updateIsAtBottom(nextContainer);
+          initialAutoPinnedScrollTopRef.current = nextContainer.scrollTop;
+          setIsAtBottom(true);
         });
         return;
       }
@@ -166,7 +176,7 @@ export function useScrollToBottom({
         });
       }
     },
-    [scrollContainerToBottom, updateIsAtBottom],
+    [scrollContainerToBottom, setIsAtBottom],
   );
 
   const maybeScrollToBottom = useCallback(() => {
@@ -175,45 +185,58 @@ export function useScrollToBottom({
       return;
     }
     const wasPinned = isAtBottom.current;
-    const currentlyAtBottom = isContainerAtBottom(nextContainer);
+    const withinInitialAutoPinGrace =
+      performance.now() < initialAutoPinGraceUntilRef.current;
     const userRecentlyScrolledUp =
       performance.now() - lastUserScrollUpAtRef.current < 250;
-    if (!currentlyAtBottom && userRecentlyScrolledUp) {
-      updateIsAtBottom(nextContainer);
+    const changedFromInitialAutoPin =
+      nextContainer.scrollTop !== initialAutoPinnedScrollTopRef.current;
+    if (wasPinned && withinInitialAutoPinGrace && changedFromInitialAutoPin) {
+      setIsAtBottom(false);
       return;
     }
-    if (wasPinned || currentlyAtBottom) {
-      forceScrollToBottom("auto");
+    if (wasPinned && userRecentlyScrolledUp) {
+      setIsAtBottom(false);
+      return;
     }
-  }, [forceScrollToBottom, updateIsAtBottom]);
+    if (wasPinned) {
+      scrollContainerToBottom(nextContainer);
+      initialAutoPinnedScrollTopRef.current = nextContainer.scrollTop;
+      setIsAtBottom(true);
+      return;
+    }
+
+    const currentlyAtBottom = isContainerAtBottom(nextContainer);
+    if (!currentlyAtBottom && userRecentlyScrolledUp) {
+      setIsAtBottom(false);
+      return;
+    }
+    if (currentlyAtBottom) {
+      scrollContainerToBottom(nextContainer);
+      initialAutoPinnedScrollTopRef.current = nextContainer.scrollTop;
+      setIsAtBottom(true);
+    }
+  }, [scrollContainerToBottom, setIsAtBottom]);
 
   useLayoutEffect(() => {
     if (!container || hasInitialScrollRef.current) {
       return;
     }
 
-    let firstFrame = 0;
-    let secondFrame = 0;
-
-    // Wait briefly so hash navigation and browser restoration can set the
-    // viewport before we decide whether to pin the thread to the bottom.
-    firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        if (!shouldPreserveInitialPosition(container)) {
-          scrollContainerToBottom(container);
-        }
-        updateIsAtBottom(container);
-        hasInitialScrollRef.current = true;
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      cancelAnimationFrame(secondFrame);
-    };
+    if (!shouldPreserveInitialPosition(container)) {
+      scrollContainerToBottom(container);
+      initialAutoPinnedScrollTopRef.current = container.scrollTop;
+      initialAutoPinGraceUntilRef.current = performance.now() + 250;
+      setIsAtBottom(true);
+      hasInitialScrollRef.current = true;
+      return;
+    }
+    updateIsAtBottom(container);
+    hasInitialScrollRef.current = true;
   }, [
     container,
     scrollContainerToBottom,
+    setIsAtBottom,
     shouldPreserveInitialPosition,
     updateIsAtBottom,
   ]);
@@ -224,32 +247,32 @@ export function useScrollToBottom({
       return;
     }
 
+    let isActive = true;
     const scheduleScrollCheck = () => {
+      if (!isActive) return;
       if (resizeScrollFrameRef.current !== null) return;
       resizeScrollFrameRef.current = requestAnimationFrame(() => {
+        if (!isActive) return;
         resizeScrollFrameRef.current = null;
         maybeScrollToBottom();
       });
     };
 
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(scheduleScrollCheck);
+    const usesResizeObserver = typeof ResizeObserver !== "undefined";
+    const observer = usesResizeObserver
+      ? new ResizeObserver(scheduleScrollCheck)
+      : new MutationObserver(scheduleScrollCheck);
+    if (usesResizeObserver) {
       observer.observe(observedNode);
-      return () => {
-        observer.disconnect();
-        if (resizeScrollFrameRef.current !== null) {
-          cancelAnimationFrame(resizeScrollFrameRef.current);
-          resizeScrollFrameRef.current = null;
-        }
-      };
+    } else {
+      (observer as MutationObserver).observe(observedNode, {
+        childList: true,
+        subtree: true,
+      });
     }
 
-    const observer = new MutationObserver(scheduleScrollCheck);
-    observer.observe(observedNode, {
-      childList: true,
-      subtree: true,
-    });
     return () => {
+      isActive = false;
       observer.disconnect();
       if (resizeScrollFrameRef.current !== null) {
         cancelAnimationFrame(resizeScrollFrameRef.current);

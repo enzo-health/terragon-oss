@@ -1,4 +1,4 @@
-import type { BaseEvent } from "@ag-ui/core";
+import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { UIMessage } from "@terragon/shared";
 import {
   createRepoFileArtifactDescriptor,
@@ -8,6 +8,7 @@ import {
   agUiMessagesReducer,
   createInitialAgUiMessagesState,
 } from "../ag-ui-messages-reducer";
+import { getField } from "../ag-ui-reducer-utils";
 import {
   getAgUiEventDedupeKey,
   isCanonicalEventMessageId,
@@ -25,6 +26,7 @@ import { applyOptimisticUserSubmit } from "./optimistic-events";
 import {
   applyLifecycleEvent,
   applyMetaEvent,
+  extractThreadLifecycleMessages,
   getQuarantineEntry,
   mergeMetaSnapshot,
   splitThreadLifecycleMessages,
@@ -61,6 +63,7 @@ export function createInitialThreadViewModelState(
     meta: snapshot.meta,
     githubSummary: snapshot.githubSummary,
     lifecycle: snapshot.lifecycle,
+    lifecycleMessages: extractThreadLifecycleMessages(snapshot.uiMessages),
     quarantine: snapshot.quarantine,
     hasLiveTranscriptEvents: false,
     hasLiveLifecycleEvents: false,
@@ -127,15 +130,11 @@ export function threadViewModelReducer(
 
 export function projectThreadViewModel(
   state: ThreadViewModelState,
+  options: { includeTranscriptMessages?: boolean } = {},
 ): ThreadViewModel {
-  const splitMessages = splitThreadLifecycleMessages(
-    collapseHydrationReplayTextDuplicates(state.transcript.messages),
-  );
-  return {
+  const baseProjection = {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
-    messages: splitMessages.transcriptMessages,
-    lifecycleMessages: splitMessages.lifecycleMessages,
     runtimeState: state.runtimeState,
     runtimeActivities: state.runtimeActivities,
     dbMessages: state.dbMessages,
@@ -151,6 +150,23 @@ export function projectThreadViewModel(
     githubSummary: state.githubSummary,
     lifecycle: state.lifecycle,
     quarantine: state.quarantine,
+  };
+
+  if (options.includeTranscriptMessages === false) {
+    return {
+      ...baseProjection,
+      messages: [],
+      lifecycleMessages: state.lifecycleMessages,
+    };
+  }
+
+  const splitMessages = splitThreadLifecycleMessages(
+    collapseHydrationReplayTextDuplicates(state.transcript.messages),
+  );
+  return {
+    ...baseProjection,
+    messages: splitMessages.transcriptMessages,
+    lifecycleMessages: splitMessages.lifecycleMessages,
   };
 }
 
@@ -241,6 +257,9 @@ function applySnapshot(
   const threadStatus = shouldPreserveLocalLifecycle
     ? state.threadStatus
     : snapshot.threadStatus;
+  const lifecycleMessages = shouldReplaceTranscript
+    ? extractThreadLifecycleMessages(snapshot.uiMessages)
+    : state.lifecycleMessages;
 
   return {
     ...state,
@@ -274,6 +293,7 @@ function applySnapshot(
     meta: mergeMetaSnapshot(state.meta, snapshot.meta),
     githubSummary: snapshot.githubSummary,
     lifecycle,
+    lifecycleMessages,
     quarantine:
       snapshot.quarantine.length > 0
         ? [...state.quarantine, ...snapshot.quarantine]
@@ -305,26 +325,13 @@ function applyAgUiEvent(
     return state;
   }
 
-  const seenEventKeys = dedupeKey
-    ? new Set(state.seenEventKeys)
-    : state.seenEventKeys;
-  const seenEventOrder = dedupeKey
-    ? state.seenEventOrder.slice()
-    : state.seenEventOrder;
-  if (dedupeKey) {
-    trackSeenAgUiEventKey({
-      seenEventKeys,
-      seenEventOrder,
-      key: dedupeKey,
-    });
-  }
-
   const nativeRuntimeProjection = applyNativeRuntimeEvent(state, event);
   if (nativeRuntimeProjection?.quarantineEntry) {
+    const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
     return {
       ...state,
-      seenEventKeys,
-      seenEventOrder,
+      seenEventKeys: tracked.seenEventKeys,
+      seenEventOrder: tracked.seenEventOrder,
       quarantine: [
         ...state.quarantine,
         nativeRuntimeProjection.quarantineEntry,
@@ -334,10 +341,11 @@ function applyAgUiEvent(
 
   const quarantineEntry = getQuarantineEntry(event);
   if (quarantineEntry) {
+    const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
     return {
       ...state,
-      seenEventKeys,
-      seenEventOrder,
+      seenEventKeys: tracked.seenEventKeys,
+      seenEventOrder: tracked.seenEventOrder,
       quarantine: [...state.quarantine, quarantineEntry],
     };
   }
@@ -345,34 +353,41 @@ function applyAgUiEvent(
   const meta = applyMetaEvent(state.meta, event);
   const lifecycle = applyLifecycleEvent(state.lifecycle, event);
   const transcript = agUiMessagesReducer(state.transcript, event);
+  const transcriptChanged = transcript !== state.transcript;
+  const lifecycleMessages =
+    transcriptChanged && shouldRefreshLifecycleMessagesForEvent(event)
+      ? extractThreadLifecycleMessages(transcript.messages)
+      : state.lifecycleMessages;
   const runtimeState =
     nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
   const runtimeActivities =
     nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
-  const artifacts = upsertSynthesizedDescriptor(
-    transcript === state.transcript
-      ? state.artifacts
-      : getStableArtifactsForMessages({
+  const artifactBase =
+    transcriptChanged && shouldRefreshArtifactsForEvent(state, event)
+      ? getStableArtifactsForMessages({
           previous: state.artifacts,
           messages: collapseHydrationReplayTextDuplicates(transcript.messages),
           artifactThread: state.artifactThread,
-        }),
+        })
+      : state.artifacts;
+  const artifacts = upsertSynthesizedDescriptor(
+    artifactBase,
     artifactReferenceDescriptor,
   );
   if (
-    transcript === state.transcript &&
+    !transcriptChanged &&
     artifacts === state.artifacts &&
     meta === state.meta &&
     lifecycle === state.lifecycle &&
     runtimeState === state.runtimeState &&
     runtimeActivities === state.runtimeActivities &&
-    seenEventKeys === state.seenEventKeys &&
-    seenEventOrder === state.seenEventOrder
+    lifecycleMessages === state.lifecycleMessages
   ) {
     return state;
   }
 
+  const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   return {
     ...state,
     transcript,
@@ -381,14 +396,104 @@ function applyAgUiEvent(
     lifecycle,
     runtimeState,
     runtimeActivities,
+    lifecycleMessages,
     threadStatus: lifecycle.threadStatus,
-    seenEventKeys,
-    seenEventOrder,
-    hasLiveTranscriptEvents:
-      transcript !== state.transcript || state.hasLiveTranscriptEvents,
+    seenEventKeys: tracked.seenEventKeys,
+    seenEventOrder: tracked.seenEventOrder,
+    hasLiveTranscriptEvents: transcriptChanged || state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents:
       lifecycle !== state.lifecycle || state.hasLiveLifecycleEvents,
   };
+}
+
+function trackDedupeKeyIfNeeded(
+  state: ThreadViewModelState,
+  dedupeKey: string | null,
+): Pick<ThreadViewModelState, "seenEventKeys" | "seenEventOrder"> {
+  if (!dedupeKey) {
+    return {
+      seenEventKeys: state.seenEventKeys,
+      seenEventOrder: state.seenEventOrder,
+    };
+  }
+
+  const seenEventKeys = new Set(state.seenEventKeys);
+  const seenEventOrder = state.seenEventOrder.slice();
+  trackSeenAgUiEventKey({
+    seenEventKeys,
+    seenEventOrder,
+    key: dedupeKey,
+  });
+  return { seenEventKeys, seenEventOrder };
+}
+
+function shouldRefreshLifecycleMessagesForEvent(event: BaseEvent): boolean {
+  return event.type === EventType.MESSAGES_SNAPSHOT;
+}
+
+function shouldRefreshArtifactsForEvent(
+  state: ThreadViewModelState,
+  event: BaseEvent,
+): boolean {
+  switch (event.type) {
+    case EventType.MESSAGES_SNAPSHOT:
+    case EventType.TOOL_CALL_RESULT:
+      return true;
+    case EventType.TOOL_CALL_START:
+      return getField<string>(event, "toolCallName") === "ExitPlanMode";
+    case EventType.TEXT_MESSAGE_CONTENT:
+      return textDeltaCompletesProposedPlanArtifact(state, event);
+    case EventType.CUSTOM:
+      return getField<string>(event, "name") === "terragon.data-part";
+    default:
+      return false;
+  }
+}
+
+function textDeltaCompletesProposedPlanArtifact(
+  state: ThreadViewModelState,
+  event: BaseEvent,
+): boolean {
+  const messageId = getField<string>(event, "messageId");
+  const delta = getField<string>(event, "delta");
+  if (!messageId || !delta) {
+    return false;
+  }
+  const previousText = getAgentMessageTextContentById(state, messageId);
+  if (previousText === null) {
+    return delta.toLowerCase().includes(PROPOSED_PLAN_END_TAG);
+  }
+  const previousCloseCount = countProposedPlanCloseTags(previousText);
+  const nextCloseCount = countProposedPlanCloseTags(previousText + delta);
+  return nextCloseCount > previousCloseCount;
+}
+
+const PROPOSED_PLAN_END_TAG = "</proposed_plan>";
+
+function getAgentMessageTextContentById(
+  state: ThreadViewModelState,
+  messageId: string,
+): string | null {
+  const messageIndex = state.transcript.assistantMessageIndexes[messageId];
+  const message =
+    messageIndex === undefined
+      ? undefined
+      : state.transcript.messages[messageIndex];
+  return message ? getAgentMessageTextContent(message) : null;
+}
+
+function countProposedPlanCloseTags(text: string): number {
+  const lower = text.toLowerCase();
+  let count = 0;
+  let index = 0;
+  while (true) {
+    const nextIndex = lower.indexOf(PROPOSED_PLAN_END_TAG, index);
+    if (nextIndex === -1) {
+      return count;
+    }
+    count += 1;
+    index = nextIndex + PROPOSED_PLAN_END_TAG.length;
+  }
 }
 
 function getArtifactsForStateMessages(

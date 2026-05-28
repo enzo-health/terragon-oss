@@ -15,7 +15,13 @@ import {
 import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { NativeThread } from "./native-thread";
+import {
+  decodeToolGroupFlags,
+  getToolGroupFlags,
+  NativeThread,
+  toolArgPreview,
+  toolArgsDisplayText,
+} from "./native-thread";
 
 beforeAll(() => {
   (
@@ -169,6 +175,35 @@ afterEach(() => {
 });
 
 describe("NativeThread", () => {
+  it("computes grouped tool-call summary in one part-range pass", () => {
+    const parts = [
+      { type: "text" },
+      {
+        type: "tool-call",
+        status: { type: "complete" },
+        result: "ok",
+      },
+      {
+        type: "tool-call",
+        status: { type: "running" },
+      },
+      {
+        type: "tool-call",
+        status: { type: "incomplete" },
+        result: "bad",
+        isError: true,
+      },
+    ];
+
+    const state = decodeToolGroupFlags(getToolGroupFlags(parts, 1, 3));
+
+    expect(state).toEqual({
+      count: 3,
+      hasActive: true,
+      hasError: true,
+    });
+  });
+
   it("renders text, reasoning, and tool calls through native assistant-ui primitives", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -186,6 +221,29 @@ describe("NativeThread", () => {
     expect(text).toContain("file.txt");
     expect(text).not.toContain("term-1");
     expect(text).not.toContain("terragon.terminal");
+  });
+
+  it("applies paint containment to native message roots", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(createElement(Harness));
+    });
+
+    const userRoot = Array.from(container.querySelectorAll(".items-end")).find(
+      (element) => element.textContent?.includes("show me the files"),
+    );
+    const assistantRoot = Array.from(
+      container.querySelectorAll(".leading-relaxed"),
+    )[0]?.parentElement;
+
+    expect(userRoot?.className).toContain("[content-visibility:auto]");
+    expect(userRoot?.className).toContain("[contain-intrinsic-size:auto_96px]");
+    expect(assistantRoot?.className).toContain("[content-visibility:auto]");
+    expect(assistantRoot?.className).toContain(
+      "[contain-intrinsic-size:auto_160px]",
+    );
   });
 
   it("collapses consecutive completed tool calls into a native assistant-ui group", async () => {
@@ -239,6 +297,102 @@ describe("NativeThread", () => {
     });
 
     expect(toolGroup.open).toBe(true);
+  });
+
+  it("keeps historical failed tool groups collapsed by default", async () => {
+    const messages: ThreadMessageLike[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking context." },
+          {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "Bash",
+            argsText: '{"command":"rg scheduling"}',
+            result: "rg: not found",
+            isError: true,
+          },
+          {
+            type: "tool-call",
+            toolCallId: "t2",
+            toolName: "Read",
+            argsText: '{"file_path":"docs/scheduling/README.md"}',
+            result: "docs",
+          },
+        ],
+      },
+    ];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(createElement(Harness, { messages }));
+    });
+
+    const toolGroup = Array.from(container.querySelectorAll("details")).find(
+      (details) => details.textContent?.includes("Tool calls (2)"),
+    );
+    if (!toolGroup) {
+      throw new Error("expected grouped tool-call disclosure");
+    }
+
+    expect(toolGroup.textContent).toContain("Needs attention");
+    expect(toolGroup.open).toBe(false);
+  });
+
+  it("keeps a single historical failed tool call collapsed by default", async () => {
+    const messages: ThreadMessageLike[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "Bash",
+            argsText: '{"command":"rg scheduling"}',
+            result: "rg: not found",
+            isError: true,
+          },
+        ],
+      },
+    ];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(createElement(Harness, { messages }));
+    });
+
+    const toolCall = Array.from(container.querySelectorAll("details")).find(
+      (details) => details.textContent?.includes("Bash"),
+    );
+    if (!toolCall) {
+      throw new Error("expected tool-call disclosure");
+    }
+
+    expect(toolCall.textContent).toContain("Failed");
+    expect(toolCall.open).toBe(false);
+  });
+
+  it("extracts streamed tool arg previews without requiring valid JSON", () => {
+    const longCommand = "pnpm ".repeat(1200);
+    const preview = toolArgPreview(`{"command":"${longCommand}`);
+
+    expect(preview).toBe(longCommand.slice(0, preview?.length));
+    expect(preview?.length).toBeLessThan(longCommand.length);
+  });
+
+  it("bounds rendered args for active tool calls", () => {
+    const longArgs = `{"command":"${"pnpm test ".repeat(500)}"}`;
+
+    expect(toolArgsDisplayText(longArgs, true)).toHaveLength(2000);
+    expect(toolArgsDisplayText(longArgs, true)).toMatch(/…$/);
+    expect(toolArgsDisplayText(longArgs, false)).toBe(longArgs);
   });
 
   it("shows submitted follow-up text through the AG-UI assistant runtime", async () => {

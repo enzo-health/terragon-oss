@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ThreadInfo } from "@terragon/shared";
 import { LoaderCircle, ChevronRight, EllipsisVerticalIcon } from "lucide-react";
@@ -181,10 +175,7 @@ function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
             e.stopPropagation();
           }}
         >
-          <SidebarThreadMenu
-            thread={thread}
-            onOpenChange={setMenuOpen}
-          />
+          <SidebarThreadMenu thread={thread} onOpenChange={setMenuOpen} />
         </div>
       )}
     </div>

@@ -6,9 +6,11 @@ import {
   getLatestRunIdForThreadChat,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { getAuthorizedThreadAccess } from "@terragon/shared/model/thread-auth";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSessionOrNull } from "@/lib/auth-server";
+import { getHasRepoPermissionsForUser } from "@/server-actions/get-thread";
 import { GET, POST } from "./route";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +24,7 @@ const dbMocks = vi.hoisted(() => {
   const limit = vi.fn();
   const where = vi.fn(() => ({ limit }));
   const innerJoin = vi.fn(() => ({ where }));
-  const from = vi.fn(() => ({ innerJoin }));
+  const from = vi.fn(() => ({ innerJoin, where }));
   const select = vi.fn(() => ({ from }));
   return {
     limit,
@@ -61,6 +63,14 @@ vi.mock("@/lib/redis", () => ({
     xread: redisMocks.xread,
     xrevrange: redisMocks.xrevrange,
   },
+}));
+
+vi.mock("@terragon/shared/model/thread-auth", () => ({
+  getAuthorizedThreadAccess: vi.fn(),
+}));
+
+vi.mock("@/server-actions/get-thread", () => ({
+  getHasRepoPermissionsForUser: vi.fn(),
 }));
 
 vi.mock("@terragon/shared/model/agent-event-log", () => ({
@@ -347,6 +357,11 @@ describe("ag-ui SSE route", () => {
         name: "User",
       },
     } as Awaited<ReturnType<typeof getSessionOrNull>>);
+    vi.mocked(getAuthorizedThreadAccess).mockResolvedValue({
+      ownerUserId: "user-1",
+      visibility: "private",
+    });
+    vi.mocked(getHasRepoPermissionsForUser).mockResolvedValue(true);
     // Default: ownership join returns one row (authorized).
     dbMocks.limit.mockResolvedValue([
       { id: "chat-1", messages: [], threadName: null },
@@ -371,7 +386,7 @@ describe("ag-ui SSE route", () => {
   });
 
   it("returns 404 when thread does not belong to the session user", async () => {
-    dbMocks.limit.mockResolvedValue([]);
+    vi.mocked(getAuthorizedThreadAccess).mockResolvedValue(undefined);
     const response = await GET(
       makeRequest(
         "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-1",
@@ -382,9 +397,6 @@ describe("ag-ui SSE route", () => {
   });
 
   it("returns 404 when threadChatId belongs to a different thread", async () => {
-    // The ownership query is a JOIN that filters on
-    //   threadChat.id = threadChatId AND thread.id = threadId AND thread.userId = session.user.id
-    // If threadChatId belongs to some other thread, the join returns 0 rows.
     dbMocks.limit.mockResolvedValue([]);
     const response = await GET(
       makeRequest(
@@ -393,8 +405,6 @@ describe("ag-ui SSE route", () => {
       makeContext("thread-a"),
     );
     expect(response.status).toBe(404);
-    // Prove we ran the join — not the single-table `thread` lookup.
-    expect(dbMocks.innerJoin).toHaveBeenCalled();
     // Replay should NOT be called when ownership fails.
     expect(getAgUiEventEnvelopesForThreadChat).not.toHaveBeenCalled();
   });

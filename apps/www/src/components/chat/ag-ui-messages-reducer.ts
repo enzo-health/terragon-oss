@@ -67,6 +67,7 @@ import {
 } from "./ag-ui-part-validation";
 import {
   type AgUiMessagesState,
+  createAgUiMessageIndexes,
   getField,
   safeStringify,
 } from "./ag-ui-reducer-utils";
@@ -81,8 +82,10 @@ export function createInitialAgUiMessagesState(
   agent: AIAgent,
   initialMessages: UIMessage[],
 ): AgUiMessagesState {
+  const indexes = createAgUiMessageIndexes(initialMessages);
   return {
     messages: initialMessages.slice(),
+    ...indexes,
     agent,
     toolArgsBuffers: {},
     activeAssistantMessageId: null,
@@ -105,18 +108,13 @@ export function agUiMessagesReducer(
     case EventType.TEXT_MESSAGE_START: {
       const messageId = getField<string>(event, "messageId");
       if (!messageId) return state;
-      const { messages, changed } = ensureAssistantMessage(
-        state.messages,
-        messageId,
-        state.agent,
-      );
+      const prepared = ensureAssistantMessage(state, messageId);
       const nextActive = messageId;
-      if (!changed && state.activeAssistantMessageId === nextActive) {
+      if (!prepared.changed && state.activeAssistantMessageId === nextActive) {
         return state;
       }
       return {
-        ...state,
-        messages: changed ? messages : state.messages,
+        ...prepared.state,
         activeAssistantMessageId: nextActive,
       };
     }
@@ -170,27 +168,23 @@ export function agUiMessagesReducer(
         // message so they still render in their own bubble.
         `agent-${toolCallId}`;
 
-      const { messages: withMessage, changed: messageChanged } =
-        ensureAssistantMessage(state.messages, targetMessageId, state.agent);
-      const { messages: withTool, changed: toolChanged } = addPendingToolPart(
-        withMessage,
+      const prepared = ensureAssistantMessage(state, targetMessageId);
+      const withTool = addPendingToolPart(
+        prepared.state,
         targetMessageId,
         toolCallId,
         toolCallName,
-        state.agent,
       );
 
-      const nextMessages =
-        messageChanged || toolChanged ? withTool : state.messages;
       const nextActive = state.activeAssistantMessageId ?? targetMessageId;
       const buffers =
         toolCallId in state.toolArgsBuffers
-          ? state.toolArgsBuffers
-          : { ...state.toolArgsBuffers, [toolCallId]: "" };
+          ? withTool.state.toolArgsBuffers
+          : { ...withTool.state.toolArgsBuffers, [toolCallId]: "" };
 
       if (
-        !messageChanged &&
-        !toolChanged &&
+        !prepared.changed &&
+        !withTool.changed &&
         nextActive === state.activeAssistantMessageId &&
         state.toolArgsBuffers[toolCallId] === ""
       ) {
@@ -198,8 +192,7 @@ export function agUiMessagesReducer(
       }
 
       return {
-        ...state,
-        messages: nextMessages,
+        ...withTool.state,
         activeAssistantMessageId: nextActive,
         toolArgsBuffers: buffers,
       };
@@ -223,12 +216,7 @@ export function agUiMessagesReducer(
       const toolCallId = getField<string>(event, "toolCallId");
       const delta = getField<string>(event, "delta");
       if (!toolCallId || !delta) return state;
-      const { messages, changed } = appendToolProgressChunk(
-        state.messages,
-        toolCallId,
-        delta,
-      );
-      return changed ? { ...state, messages } : state;
+      return appendToolProgressChunk(state, toolCallId, delta);
     }
 
     case EventType.TOOL_CALL_END: {
@@ -237,19 +225,23 @@ export function agUiMessagesReducer(
       const raw = state.toolArgsBuffers[toolCallId];
       if (raw === undefined) return state;
       const parsed = safeParseJson(raw);
-      const { messages, changed } = updateToolPartParameters(
-        state.messages,
+      const withParameters = updateToolPartParameters(
+        state,
         toolCallId,
         parsed,
       );
       const toolArgsBuffers = removeToolArgsBuffer(
-        state.toolArgsBuffers,
+        withParameters.toolArgsBuffers,
         toolCallId,
       );
-      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      if (
+        withParameters === state &&
+        toolArgsBuffers === state.toolArgsBuffers
+      ) {
+        return state;
+      }
       return {
-        ...state,
-        messages: changed ? messages : state.messages,
+        ...withParameters,
         toolArgsBuffers,
       };
     }
@@ -268,20 +260,21 @@ export function agUiMessagesReducer(
         typeof error === "string";
       const resultText =
         typeof content === "string" ? content : safeStringify(content);
-      const { messages, changed } = completeToolPart(
-        state.messages,
+      const withResult = completeToolPart(
+        state,
         toolCallId,
         resultText,
         isError,
       );
       const toolArgsBuffers = removeToolArgsBuffer(
-        state.toolArgsBuffers,
+        withResult.toolArgsBuffers,
         toolCallId,
       );
-      if (!changed && toolArgsBuffers === state.toolArgsBuffers) return state;
+      if (withResult === state && toolArgsBuffers === state.toolArgsBuffers) {
+        return state;
+      }
       return {
-        ...state,
-        messages: changed ? messages : state.messages,
+        ...withResult,
         toolArgsBuffers,
       };
     }
@@ -293,13 +286,7 @@ export function agUiMessagesReducer(
       const part = dataPart.data.data;
       if (!isRenderablePart(part)) return state;
       const normalizedPart = normalizeRenderablePart(part);
-      const { messages, changed } = insertRichPart(
-        state.messages,
-        messageId,
-        normalizedPart,
-        state.agent,
-      );
-      return changed ? { ...state, messages } : state;
+      return insertRichPart(state, messageId, normalizedPart);
     }
 
     case EventType.MESSAGES_SNAPSHOT: {
@@ -309,11 +296,7 @@ export function agUiMessagesReducer(
         .map((message) => agUiSnapshotMessageToUiMessage(message, state.agent))
         .filter((message): message is UIMessage => message !== null);
       if (projectedMessages.length === 0) return state;
-      const { messages, changed } = appendSnapshotMessages(
-        state.messages,
-        projectedMessages,
-      );
-      return changed ? { ...state, messages } : state;
+      return appendSnapshotMessages(state, projectedMessages);
     }
 
     case EventType.RUN_FINISHED: {

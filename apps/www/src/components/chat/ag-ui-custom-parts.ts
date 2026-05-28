@@ -164,31 +164,59 @@ export function appendTerragonDataPart(
   return [...content, dataPart];
 }
 
+export function terragonDataPartIdentityKey(
+  dataPart: TerragonDataPart,
+): string {
+  return `${dataPart.name}\u0000${dataPart.data.messageId}\u0000${dataPart.data.partIndex}`;
+}
+
 export function applyCustomPartEvent(params: {
   messages: ThreadMessage[];
   event: BaseEvent;
   createAssistantMessage: (messageId: string) => ThreadAssistantMessage;
+  findAssistantMessageIndex?: (messageId: string) => number | undefined;
+  onAssistantMessageCreated?: (messageId: string, messageIndex: number) => void;
+  hasTerragonDataPart?: (dataPart: TerragonDataPart) => boolean;
+  onTerragonDataPartAppended?: (dataPart: TerragonDataPart) => void;
 }): boolean {
-  const { messages, event, createAssistantMessage } = params;
+  const {
+    messages,
+    event,
+    createAssistantMessage,
+    findAssistantMessageIndex,
+    onAssistantMessageCreated,
+    hasTerragonDataPart,
+    onTerragonDataPartAppended,
+  } = params;
   const dataPart = terragonDataPartFromCustomEvent(event);
   if (!dataPart) {
     return false;
   }
+  if (hasTerragonDataPart?.(dataPart)) {
+    return false;
+  }
 
-  let messageIndex = messages.findIndex(
-    (message) =>
-      message.role === "assistant" && message.id === dataPart.data.messageId,
-  );
-  if (messageIndex === -1) {
+  let messageIndex = findAssistantMessageIndex?.(dataPart.data.messageId);
+  if (messageIndex === undefined && !findAssistantMessageIndex) {
+    const fallbackIndex = messages.findIndex(
+      (message) =>
+        message.role === "assistant" && message.id === dataPart.data.messageId,
+    );
+    messageIndex = fallbackIndex === -1 ? undefined : fallbackIndex;
+  }
+  if (messageIndex === undefined) {
     messages.push(createAssistantMessage(dataPart.data.messageId));
     messageIndex = messages.length - 1;
+    onAssistantMessageCreated?.(dataPart.data.messageId, messageIndex);
   }
 
   const message = messages[messageIndex];
   if (!message || message.role !== "assistant") {
     return false;
   }
-  const content = appendTerragonDataPart(message.content, dataPart);
+  const content = hasTerragonDataPart
+    ? [...message.content, dataPart]
+    : appendTerragonDataPart(message.content, dataPart);
   if (!content) {
     return false;
   }
@@ -196,5 +224,6 @@ export function applyCustomPartEvent(params: {
     ...message,
     content,
   };
+  onTerragonDataPartAppended?.(dataPart);
   return true;
 }

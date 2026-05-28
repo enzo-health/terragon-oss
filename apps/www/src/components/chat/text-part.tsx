@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import {
   type ComponentProps,
   memo,
@@ -13,7 +14,6 @@ import { createPortal } from "react-dom";
 import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ImagePart } from "./image-part";
 
 interface TextPartProps {
   text: string;
@@ -74,29 +74,69 @@ function normalizeBoldHeaders(text: string): string {
 }
 
 const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
-const PROPOSED_PLAN_BODY_RE = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/g;
+const PROPOSED_PLAN_START_TAG_RE = /<proposed_plan[^>]*>/g;
 const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_SYNTAX_RE =
   /```|~~~|`|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
 const STREAMING_MARKDOWN_SYNTAX_RE =
   /```|~~~|\*\*|__|~~|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\)|(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|<[^>\n]+>/;
+const STREAMING_INCREMENTAL_TEXT_UNSAFE_RE =
+  /```|~~~|`|\*\*|__|~~|!\[|\]\(|【F:|<|>|\||(?:^|\n)\s{0,3}(?:#{1,6}\s|>|\|)|(?:^|\n)\s*(?:[-*+]|\d+\.)\s|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_CONTROLS = { code: true } satisfies NonNullable<
   ComponentProps<typeof MarkdownRenderer>["controls"]
 >;
+const MARKDOWN_INCREMENTAL_TAIL_LENGTH = 512;
+const STREAMING_APPEND_BOUNDARY_TAIL_LENGTH = 16;
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 15;
 const LINE_HEIGHT_PX = 22;
 const PROPOSED_PLAN_START = "<proposed_plan";
+const PROPOSED_PLAN_END = "</proposed_plan>";
 
 interface BlockInfo {
   totalLines: number;
   expanded: boolean;
 }
 
+type MarkdownDetectionState = {
+  text: string;
+  streaming: boolean;
+  hasMarkdownSyntax: boolean;
+  scanTail: string;
+};
+
+type TextProcessingContext = {
+  githubRepoFullName?: string;
+  branchName?: string;
+  baseBranchName?: string;
+  hasCheckpoint?: boolean;
+  hasArtifactWorkspace: boolean;
+};
+
+type TextProcessingState = {
+  text: string;
+  processedText: string;
+  streaming: boolean;
+  contextKey: string;
+  hasCompleteProposedPlan: boolean;
+  hasPossibleCodeBlock: boolean;
+  hasProposedPlanStart: boolean;
+  usedIncrementalAppend: boolean;
+};
+
+type StreamingAppendContext = {
+  previous: TextProcessingState;
+  suffix: string;
+};
+
 function getFirstProposedPlanBody(text: string): string {
-  PROPOSED_PLAN_BODY_RE.lastIndex = 0;
-  return PROPOSED_PLAN_BODY_RE.exec(text)?.[1]?.trim() ?? "";
+  return extractProposedPlanText(text) ?? "";
+}
+
+function getIncompleteProposedPlanDisplayText(text: string): string {
+  PROPOSED_PLAN_START_TAG_RE.lastIndex = 0;
+  return text.replace(PROPOSED_PLAN_START_TAG_RE, "").trimStart();
 }
 
 export function shouldScanCodeBlocks({
@@ -107,6 +147,243 @@ export function shouldScanCodeBlocks({
   streaming: boolean;
 }): boolean {
   return hasPossibleCodeBlock && !streaming;
+}
+
+function getIncrementalMarkdownScanStart(previousText: string): number {
+  let start = Math.max(
+    0,
+    previousText.length - MARKDOWN_INCREMENTAL_TAIL_LENGTH,
+  );
+
+  for (const marker of ["\n", "[", "<", "`", "*", "_", "~", "|"]) {
+    const markerIndex = previousText.lastIndexOf(marker);
+    if (markerIndex >= 0) {
+      start = Math.min(start, markerIndex);
+    }
+  }
+
+  return start;
+}
+
+function getMarkdownScanTail(text: string): string {
+  return text.slice(-MARKDOWN_INCREMENTAL_TAIL_LENGTH);
+}
+
+export function detectMarkdownSyntax({
+  text,
+  streaming,
+  previous,
+  knownAppend = false,
+}: {
+  text: string;
+  streaming: boolean;
+  previous: MarkdownDetectionState | null;
+  knownAppend?: boolean;
+}): MarkdownDetectionState {
+  const regex = streaming ? STREAMING_MARKDOWN_SYNTAX_RE : MARKDOWN_SYNTAX_RE;
+
+  if (streaming && previous?.streaming === true && previous.hasMarkdownSyntax) {
+    return {
+      text,
+      streaming,
+      hasMarkdownSyntax: true,
+      scanTail: getMarkdownScanTail(text),
+    };
+  }
+
+  const canScanIncrementally =
+    streaming &&
+    previous?.streaming === true &&
+    previous.hasMarkdownSyntax === false &&
+    text.length >= previous.text.length &&
+    (knownAppend || text.startsWith(previous.text));
+  const scanText =
+    canScanIncrementally && knownAppend
+      ? `${previous.scanTail}${text.slice(previous.text.length)}`
+      : canScanIncrementally
+        ? text.slice(getIncrementalMarkdownScanStart(previous.text))
+        : text;
+
+  return {
+    text,
+    streaming,
+    hasMarkdownSyntax: regex.test(scanText),
+    scanTail: getMarkdownScanTail(scanText),
+  };
+}
+
+function getTextProcessingContextKey({
+  githubRepoFullName,
+  branchName,
+  baseBranchName,
+  hasCheckpoint,
+  hasArtifactWorkspace,
+}: TextProcessingContext): string {
+  return JSON.stringify({
+    githubRepoFullName,
+    branchName,
+    baseBranchName,
+    hasCheckpoint: Boolean(hasCheckpoint),
+    hasArtifactWorkspace,
+  });
+}
+
+function getStreamingAppendContext({
+  text,
+  streaming,
+  previous,
+  contextKey,
+}: {
+  text: string;
+  streaming: boolean;
+  previous: TextProcessingState | null;
+  contextKey: string;
+}): StreamingAppendContext | null {
+  if (
+    !streaming ||
+    previous?.streaming !== true ||
+    previous.contextKey !== contextKey ||
+    text.length < previous.text.length ||
+    !text.startsWith(previous.text)
+  ) {
+    return null;
+  }
+
+  return {
+    previous,
+    suffix: text.slice(previous.text.length),
+  };
+}
+
+function canUseIncrementalPlainAppend({
+  previous,
+  suffix,
+}: StreamingAppendContext): boolean {
+  if (
+    previous.hasCompleteProposedPlan ||
+    previous.hasPossibleCodeBlock ||
+    previous.hasProposedPlanStart
+  ) {
+    return false;
+  }
+
+  if (suffix.length === 0) {
+    return true;
+  }
+
+  STREAMING_INCREMENTAL_TEXT_UNSAFE_RE.lastIndex = 0;
+  return !STREAMING_INCREMENTAL_TEXT_UNSAFE_RE.test(
+    `${previous.text.slice(-STREAMING_APPEND_BOUNDARY_TAIL_LENGTH)}${suffix}`,
+  );
+}
+
+function canUseIncrementalPlanAppend({
+  previous,
+  suffix,
+}: {
+  previous: TextProcessingState;
+  suffix: string;
+}): boolean {
+  const planTail = `${previous.text.slice(-PROPOSED_PLAN_END.length)}${suffix}`;
+  const citationTail = `${previous.text.slice(-"【F:".length)}${suffix}`;
+  return (
+    previous.hasProposedPlanStart &&
+    !previous.hasCompleteProposedPlan &&
+    previous.processedText === previous.text &&
+    !planTail.includes(PROPOSED_PLAN_END) &&
+    !citationTail.includes("【F:")
+  );
+}
+
+export function processTextForRendering({
+  text,
+  streaming,
+  previous,
+  context,
+}: {
+  text: string;
+  streaming: boolean;
+  previous: TextProcessingState | null;
+  context: TextProcessingContext;
+}): TextProcessingState {
+  const contextKey = getTextProcessingContextKey(context);
+  const appendContext = getStreamingAppendContext({
+    text,
+    streaming,
+    previous,
+    contextKey,
+  });
+  const appendPrevious = appendContext?.previous ?? null;
+  const suffix = appendContext?.suffix ?? "";
+  if (appendContext && canUseIncrementalPlainAppend(appendContext)) {
+    return {
+      ...appendContext.previous,
+      text,
+      processedText: appendContext.previous.processedText + suffix,
+      usedIncrementalAppend: true,
+    };
+  }
+
+  if (
+    appendPrevious &&
+    canUseIncrementalPlanAppend({ previous: appendPrevious, suffix })
+  ) {
+    return {
+      ...appendPrevious,
+      text,
+      processedText: appendPrevious.processedText + suffix,
+      hasProposedPlanStart: true,
+      usedIncrementalAppend: true,
+    };
+  }
+
+  const hasProposedPlanStart = appendPrevious
+    ? appendPrevious.hasProposedPlanStart ||
+      `${appendPrevious.text.slice(-PROPOSED_PLAN_START.length)}${suffix}`.includes(
+        PROPOSED_PLAN_START,
+      )
+    : text.includes(PROPOSED_PLAN_START);
+  const hasCompleteProposedPlan =
+    hasProposedPlanStart &&
+    (appendPrevious && streaming
+      ? appendPrevious.hasCompleteProposedPlan ||
+        `${appendPrevious.text.slice(-PROPOSED_PLAN_END.length)}${suffix}`.includes(
+          PROPOSED_PLAN_END,
+        )
+      : (() => {
+          PROPOSED_PLAN_RE.lastIndex = 0;
+          return PROPOSED_PLAN_RE.test(text);
+        })());
+  const hasPossibleCodeBlock = !streaming && POSSIBLE_CODE_BLOCK_RE.test(text);
+  let processedText = normalizeBoldHeaders(
+    convertCitationsToGitHubLinks(
+      text,
+      context.githubRepoFullName,
+      context.branchName,
+      context.baseBranchName,
+      context.hasCheckpoint,
+    ),
+  );
+
+  if (hasCompleteProposedPlan && context.hasArtifactWorkspace) {
+    PROPOSED_PLAN_RE.lastIndex = 0;
+    const withoutPlan = processedText.replace(PROPOSED_PLAN_RE, "").trim();
+    processedText =
+      withoutPlan.length > 0
+        ? withoutPlan
+        : getFirstProposedPlanBody(processedText);
+  }
+
+  return {
+    text,
+    processedText,
+    streaming,
+    contextKey,
+    hasCompleteProposedPlan,
+    hasPossibleCodeBlock,
+    hasProposedPlanStart,
+    usedIncrementalAppend: false,
+  };
 }
 
 function CollapsibleCodeBlockOverlay({
@@ -175,44 +452,43 @@ const TextPart = memo(function TextPart({
   const [blocks, setBlocks] = useState<Map<number, BlockInfo>>(new Map());
   // Track scan results separately from expand state to avoid re-scan loops
   const lastScanRef = useRef<string>("");
-  const hasCompleteProposedPlan = useMemo(() => {
-    PROPOSED_PLAN_RE.lastIndex = 0;
-    return PROPOSED_PLAN_RE.test(text);
-  }, [text]);
-  const hasPossibleCodeBlock = useMemo(
-    () => POSSIBLE_CODE_BLOCK_RE.test(text),
-    [text],
-  );
-  const canScanCodeBlocks = shouldScanCodeBlocks({
-    hasPossibleCodeBlock,
-    streaming,
-  });
-
-  const processedText = useMemo(() => {
-    let t = normalizeBoldHeaders(
-      convertCitationsToGitHubLinks(
-        text,
+  const markdownDetectionRef = useRef<MarkdownDetectionState | null>(null);
+  const textProcessingRef = useRef<TextProcessingState | null>(null);
+  const processed = useMemo(() => {
+    const nextProcessed = processTextForRendering({
+      text,
+      streaming,
+      previous: textProcessingRef.current,
+      context: {
         githubRepoFullName,
         branchName,
         baseBranchName,
         hasCheckpoint,
-      ),
-    );
-    if (hasCompleteProposedPlan && onOpenInArtifactWorkspace) {
-      PROPOSED_PLAN_RE.lastIndex = 0;
-      const withoutPlan = t.replace(PROPOSED_PLAN_RE, "").trim();
-      t = withoutPlan.length > 0 ? withoutPlan : getFirstProposedPlanBody(t);
-    }
-    return t;
+        hasArtifactWorkspace: Boolean(onOpenInArtifactWorkspace),
+      },
+    });
+    textProcessingRef.current = nextProcessed;
+    return nextProcessed;
   }, [
     text,
+    streaming,
     githubRepoFullName,
     branchName,
     baseBranchName,
     hasCheckpoint,
-    hasCompleteProposedPlan,
     onOpenInArtifactWorkspace,
   ]);
+  const {
+    processedText,
+    hasCompleteProposedPlan,
+    hasPossibleCodeBlock,
+    hasProposedPlanStart,
+    usedIncrementalAppend,
+  } = processed;
+  const canScanCodeBlocks = shouldScanCodeBlocks({
+    hasPossibleCodeBlock,
+    streaming,
+  });
 
   // Scan for collapsible code blocks after DOM updates.
   // Streaming inserts a text node per character — without coalescing, this
@@ -341,25 +617,32 @@ const TextPart = memo(function TextPart({
       );
     });
     return portals.length > 0 ? portals : null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, toggleBlock]);
 
-  const showStreamdown = processedText.length > 0;
-  const hasMarkdownSyntax = useMemo(
-    () =>
-      (streaming ? STREAMING_MARKDOWN_SYNTAX_RE : MARKDOWN_SYNTAX_RE).test(
-        processedText,
-      ),
-    [processedText, streaming],
-  );
-  const renderImage = useCallback(
-    (src: string, alt?: string) => <ImagePart imageUrl={src} alt={alt} />,
-    [],
-  );
+  const renderIncompletePlanAsPlain =
+    streaming && hasProposedPlanStart && !hasCompleteProposedPlan;
+  const visibleText = renderIncompletePlanAsPlain
+    ? getIncompleteProposedPlanDisplayText(processedText)
+    : processedText;
+  const showStreamdown = visibleText.length > 0;
+  const hasMarkdownSyntax = useMemo(() => {
+    if (renderIncompletePlanAsPlain) return false;
+    const detection = detectMarkdownSyntax({
+      text: processedText,
+      streaming,
+      previous: markdownDetectionRef.current,
+      knownAppend: usedIncrementalAppend,
+    });
+    markdownDetectionRef.current = detection;
+    return detection.hasMarkdownSyntax;
+  }, [
+    processedText,
+    renderIncompletePlanAsPlain,
+    streaming,
+    usedIncrementalAppend,
+  ]);
   const streamingSegmentation =
-    hasCompleteProposedPlan || processedText.includes(PROPOSED_PLAN_START)
-      ? "off"
-      : "auto";
+    hasCompleteProposedPlan || hasProposedPlanStart ? "off" : "auto";
 
   return (
     <div>
@@ -382,7 +665,7 @@ const TextPart = memo(function TextPart({
             streaming && "streaming-cursor",
           )}
         >
-          {processedText}
+          {visibleText}
         </div>
       ) : null}
       {showStreamdown && hasMarkdownSyntax ? (
@@ -394,10 +677,9 @@ const TextPart = memo(function TextPart({
           ref={containerRef}
         >
           <MarkdownRenderer
-            content={processedText}
+            content={visibleText}
             controls={MARKDOWN_CONTROLS}
             streaming={streaming}
-            renderImage={renderImage}
             onOpenFile={onOpenRepoFile}
             streamingSegmentation={streamingSegmentation}
           />

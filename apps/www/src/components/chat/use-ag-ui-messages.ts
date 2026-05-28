@@ -109,10 +109,11 @@ export function useThreadViewModel({
   }, [snapshot]);
 
   const viewModel = useMemo(() => {
-    const projected = projectThreadViewModel(state);
+    const projected = projectThreadViewModel(state, {
+      includeTranscriptMessages,
+    });
     return {
       ...projected,
-      messages: includeTranscriptMessages ? projected.messages : [],
       dispatchThreadViewEvent: dispatch,
     };
   }, [includeTranscriptMessages, state]);

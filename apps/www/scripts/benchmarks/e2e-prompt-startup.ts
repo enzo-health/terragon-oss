@@ -36,6 +36,7 @@ type Config = {
   appUrl: string;
   repo: string;
   branch: string;
+  taskUrl: string | null;
   prompt: string;
   promptName: string;
   iterations: number;
@@ -46,6 +47,7 @@ type Config = {
   screenshotDir: string | null;
   failOnThreshold: boolean;
   headless: boolean;
+  syntheticAgUiStream: boolean;
   thresholds: Thresholds;
 };
 
@@ -176,6 +178,16 @@ type BrowserStreamMetricSnapshot = {
   diagnostics: BrowserStreamMetricDiagnostics;
 };
 
+declare global {
+  interface Window {
+    __terragonSyntheticAgUiStream?: {
+      requestCount: number;
+      emittedCount: number;
+      done: boolean;
+    };
+  }
+}
+
 type BenchmarkReport = {
   schemaVersion: 1;
   kind: "e2e-prompt-startup-streaming-benchmark";
@@ -227,6 +239,8 @@ const DEFAULT_THRESHOLDS: Thresholds = {
   cumulativeLayoutShift: 0.02,
   routeErrorCount: 0,
 };
+const ASSISTANT_MESSAGE_SELECTOR =
+  '[data-message-role="agent"], [data-message-role="assistant"], [data-message-id]:not([data-message-id^="side-effect-user"])';
 
 const SUBMIT_STARTED_AT_STORAGE_KEY = "__terragonPromptSubmittedAtEpochMs";
 
@@ -262,6 +276,7 @@ function parseArgs(argv: string[]): Config {
     ),
     repo: stringArg(args, "repo", "enzo-health/terragon-oss"),
     branch: stringArg(args, "branch", "main"),
+    taskUrl: nullableStringArg(args, "task-url"),
     prompt,
     promptName: stringArg(args, "prompt-name", "minimal-streaming-smoke"),
     iterations: numberArg(args, "iterations", 1),
@@ -276,6 +291,7 @@ function parseArgs(argv: string[]): Config {
     screenshotDir: nullableStringArg(args, "screenshot-dir"),
     failOnThreshold: booleanArg(args, "fail-on-threshold", false),
     headless: !booleanArg(args, "headed", false),
+    syntheticAgUiStream: booleanArg(args, "synthetic-ag-ui-stream", false),
     thresholds,
   };
 }
@@ -294,6 +310,7 @@ Options:
   --app-url <url>             Running app URL. Default: http://localhost:3000
   --repo <owner/name>         Repository to select. Default: enzo-health/terragon-oss
   --branch <name>             Branch to select. Default: main
+  --task-url <url>            Existing task URL to benchmark instead of creating one
   --prompt <text>             Prompt text to submit
   --prompt-file <path>        Read prompt text from a file
   --prompt-name <name>        Label stored in the JSON report
@@ -305,6 +322,7 @@ Options:
   --screenshot-dir <path>     Optional screenshot artifact directory
   --thresholds <json>         Partial threshold override JSON
   --fail-on-threshold         Exit non-zero when summary checks fail
+  --synthetic-ag-ui-stream    Replace live AG-UI SSE with a paced browser stream
   --headed                    Run Chromium headed
   --help                      Show this help
 `);
@@ -439,7 +457,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
     } = ${browserBenchmarkMetricHelpersSource};
 
     const lastAgentMessage = () => {
-      const rows = document.querySelectorAll('[data-message-role="agent"]');
+      const rows = document.querySelectorAll(${JSON.stringify(
+        ASSISTANT_MESSAGE_SELECTOR,
+      )});
       const last = rows.item(rows.length - 1);
       return last
         ? {
@@ -769,6 +789,12 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
   await page.evaluate(script);
 }
 
+async function installSyntheticAgUiStream(page: Page): Promise<void> {
+  await page.addInitScript(
+    `window.sessionStorage.setItem("__terragonSyntheticAgUiBenchmarkStream", "1");`,
+  );
+}
+
 async function resetBrowserLayoutShiftMetric(page: Page): Promise<void> {
   await page.evaluate(() => {
     const metricWindow = window as typeof window & {
@@ -1060,6 +1086,9 @@ async function runIteration(params: {
   });
   page.on("console", (message) => {
     if (message.type() === "error") {
+      if (message.text().includes("ws://localhost:1999/")) {
+        return;
+      }
       errors.push(`console.error: ${message.text()}`);
     }
   });
@@ -1080,32 +1109,46 @@ async function runIteration(params: {
   });
 
   try {
+    if (config.syntheticAgUiStream) {
+      await installSyntheticAgUiStream(page);
+    }
     await loginWithDevLogin(page, config);
     await installBrowserStreamMetrics(page);
-    await selectRepoAndBranch(page, config);
-    await screenshot(page, config, screenshots, iteration, "dashboard-ready");
-    await typePrompt(page, config.prompt);
-    const existingTaskHrefs = await getSettledTaskHrefs(page);
 
-    const promptSubmittedAtMs = nowMs(startedAt);
-    const submitButton = page
-      .locator('button[title="Submit (Enter)"], button[title="Send message"]')
-      .first();
-    await submitButton.waitFor({ state: "visible", timeout: 30_000 });
-    await markPromptSubmittedForBrowserMetrics(page);
-    await submitButton.click();
-
-    const taskHref = await waitForCreatedTaskNavigationOrHref({
-      page,
-      existingTaskHrefs,
-      timeoutMs: config.timeoutMs,
-    });
-    const threadCreatedMs = nowMs(startedAt);
-    if (!/\/task\/[^/?#]+/.test(page.url())) {
-      await page.goto(new URL(taskHref, config.appUrl).toString(), {
+    let promptSubmittedAtMs = nowMs(startedAt);
+    let threadCreatedMs = 0;
+    if (config.taskUrl) {
+      await markPromptSubmittedForBrowserMetrics(page);
+      await page.goto(new URL(config.taskUrl, config.appUrl).toString(), {
         waitUntil: "domcontentloaded",
         timeout: config.timeoutMs,
       });
+    } else {
+      await selectRepoAndBranch(page, config);
+      await screenshot(page, config, screenshots, iteration, "dashboard-ready");
+      await typePrompt(page, config.prompt);
+      const existingTaskHrefs = await getSettledTaskHrefs(page);
+
+      promptSubmittedAtMs = nowMs(startedAt);
+      const submitButton = page
+        .locator('button[title="Submit (Enter)"], button[title="Send message"]')
+        .first();
+      await submitButton.waitFor({ state: "visible", timeout: 30_000 });
+      await markPromptSubmittedForBrowserMetrics(page);
+      await submitButton.click();
+
+      const taskHref = await waitForCreatedTaskNavigationOrHref({
+        page,
+        existingTaskHrefs,
+        timeoutMs: config.timeoutMs,
+      });
+      threadCreatedMs = nowMs(startedAt);
+      if (!/\/task\/[^/?#]+/.test(page.url())) {
+        await page.goto(new URL(taskHref, config.appUrl).toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: config.timeoutMs,
+        });
+      }
     }
     await page.waitForURL(/\/task\/[^/?#]+/, { timeout: config.timeoutMs });
     taskUrl = page.url();
@@ -1114,12 +1157,12 @@ async function runIteration(params: {
     await markPromptSubmittedForBrowserMetrics(page);
 
     await page.waitForFunction(
-      () => {
-        const rows = document.querySelectorAll('[data-message-role="agent"]');
+      (selector) => {
+        const rows = document.querySelectorAll(selector);
         const last = rows.item(rows.length - 1);
         return (last?.textContent ?? "").trim().length > 0;
       },
-      undefined,
+      ASSISTANT_MESSAGE_SELECTOR,
       { timeout: config.timeoutMs },
     );
     firstAssistantTextMs = nowMs(startedAt);
@@ -1130,7 +1173,7 @@ async function runIteration(params: {
     while (performance.now() < observationDeadline) {
       const bodyText = await page.locator("body").innerText();
       const assistantText = await page
-        .locator('[data-message-role="agent"]')
+        .locator(ASSISTANT_MESSAGE_SELECTOR)
         .last()
         .textContent()
         .catch(() => "");
@@ -1595,7 +1638,9 @@ async function main(): Promise<void> {
     target: {
       appUrl: config.appUrl,
       sandboxProvider: process.env.SANDBOX_PROVIDER ?? null,
-      transportMode: "browser-dashboard-dev-login",
+      transportMode: config.syntheticAgUiStream
+        ? "browser-dashboard-dev-login-synthetic-ag-ui-stream"
+        : "browser-dashboard-dev-login",
       promptName: config.promptName,
       repo: config.repo,
       branch: config.branch,

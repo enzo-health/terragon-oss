@@ -67,10 +67,14 @@ function SidecarHarness({
   agent,
   initialMessages,
   onMessages,
+  onLifecycleMessages,
 }: {
   agent: HttpAgent | null;
   initialMessages: UIMessage[];
   onMessages: (messages: UIMessage[]) => void;
+  onLifecycleMessages?: (
+    messages: ReturnType<typeof useThreadViewModel>["lifecycleMessages"],
+  ) => void;
 }): null {
   const snapshot = useMemo(
     () =>
@@ -94,6 +98,7 @@ function SidecarHarness({
     projectEvent,
   });
   onMessages(viewModel.messages);
+  onLifecycleMessages?.(viewModel.lifecycleMessages);
   return null;
 }
 
@@ -586,6 +591,46 @@ describe("useThreadViewModel sidecar projection", () => {
     });
 
     expect(seen.at(-1)).toEqual([]);
+  });
+
+  it("keeps lifecycle notices while skipping long sidecar transcripts", () => {
+    const seenMessages: UIMessage[][] = [];
+    const seenLifecycle: ReturnType<
+      typeof useThreadViewModel
+    >["lifecycleMessages"][] = [];
+    const lifecycleMessage: UIMessage = {
+      id: "retry-1",
+      role: "system",
+      message_type: "generic-retry",
+      parts: [{ type: "text", text: "Retrying..." }],
+    };
+    const initialMessages: UIMessage[] = [
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        id: `agent-${index}`,
+        role: "agent" as const,
+        agent: "claudeCode" as const,
+        parts: [{ type: "text" as const, text: `history ${index}` }],
+      })),
+      lifecycleMessage,
+    ];
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(SidecarHarness, {
+          agent: null,
+          initialMessages,
+          onMessages: (messages) => seenMessages.push(messages),
+          onLifecycleMessages: (messages) => seenLifecycle.push(messages),
+        }),
+      );
+    });
+
+    expect(seenMessages.at(-1)).toEqual([]);
+    expect(seenLifecycle.at(-1)).toEqual([lifecycleMessage]);
   });
 
   it("unsubscribes from the agent on unmount", () => {

@@ -5,7 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  advanceContentNeedsMath,
+  advanceStreamingMarkdownSegments,
   MarkdownRenderer,
+  type StreamingMarkdownSegmentState,
   splitStreamingMarkdownContent,
 } from "./markdown-renderer";
 
@@ -34,6 +37,21 @@ describe("MarkdownRenderer code rendering", () => {
     expect(html).not.toContain("<pre");
     expect(html).toContain("bg-muted");
     expect(html).toContain("pnpm lint");
+  });
+
+  it("renders markdown images without block wrappers inside paragraphs", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        content={
+          'Priority badge <sub><img src="https://example.com/p1.png" alt="P1 Badge" /></sub>'
+        }
+      />,
+    );
+
+    expect(html).toContain("<img");
+    expect(html).toContain('alt="P1 Badge"');
+    expect(html).toContain("image-outline");
+    expect(html).not.toContain("<p><div");
   });
 
   it("splits long streaming markdown by Streamdown block boundaries", () => {
@@ -94,6 +112,127 @@ describe("MarkdownRenderer code rendering", () => {
 
     expect(html).toContain("[&amp;&gt;*:last-child]:mb-2");
     expect(html).toContain("Still streaming");
+  });
+
+  it("advances append-only streaming segments without moving a stable prefix", () => {
+    const baseContent = `# Summary\n\n${longParagraph}\n\nStreaming tail`;
+    let state: StreamingMarkdownSegmentState | null =
+      advanceStreamingMarkdownSegments(baseContent, null);
+    if (!state) throw new Error("expected initial streaming segments");
+    expect(state?.stablePrefix).toBe(`# Summary\n\n${longParagraph}\n\n`);
+
+    const stablePrefix = state.stablePrefix;
+    for (let index = 0; index < 100; index += 1) {
+      state = advanceStreamingMarkdownSegments(`${state.content} token`, state);
+      if (!state) throw new Error("expected advanced streaming segments");
+      expect(state?.stablePrefix).toBe(stablePrefix);
+    }
+
+    expect(state?.liveTail.endsWith(" token")).toBe(true);
+  });
+
+  it("promotes completed live-tail blocks into the stable prefix", () => {
+    const baseContent = `# Summary\n\n${longParagraph}\n\nStreaming tail`;
+    const initial = advanceStreamingMarkdownSegments(baseContent, null);
+    const advanced = advanceStreamingMarkdownSegments(
+      `${baseContent}\n\n## Next\n\nMore text`,
+      initial,
+    );
+
+    expect(advanced?.stablePrefix).toBe(
+      `# Summary\n\n${longParagraph}\n\nStreaming tail\n\n## Next\n\n`,
+    );
+    expect(advanced?.liveTail).toBe("More text");
+  });
+
+  it("resets incremental segmentation for raw html, references, shrink, and non-append changes", () => {
+    const baseContent = `# Summary\n\n${longParagraph}\n\nStreaming tail`;
+    const initial = advanceStreamingMarkdownSegments(baseContent, null);
+
+    expect(
+      advanceStreamingMarkdownSegments(`${baseContent}\n\n<details>`, initial),
+    ).toBeNull();
+    expect(
+      advanceStreamingMarkdownSegments(
+        `${baseContent}\n\n[docs]: https://example.com`,
+        initial,
+      ),
+    ).toBeNull();
+    expect(
+      advanceStreamingMarkdownSegments(
+        `# Summary\n\n${longParagraph}\n\nShrunk`,
+        initial,
+      ),
+    ).toEqual(
+      advanceStreamingMarkdownSegments(
+        `# Summary\n\n${longParagraph}\n\nShrunk`,
+        null,
+      ),
+    );
+    expect(
+      advanceStreamingMarkdownSegments(
+        `# Summary\n\n${longParagraph}\n\nChanged tail`,
+        initial,
+      ),
+    ).toEqual(
+      advanceStreamingMarkdownSegments(
+        `# Summary\n\n${longParagraph}\n\nChanged tail`,
+        null,
+      ),
+    );
+  });
+
+  it("detects unsafe markdown markers split across append chunks", () => {
+    const baseContent = `# Summary\n\n${longParagraph}\n\nStreaming tail`;
+    const initial = advanceStreamingMarkdownSegments(baseContent, null);
+    const partialHtml = advanceStreamingMarkdownSegments(
+      `${baseContent}\n\n<det`,
+      initial,
+    );
+    expect(partialHtml).not.toBeNull();
+    expect(
+      advanceStreamingMarkdownSegments(
+        `${baseContent}\n\n<details>`,
+        partialHtml,
+      ),
+    ).toBeNull();
+
+    const partialReference = advanceStreamingMarkdownSegments(
+      `${baseContent}\n\n[docs`,
+      initial,
+    );
+    expect(partialReference).not.toBeNull();
+    expect(
+      advanceStreamingMarkdownSegments(
+        `${baseContent}\n\n[docs]: https://example.com`,
+        partialReference,
+      ),
+    ).toBeNull();
+  });
+
+  it("detects math incrementally across append-only chunks", () => {
+    let state = advanceContentNeedsMath("No math yet $", null);
+    expect(state.needsMath).toBe(false);
+
+    state = advanceContentNeedsMath(`${state.content}$x`, state);
+    expect(state.needsMath).toBe(false);
+
+    state = advanceContentNeedsMath(`${state.content} + y`, state);
+    expect(state.needsMath).toBe(false);
+
+    state = advanceContentNeedsMath(`${state.content}$$`, state);
+    expect(state.needsMath).toBe(true);
+
+    state = advanceContentNeedsMath(`${state.content} and more text`, state);
+    expect(state.needsMath).toBe(true);
+  });
+
+  it("falls back to full math detection after non-append content changes", () => {
+    const initial = advanceContentNeedsMath("Before $$x$$ after", null);
+    expect(initial.needsMath).toBe(true);
+
+    const changed = advanceContentNeedsMath("Before plain after", initial);
+    expect(changed.needsMath).toBe(false);
   });
 });
 

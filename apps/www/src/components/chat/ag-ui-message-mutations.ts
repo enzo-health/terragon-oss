@@ -1,4 +1,3 @@
-import type { AIAgent } from "@terragon/agent/types";
 import type { UIAgentMessage, UIMessage, UIPart } from "@terragon/shared";
 import { getPartIdentity } from "./ag-ui-part-validation";
 import type { AgUiMessagesState } from "./ag-ui-reducer-utils";
@@ -18,23 +17,36 @@ type ToolPartWithProgress = UIPart & {
 };
 
 export function ensureAssistantMessage(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   messageId: string,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  const idx = messages.findIndex(
-    (m) => m.role === "agent" && m.id === messageId,
-  );
-  if (idx >= 0) {
-    return { messages, changed: false };
+): { state: AgUiMessagesState; messageIndex: number; changed: boolean } {
+  const existingIndex = state.assistantMessageIndexes[messageId];
+  if (existingIndex !== undefined) {
+    return { state, messageIndex: existingIndex, changed: false };
   }
   const newMessage: UIAgentMessage = {
     id: messageId,
     role: "agent",
-    agent,
+    agent: state.agent,
     parts: [],
   };
-  return { messages: [...messages, newMessage], changed: true };
+  const messageIndex = state.messages.length;
+  return {
+    state: {
+      ...state,
+      messages: [...state.messages, newMessage],
+      messageIndexes: {
+        ...state.messageIndexes,
+        [messageId]: messageIndex,
+      },
+      assistantMessageIndexes: {
+        ...state.assistantMessageIndexes,
+        [messageId]: messageIndex,
+      },
+    },
+    messageIndex,
+    changed: true,
+  };
 }
 
 export function applyTextDelta(
@@ -42,28 +54,27 @@ export function applyTextDelta(
   messageId: string,
   delta: string,
 ): AgUiMessagesState {
-  const { messages: withMessage } = ensureAssistantMessage(
-    state.messages,
-    messageId,
-    state.agent,
-  );
-  const nextMessages = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    const parts = m.parts.slice();
-    const lastIdx = findLastIndex(parts, (p) => p.type === "text");
-    if (lastIdx >= 0) {
-      const last = parts[lastIdx]!;
-      if (last.type === "text") {
-        parts[lastIdx] = { ...last, text: last.text + delta };
-      }
-    } else {
-      parts.push({ type: "text", text: delta });
+  const prepared = ensureAssistantMessage(state, messageId);
+  const message = prepared.state.messages[prepared.messageIndex];
+  if (!message || message.role !== "agent") {
+    return state;
+  }
+  const parts = message.parts.slice();
+  const lastIdx = findLastIndex(parts, (p) => p.type === "text");
+  if (lastIdx >= 0) {
+    const last = parts[lastIdx]!;
+    if (last.type === "text") {
+      parts[lastIdx] = { ...last, text: last.text + delta };
     }
-    return { ...m, parts };
-  });
+  } else {
+    parts.push({ type: "text", text: delta });
+  }
   return {
-    ...state,
-    messages: nextMessages,
+    ...prepared.state,
+    messages: replaceMessage(prepared.state.messages, prepared.messageIndex, {
+      ...message,
+      parts,
+    }),
     activeAssistantMessageId: messageId,
   };
 }
@@ -76,26 +87,20 @@ export function ensureReasoningPart(
   if (state.reasoningPartPositions[reasoningId]) {
     return state;
   }
-  const { messages: withMessage } = ensureAssistantMessage(
-    state.messages,
-    parentMessageId,
-    state.agent,
-  );
-  let partsIndex = -1;
-  const next = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== parentMessageId) return m;
-    partsIndex = m.parts.length;
-    return {
-      ...m,
-      parts: [...m.parts, { type: "thinking", thinking: "" } as UIPart],
-    };
-  });
-  if (partsIndex < 0) return state;
+  const prepared = ensureAssistantMessage(state, parentMessageId);
+  const message = prepared.state.messages[prepared.messageIndex];
+  if (!message || message.role !== "agent") {
+    return state;
+  }
+  const partsIndex = message.parts.length;
   return {
-    ...state,
-    messages: next,
+    ...prepared.state,
+    messages: replaceMessage(prepared.state.messages, prepared.messageIndex, {
+      ...message,
+      parts: [...message.parts, { type: "thinking", thinking: "" } as UIPart],
+    }),
     reasoningPartPositions: {
-      ...state.reasoningPartPositions,
+      ...prepared.state.reasoningPartPositions,
       [reasoningId]: { parentMessageId, partsIndex },
     },
   };
@@ -108,90 +113,86 @@ export function appendReasoningDelta(
 ): AgUiMessagesState {
   const pos = state.reasoningPartPositions[reasoningId];
   if (!pos) return state;
-  const next = state.messages.map((m) => {
-    if (m.role !== "agent" || m.id !== pos.parentMessageId) return m;
-    const part = m.parts[pos.partsIndex];
-    if (!part || part.type !== "thinking") return m;
-    const parts = m.parts.slice();
-    parts[pos.partsIndex] = {
-      ...part,
-      thinking: part.thinking + delta,
-    } as UIPart;
-    return { ...m, parts };
-  });
-  return { ...state, messages: next };
+  const messageIndex = state.assistantMessageIndexes[pos.parentMessageId];
+  if (messageIndex === undefined) return state;
+  const message = state.messages[messageIndex];
+  if (!message || message.role !== "agent") return state;
+  const part = message.parts[pos.partsIndex];
+  if (!part || part.type !== "thinking") return state;
+  const parts = message.parts.slice();
+  parts[pos.partsIndex] = {
+    ...part,
+    thinking: part.thinking + delta,
+  } as UIPart;
+  return {
+    ...state,
+    messages: replaceMessage(state.messages, messageIndex, {
+      ...message,
+      parts,
+    }),
+  };
 }
 
 export function addPendingToolPart(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   messageId: string,
   toolCallId: string,
   toolName: string,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    const existing = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (existing >= 0) return m;
-    changed = true;
-    return {
-      ...m,
-      parts: [
-        ...m.parts,
-        {
-          type: "tool",
-          id: toolCallId,
-          agent,
-          name: toolName,
-          parameters: {} as Record<string, unknown>,
-          status: "pending",
-          parts: [],
-        } as unknown as UIPart,
-      ],
-    };
-  });
-  return { messages: next, changed };
+): { state: AgUiMessagesState; changed: boolean } {
+  if (state.toolPartPositions[toolCallId]) {
+    return { state, changed: false };
+  }
+  const messageIndex = state.assistantMessageIndexes[messageId];
+  if (messageIndex === undefined) {
+    return { state, changed: false };
+  }
+  const message = state.messages[messageIndex];
+  if (!message || message.role !== "agent") {
+    return { state, changed: false };
+  }
+  const partsIndex = message.parts.length;
+  const toolPart = {
+    type: "tool",
+    id: toolCallId,
+    agent: state.agent,
+    name: toolName,
+    parameters: {} as Record<string, unknown>,
+    status: "pending",
+    parts: [],
+  } as unknown as UIPart;
+  return {
+    state: {
+      ...state,
+      messages: replaceMessage(state.messages, messageIndex, {
+        ...message,
+        parts: [...message.parts, toolPart],
+      }),
+      toolPartPositions: {
+        ...state.toolPartPositions,
+        [toolCallId]: { messageId, partsIndex },
+      },
+    },
+    changed: true,
+  };
 }
 
 export function updateToolPartParameters(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   toolCallId: string,
   parameters: Record<string, unknown>,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
-    const nextParts = m.parts.slice();
-    nextParts[idx] = { ...part, parameters } as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
-  });
-  return { messages: next, changed };
+): AgUiMessagesState {
+  return updateToolPart(state, toolCallId, (part) => ({
+    ...part,
+    parameters,
+  }));
 }
 
 export function appendToolProgressChunk(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   toolCallId: string,
   text: string,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
+): AgUiMessagesState {
+  return updateToolPart(state, toolCallId, (part) => {
     const progressPart = part as ToolPartWithProgress;
     const existing = progressPart.progressChunks ?? [];
     const previousSeq = existing.at(-1)?.seq ?? -1;
@@ -200,17 +201,13 @@ export function appendToolProgressChunk(
       0,
       nextProgressChunks.length - MAX_PROGRESS_CHUNKS,
     );
-    const nextParts = m.parts.slice();
-    nextParts[idx] = {
+    return {
       ...progressPart,
       progressChunks: nextProgressChunks.slice(-MAX_PROGRESS_CHUNKS),
       progressHiddenCount: (progressPart.progressHiddenCount ?? 0) + overflow,
       toolStatus: "in_progress",
     } as unknown as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
   });
-  return { messages: next, changed };
 }
 
 export function removeToolArgsBuffer(
@@ -226,26 +223,17 @@ export function removeToolArgsBuffer(
 }
 
 export function completeToolPart(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   toolCallId: string,
   result: string,
   isError: boolean,
-): { messages: UIMessage[]; changed: boolean } {
-  let changed = false;
-  const next = messages.map((m) => {
-    if (m.role !== "agent") return m;
-    const idx = m.parts.findIndex(
-      (p) => p.type === "tool" && p.id === toolCallId,
-    );
-    if (idx < 0) return m;
-    const part = m.parts[idx]!;
-    if (part.type !== "tool") return m;
+): AgUiMessagesState {
+  return updateToolPart(state, toolCallId, (part) => {
     const progressPart = part as ToolPartWithProgress;
     const shouldCarryToolStatus =
       Boolean(progressPart.toolStatus) ||
       Boolean(progressPart.progressChunks?.length);
-    const nextParts = m.parts.slice();
-    nextParts[idx] = {
+    return {
       ...part,
       status: isError ? "error" : "completed",
       ...(shouldCarryToolStatus
@@ -253,10 +241,7 @@ export function completeToolPart(
         : {}),
       result,
     } as UIPart;
-    changed = true;
-    return { ...m, parts: nextParts };
   });
-  return { messages: next, changed };
 }
 
 export function failPendingToolParts(
@@ -285,49 +270,107 @@ export function failPendingToolParts(
 }
 
 export function insertRichPart(
-  messages: UIMessage[],
+  state: AgUiMessagesState,
   messageId: string,
   part: UIPartExtended,
-  agent: AIAgent,
-): { messages: UIMessage[]; changed: boolean } {
-  const { messages: withMessage, changed: created } = ensureAssistantMessage(
-    messages,
-    messageId,
-    agent,
-  );
-  let changed = created;
-  const next = withMessage.map((m) => {
-    if (m.role !== "agent" || m.id !== messageId) return m;
-    const partIdentity = getPartIdentity(part);
-    if (partIdentity.id) {
-      const dup = m.parts.some((p) => {
-        const existingIdentity = getPartIdentity(p);
-        return (
-          existingIdentity.type === partIdentity.type &&
-          existingIdentity.id === partIdentity.id
-        );
-      });
-      if (dup) return m;
+): AgUiMessagesState {
+  const prepared = ensureAssistantMessage(state, messageId);
+  const message = prepared.state.messages[prepared.messageIndex];
+  if (!message || message.role !== "agent") {
+    return state;
+  }
+  const partIdentity = getPartIdentity(part);
+  if (partIdentity.id) {
+    const dup = message.parts.some((existingPart) => {
+      const existingIdentity = getPartIdentity(existingPart);
+      return (
+        existingIdentity.type === partIdentity.type &&
+        existingIdentity.id === partIdentity.id
+      );
+    });
+    if (dup) {
+      return prepared.state;
     }
-    changed = true;
-    return {
-      ...m,
-      parts: [...m.parts, part as UIPart],
-    };
-  });
-  return { messages: next, changed };
+  }
+  return {
+    ...prepared.state,
+    messages: replaceMessage(prepared.state.messages, prepared.messageIndex, {
+      ...message,
+      parts: [...message.parts, part as UIPart],
+    }),
+  };
 }
 
 export function appendSnapshotMessages(
-  current: UIMessage[],
+  state: AgUiMessagesState,
   incoming: UIMessage[],
-): { messages: UIMessage[]; changed: boolean } {
-  const existingIds = new Set(current.map((message) => message.id));
-  const missing = incoming.filter((message) => !existingIds.has(message.id));
+): AgUiMessagesState {
+  const missing = incoming.filter(
+    (message) => state.messageIndexes[message.id] === undefined,
+  );
   if (missing.length === 0) {
-    return { messages: current, changed: false };
+    return state;
   }
-  return { messages: [...current, ...missing], changed: true };
+  const messageIndexes = { ...state.messageIndexes };
+  const assistantMessageIndexes = { ...state.assistantMessageIndexes };
+  const toolPartPositions = { ...state.toolPartPositions };
+  let nextMessageIndex = state.messages.length;
+  for (const message of missing) {
+    messageIndexes[message.id] = nextMessageIndex;
+    if (message.role === "agent") {
+      assistantMessageIndexes[message.id] = nextMessageIndex;
+      message.parts.forEach((part, partsIndex) => {
+        if (part.type === "tool") {
+          toolPartPositions[part.id] = {
+            messageId: message.id,
+            partsIndex,
+          };
+        }
+      });
+    }
+    nextMessageIndex += 1;
+  }
+  return {
+    ...state,
+    messages: [...state.messages, ...missing],
+    messageIndexes,
+    assistantMessageIndexes,
+    toolPartPositions,
+  };
+}
+
+function updateToolPart(
+  state: AgUiMessagesState,
+  toolCallId: string,
+  update: (part: Extract<UIPart, { type: "tool" }>) => UIPart,
+): AgUiMessagesState {
+  const position = state.toolPartPositions[toolCallId];
+  if (!position) return state;
+  const messageIndex = state.assistantMessageIndexes[position.messageId];
+  if (messageIndex === undefined) return state;
+  const message = state.messages[messageIndex];
+  if (!message || message.role !== "agent") return state;
+  const part = message.parts[position.partsIndex];
+  if (!part || part.type !== "tool") return state;
+  const parts = message.parts.slice();
+  parts[position.partsIndex] = update(part);
+  return {
+    ...state,
+    messages: replaceMessage(state.messages, messageIndex, {
+      ...message,
+      parts,
+    }),
+  };
+}
+
+function replaceMessage(
+  messages: UIMessage[],
+  index: number,
+  message: UIMessage,
+): UIMessage[] {
+  const next = messages.slice();
+  next[index] = message;
+  return next;
 }
 
 function findLastIndex<T>(

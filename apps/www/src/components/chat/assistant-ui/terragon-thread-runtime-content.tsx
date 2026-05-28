@@ -37,6 +37,9 @@ import {
   shouldSuppressPreStartLifecycleFooter,
 } from "./working-footer-freshness";
 
+const RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS = 1;
+const RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL = 2;
+
 export type TerragonThreadRuntimeContentProps = {
   lifecycleMessages: UISystemMessage[];
   threadStatus: ThreadStatus | null;
@@ -94,6 +97,36 @@ function threadMessageHasPendingToolCall(message: ThreadMessage): boolean {
   return message.content.some(isPendingToolCall);
 }
 
+export function getRuntimeThreadFlags(
+  messages: readonly ThreadMessage[],
+): number {
+  let flags = 0;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") {
+      continue;
+    }
+    if (
+      (flags & RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS) === 0 &&
+      threadMessageHasRenderableParts(message)
+    ) {
+      flags |= RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS;
+    }
+    if (
+      (flags & RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL) === 0 &&
+      threadMessageHasPendingToolCall(message)
+    ) {
+      flags |= RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL;
+    }
+    if ((flags & RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS) !== 0) {
+      return flags;
+    }
+  }
+
+  return flags;
+}
+
 export function TerragonThreadRuntimeContent({
   lifecycleMessages,
   threadStatus,
@@ -123,16 +156,16 @@ export function TerragonThreadRuntimeContent({
   threadChatStatus,
   children,
 }: TerragonThreadRuntimeContentProps) {
-  const runtimeMessages = useAuiState((state) => state.thread.messages);
-  const runtimeIsLoading = useAuiState((state) => state.thread.isLoading);
-  const isRuntimeHydrating = runtimeIsLoading && runtimeMessages.length === 0;
-  const hasRenderableAgentParts = runtimeMessages.some(
-    (message) =>
-      message.role === "assistant" && threadMessageHasRenderableParts(message),
+  const isRuntimeHydrating = useAuiState(
+    (state) => state.thread.isLoading && state.thread.messages.length === 0,
   );
-  const hasPendingToolCall = runtimeMessages.some(
-    threadMessageHasPendingToolCall,
+  const runtimeThreadFlags = useAuiState((state) =>
+    getRuntimeThreadFlags(state.thread.messages),
   );
+  const hasRenderableAgentParts =
+    (runtimeThreadFlags & RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS) !== 0;
+  const hasPendingToolCall =
+    (runtimeThreadFlags & RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL) !== 0;
   useScrollToHashMessageOnce({
     messages: [],
     resetKey: thread.id,

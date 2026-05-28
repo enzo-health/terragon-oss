@@ -24,7 +24,6 @@ type MathPlugin = ReturnType<
 >;
 
 import { classifyRepoFileLink } from "@terragon/shared/utils/repo-file-link";
-import { ImagePart } from "@/components/chat/image-part";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -67,22 +66,92 @@ function contentNeedsMath(content: string): boolean {
   return MATH_RE.test(content);
 }
 
+export interface MathDetectionState {
+  content: string;
+  needsMath: boolean;
+  scanTail: string;
+}
+
+function getMathScanTail(content: string): string {
+  const lastMathDelimiterIndex = content.lastIndexOf("$$");
+  if (lastMathDelimiterIndex >= 0) {
+    return content.slice(lastMathDelimiterIndex);
+  }
+  return content.endsWith("$") ? "$" : "";
+}
+
+function createMathDetectionState(content: string): MathDetectionState {
+  return {
+    content,
+    needsMath: contentNeedsMath(content),
+    scanTail: getMathScanTail(content),
+  };
+}
+
+export function advanceContentNeedsMath(
+  content: string,
+  previous: MathDetectionState | null,
+): MathDetectionState {
+  if (
+    !previous ||
+    content.length < previous.content.length ||
+    !content.startsWith(previous.content)
+  ) {
+    return createMathDetectionState(content);
+  }
+
+  if (previous.needsMath || content.length === previous.content.length) {
+    return {
+      content,
+      needsMath: previous.needsMath,
+      scanTail: previous.scanTail,
+    };
+  }
+
+  const suffix = content.slice(previous.content.length);
+  const scanText = previous.scanTail + suffix;
+  return {
+    content,
+    needsMath: contentNeedsMath(scanText),
+    scanTail: getMathScanTail(scanText),
+  };
+}
+
 const MIN_STABLE_MARKDOWN_PREFIX_LENGTH = 480;
 const RAW_HTML_TAG_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^>\n]*)?>/;
 const REFERENCE_MARKDOWN_RE =
   /(?:^|\n)[ \t]{0,3}\[[^\]\n]+]:[^\n]+|\[[^\]\n]+]\[[^\]\n]*]/;
+const UNSAFE_MARKDOWN_SCAN_TAIL_LENGTH = 256;
 
 interface StreamingMarkdownSegments {
   stablePrefix: string;
   liveTail: string;
 }
 
-export function splitStreamingMarkdownContent(
+export interface StreamingMarkdownSegmentState
+  extends StreamingMarkdownSegments {
+  content: string;
+  unsafeScanTail: string;
+}
+
+type DisabledStreamingMarkdownSegmentationState = {
+  content: string;
+  unsafeScanTail: string;
+};
+
+function hasUnsafeStreamingMarkdown(content: string): boolean {
+  return RAW_HTML_TAG_RE.test(content) || REFERENCE_MARKDOWN_RE.test(content);
+}
+
+function getUnsafeStreamingMarkdownScanTail(content: string): string {
+  return content.slice(-UNSAFE_MARKDOWN_SCAN_TAIL_LENGTH);
+}
+
+function createStreamingMarkdownSegmentState(
   content: string,
-): StreamingMarkdownSegments | null {
+): StreamingMarkdownSegmentState | null {
   if (content.length < MIN_STABLE_MARKDOWN_PREFIX_LENGTH) return null;
-  if (RAW_HTML_TAG_RE.test(content)) return null;
-  if (REFERENCE_MARKDOWN_RE.test(content)) return null;
+  if (hasUnsafeStreamingMarkdown(content)) return null;
 
   const blocks = parseMarkdownIntoBlocks(content);
   if (blocks.length < 2) return null;
@@ -93,7 +162,124 @@ export function splitStreamingMarkdownContent(
   const stablePrefix = blocks.slice(0, -1).join("");
   if (stablePrefix.length < MIN_STABLE_MARKDOWN_PREFIX_LENGTH) return null;
 
-  return { stablePrefix, liveTail };
+  return {
+    content,
+    stablePrefix,
+    liveTail,
+    unsafeScanTail: getUnsafeStreamingMarkdownScanTail(content),
+  };
+}
+
+export function advanceStreamingMarkdownSegments(
+  content: string,
+  previous: StreamingMarkdownSegmentState | null,
+): StreamingMarkdownSegmentState | null {
+  if (!previous) {
+    return createStreamingMarkdownSegmentState(content);
+  }
+
+  if (content.length < previous.content.length) {
+    return createStreamingMarkdownSegmentState(content);
+  }
+
+  if (!content.startsWith(previous.content)) {
+    return createStreamingMarkdownSegmentState(content);
+  }
+
+  const suffix = content.slice(previous.content.length);
+  const unsafeScanText = previous.unsafeScanTail + suffix;
+  if (hasUnsafeStreamingMarkdown(unsafeScanText)) {
+    return null;
+  }
+
+  if (suffix.length === 0) return previous;
+
+  const tailBlocks = parseMarkdownIntoBlocks(previous.liveTail + suffix);
+  const liveTail = tailBlocks.at(-1) ?? "";
+  if (tailBlocks.length < 2 || liveTail.trim().length === 0) {
+    return {
+      content,
+      stablePrefix: previous.stablePrefix,
+      liveTail: previous.liveTail + suffix,
+      unsafeScanTail: getUnsafeStreamingMarkdownScanTail(unsafeScanText),
+    };
+  }
+
+  return {
+    content,
+    stablePrefix: previous.stablePrefix + tailBlocks.slice(0, -1).join(""),
+    liveTail,
+    unsafeScanTail: getUnsafeStreamingMarkdownScanTail(unsafeScanText),
+  };
+}
+
+export function splitStreamingMarkdownContent(
+  content: string,
+): StreamingMarkdownSegments | null {
+  const segments = createStreamingMarkdownSegmentState(content);
+  if (!segments) return null;
+  return {
+    stablePrefix: segments.stablePrefix,
+    liveTail: segments.liveTail,
+  };
+}
+
+function advanceDisabledStreamingMarkdownSegmentation(
+  content: string,
+  previous: DisabledStreamingMarkdownSegmentationState | null,
+): DisabledStreamingMarkdownSegmentationState | null {
+  if (!previous) return null;
+  if (
+    content.length < previous.content.length ||
+    !content.startsWith(previous.content)
+  ) {
+    return null;
+  }
+  const suffix = content.slice(previous.content.length);
+  return {
+    content,
+    unsafeScanTail: getUnsafeStreamingMarkdownScanTail(
+      previous.unsafeScanTail + suffix,
+    ),
+  };
+}
+
+function advanceStreamingMarkdownSegmentsForRender({
+  content,
+  previousSegments,
+  previousDisabled,
+}: {
+  content: string;
+  previousSegments: StreamingMarkdownSegmentState | null;
+  previousDisabled: DisabledStreamingMarkdownSegmentationState | null;
+}): {
+  segments: StreamingMarkdownSegmentState | null;
+  disabled: DisabledStreamingMarkdownSegmentationState | null;
+} {
+  const disabled = advanceDisabledStreamingMarkdownSegmentation(
+    content,
+    previousDisabled,
+  );
+  if (disabled) {
+    return { segments: null, disabled };
+  }
+
+  const segments = advanceStreamingMarkdownSegments(content, previousSegments);
+  if (
+    segments ||
+    !previousSegments ||
+    !content.startsWith(previousSegments.content)
+  ) {
+    return { segments, disabled: null };
+  }
+
+  return {
+    segments: null,
+    disabled: {
+      content,
+      unsafeScanTail: getUnsafeStreamingMarkdownScanTail(content),
+    },
+  };
 }
 
 export type MarkdownVariant = "response" | "reasoning";
@@ -152,6 +338,18 @@ function getLanguageLabel(className?: string): string | null {
   const match = className.match(/language-([a-z0-9_+-]+)/i);
   if (!match) return null;
   return match[1] ?? null;
+}
+
+function MarkdownImage({ src, alt }: { src: string; alt?: string }) {
+  return (
+    <img
+      src={src}
+      alt={alt ?? "Image"}
+      className="max-w-[200px] rounded-lg image-outline"
+      loading="lazy"
+      decoding="async"
+    />
+  );
 }
 
 function findNestedClassName(node: ReactNode): string | null {
@@ -412,7 +610,7 @@ function getResponseComponents(
       if (renderImage) {
         return renderImage(src, alt);
       }
-      return <ImagePart imageUrl={src} alt={alt} />;
+      return <MarkdownImage src={src} alt={alt} />;
     },
     hr() {
       return <hr className="my-4 border-t border-border" />;
@@ -488,6 +686,36 @@ function getReasoningComponents(): NonNullable<StreamdownProps["components"]> {
   return components;
 }
 
+const MemoizedStableMarkdownPrefix = memo(
+  function MemoizedStableMarkdownPrefix({
+    stablePrefix,
+    plugins,
+    components,
+    controls,
+    className,
+  }: {
+    stablePrefix: string;
+    plugins: NonNullable<StreamdownProps["plugins"]>;
+    components: NonNullable<StreamdownProps["components"]>;
+    controls: StreamdownProps["controls"];
+    className?: string;
+  }) {
+    return (
+      <Streamdown
+        plugins={plugins}
+        components={components}
+        controls={controls}
+        mode="static"
+        parseIncompleteMarkdown={false}
+        normalizeHtmlIndentation
+        className={cn(className, "[&>*:last-child]:mb-2")}
+      >
+        {stablePrefix}
+      </Streamdown>
+    );
+  },
+);
+
 export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   streaming = false,
@@ -513,7 +741,13 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   const [mathPlugin, setMathPlugin] = useState<MathPlugin | null>(
     () => mathPluginInstance,
   );
-  const needsMath = contentNeedsMath(content);
+  const mathDetectionRef = useRef<MathDetectionState | null>(null);
+  const mathDetection = advanceContentNeedsMath(
+    content,
+    mathDetectionRef.current,
+  );
+  mathDetectionRef.current = mathDetection;
+  const needsMath = mathDetection.needsMath;
   useEffect(() => {
     if (!needsMath || mathPlugin) return;
     let cancelled = false;
@@ -530,28 +764,33 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
       mathPlugin ? { code: codePlugin, math: mathPlugin } : codeOnlyPlugins,
     [mathPlugin],
   );
-  const streamingSegments = useMemo(
-    () =>
-      streaming && streamingSegmentation === "auto"
-        ? splitStreamingMarkdownContent(content)
-        : null,
-    [content, streaming, streamingSegmentation],
+  const streamingSegmentRef = useRef<StreamingMarkdownSegmentState | null>(
+    null,
   );
+  const disabledStreamingSegmentRef =
+    useRef<DisabledStreamingMarkdownSegmentationState | null>(null);
+  const streamingSegmentProgress =
+    streaming && streamingSegmentation === "auto"
+      ? advanceStreamingMarkdownSegmentsForRender({
+          content,
+          previousSegments: streamingSegmentRef.current,
+          previousDisabled: disabledStreamingSegmentRef.current,
+        })
+      : { segments: null, disabled: null };
+  const streamingSegments = streamingSegmentProgress.segments;
+  streamingSegmentRef.current = streamingSegments;
+  disabledStreamingSegmentRef.current = streamingSegmentProgress.disabled;
 
   if (streamingSegments) {
     return (
       <>
-        <Streamdown
+        <MemoizedStableMarkdownPrefix
+          stablePrefix={streamingSegments.stablePrefix}
           plugins={plugins}
           components={components}
           controls={controls}
-          mode="static"
-          parseIncompleteMarkdown={false}
-          normalizeHtmlIndentation
-          className={cn(className, "[&>*:last-child]:mb-2")}
-        >
-          {streamingSegments.stablePrefix}
-        </Streamdown>
+          className={className}
+        />
         <Streamdown
           plugins={plugins}
           components={components}

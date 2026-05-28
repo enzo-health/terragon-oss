@@ -9,11 +9,11 @@ import {
   type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
 import { Check, ChevronDown, Copy, Link, Loader2, Wrench } from "lucide-react";
-import { useCallback, useState, type PropsWithChildren } from "react";
+import { useCallback, useMemo, useState, type PropsWithChildren } from "react";
 import { toast } from "sonner";
-import { MarkdownRenderer } from "@/components/ai-elements/markdown-renderer";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { TextPart } from "../text-part";
 
 /**
  * Native transcript surface — pure assistant-ui. The runtime owns the message
@@ -25,15 +25,15 @@ import { cn } from "@/lib/utils";
  * non-library pieces.
  */
 
-const NativeText: TextMessagePartComponent = ({ text }) => (
-  <MarkdownRenderer content={text} />
+const NativeText: TextMessagePartComponent = ({ text, status }) => (
+  <TextPart text={text} streaming={status.type === "running"} />
 );
 
-const NativeReasoning: ReasoningMessagePartComponent = ({ text }) => (
+const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => (
   <details className="my-2 text-sm text-muted-foreground">
     <summary className="cursor-pointer select-none">Thinking</summary>
-    <div className="mt-1">
-      <MarkdownRenderer content={text} variant="reasoning" />
+    <div className="mt-1 text-muted-foreground">
+      <TextPart text={text} streaming={status.type === "running"} />
     </div>
   </details>
 );
@@ -45,75 +45,59 @@ type ToolGroupPart = {
   readonly isError?: boolean;
 };
 
-const countToolParts = (
+type ToolGroupState = {
+  count: number;
+  hasActive: boolean;
+  hasError: boolean;
+};
+
+const TOOL_GROUP_FLAG_HAS_ACTIVE = 1;
+const TOOL_GROUP_FLAG_HAS_ERROR = 2;
+const TOOL_GROUP_COUNT_SHIFT = 2;
+
+export const getToolGroupFlags = (
   parts: readonly ToolGroupPart[],
   startIndex: number,
   endIndex: number,
 ): number => {
   let count = 0;
+  let flags = 0;
 
   for (let index = startIndex; index <= endIndex; index += 1) {
     const part = parts[index];
     if (!part || part.type !== "tool-call") continue;
 
     count += 1;
-  }
-
-  return count;
-};
-
-const toolGroupHasActiveCall = (
-  parts: readonly ToolGroupPart[],
-  startIndex: number,
-  endIndex: number,
-): boolean => {
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    const part = parts[index];
-    if (
-      part?.type === "tool-call" &&
-      (part.status?.type === "running" || part.result === undefined)
-    ) {
-      return true;
+    if (part.status?.type === "running" || part.result === undefined) {
+      flags |= TOOL_GROUP_FLAG_HAS_ACTIVE;
+    }
+    if (part.isError === true || part.status?.type === "incomplete") {
+      flags |= TOOL_GROUP_FLAG_HAS_ERROR;
     }
   }
 
-  return false;
+  return (count << TOOL_GROUP_COUNT_SHIFT) | flags;
 };
 
-const toolGroupHasError = (
-  parts: readonly ToolGroupPart[],
-  startIndex: number,
-  endIndex: number,
-): boolean => {
-  for (let index = startIndex; index <= endIndex; index += 1) {
-    const part = parts[index];
-    if (
-      part?.type === "tool-call" &&
-      (part.isError === true || part.status?.type === "incomplete")
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-};
+export function decodeToolGroupFlags(flags: number): ToolGroupState {
+  return {
+    count: flags >> TOOL_GROUP_COUNT_SHIFT,
+    hasActive: (flags & TOOL_GROUP_FLAG_HAS_ACTIVE) !== 0,
+    hasError: (flags & TOOL_GROUP_FLAG_HAS_ERROR) !== 0,
+  };
+}
 
 const NativeToolGroup = ({
   startIndex,
   endIndex,
   children,
 }: PropsWithChildren<{ startIndex: number; endIndex: number }>) => {
-  const count = useAuiState((state) =>
-    countToolParts(state.message.parts, startIndex, endIndex),
-  );
-  const hasActive = useAuiState((state) =>
-    toolGroupHasActiveCall(state.message.parts, startIndex, endIndex),
-  );
-  const hasError = useAuiState((state) =>
-    toolGroupHasError(state.message.parts, startIndex, endIndex),
+  const toolGroupFlags = useAuiState((state) =>
+    getToolGroupFlags(state.message.parts, startIndex, endIndex),
   );
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const open = hasActive || hasError || manualOpen === true;
+  const { count, hasActive, hasError } = decodeToolGroupFlags(toolGroupFlags);
+  const open = hasActive || manualOpen === true;
 
   if (count <= 1) return <>{children}</>;
 
@@ -154,6 +138,16 @@ const toolCallResultText = (result: unknown): string => {
   return JSON.stringify(result, null, 2);
 };
 
+const TOOL_ARG_PREVIEW_SCAN_LIMIT = 4096;
+const STREAMING_TOOL_ARGS_RENDER_LIMIT = 2000;
+const TOOL_PREVIEW_FIELDS = [
+  "command",
+  "file_path",
+  "path",
+  "pattern",
+  "query",
+] as const;
+
 const jsonField = (value: unknown, key: string): string | null => {
   if (!value || typeof value !== "object" || !(key in value)) return null;
   const field = Object.entries(value).find(
@@ -162,8 +156,31 @@ const jsonField = (value: unknown, key: string): string | null => {
   return typeof field === "string" && field.length > 0 ? field : null;
 };
 
-const toolArgPreview = (argsText: string): string | null => {
+const parseJsonStringLiteral = (raw: string): string | null => {
+  try {
+    const parsed: unknown = JSON.parse(`"${raw}"`);
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const quotedJsonField = (argsText: string, key: string): string | null => {
+  const scanned = argsText.slice(0, TOOL_ARG_PREVIEW_SCAN_LIMIT);
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(
+    `"${escapedKey}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)(?:"|$)`,
+  ).exec(scanned);
+  return match?.[1] ? parseJsonStringLiteral(match[1]) : null;
+};
+
+export const toolArgPreview = (argsText: string): string | null => {
   if (!argsText) return null;
+
+  for (const key of TOOL_PREVIEW_FIELDS) {
+    const field = quotedJsonField(argsText, key);
+    if (field) return field;
+  }
 
   try {
     const parsed: unknown = JSON.parse(argsText);
@@ -182,6 +199,16 @@ const toolArgPreview = (argsText: string): string | null => {
 const truncatePreview = (value: string, maxLength: number): string =>
   value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 
+export const toolArgsDisplayText = (
+  argsText: string,
+  active: boolean,
+): string => {
+  if (!active || argsText.length <= STREAMING_TOOL_ARGS_RENDER_LIMIT) {
+    return argsText;
+  }
+  return `${argsText.slice(0, STREAMING_TOOL_ARGS_RENDER_LIMIT - 1)}…`;
+};
+
 const NativeToolCall: ToolCallMessagePartComponent = ({
   toolName,
   argsText,
@@ -191,10 +218,14 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
 }) => {
   const active = status.type === "running" || result === undefined;
   const failed = isError === true || status.type === "incomplete";
-  const resultText = toolCallResultText(result);
-  const preview = toolArgPreview(argsText);
+  const resultText = useMemo(() => toolCallResultText(result), [result]);
+  const preview = useMemo(() => toolArgPreview(argsText), [argsText]);
+  const displayArgsText = useMemo(
+    () => toolArgsDisplayText(argsText, active),
+    [active, argsText],
+  );
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const open = active || failed || manualOpen === true;
+  const open = active || manualOpen === true;
 
   return (
     <details
@@ -239,9 +270,9 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
         />
       </summary>
       <div className="border-t border-border/70 px-3 py-2">
-        {argsText ? (
+        {displayArgsText ? (
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
-            {argsText}
+            {displayArgsText}
           </pre>
         ) : null}
         {resultText ? (
@@ -276,11 +307,7 @@ const messageTextFromParts = (parts: readonly MessageContentPart[]): string =>
 const NATIVE_ACTION_BTN =
   "flex items-center justify-center min-h-[32px] min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.98] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
 
-const NativeMessageActions = ({
-  align,
-}: {
-  align: "start" | "end";
-}) => {
+const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState(
     (state) => state.message.parts as readonly MessageContentPart[],
@@ -358,7 +385,7 @@ const NativeMessageActions = ({
 };
 
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col items-end py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
+  <MessagePrimitive.Root className="group/native-msg flex flex-col items-end py-2 [content-visibility:auto] [contain-intrinsic-size:auto_96px] animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
     <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
       <MessagePrimitive.Parts />
     </div>
@@ -367,7 +394,7 @@ const NativeUserMessage = () => (
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col py-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+  <MessagePrimitive.Root className="group/native-msg flex flex-col py-2 [content-visibility:auto] [contain-intrinsic-size:auto_160px] animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
     <div className="mr-auto w-full break-words text-sm leading-relaxed">
       <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
     </div>
