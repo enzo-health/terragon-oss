@@ -73,7 +73,6 @@ export async function GET(
   });
   const replayCursorSeq = replayCursor?.seq ?? null;
   const shouldFrameRunAgentResume = request.method === "POST";
-
   if (!threadChatId) {
     return NextResponse.json(
       { error: "Missing threadChatId" },
@@ -114,7 +113,7 @@ export async function GET(
   const initialLastId = await captureStreamCursor(streamKey);
 
   // Resolve the effective runId for the SSE stream.
-  let resolvedRunId = await resolveEffectiveRunId({
+  const initialResolvedRunId = await resolveEffectiveRunId({
     runIdParam,
     replayCursorSeq,
     isGetMethod: request.method === "GET",
@@ -129,7 +128,7 @@ export async function GET(
         threadId,
         threadChatId,
         userId: session.user.id,
-        resolvedRunId,
+        resolvedRunId: initialResolvedRunId,
         replayCursorSeq,
         shouldFrameRunAgentResume,
         hasRunIdParam: runIdParam !== null,
@@ -159,7 +158,7 @@ export async function GET(
         } catch (error) {
           console.warn(
             "[ag-ui] durable catch-up replay failed during live-tail; continuing",
-            { threadId, threadChatId, runId: resolvedRunId },
+            { threadId, threadChatId, runId: sse.resolvedRunId },
             error,
           );
           return false;
@@ -276,7 +275,6 @@ export async function GET(
             return false;
           }
 
-          resolvedRunId = latestRunId;
           sse.resolvedRunId = latestRunId;
           const replayed = await replayDurableEventsAfterCursor();
           if (!sse.closed) {
@@ -428,7 +426,7 @@ export async function GET(
       // Send an immediate keepalive comment so proxies don't close idle
       // connections before the first real event lands, then live-tail.
       // -----------------------------------------------------------------
-      if (resolvedRunId === null) {
+      if (sse.resolvedRunId === null) {
         const replayed =
           replayCursorSeq !== null
             ? await replayDurableEventsAfterCursor()
@@ -440,8 +438,8 @@ export async function GET(
           sse.enqueue(encodeSseComment("awaiting-first-run"));
         }
         await liveTail(
-          resolvedRunId !== null
-            ? { runId: resolvedRunId, userId: session.user.id }
+          sse.resolvedRunId !== null
+            ? { runId: sse.resolvedRunId, userId: session.user.id }
             : undefined,
         );
         return;
@@ -456,10 +454,10 @@ export async function GET(
       let replayEnvelopes: AgUiEventEnvelope[];
       try {
         replayEnvelopes =
-          resolvedRunId !== null && replayCursorSeq === null
+          sse.resolvedRunId !== null && replayCursorSeq === null
             ? await getAgUiEventEnvelopesForRun({
                 db,
-                runId: resolvedRunId,
+                runId: sse.resolvedRunId,
                 threadChatId,
               })
             : await getAgUiEventEnvelopesForThreadChat({
@@ -470,7 +468,7 @@ export async function GET(
       } catch (error) {
         console.error(
           "[ag-ui] threadChat replay failed",
-          { threadId, threadChatId, runId: resolvedRunId },
+          { threadId, threadChatId, runId: sse.resolvedRunId },
           error,
         );
         const errorEvent = mapRunErrorToAgui(
@@ -485,11 +483,11 @@ export async function GET(
       let terminalRunContext: Awaited<
         ReturnType<typeof getAgentRunContextByRunId>
       > = null;
-      if (resolvedRunId !== null) {
+      if (sse.resolvedRunId !== null) {
         try {
           terminalRunContext = await getAgentRunContextByRunId({
             db,
-            runId: resolvedRunId,
+            runId: sse.resolvedRunId,
             userId: session.user.id,
           });
         } catch (error) {
@@ -498,7 +496,7 @@ export async function GET(
             {
               threadId,
               threadChatId,
-              runId: resolvedRunId,
+              runId: sse.resolvedRunId,
             },
             error,
           );
@@ -508,19 +506,19 @@ export async function GET(
       if (replayEnvelopes.length === 0) {
         if (
           replayCursorSeq !== null &&
-          resolvedRunId !== null &&
+          sse.resolvedRunId !== null &&
           terminalRunContext !== null &&
           !isTerminalAgentRunStatus(terminalRunContext.status)
         ) {
           if (shouldFrameRunAgentResume) {
             const runStartedEvent = buildResumeRunStartedEvent({
               threadId,
-              runId: resolvedRunId,
+              runId: sse.resolvedRunId,
             });
             sse.rememberReplayedEventDedupeKeys(runStartedEvent);
             sse.emitAgUiEvent(runStartedEvent, null);
           }
-          await liveTail({ runId: resolvedRunId, userId: session.user.id });
+          await liveTail({ runId: sse.resolvedRunId, userId: session.user.id });
           return;
         }
         if (
@@ -544,7 +542,7 @@ export async function GET(
         hasTerminalEvent: resolvedRunHasTerminalEvent,
         syntheticTerminalEntry,
       } = synthesizeTerminalEntry({
-        runId: resolvedRunId,
+        runId: sse.resolvedRunId,
         envelopes: replayEnvelopes,
         runContext: terminalRunContext,
         threadId,
@@ -583,7 +581,7 @@ export async function GET(
             {
               threadId,
               threadChatId,
-              runId: resolvedRunId,
+              runId: sse.resolvedRunId,
               firstType: replayEntries[0]?.event.type,
             },
           );
@@ -629,7 +627,7 @@ export async function GET(
         return;
       }
 
-      await liveTail({ runId: resolvedRunId, userId: session.user.id });
+      await liveTail({ runId: sse.resolvedRunId, userId: session.user.id });
     },
   });
 
