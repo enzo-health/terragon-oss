@@ -307,15 +307,6 @@ describe("getDaytonaVolumeEnvironmentEntries", () => {
 
     expect(getDaytonaVolumeEnvironmentEntries(daytonaVolume)).toEqual(
       expect.arrayContaining([
-        { key: "PNPM_STORE_DIR", value: "/mnt/terragon/cache/pnpm-store" },
-        {
-          key: "npm_config_store_dir",
-          value: "/mnt/terragon/cache/pnpm-store",
-        },
-        {
-          key: "pnpm_config_store_dir",
-          value: "/mnt/terragon/cache/pnpm-store",
-        },
         { key: "GOMODCACHE", value: "/mnt/terragon/cache/go/pkg/mod" },
         {
           key: "TERRAGON_ARTIFACTS_DIR",
