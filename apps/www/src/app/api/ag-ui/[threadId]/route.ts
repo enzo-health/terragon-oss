@@ -1,4 +1,4 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import { EventType } from "@ag-ui/core";
 import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import {
   type AgUiEventEnvelope,
@@ -43,17 +43,11 @@ import {
   isTerminalRunEventType,
   repairReplayTextMessageLifecycles,
   resolveEffectiveRunId,
-  sseIdForReplayEntry,
   splitHistoryOnlyPrefix,
   toReplayEntries,
   type ReplayEntry,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
-import {
-  getStringEventField,
-  isValidKnownAgUiEvent,
-  parseStreamEntries,
-  type ReplayIdentity,
-} from "@/server-lib/ag-ui/ag-ui-stream-entry";
+import { parseStreamEntries } from "@/server-lib/ag-ui/ag-ui-stream-entry";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -152,128 +146,9 @@ export async function GET(
       abortSignal.addEventListener("abort", () => sse.close("client_abort"), {
         once: true,
       });
-      let lastDeliveredSeq = replayCursorSeq;
-      let hasEmittedAgUiDataEvent = false;
-      let activeEmittedRunId: string | null = null;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
       sse.emitBaselineComment();
-
-      const ensurePostResumeStartsWithRun = (
-        event: BaseEvent,
-        identity?: ReplayIdentity,
-      ): boolean => {
-        if (
-          !shouldFrameRunAgentResume ||
-          hasEmittedAgUiDataEvent ||
-          event.type === EventType.RUN_STARTED ||
-          event.type === EventType.RUN_ERROR
-        ) {
-          return true;
-        }
-
-        const resumeRunId =
-          resolvedRunId ??
-          identity?.runId ??
-          getStringEventField(event, "runId");
-        if (resumeRunId === null) {
-          console.error(
-            "[ag-ui] cursored resume cannot infer run id before first live event",
-            {
-              threadId,
-              threadChatId,
-              firstType: event.type,
-            },
-          );
-          const errorEvent = mapRunErrorToAgui(
-            `Thread chat ${threadChatId} resume log is malformed: first event has no run id`,
-            "replay_failed",
-          );
-          hasEmittedAgUiDataEvent = true;
-          sse.enqueue(encodeSseEvent(errorEvent));
-          sse.close("malformed_replay");
-          return false;
-        }
-
-        resolvedRunId = resumeRunId;
-        sse.resolvedRunId = resumeRunId;
-        const runStartedEvent = buildResumeRunStartedEvent({
-          threadId,
-          runId: resumeRunId,
-        });
-        sse.rememberReplayedEventDedupeKeys(runStartedEvent);
-        hasEmittedAgUiDataEvent = true;
-        activeEmittedRunId = resumeRunId;
-        sse.enqueue(encodeSseEvent(runStartedEvent));
-        return true;
-      };
-
-      const emitAgUiEvent = (
-        event: BaseEvent,
-        seq: number | null,
-        identity?: ReplayIdentity,
-      ): boolean => {
-        if (!ensurePostResumeStartsWithRun(event, identity)) {
-          return false;
-        }
-        if (event.type === EventType.RUN_STARTED) {
-          const nextRunId = getStringEventField(event, "runId");
-          if (
-            activeEmittedRunId !== null &&
-            nextRunId !== null &&
-            activeEmittedRunId !== nextRunId
-          ) {
-            sse.enqueue(
-              encodeSseEvent({
-                type: EventType.RUN_FINISHED,
-                threadId,
-                runId: activeEmittedRunId,
-              }),
-            );
-          }
-          activeEmittedRunId = nextRunId;
-          resolvedRunId = nextRunId;
-          sse.resolvedRunId = nextRunId;
-        }
-        hasEmittedAgUiDataEvent = true;
-        sse.enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
-        if (isTerminalRunEventType(event.type)) {
-          const terminalRunId = getStringEventField(event, "runId");
-          if (terminalRunId === null || terminalRunId === activeEmittedRunId) {
-            activeEmittedRunId = null;
-          }
-        }
-        return true;
-      };
-
-      const emitReplayEntry = (entry: ReplayEntry): boolean => {
-        if (!isValidKnownAgUiEvent(entry.event)) {
-          console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
-            threadId,
-            threadChatId,
-            runId: resolvedRunId,
-            eventType: Reflect.get(entry.event, "type"),
-            seq: entry.seq,
-          });
-          const errorEvent = mapRunErrorToAgui(
-            `Run ${resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
-            "replay_failed",
-          );
-          emitAgUiEvent(errorEvent, null);
-          sse.close("malformed_replay");
-          return false;
-        }
-
-        sse.incrementReplayCount();
-        sse.rememberReplayedEventDedupeKeys(entry.event, entry.identity);
-        if (entry.seq !== null) {
-          lastDeliveredSeq =
-            lastDeliveredSeq === null
-              ? entry.seq
-              : Math.max(lastDeliveredSeq, entry.seq);
-        }
-        return emitAgUiEvent(entry.event, entry.seq, entry.identity);
-      };
 
       const frameResumeReplayEntries = (
         replayEntries: ReplayEntry[],
@@ -289,10 +164,10 @@ export async function GET(
         while (replayEntries[0]?.event.type === EventType.MESSAGES_SNAPSHOT) {
           const [entry] = replayEntries.splice(0, 1);
           if (entry?.seq !== null && entry?.seq !== undefined) {
-            lastDeliveredSeq =
-              lastDeliveredSeq === null
+            sse.lastDeliveredSeq =
+              sse.lastDeliveredSeq === null
                 ? entry.seq
-                : Math.max(lastDeliveredSeq, entry.seq);
+                : Math.max(sse.lastDeliveredSeq, entry.seq);
           }
         }
 
@@ -379,7 +254,7 @@ export async function GET(
           replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
             db,
             threadChatId,
-            afterSeq: lastDeliveredSeq ?? undefined,
+            afterSeq: sse.lastDeliveredSeq ?? undefined,
           });
         } catch (error) {
           console.warn(
@@ -399,12 +274,12 @@ export async function GET(
           return true;
         }
         const repairedReplayEntries =
-          replayCursorSeq !== null && !hasEmittedAgUiDataEvent
+          replayCursorSeq !== null && !sse.hasEmittedAgUiDataEvent
             ? repairReplayTextMessageLifecycles(replayEntries)
             : replayEntries;
         let emittedReplayEntry = false;
         for (const entry of repairedReplayEntries) {
-          if (!emitReplayEntry(entry)) {
+          if (!sse.emitReplayEntry(entry)) {
             return true;
           }
           emittedReplayEntry = true;
@@ -457,7 +332,7 @@ export async function GET(
                 errorMessage: runContext.failureTerminalReason ?? null,
                 errorCode: runContext.failureCategory ?? null,
               });
-              if (!emitAgUiEvent(terminalEvent, null)) {
+              if (!sse.emitAgUiEvent(terminalEvent, null)) {
                 return true;
               }
               sse.close(
@@ -582,12 +457,14 @@ export async function GET(
                     continue;
                   }
                   if (entry.seq !== null) {
-                    lastDeliveredSeq =
-                      lastDeliveredSeq === null
+                    sse.lastDeliveredSeq =
+                      sse.lastDeliveredSeq === null
                         ? entry.seq
-                        : Math.max(lastDeliveredSeq, entry.seq);
+                        : Math.max(sse.lastDeliveredSeq, entry.seq);
                   }
-                  if (!emitAgUiEvent(entry.event, entry.seq, entry.identity)) {
+                  if (
+                    !sse.emitAgUiEvent(entry.event, entry.seq, entry.identity)
+                  ) {
                     return;
                   }
                   if (isTerminalRunEventType(entry.event.type)) {
@@ -741,7 +618,7 @@ export async function GET(
               runId: resolvedRunId,
             });
             sse.rememberReplayedEventDedupeKeys(runStartedEvent);
-            emitAgUiEvent(runStartedEvent, null);
+            sse.emitAgUiEvent(runStartedEvent, null);
           }
           await liveTail({ runId: resolvedRunId, userId: session.user.id });
           return;
@@ -779,10 +656,10 @@ export async function GET(
           : { historyOnlyLastSeq: null, replayEnvelopes };
       const streamReplayEnvelopes = historyPrefix.replayEnvelopes;
       if (historyPrefix.historyOnlyLastSeq !== null) {
-        lastDeliveredSeq =
-          lastDeliveredSeq === null
+        sse.lastDeliveredSeq =
+          sse.lastDeliveredSeq === null
             ? historyPrefix.historyOnlyLastSeq
-            : Math.max(lastDeliveredSeq, historyPrefix.historyOnlyLastSeq);
+            : Math.max(sse.lastDeliveredSeq, historyPrefix.historyOnlyLastSeq);
       }
 
       if (replayCursorSeq === null && streamReplayEnvelopes.length === 0) {
@@ -838,7 +715,7 @@ export async function GET(
         resolvedRunHasTerminalEvent || syntheticTerminalEntry !== null;
 
       for (const entry of streamReplayEntries) {
-        if (!emitReplayEntry(entry)) {
+        if (!sse.emitReplayEntry(entry)) {
           return;
         }
       }

@@ -1,6 +1,8 @@
 import { type BaseEvent, EventType } from "@ag-ui/core";
+import { mapRunErrorToAgui } from "@terragon/agent/ag-ui-mapper";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
+  buildResumeRunStartedEvent,
   getReplayDedupeKey,
   isTerminalRunEventType,
   sseIdForReplayEntry,
@@ -14,7 +16,11 @@ import {
   type StreamDiagnostics,
   BASELINE_SNAPSHOT_COMMENT,
 } from "@/server-lib/ag-ui/ag-ui-sse-writer";
-import type { ReplayIdentity } from "@/server-lib/ag-ui/ag-ui-stream-entry";
+import {
+  getStringEventField,
+  isValidKnownAgUiEvent,
+  type ReplayIdentity,
+} from "@/server-lib/ag-ui/ag-ui-stream-entry";
 
 export class AgUiSseSession {
   private controller: ReadableStreamDefaultController<Uint8Array>;
@@ -238,7 +244,7 @@ export class AgUiSseSession {
       return false;
     }
     if (event.type === EventType.RUN_STARTED) {
-      const nextRunId = Reflect.get(event, "runId") as string | null;
+      const nextRunId = getStringEventField(event, "runId");
       if (
         this.activeEmittedRunId !== null &&
         nextRunId !== null &&
@@ -258,7 +264,7 @@ export class AgUiSseSession {
     this.hasEmittedAgUiDataEvent = true;
     this.enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
     if (isTerminalRunEventType(event.type)) {
-      const terminalRunId = Reflect.get(event, "runId") as string | null;
+      const terminalRunId = getStringEventField(event, "runId");
       if (terminalRunId === null || terminalRunId === this.activeEmittedRunId) {
         this.activeEmittedRunId = null;
       }
@@ -270,18 +276,32 @@ export class AgUiSseSession {
    * Emit a replay entry after validation.
    */
   emitReplayEntry(entry: ReplayEntry): boolean {
-    const event = entry.event;
-    // Basic validation — the full isValidKnownAgUiEvent check remains
-    // in the route for error-reporting with seq context.
+    if (!isValidKnownAgUiEvent(entry.event)) {
+      console.error("[ag-ui] threadChat replay: malformed AG-UI event", {
+        threadId: this.threadId,
+        threadChatId: this.threadChatId,
+        runId: this.resolvedRunId,
+        eventType: Reflect.get(entry.event, "type"),
+        seq: entry.seq,
+      });
+      const errorEvent = mapRunErrorToAgui(
+        `Run ${this.resolvedRunId} log contains malformed AG-UI event at seq ${entry.seq ?? "unknown"}`,
+        "replay_failed",
+      );
+      this.emitAgUiEvent(errorEvent, null);
+      this.close("malformed_replay");
+      return false;
+    }
+
     this.incrementReplayCount();
-    this.rememberReplayedEventDedupeKeys(event, entry.identity);
+    this.rememberReplayedEventDedupeKeys(entry.event, entry.identity);
     if (entry.seq !== null) {
       this.lastDeliveredSeq =
         this.lastDeliveredSeq === null
           ? entry.seq
           : Math.max(this.lastDeliveredSeq, entry.seq);
     }
-    return this.emitAgUiEvent(event, entry.seq, entry.identity);
+    return this.emitAgUiEvent(entry.event, entry.seq, entry.identity);
   }
 
   private markFirstFrameIfNeeded(): void {
@@ -321,8 +341,39 @@ export class AgUiSseSession {
     ) {
       return true;
     }
-    // This is handled in the route with full error diagnostics.
-    // The session just validates that the invariant holds.
+
+    const resumeRunId =
+      this.resolvedRunId ??
+      identity?.runId ??
+      getStringEventField(event, "runId");
+    if (resumeRunId === null) {
+      console.error(
+        "[ag-ui] cursored resume cannot infer run id before first live event",
+        {
+          threadId: this.threadId,
+          threadChatId: this.threadChatId,
+          firstType: event.type,
+        },
+      );
+      const errorEvent = mapRunErrorToAgui(
+        `Thread chat ${this.threadChatId} resume log is malformed: first event has no run id`,
+        "replay_failed",
+      );
+      this.hasEmittedAgUiDataEvent = true;
+      this.enqueue(encodeSseEvent(errorEvent));
+      this.close("malformed_replay");
+      return false;
+    }
+
+    this.resolvedRunId = resumeRunId;
+    const runStartedEvent = buildResumeRunStartedEvent({
+      threadId: this.threadId,
+      runId: resumeRunId,
+    });
+    this.rememberReplayedEventDedupeKeys(runStartedEvent);
+    this.hasEmittedAgUiDataEvent = true;
+    this.activeEmittedRunId = resumeRunId;
+    this.enqueue(encodeSseEvent(runStartedEvent));
     return true;
   }
 }
