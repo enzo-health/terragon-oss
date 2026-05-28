@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { bashQuote } from "@terragon/sandbox/utils";
 import {
+  getDaytonaVolumeEnvironmentEntries,
   reconcileSandboxBranchForThread,
+  resolveDaytonaVolumeConfig,
   resolveExpectedBranchForReconciliation,
   type SandboxBranchReconciliationResult,
 } from "./sandbox";
@@ -242,5 +244,84 @@ describe("resolveExpectedBranchForReconciliation", () => {
         repoBaseBranchName: "main",
       }),
     ).toBe("feature/existing-branch");
+  });
+});
+
+describe("resolveDaytonaVolumeConfig", () => {
+  it("returns undefined when Daytona volume storage is not configured", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user-1",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        volumeName: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("builds isolated cache and workspace subpaths", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user/1",
+        environmentId: "env:1",
+        threadId: "thread 1",
+        repoFullName: "owner/repo",
+        volumeName: " terragon-workspaces ",
+        repoStorage: "volume",
+      }),
+    ).toEqual({
+      volumeName: "terragon-workspaces",
+      cacheMountPath: "/mnt/terragon/cache",
+      cacheSubpath: "users/user_1/cache",
+      workspaceMountPath: "/mnt/terragon/workspace",
+      workspaceSubpath:
+        "users/user_1/environments/env_1/repos/owner_repo/threads/thread_1",
+      repoOnVolume: true,
+    });
+  });
+
+  it("defaults repo storage to local while still using volume-backed caches", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user-1",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        repoFullName: null,
+        volumeName: "terragon-workspaces",
+        repoStorage: "local",
+      }),
+    ).toMatchObject({
+      workspaceSubpath:
+        "users/user-1/environments/env-1/repos/no-repo/threads/thread-1",
+      repoOnVolume: false,
+    });
+  });
+});
+
+describe("getDaytonaVolumeEnvironmentEntries", () => {
+  it("returns cache and artifact defaults for Daytona volume sandboxes", () => {
+    const daytonaVolume = resolveDaytonaVolumeConfig({
+      userId: "user-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      volumeName: "terragon-workspaces",
+    });
+
+    expect(getDaytonaVolumeEnvironmentEntries(daytonaVolume)).toEqual(
+      expect.arrayContaining([
+        { key: "PNPM_STORE_DIR", value: "/mnt/terragon/cache/pnpm-store" },
+        {
+          key: "npm_config_store_dir",
+          value: "/mnt/terragon/cache/pnpm-store",
+        },
+        { key: "GOMODCACHE", value: "/mnt/terragon/cache/go/pkg/mod" },
+        {
+          key: "TERRAGON_ARTIFACTS_DIR",
+          value: "/mnt/terragon/workspace/artifacts",
+        },
+      ]),
+    );
   });
 });

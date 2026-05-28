@@ -9,7 +9,12 @@ import { getUserSettings } from "@terragon/shared/model/user";
 import { getGitHubUserAccessToken } from "@/lib/github";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { env } from "@terragon/env/apps-www";
-import { getOrCreateSandbox, getSandboxProvider } from "@/agent/sandbox";
+import {
+  getDaytonaVolumeEnvironmentEntries,
+  getOrCreateSandbox,
+  getSandboxProvider,
+  resolveDaytonaVolumeConfig,
+} from "@/agent/sandbox";
 import { CreateSandboxOptions } from "@terragon/sandbox/types";
 import { runSetupScript } from "@terragon/sandbox";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
@@ -108,6 +113,21 @@ export async function POST(request: NextRequest) {
         await sendError("GitHub access token not found");
         return;
       }
+      const sandboxProvider = await getSandboxProvider({
+        userSetting: userSettings?.sandboxProvider,
+        userId,
+      });
+      const daytonaVolume =
+        sandboxProvider === "daytona"
+          ? resolveDaytonaVolumeConfig({
+              userId,
+              environmentId,
+              threadId: `setup-script-${environmentId}`,
+              repoFullName: environment.repoFullName,
+            })
+          : undefined;
+      const daytonaVolumeEnvironmentVariables =
+        getDaytonaVolumeEnvironmentEntries(daytonaVolume);
       // Create sandbox options
       const sandboxOptions: CreateSandboxOptions = {
         threadName: `Sandbox Session - ${environment.repoFullName}`,
@@ -117,18 +137,16 @@ export async function POST(request: NextRequest) {
         githubRepoFullName: environment.repoFullName,
         repoBaseBranchName: defaultBranch,
         userId,
-        sandboxProvider: await getSandboxProvider({
-          userSetting: userSettings?.sandboxProvider,
-          userId,
-        }),
+        sandboxProvider,
         sandboxSize: preferredSandboxSize,
         agent: null,
         createNewBranch: false,
-        environmentVariables: [],
+        environmentVariables: daytonaVolumeEnvironmentVariables,
         agentCredentials: null,
         autoUpdateDaemon: false,
         skipLocalQualityChecks: env.SKIP_LOCAL_QUALITY_CHECKS,
         skipSetupScript: true,
+        daytonaVolume,
         publicUrl: nonLocalhostPublicAppUrl(),
         featureFlags: featureFlags,
         generateBranchName: async () => null,
@@ -158,12 +176,16 @@ export async function POST(request: NextRequest) {
           environmentId,
           encryptionMasterKey: env.ENCRYPTION_MASTER_KEY,
         });
+        const setupEnvironmentVariables = [
+          ...daytonaVolumeEnvironmentVariables,
+          ...environmentVariables,
+        ];
         const setupScriptPath = `/tmp/sandbox-session-${Date.now()}.sh`;
         try {
           await runSetupScript({
             session: sandbox,
             options: {
-              environmentVariables,
+              environmentVariables: setupEnvironmentVariables,
               githubAccessToken,
               setupScript,
               setupScriptPath,
