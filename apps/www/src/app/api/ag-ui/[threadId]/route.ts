@@ -16,7 +16,6 @@ import {
   resolveAgUiReplayCursor,
   shouldReplayEnvelope,
 } from "@/lib/ag-ui-replay-cursor";
-import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
@@ -25,20 +24,17 @@ import {
   captureStreamCursor,
   encodeSseComment,
   encodeSseEvent,
-  emitStreamDiagnostic,
   isXreadTimeoutError,
-  type StreamCloseReason,
-  type StreamDiagnostics,
   MIN_XREAD_BLOCK_MS,
   MAX_XREAD_BLOCK_MS,
   XREAD_COUNT,
   KEEPALIVE_INTERVAL_MS,
   XREAD_BACKOFF_MS,
-  BASELINE_SNAPSHOT_COMMENT,
   TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS,
   XREAD_ERROR_LOG_INITIAL_BUDGET,
   XREAD_ERROR_LOG_EVERY_N,
 } from "@/server-lib/ag-ui/ag-ui-sse-writer";
+import { AgUiSseSession } from "@/server-lib/ag-ui/ag-ui-sse-session";
 import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
 import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
@@ -137,123 +133,24 @@ export async function GET(
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const diagnostics: StreamDiagnostics = {
-        openedAtMs: Date.now(),
-        firstFrameLatencyMs: null,
-        replayCount: 0,
-        dedupeCount: 0,
-        xreadTimeoutCount: 0,
-        xreadBackoffCount: 0,
-        xreadErrorCount: 0,
-      };
-      let closed = false;
-      let closeReason: StreamCloseReason | null = null;
-      let keepaliveTimer: NodeJS.Timeout | null = null;
-
-      const close = (reason: StreamCloseReason) => {
-        if (closed) return;
-        closed = true;
-        closeReason = reason;
-        if (keepaliveTimer) {
-          clearInterval(keepaliveTimer);
-          keepaliveTimer = null;
-        }
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-        emitStreamDiagnostic("stream_close", {
-          threadId,
-          threadChatId,
-          runId: resolvedRunId,
-          closeReason,
-          firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
-          replayCount: diagnostics.replayCount,
-          dedupeCount: diagnostics.dedupeCount,
-          xreadTimeoutCount: diagnostics.xreadTimeoutCount,
-          xreadBackoffCount: diagnostics.xreadBackoffCount,
-          xreadErrorCount: diagnostics.xreadErrorCount,
-        });
-        recordAgentTraceSpan({
-          traceId: resolvedRunId,
-          name: "server.agui.sse.closed",
-          startedAtMs: diagnostics.openedAtMs,
-          endedAtMs: Date.now(),
-          attributes: {
-            threadId,
-            threadChatId,
-            closeReason,
-            replayCount: diagnostics.replayCount,
-            dedupeCount: diagnostics.dedupeCount,
-            xreadTimeoutCount: diagnostics.xreadTimeoutCount,
-            xreadBackoffCount: diagnostics.xreadBackoffCount,
-            xreadErrorCount: diagnostics.xreadErrorCount,
-          },
-        });
-      };
-
-      const markFirstFrameIfNeeded = () => {
-        if (diagnostics.firstFrameLatencyMs !== null) {
-          return;
-        }
-        diagnostics.firstFrameLatencyMs = Date.now() - diagnostics.openedAtMs;
-        emitStreamDiagnostic("first_frame", {
-          threadId,
-          threadChatId,
-          runId: resolvedRunId,
-          firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
-        });
-        recordAgentTraceSpan({
-          traceId: resolvedRunId,
-          name: "server.agui.sse.first_frame",
-          startedAtMs: diagnostics.openedAtMs,
-          endedAtMs: Date.now(),
-          attributes: {
-            threadId,
-            threadChatId,
-            firstFrameLatencyMs: diagnostics.firstFrameLatencyMs,
-          },
-        });
-      };
-
-      const enqueue = (chunk: Uint8Array) => {
-        if (closed) return;
-        try {
-          markFirstFrameIfNeeded();
-          controller.enqueue(chunk);
-        } catch {
-          close("controller_enqueue_failed");
-        }
-      };
-
-      emitStreamDiagnostic("stream_open", {
+      const sse = new AgUiSseSession({
+        controller,
         threadId,
         threadChatId,
-        runId: resolvedRunId,
-        hasRunIdParam: runIdParam !== null,
+        userId: session.user.id,
+        resolvedRunId,
         replayCursorSeq,
-      });
-      recordAgentTraceSpan({
-        traceId: resolvedRunId,
-        name: "server.agui.sse.opened",
-        startedAtMs: diagnostics.openedAtMs,
-        endedAtMs: diagnostics.openedAtMs,
-        attributes: {
-          threadId,
-          threadChatId,
-          hasRunIdParam: runIdParam !== null,
-          replayCursorSeq,
-        },
+        shouldFrameRunAgentResume,
+        hasRunIdParam: runIdParam !== null,
       });
 
       // Tear down on client abort. `once: true` handles listener cleanup.
       const abortSignal = request.signal;
       if (abortSignal.aborted) {
-        close("client_abort_before_start");
+        sse.close("client_abort_before_start");
         return;
       }
-      abortSignal.addEventListener("abort", () => close("client_abort"), {
+      abortSignal.addEventListener("abort", () => sse.close("client_abort"), {
         once: true,
       });
       const replayedEventDedupeKeys = new Set<string>();
@@ -262,7 +159,7 @@ export async function GET(
       let activeEmittedRunId: string | null = null;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
-      enqueue(encodeSseComment(BASELINE_SNAPSHOT_COMMENT));
+      sse.emitBaselineComment();
 
       const rememberReplayedEventDedupeKeys = (
         event: BaseEvent,
@@ -333,12 +230,13 @@ export async function GET(
             "replay_failed",
           );
           hasEmittedAgUiDataEvent = true;
-          enqueue(encodeSseEvent(errorEvent));
-          close("malformed_replay");
+          sse.enqueue(encodeSseEvent(errorEvent));
+          sse.close("malformed_replay");
           return false;
         }
 
         resolvedRunId = resumeRunId;
+        sse.resolvedRunId = resumeRunId;
         const runStartedEvent = buildResumeRunStartedEvent({
           threadId,
           runId: resumeRunId,
@@ -346,7 +244,7 @@ export async function GET(
         rememberReplayedEventDedupeKeys(runStartedEvent);
         hasEmittedAgUiDataEvent = true;
         activeEmittedRunId = resumeRunId;
-        enqueue(encodeSseEvent(runStartedEvent));
+        sse.enqueue(encodeSseEvent(runStartedEvent));
         return true;
       };
 
@@ -365,7 +263,7 @@ export async function GET(
             nextRunId !== null &&
             activeEmittedRunId !== nextRunId
           ) {
-            enqueue(
+            sse.enqueue(
               encodeSseEvent({
                 type: EventType.RUN_FINISHED,
                 threadId,
@@ -375,9 +273,10 @@ export async function GET(
           }
           activeEmittedRunId = nextRunId;
           resolvedRunId = nextRunId;
+          sse.resolvedRunId = nextRunId;
         }
         hasEmittedAgUiDataEvent = true;
-        enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
+        sse.enqueue(encodeSseEvent(event, sseIdForReplayEntry(seq, identity)));
         if (isTerminalRunEventType(event.type)) {
           const terminalRunId = getStringEventField(event, "runId");
           if (terminalRunId === null || terminalRunId === activeEmittedRunId) {
@@ -401,11 +300,11 @@ export async function GET(
             "replay_failed",
           );
           emitAgUiEvent(errorEvent, null);
-          close("malformed_replay");
+          sse.close("malformed_replay");
           return false;
         }
 
-        diagnostics.replayCount += 1;
+        sse.incrementReplayCount();
         rememberReplayedEventDedupeKeys(entry.event, entry.identity);
         if (entry.seq !== null) {
           lastDeliveredSeq =
@@ -460,12 +359,13 @@ export async function GET(
             `Thread chat ${threadChatId} resume log is malformed: first event has no run id`,
             "replay_failed",
           );
-          enqueue(encodeSseEvent(errorEvent));
-          close("malformed_replay");
+          sse.enqueue(encodeSseEvent(errorEvent));
+          sse.close("malformed_replay");
           return false;
         }
 
         resolvedRunId = resumeRunId;
+        sse.resolvedRunId = resumeRunId;
         replayEntries.unshift({
           seq: null,
           event: buildResumeRunStartedEvent({
@@ -549,7 +449,7 @@ export async function GET(
           }
           emittedReplayEntry = true;
           if (isTerminalRunEventType(entry.event.type)) {
-            close("terminal_event");
+            sse.close("terminal_event");
             return true;
           }
         }
@@ -563,9 +463,11 @@ export async function GET(
       const liveTail = async (params?: { runId?: string; userId?: string }) => {
         let liveTailParams = params;
         const localRedisHttpMode = isLocalRedisHttpMode();
-        keepaliveTimer = setInterval(() => {
-          enqueue(encodeSseComment("keepalive"));
-        }, KEEPALIVE_INTERVAL_MS);
+        sse.setKeepaliveTimer(
+          setInterval(() => {
+            sse.enqueue(encodeSseComment("keepalive"));
+          }, KEEPALIVE_INTERVAL_MS),
+        );
 
         const maybeReconcileActiveRunFromDurable = async (
           phase: "idle" | "xread_error",
@@ -585,7 +487,7 @@ export async function GET(
               isTerminalAgentRunStatus(runContext.status)
             ) {
               await replayDurableEventsAfterCursor();
-              if (closed) {
+              if (sse.closed) {
                 return true;
               }
               const terminalEvent = buildRunTerminalAgUi({
@@ -598,7 +500,7 @@ export async function GET(
               if (!emitAgUiEvent(terminalEvent, null)) {
                 return true;
               }
-              close(
+              sse.close(
                 phase === "idle"
                   ? "durable_terminal_idle"
                   : "durable_terminal_after_xread_error",
@@ -606,7 +508,7 @@ export async function GET(
               return true;
             }
             await replayDurableEventsAfterCursor();
-            return closed;
+            return sse.closed;
           } catch (error) {
             console.warn(
               "[ag-ui] durable run status check failed during live-tail; continuing",
@@ -640,8 +542,9 @@ export async function GET(
           }
 
           resolvedRunId = latestRunId;
+          sse.resolvedRunId = latestRunId;
           const replayed = await replayDurableEventsAfterCursor();
-          if (!closed) {
+          if (!sse.closed) {
             liveTailParams = {
               runId: latestRunId,
               userId: session.user.id,
@@ -653,7 +556,7 @@ export async function GET(
         let lastId = initialLastId;
         let consecutiveEmpty = 0;
         let emptyPollsSinceTerminalCheck = 0;
-        while (!closed) {
+        while (!sse.closed) {
           const adaptiveBlockMS = Math.min(
             MAX_XREAD_BLOCK_MS,
             MIN_XREAD_BLOCK_MS * (1 + consecutiveEmpty),
@@ -669,7 +572,7 @@ export async function GET(
               count: XREAD_COUNT,
               blockMS,
             });
-            if (closed) break;
+            if (sse.closed) break;
             const entries = parseStreamEntries(raw);
             if (entries.length === 0) {
               consecutiveEmpty++;
@@ -703,7 +606,7 @@ export async function GET(
                       replayCursor,
                     )
                   ) {
-                    diagnostics.dedupeCount += 1;
+                    sse.incrementDedupeCount();
                     continue;
                   }
                   // Replay and live-tail intentionally overlap during connect so
@@ -712,7 +615,7 @@ export async function GET(
                   if (
                     consumeReplayedEventDedupeKey(entry.event, entry.identity)
                   ) {
-                    diagnostics.dedupeCount += 1;
+                    sse.incrementDedupeCount();
                     continue;
                   }
                   if (entry.seq !== null) {
@@ -725,22 +628,23 @@ export async function GET(
                     return;
                   }
                   if (isTerminalRunEventType(entry.event.type)) {
-                    close("terminal_event");
+                    sse.close("terminal_event");
                     return;
                   }
                 }
               }
             }
           } catch (error) {
-            if (closed) break;
+            if (sse.closed) break;
             // Reset adaptive growth on transport failures so the next read
             // re-enters with the smallest block window.
             consecutiveEmpty = 0;
-            diagnostics.xreadErrorCount += 1;
-            diagnostics.xreadBackoffCount += 1;
+            sse.incrementXreadErrorCount();
+            sse.incrementXreadBackoffCount();
             if (isXreadTimeoutError(error)) {
-              diagnostics.xreadTimeoutCount += 1;
+              sse.incrementXreadTimeoutCount();
             }
+            const diagnostics = sse.diagnosticsSnapshot;
             const shouldLogXreadError =
               diagnostics.xreadErrorCount <= XREAD_ERROR_LOG_INITIAL_BUDGET ||
               diagnostics.xreadErrorCount % XREAD_ERROR_LOG_EVERY_N === 0;
@@ -789,11 +693,11 @@ export async function GET(
           replayCursorSeq !== null
             ? await replayDurableEventsAfterCursor()
             : false;
-        if (closed) {
+        if (sse.closed) {
           return;
         }
         if (!replayed) {
-          enqueue(encodeSseComment("awaiting-first-run"));
+          sse.enqueue(encodeSseComment("awaiting-first-run"));
         }
         await liveTail(
           resolvedRunId !== null
@@ -833,8 +737,8 @@ export async function GET(
           error instanceof Error ? error.message : "Replay failed",
           "replay_failed",
         );
-        enqueue(encodeSseEvent(errorEvent));
-        close("replay_failed");
+        sse.enqueue(encodeSseEvent(errorEvent));
+        sse.close("replay_failed");
         return;
       }
 
@@ -884,15 +788,15 @@ export async function GET(
           terminalRunContext !== null &&
           isTerminalAgentRunStatus(terminalRunContext.status)
         ) {
-          close("replay_already_terminal");
+          sse.close("replay_already_terminal");
           return;
         }
         const errorEvent = mapRunErrorToAgui(
           `Thread chat ${threadChatId} has no AG-UI events after cursor ${replayCursorSeq ?? "start"}`,
           "run_not_found",
         );
-        enqueue(encodeSseEvent(errorEvent));
-        close("run_not_found");
+        sse.enqueue(encodeSseEvent(errorEvent));
+        sse.close("run_not_found");
         return;
       }
 
@@ -919,7 +823,7 @@ export async function GET(
       }
 
       if (replayCursorSeq === null && streamReplayEnvelopes.length === 0) {
-        enqueue(encodeSseComment("awaiting-first-run"));
+        sse.enqueue(encodeSseComment("awaiting-first-run"));
         await liveTail();
         return;
       }
@@ -947,8 +851,8 @@ export async function GET(
             `Thread chat ${threadChatId} log is malformed: first event is ${replayEntries[0]?.event.type ?? "empty"}, expected RUN_STARTED`,
             "replay_failed",
           );
-          enqueue(encodeSseEvent(errorEvent));
-          close("malformed_replay");
+          sse.enqueue(encodeSseEvent(errorEvent));
+          sse.close("malformed_replay");
           return;
         }
       }
@@ -981,7 +885,7 @@ export async function GET(
         // the client's SSE consumer knows the server has nothing more to
         // say. Live-tail here would block on an XREAD poll forever
         // without producing useful output.
-        close("replay_already_terminal");
+        sse.close("replay_already_terminal");
         return;
       }
 
