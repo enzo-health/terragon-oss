@@ -258,24 +258,19 @@ export function useScrollToBottom({
       });
     };
 
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(scheduleScrollCheck);
+    const usesResizeObserver = typeof ResizeObserver !== "undefined";
+    const observer = usesResizeObserver
+      ? new ResizeObserver(scheduleScrollCheck)
+      : new MutationObserver(scheduleScrollCheck);
+    if (usesResizeObserver) {
       observer.observe(observedNode);
-      return () => {
-        isActive = false;
-        observer.disconnect();
-        if (resizeScrollFrameRef.current !== null) {
-          cancelAnimationFrame(resizeScrollFrameRef.current);
-          resizeScrollFrameRef.current = null;
-        }
-      };
+    } else {
+      (observer as MutationObserver).observe(observedNode, {
+        childList: true,
+        subtree: true,
+      });
     }
 
-    const observer = new MutationObserver(scheduleScrollCheck);
-    observer.observe(observedNode, {
-      childList: true,
-      subtree: true,
-    });
     return () => {
       isActive = false;
       observer.disconnect();

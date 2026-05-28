@@ -99,12 +99,10 @@ function threadMessageHasPendingToolCall(message: ThreadMessage): boolean {
 
 export function getRuntimeThreadFlags(
   messages: readonly ThreadMessage[],
-  onVisitMessage?: () => void,
 ): number {
   let flags = 0;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    onVisitMessage?.();
     const message = messages[index];
     if (!message || message.role !== "assistant") {
       continue;
@@ -122,15 +120,6 @@ export function getRuntimeThreadFlags(
       flags |= RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL;
     }
     if ((flags & RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS) !== 0) {
-      return flags;
-    }
-    if (
-      (flags &
-        (RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS |
-          RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL)) ===
-      (RUNTIME_THREAD_FLAG_HAS_RENDERABLE_AGENT_PARTS |
-        RUNTIME_THREAD_FLAG_HAS_PENDING_TOOL_CALL)
-    ) {
       return flags;
     }
   }

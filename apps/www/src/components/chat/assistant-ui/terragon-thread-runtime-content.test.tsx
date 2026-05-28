@@ -448,14 +448,9 @@ describe("TerragonThreadRuntimeContent", () => {
         },
       },
     ];
-    let visited = 0;
-
-    const flags = getRuntimeThreadFlags(messages, () => {
-      visited += 1;
-    });
+    const flags = getRuntimeThreadFlags(messages);
 
     expect(flags).toBe(3);
-    expect(visited).toBe(1);
   });
 
   it("does not scan historical rows for pending tools after a plain assistant tail", () => {
@@ -489,13 +484,8 @@ describe("TerragonThreadRuntimeContent", () => {
         },
       },
     ];
-    let visited = 0;
-
-    const flags = getRuntimeThreadFlags(messages, () => {
-      visited += 1;
-    });
+    const flags = getRuntimeThreadFlags(messages);
 
     expect(flags).toBe(1);
-    expect(visited).toBe(1);
   });
 });

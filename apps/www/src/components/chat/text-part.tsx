@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { extractProposedPlanText } from "@terragon/shared/db/artifact-descriptors";
 import {
   type ComponentProps,
   memo,
@@ -74,7 +75,6 @@ function normalizeBoldHeaders(text: string): string {
 }
 
 const PROPOSED_PLAN_RE = /<proposed_plan>[\s\S]*?<\/proposed_plan>/g;
-const PROPOSED_PLAN_BODY_RE = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/g;
 const PROPOSED_PLAN_START_TAG_RE = /<proposed_plan[^>]*>/g;
 const POSSIBLE_CODE_BLOCK_RE = /```|~~~|(?:^|\n)(?: {4}|\t)\S/;
 const MARKDOWN_SYNTAX_RE =
@@ -132,8 +132,7 @@ type StreamingAppendContext = {
 };
 
 function getFirstProposedPlanBody(text: string): string {
-  PROPOSED_PLAN_BODY_RE.lastIndex = 0;
-  return PROPOSED_PLAN_BODY_RE.exec(text)?.[1]?.trim() ?? "";
+  return extractProposedPlanText(text) ?? "";
 }
 
 function getIncompleteProposedPlanDisplayText(text: string): string {

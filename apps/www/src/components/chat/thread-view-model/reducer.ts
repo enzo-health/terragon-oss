@@ -132,38 +132,9 @@ export function projectThreadViewModel(
   state: ThreadViewModelState,
   options: { includeTranscriptMessages?: boolean } = {},
 ): ThreadViewModel {
-  if (options.includeTranscriptMessages === false) {
-    return {
-      threadId: state.threadId,
-      threadChatId: state.threadChatId,
-      messages: [],
-      lifecycleMessages: state.lifecycleMessages,
-      runtimeState: state.runtimeState,
-      runtimeActivities: state.runtimeActivities,
-      dbMessages: state.dbMessages,
-      queuedMessages: state.queuedMessages,
-      threadStatus: state.threadStatus,
-      permissionMode: state.permissionMode,
-      hasCheckpoint: state.hasCheckpoint,
-      latestGitDiffTimestamp: state.latestGitDiffTimestamp,
-      artifactThread: state.artifactThread,
-      artifacts: state.artifacts,
-      sidePanel: state.sidePanel,
-      meta: state.meta,
-      githubSummary: state.githubSummary,
-      lifecycle: state.lifecycle,
-      quarantine: state.quarantine,
-    };
-  }
-
-  const splitMessages = splitThreadLifecycleMessages(
-    collapseHydrationReplayTextDuplicates(state.transcript.messages),
-  );
-  return {
+  const baseProjection = {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
-    messages: splitMessages.transcriptMessages,
-    lifecycleMessages: splitMessages.lifecycleMessages,
     runtimeState: state.runtimeState,
     runtimeActivities: state.runtimeActivities,
     dbMessages: state.dbMessages,
@@ -179,6 +150,23 @@ export function projectThreadViewModel(
     githubSummary: state.githubSummary,
     lifecycle: state.lifecycle,
     quarantine: state.quarantine,
+  };
+
+  if (options.includeTranscriptMessages === false) {
+    return {
+      ...baseProjection,
+      messages: [],
+      lifecycleMessages: state.lifecycleMessages,
+    };
+  }
+
+  const splitMessages = splitThreadLifecycleMessages(
+    collapseHydrationReplayTextDuplicates(state.transcript.messages),
+  );
+  return {
+    ...baseProjection,
+    messages: splitMessages.transcriptMessages,
+    lifecycleMessages: splitMessages.lifecycleMessages,
   };
 }
 
@@ -337,26 +325,13 @@ function applyAgUiEvent(
     return state;
   }
 
-  const seenEventKeys = dedupeKey
-    ? new Set(state.seenEventKeys)
-    : state.seenEventKeys;
-  const seenEventOrder = dedupeKey
-    ? state.seenEventOrder.slice()
-    : state.seenEventOrder;
-  if (dedupeKey) {
-    trackSeenAgUiEventKey({
-      seenEventKeys,
-      seenEventOrder,
-      key: dedupeKey,
-    });
-  }
-
   const nativeRuntimeProjection = applyNativeRuntimeEvent(state, event);
   if (nativeRuntimeProjection?.quarantineEntry) {
+    const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
     return {
       ...state,
-      seenEventKeys,
-      seenEventOrder,
+      seenEventKeys: tracked.seenEventKeys,
+      seenEventOrder: tracked.seenEventOrder,
       quarantine: [
         ...state.quarantine,
         nativeRuntimeProjection.quarantineEntry,
@@ -366,10 +341,11 @@ function applyAgUiEvent(
 
   const quarantineEntry = getQuarantineEntry(event);
   if (quarantineEntry) {
+    const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
     return {
       ...state,
-      seenEventKeys,
-      seenEventOrder,
+      seenEventKeys: tracked.seenEventKeys,
+      seenEventOrder: tracked.seenEventOrder,
       quarantine: [...state.quarantine, quarantineEntry],
     };
   }
@@ -406,13 +382,12 @@ function applyAgUiEvent(
     lifecycle === state.lifecycle &&
     runtimeState === state.runtimeState &&
     runtimeActivities === state.runtimeActivities &&
-    lifecycleMessages === state.lifecycleMessages &&
-    seenEventKeys === state.seenEventKeys &&
-    seenEventOrder === state.seenEventOrder
+    lifecycleMessages === state.lifecycleMessages
   ) {
     return state;
   }
 
+  const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   return {
     ...state,
     transcript,
@@ -423,12 +398,33 @@ function applyAgUiEvent(
     runtimeActivities,
     lifecycleMessages,
     threadStatus: lifecycle.threadStatus,
-    seenEventKeys,
-    seenEventOrder,
+    seenEventKeys: tracked.seenEventKeys,
+    seenEventOrder: tracked.seenEventOrder,
     hasLiveTranscriptEvents: transcriptChanged || state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents:
       lifecycle !== state.lifecycle || state.hasLiveLifecycleEvents,
   };
+}
+
+function trackDedupeKeyIfNeeded(
+  state: ThreadViewModelState,
+  dedupeKey: string | null,
+): Pick<ThreadViewModelState, "seenEventKeys" | "seenEventOrder"> {
+  if (!dedupeKey) {
+    return {
+      seenEventKeys: state.seenEventKeys,
+      seenEventOrder: state.seenEventOrder,
+    };
+  }
+
+  const seenEventKeys = new Set(state.seenEventKeys);
+  const seenEventOrder = state.seenEventOrder.slice();
+  trackSeenAgUiEventKey({
+    seenEventKeys,
+    seenEventOrder,
+    key: dedupeKey,
+  });
+  return { seenEventKeys, seenEventOrder };
 }
 
 function shouldRefreshLifecycleMessagesForEvent(event: BaseEvent): boolean {
@@ -463,28 +459,27 @@ function textDeltaCompletesProposedPlanArtifact(
   if (!messageId || !delta) {
     return false;
   }
-  const previousText = getAgentMessageTextContentById(
-    state.transcript.messages,
-    messageId,
-  );
+  const previousText = getAgentMessageTextContentById(state, messageId);
   if (previousText === null) {
-    return delta.toLowerCase().includes("</proposed_plan>");
+    return delta.toLowerCase().includes(PROPOSED_PLAN_END_TAG);
   }
   const previousCloseCount = countProposedPlanCloseTags(previousText);
   const nextCloseCount = countProposedPlanCloseTags(previousText + delta);
   return nextCloseCount > previousCloseCount;
 }
 
+const PROPOSED_PLAN_END_TAG = "</proposed_plan>";
+
 function getAgentMessageTextContentById(
-  messages: UIMessage[],
+  state: ThreadViewModelState,
   messageId: string,
 ): string | null {
-  for (const message of messages) {
-    if (message.id === messageId) {
-      return getAgentMessageTextContent(message);
-    }
-  }
-  return null;
+  const messageIndex = state.transcript.assistantMessageIndexes[messageId];
+  const message =
+    messageIndex === undefined
+      ? undefined
+      : state.transcript.messages[messageIndex];
+  return message ? getAgentMessageTextContent(message) : null;
 }
 
 function countProposedPlanCloseTags(text: string): number {
@@ -492,12 +487,12 @@ function countProposedPlanCloseTags(text: string): number {
   let count = 0;
   let index = 0;
   while (true) {
-    const nextIndex = lower.indexOf("</proposed_plan>", index);
+    const nextIndex = lower.indexOf(PROPOSED_PLAN_END_TAG, index);
     if (nextIndex === -1) {
       return count;
     }
     count += 1;
-    index = nextIndex + "</proposed_plan>".length;
+    index = nextIndex + PROPOSED_PLAN_END_TAG.length;
   }
 }
 

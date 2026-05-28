@@ -40,14 +40,14 @@ function coalescableDeltaKey(event: CoalescableDeltaEvent): string {
 type PendingDelta = {
   event: CoalescableDeltaEvent;
   key: string;
-  chunks: string[];
+  delta: string;
 };
 
 function createPendingDelta(event: CoalescableDeltaEvent): PendingDelta {
   return {
     event,
     key: coalescableDeltaKey(event),
-    chunks: [event.delta],
+    delta: event.delta,
   };
 }
 
@@ -59,14 +59,14 @@ function appendPendingDelta(
     return false;
   }
   pending.event = event;
-  pending.chunks.push(event.delta);
+  pending.delta += event.delta;
   return true;
 }
 
 function pendingDeltaToEvent(pending: PendingDelta): CoalescableDeltaEvent {
   return {
     ...pending.event,
-    delta: pending.chunks.join(""),
+    delta: pending.delta,
   } as CoalescableDeltaEvent;
 }
 

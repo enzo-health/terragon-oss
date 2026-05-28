@@ -59,13 +59,11 @@ export const getToolGroupFlags = (
   parts: readonly ToolGroupPart[],
   startIndex: number,
   endIndex: number,
-  onVisitPart?: () => void,
 ): number => {
   let count = 0;
   let flags = 0;
 
   for (let index = startIndex; index <= endIndex; index += 1) {
-    onVisitPart?.();
     const part = parts[index];
     if (!part || part.type !== "tool-call") continue;
 

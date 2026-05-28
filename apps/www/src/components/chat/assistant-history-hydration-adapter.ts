@@ -244,6 +244,22 @@ function toolCallPart(toolCall: AgUiToolCall): ToolCallMessagePart {
   };
 }
 
+function appendUniqueMessage(
+  messages: ThreadMessage[],
+  indexes: HydrationIndexes,
+  message: ThreadMessage,
+): void {
+  if (indexes.messageIds.has(message.id)) {
+    return;
+  }
+  messages.push(message);
+  registerMessage({
+    indexes,
+    message,
+    messageIndex: messages.length - 1,
+  });
+}
+
 function userMessage(message: Extract<AgUiMessage, { role: "user" }>) {
   return {
     id: message.id,
@@ -486,29 +502,11 @@ export function hydrateAssistantHistoryMessages(
     const message = item;
     switch (message.role) {
       case "user": {
-        if (indexes.messageIds.has(message.id)) {
-          break;
-        }
-        const nextUserMessage = userMessage(message);
-        messages.push(nextUserMessage);
-        registerMessage({
-          indexes,
-          message: nextUserMessage,
-          messageIndex: messages.length - 1,
-        });
+        appendUniqueMessage(messages, indexes, userMessage(message));
         break;
       }
       case "system": {
-        if (indexes.messageIds.has(message.id)) {
-          break;
-        }
-        const nextSystemMessage = systemMessage(message);
-        messages.push(nextSystemMessage);
-        registerMessage({
-          indexes,
-          message: nextSystemMessage,
-          messageIndex: messages.length - 1,
-        });
+        appendUniqueMessage(messages, indexes, systemMessage(message));
         break;
       }
       case "assistant":

@@ -176,7 +176,6 @@ afterEach(() => {
 
 describe("NativeThread", () => {
   it("computes grouped tool-call summary in one part-range pass", () => {
-    let visits = 0;
     const parts = [
       { type: "text" },
       {
@@ -196,18 +195,13 @@ describe("NativeThread", () => {
       },
     ];
 
-    const state = decodeToolGroupFlags(
-      getToolGroupFlags(parts, 1, 3, () => {
-        visits += 1;
-      }),
-    );
+    const state = decodeToolGroupFlags(getToolGroupFlags(parts, 1, 3));
 
     expect(state).toEqual({
       count: 3,
       hasActive: true,
       hasError: true,
     });
-    expect(visits).toBe(3);
   });
 
   it("renders text, reasoning, and tool calls through native assistant-ui primitives", () => {

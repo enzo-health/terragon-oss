@@ -135,6 +135,11 @@ export interface StreamingMarkdownSegmentState
   unsafeScanTail: string;
 }
 
+type DisabledStreamingMarkdownSegmentationState = {
+  content: string;
+  unsafeScanTail: string;
+};
+
 function hasUnsafeStreamingMarkdown(content: string): boolean {
   return RAW_HTML_TAG_RE.test(content) || REFERENCE_MARKDOWN_RE.test(content);
 }
@@ -217,6 +222,64 @@ export function splitStreamingMarkdownContent(
   return {
     stablePrefix: segments.stablePrefix,
     liveTail: segments.liveTail,
+  };
+}
+
+function advanceDisabledStreamingMarkdownSegmentation(
+  content: string,
+  previous: DisabledStreamingMarkdownSegmentationState | null,
+): DisabledStreamingMarkdownSegmentationState | null {
+  if (!previous) return null;
+  if (
+    content.length < previous.content.length ||
+    !content.startsWith(previous.content)
+  ) {
+    return null;
+  }
+  const suffix = content.slice(previous.content.length);
+  return {
+    content,
+    unsafeScanTail: getUnsafeStreamingMarkdownScanTail(
+      previous.unsafeScanTail + suffix,
+    ),
+  };
+}
+
+function advanceStreamingMarkdownSegmentsForRender({
+  content,
+  previousSegments,
+  previousDisabled,
+}: {
+  content: string;
+  previousSegments: StreamingMarkdownSegmentState | null;
+  previousDisabled: DisabledStreamingMarkdownSegmentationState | null;
+}): {
+  segments: StreamingMarkdownSegmentState | null;
+  disabled: DisabledStreamingMarkdownSegmentationState | null;
+} {
+  const disabled = advanceDisabledStreamingMarkdownSegmentation(
+    content,
+    previousDisabled,
+  );
+  if (disabled) {
+    return { segments: null, disabled };
+  }
+
+  const segments = advanceStreamingMarkdownSegments(content, previousSegments);
+  if (
+    segments ||
+    !previousSegments ||
+    !content.startsWith(previousSegments.content)
+  ) {
+    return { segments, disabled: null };
+  }
+
+  return {
+    segments: null,
+    disabled: {
+      content,
+      unsafeScanTail: getUnsafeStreamingMarkdownScanTail(content),
+    },
   };
 }
 
@@ -693,11 +756,19 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   const streamingSegmentRef = useRef<StreamingMarkdownSegmentState | null>(
     null,
   );
-  const streamingSegments =
+  const disabledStreamingSegmentRef =
+    useRef<DisabledStreamingMarkdownSegmentationState | null>(null);
+  const streamingSegmentProgress =
     streaming && streamingSegmentation === "auto"
-      ? advanceStreamingMarkdownSegments(content, streamingSegmentRef.current)
-      : null;
+      ? advanceStreamingMarkdownSegmentsForRender({
+          content,
+          previousSegments: streamingSegmentRef.current,
+          previousDisabled: disabledStreamingSegmentRef.current,
+        })
+      : { segments: null, disabled: null };
+  const streamingSegments = streamingSegmentProgress.segments;
   streamingSegmentRef.current = streamingSegments;
+  disabledStreamingSegmentRef.current = streamingSegmentProgress.disabled;
 
   if (streamingSegments) {
     return (
