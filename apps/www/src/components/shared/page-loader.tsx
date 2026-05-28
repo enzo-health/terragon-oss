@@ -1,48 +1,52 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useEffect } from "react";
+
+const PROGRESS_BAR_ID = "turbo-progress-bar";
+const COMPLETE_DURATION_MS = 200;
 
 export function PageLoader() {
-  // This is so complicated because useEffect runs twice in development
-  // and we need to use a timer to debounce the clean up.
-  const cleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progressBar = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (cleanupTimer.current) {
-      clearTimeout(cleanupTimer.current);
-      cleanupTimer.current = null;
+    const existing = document.getElementById(PROGRESS_BAR_ID);
+    if (existing) {
+      existing.classList.remove("animate-loading-complete");
+      existing.classList.add("animate-loading-progress");
+      existing.style.removeProperty("width");
+      return cleanup;
     }
-    if (!progressBar.current) {
-      const turboProgressBar = document.createElement("div");
-      turboProgressBar.id = "turbo-progress-bar";
-      turboProgressBar.style.position = "fixed";
-      turboProgressBar.style.top = "0";
-      turboProgressBar.style.left = "0";
-      turboProgressBar.classList.add(
-        "z-[2147483647]",
-        "h-[3px]",
-        "w-0",
-        "bg-primary",
-        "transform-gpu",
-        "animate-loading-progress",
-      );
-      document.body.appendChild(turboProgressBar);
-      progressBar.current = turboProgressBar;
-    }
-    return () => {
-      cleanupTimer.current = setTimeout(() => {
-        if (progressBar.current) {
-          progressBar.current.style.width =
-            progressBar.current.offsetWidth + "px";
-          progressBar.current.classList.remove("animate-loading-progress");
-          progressBar.current.classList.add("animate-loading-complete");
-          setTimeout(() => {
-            progressBar.current?.remove();
-          }, 200);
-        }
-      }, 100);
-    };
+
+    const bar = document.createElement("div");
+    bar.id = PROGRESS_BAR_ID;
+    bar.style.position = "fixed";
+    bar.style.top = "0";
+    bar.style.left = "0";
+    bar.classList.add(
+      "z-[2147483647]",
+      "h-[3px]",
+      "w-0",
+      "bg-primary",
+      "transform-gpu",
+      "animate-loading-progress",
+    );
+    document.body.appendChild(bar);
+    return cleanup;
   }, []);
 
   return null;
+}
+
+function cleanup() {
+  const bar = document.getElementById(PROGRESS_BAR_ID);
+  if (!bar) return;
+  bar.style.width = bar.offsetWidth + "px";
+  bar.classList.remove("animate-loading-progress");
+  bar.classList.add("animate-loading-complete");
+  // Guard against StrictMode mount/unmount/mount: only remove if a fresh
+  // PageLoader didn't re-claim the bar during the complete animation.
+  setTimeout(() => {
+    const current = document.getElementById(PROGRESS_BAR_ID);
+    if (current?.classList.contains("animate-loading-complete")) {
+      current.remove();
+    }
+  }, COMPLETE_DURATION_MS);
 }
