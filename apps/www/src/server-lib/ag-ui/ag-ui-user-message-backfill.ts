@@ -6,11 +6,14 @@ import {
 } from "@/server-lib/ag-ui-side-effect-messages";
 
 type AgUiUserMessage = Extract<Message, { role: "user" }>;
+type AgUiAssistantMessage = Extract<Message, { role: "assistant" }>;
+type AgUiTextBackfillMessage = AgUiUserMessage | AgUiAssistantMessage;
 
-function isAgUiUserMessage(
+function isAgUiTextBackfillMessage(
   item: DurableAgUiHistoryItem,
-): item is AgUiUserMessage {
-  return Reflect.get(item, "role") === "user";
+): item is AgUiTextBackfillMessage {
+  const role = Reflect.get(item, "role");
+  return role === "user" || role === "assistant";
 }
 
 function agUiMessageContentText(content: Message["content"]): string {
@@ -34,9 +37,50 @@ function agUiMessageContentText(content: Message["content"]): string {
     .trim();
 }
 
-function agUiUserMessageSignature(message: AgUiUserMessage): string {
+function agUiTextMessageSignature(message: AgUiTextBackfillMessage): string {
   const content = agUiMessageContentText(message.content);
-  return `user:${content}`;
+  return `${message.role}:${content}`;
+}
+
+function extractAgentMessageText(
+  message: Extract<DBMessage, { type: "agent" }>,
+): string {
+  return message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function dbMessagesToTextBackfillMessages(
+  dbMessages: readonly DBMessage[],
+): AgUiTextBackfillMessage[] {
+  const messages: AgUiTextBackfillMessage[] = [];
+
+  dbMessages.forEach((dbMessage, index) => {
+    if (dbMessage.type === "user") {
+      const [message] = dbMessagesToNativeAgUiSnapshotMessages([dbMessage]);
+      if (message && isAgUiTextBackfillMessage(message)) {
+        messages.push(message);
+      }
+      return;
+    }
+
+    if (dbMessage.type !== "agent") {
+      return;
+    }
+    const content = extractAgentMessageText(dbMessage);
+    if (content.length === 0) {
+      return;
+    }
+    messages.push({
+      id: `db-agent-backfill-${index}`,
+      role: "assistant",
+      content,
+    });
+  });
+
+  return messages;
 }
 
 export function mergeMissingDbUserMessagesIntoHistory({
@@ -46,55 +90,49 @@ export function mergeMissingDbUserMessagesIntoHistory({
   historyItems: DurableAgUiHistoryItem[];
   dbMessages: readonly DBMessage[];
 }): DurableAgUiHistoryItem[] {
-  const historyUserIndicesBySignature = new Map<string, number[]>();
+  const historyIndicesBySignature = new Map<string, number[]>();
   historyItems.forEach((item, index) => {
-    if (!isAgUiUserMessage(item)) {
+    if (!isAgUiTextBackfillMessage(item)) {
       return;
     }
-    const signature = agUiUserMessageSignature(item);
-    const indices = historyUserIndicesBySignature.get(signature) ?? [];
+    const signature = agUiTextMessageSignature(item);
+    const indices = historyIndicesBySignature.get(signature) ?? [];
     indices.push(index);
-    historyUserIndicesBySignature.set(signature, indices);
+    historyIndicesBySignature.set(signature, indices);
   });
 
-  const missingBeforeIndex = new Map<number, AgUiUserMessage[]>();
-  const appendedMessages: AgUiUserMessage[] = [];
-  const pendingMissingUserMessages: AgUiUserMessage[] = [];
+  const missingBeforeIndex = new Map<number, AgUiTextBackfillMessage[]>();
+  const appendedMessages: AgUiTextBackfillMessage[] = [];
+  const pendingMissingMessages: AgUiTextBackfillMessage[] = [];
   let lastMatchedHistoryIndex: number | null = null;
 
-  for (const message of dbMessagesToNativeAgUiSnapshotMessages(dbMessages)) {
-    if (!isAgUiUserMessage(message)) {
-      continue;
-    }
+  for (const message of dbMessagesToTextBackfillMessages(dbMessages)) {
     const content = agUiMessageContentText(message.content);
     if (content.length === 0) {
       continue;
     }
-    const matchingHistoryIndices = historyUserIndicesBySignature.get(
-      agUiUserMessageSignature(message),
+    const matchingHistoryIndices = historyIndicesBySignature.get(
+      agUiTextMessageSignature(message),
     );
     const matchingHistoryIndex = matchingHistoryIndices?.shift();
     if (matchingHistoryIndex === undefined) {
-      pendingMissingUserMessages.push(message);
+      pendingMissingMessages.push(message);
       continue;
     }
-    if (pendingMissingUserMessages.length > 0) {
+    if (pendingMissingMessages.length > 0) {
       missingBeforeIndex.set(matchingHistoryIndex, [
         ...(missingBeforeIndex.get(matchingHistoryIndex) ?? []),
-        ...pendingMissingUserMessages.splice(0),
+        ...pendingMissingMessages.splice(0),
       ]);
     }
     lastMatchedHistoryIndex = matchingHistoryIndex;
   }
 
-  if (
-    pendingMissingUserMessages.length > 0 &&
-    lastMatchedHistoryIndex !== null
-  ) {
-    appendedMessages.push(...pendingMissingUserMessages.splice(0));
+  if (pendingMissingMessages.length > 0 && lastMatchedHistoryIndex !== null) {
+    appendedMessages.push(...pendingMissingMessages.splice(0));
   }
 
-  const prependedMessages = [...pendingMissingUserMessages];
+  const prependedMessages = [...pendingMissingMessages];
   if (
     prependedMessages.length === 0 &&
     missingBeforeIndex.size === 0 &&

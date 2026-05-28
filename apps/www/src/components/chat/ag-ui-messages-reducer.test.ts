@@ -649,6 +649,82 @@ describe("agUiMessagesReducer", () => {
       expect(nextState.messages[1]).not.toBe(initial.messages[1]);
     });
 
+    it("TEXT_MESSAGE_CONTENT updates a long history through the message index", () => {
+      const initialMessages: UIMessage[] = Array.from(
+        { length: 500 },
+        (_, index) => ({
+          id: `msg-${index}`,
+          role: "agent",
+          agent: "claudeCode",
+          parts: [{ type: "text", text: `message ${index}` }],
+        }),
+      );
+      const initial = mkState(initialMessages);
+      const nextState = agUiMessagesReducer(initial, {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-472",
+        delta: " streamed",
+      } as BaseEvent);
+
+      expect(nextState.messages).toHaveLength(500);
+      expect(nextState.messages[0]).toBe(initial.messages[0]);
+      expect(nextState.messages[471]).toBe(initial.messages[471]);
+      expect(nextState.messages[473]).toBe(initial.messages[473]);
+      expect(nextState.messages[499]).toBe(initial.messages[499]);
+      expect(nextState.messages[472]).toMatchObject({
+        parts: [{ type: "text", text: "message 472 streamed" }],
+      });
+      expect(nextState.assistantMessageIndexes["msg-472"]).toBe(472);
+    });
+
+    it("TOOL_CALL_RESULT updates only the indexed tool message in long history", () => {
+      const initialMessages: UIMessage[] = Array.from(
+        { length: 300 },
+        (_, index) => ({
+          id: `msg-${index}`,
+          role: "agent",
+          agent: "claudeCode",
+          parts:
+            index === 201
+              ? [
+                  {
+                    type: "tool",
+                    id: "tool-201",
+                    agent: "claudeCode",
+                    name: "Bash",
+                    parameters: {},
+                    status: "pending",
+                    parts: [],
+                  } as unknown as UIAgentMessage["parts"][number],
+                ]
+              : [{ type: "text", text: `message ${index}` }],
+        }),
+      );
+      const initial = mkState(initialMessages);
+      const nextState = agUiMessagesReducer(initial, {
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId: "tool-201",
+        content: "done",
+      } as BaseEvent);
+
+      expect(nextState.messages[0]).toBe(initial.messages[0]);
+      expect(nextState.messages[200]).toBe(initial.messages[200]);
+      expect(nextState.messages[202]).toBe(initial.messages[202]);
+      expect(nextState.messages[299]).toBe(initial.messages[299]);
+      expect(nextState.messages[201]).not.toBe(initial.messages[201]);
+      expect(
+        (nextState.messages[201] as UIAgentMessage).parts[0],
+      ).toMatchObject({
+        id: "tool-201",
+        status: "completed",
+        result: "done",
+      });
+      expect(nextState.toolPartPositions["tool-201"]).toEqual({
+        messageId: "msg-201",
+        partsIndex: 0,
+      });
+    });
+
     it("TEXT_MESSAGE_CONTENT preserves refs of non-streaming parts in streaming message", () => {
       const toolPart = {
         type: "tool",

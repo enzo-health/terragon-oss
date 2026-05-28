@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EventType } from "@ag-ui/core";
 import {
   hydrateAssistantHistoryMessages,
@@ -86,6 +86,151 @@ describe("hydrateAssistantHistoryMessages", () => {
     const assistant = messages[1];
     expect(assistant?.role).toBe("assistant");
     expect(assistant?.content).toHaveLength(2);
+  });
+
+  it("hydrates long replay histories without repeated array searches", () => {
+    const history: Array<
+      Parameters<typeof hydrateAssistantHistoryMessages>[0][number]
+    > = [];
+    for (let index = 0; index < 1_000; index += 1) {
+      history.push(
+        {
+          id: `user-${index}`,
+          role: "user",
+          content: `Prompt ${index}`,
+        },
+        {
+          id: `assistant-${index}`,
+          role: "assistant",
+          content: `Working ${index}`,
+        },
+        {
+          id: `assistant-${index}`,
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: `tool-${index}`,
+              type: "function",
+              function: {
+                name: "Bash",
+                arguments: `{"command":"echo ${index}"}`,
+              },
+            },
+          ],
+        },
+        {
+          id: `tool-result-${index}`,
+          role: "tool",
+          toolCallId: `tool-${index}`,
+          content: `result-${index}`,
+        },
+      );
+    }
+    const findIndexSpy = vi.spyOn(Array.prototype, "findIndex");
+
+    try {
+      const messages = hydrateAssistantHistoryMessages(history);
+
+      expect(messages).toHaveLength(2_000);
+      expect(findIndexSpy).not.toHaveBeenCalled();
+      const tailAssistant = messages.at(-1);
+      expect(tailAssistant?.role).toBe("assistant");
+      const tailTool =
+        tailAssistant?.role === "assistant"
+          ? tailAssistant.content[1]
+          : undefined;
+      expect(tailTool).toMatchObject({
+        type: "tool-call",
+        toolCallId: "tool-999",
+        result: "result-999",
+      });
+    } finally {
+      findIndexSpy.mockRestore();
+    }
+  });
+
+  it("keeps custom-created assistant ids from deduping later user messages", () => {
+    const messages = hydrateAssistantHistoryMessages([
+      {
+        type: EventType.CUSTOM,
+        name: "terragon.data-part",
+        value: {
+          messageId: "shared-id",
+          partIndex: 0,
+          name: "terragon.terminal",
+          data: {
+            type: "terminal",
+            sandboxId: "sandbox-1",
+            terminalId: "terminal-1",
+            chunks: [],
+          },
+        },
+      },
+      {
+        id: "shared-id",
+        role: "user",
+        content: "User message with colliding id",
+      },
+    ]);
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "user",
+    ]);
+    expect(messages[1]).toMatchObject({
+      id: "shared-id",
+      role: "user",
+    });
+  });
+
+  it("dedupes long custom data-part streams without repeated array searches", () => {
+    const history: Array<
+      Parameters<typeof hydrateAssistantHistoryMessages>[0][number]
+    > = [];
+    for (let index = 0; index < 1_000; index += 1) {
+      const value = {
+        messageId: "assistant-live",
+        partIndex: index,
+        name: "terragon.terminal",
+        data: {
+          type: "terminal",
+          sandboxId: "sandbox-1",
+          terminalId: `terminal-${index}`,
+          chunks: [],
+        },
+      };
+      history.push(
+        {
+          type: EventType.CUSTOM,
+          name: "terragon.data-part",
+          value,
+        },
+        {
+          type: EventType.CUSTOM,
+          name: "terragon.data-part",
+          value,
+        },
+      );
+    }
+    const findIndexSpy = vi.spyOn(Array.prototype, "findIndex");
+    const someSpy = vi.spyOn(Array.prototype, "some");
+
+    try {
+      const messages = hydrateAssistantHistoryMessages(history);
+
+      expect(findIndexSpy).not.toHaveBeenCalled();
+      expect(someSpy).not.toHaveBeenCalled();
+      expect(messages).toHaveLength(1);
+      const assistant = messages[0];
+      expect(assistant?.role).toBe("assistant");
+      expect(
+        assistant?.role === "assistant" ? assistant.content : [],
+      ).toHaveLength(1_000);
+    } finally {
+      findIndexSpy.mockRestore();
+      someSpy.mockRestore();
+    }
   });
 
   it("marks unresolved idle-finalized tool calls as errored", async () => {

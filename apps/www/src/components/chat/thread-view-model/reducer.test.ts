@@ -691,6 +691,67 @@ describe("ThreadViewModel reducer", () => {
     ]);
   });
 
+  it("keeps live snapshot lifecycle notices in sidecar-only projection", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = applyAgUiEvent(state, {
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [
+        {
+          id: "side-effect-system:invalid-token-retry-0-abc123abc123",
+          role: "system",
+          content: "Retrying with refreshed token",
+        },
+        {
+          id: "side-effect-user-0-abc123abc123",
+          role: "user",
+          content: "Continue",
+        },
+      ],
+    } as BaseEvent);
+
+    const viewModel = projectThreadViewModel(state, {
+      includeTranscriptMessages: false,
+    });
+
+    expect(viewModel.messages).toEqual([]);
+    expect(viewModel.lifecycleMessages).toEqual([
+      expect.objectContaining({
+        id: "side-effect-system:invalid-token-retry-0-abc123abc123",
+        role: "system",
+        message_type: "invalid-token-retry",
+      }),
+    ]);
+  });
+
+  it("keeps lifecycle notice references stable across ordinary text tokens", () => {
+    let state = createInitialThreadViewModelState(
+      snapshotWithMessages([
+        {
+          type: "system",
+          message_type: "generic-retry",
+          parts: [{ type: "text", text: "Retrying..." }],
+        },
+      ]),
+    );
+    const lifecycleMessages = state.lifecycleMessages;
+
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "live-agent-1",
+    });
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "live-agent-1",
+      delta: "streamed token",
+    });
+
+    expect(state.lifecycleMessages).toBe(lifecycleMessages);
+    expect(
+      projectThreadViewModel(state, { includeTranscriptMessages: false })
+        .lifecycleMessages,
+    ).toBe(lifecycleMessages);
+  });
+
   it("clears live transcript precedence after durable reconciliation", () => {
     let state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
@@ -854,6 +915,31 @@ describe("ThreadViewModel reducer", () => {
 
     expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
     expect(state.artifacts).toBe(artifactsAfterPlan);
+  });
+
+  it("refreshes plan artifacts when a streamed proposed_plan close tag completes", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    const initialArtifacts = state.artifacts;
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "plan-msg",
+    });
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "plan-msg",
+      delta: "<proposed_plan>\nDo the work.\n</proposed",
+    });
+
+    expect(state.artifacts).toBe(initialArtifacts);
+
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "plan-msg",
+      delta: "_plan>",
+    });
+
+    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
+    expect(state.artifacts).not.toBe(initialArtifacts);
   });
 
   it("updates artifact descriptors when artifact content changes under a stable id", () => {

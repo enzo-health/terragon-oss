@@ -9,6 +9,7 @@ import { useAgUiTransport, type AgUiTransport } from "./use-ag-ui-transport";
 // Mock @ag-ui/client so we can assert constructor args without pulling in
 // the full RxJS / fetch runtime.
 const httpAgentInstances: Array<{ config: unknown; id: number }> = [];
+const httpAgentMiddlewareCounts: number[] = [];
 let nextHttpAgentId = 0;
 
 vi.mock("@ag-ui/client", () => {
@@ -19,6 +20,7 @@ vi.mock("@ag-ui/client", () => {
     initialMessages?: Message[];
     initialState?: State;
     __mockId: number;
+    middlewares: unknown[] = [];
 
     constructor(config: {
       url: string;
@@ -34,6 +36,12 @@ vi.mock("@ag-ui/client", () => {
       this.initialState = config.initialState;
       this.__mockId = nextHttpAgentId++;
       httpAgentInstances.push({ config, id: this.__mockId });
+    }
+
+    use(...middlewares: unknown[]) {
+      this.middlewares.push(...middlewares);
+      httpAgentMiddlewareCounts[this.__mockId] = this.middlewares.length;
+      return this;
     }
   }
   return { HttpAgent: MockHttpAgent };
@@ -127,6 +135,7 @@ async function renderHarness({ args }: { args: TransportArgs }): Promise<{
 describe("useAgUiTransport", () => {
   afterEach(() => {
     httpAgentInstances.length = 0;
+    httpAgentMiddlewareCounts.length = 0;
     nextHttpAgentId = 0;
     vi.clearAllMocks();
   });
@@ -139,6 +148,7 @@ describe("useAgUiTransport", () => {
     expect(captured.length).toBeGreaterThan(0);
     const first = requireAgent(captured[0]!);
     expect(typeof first.__mockId).toBe("number");
+    expect(httpAgentMiddlewareCounts[first.__mockId]).toBe(1);
 
     await act(async () => {
       root.unmount();

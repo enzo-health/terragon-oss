@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Message as AgUiMessage } from "@ag-ui/core";
 import { ensureAgent } from "@terragon/agent/utils";
 import {
   DBUserMessage,
@@ -21,7 +22,10 @@ import {
   invalidateCachedTranscript,
   seedTranscript,
 } from "@/collections/thread-transcript-collection";
-import { useAgUiTransport } from "@/hooks/use-ag-ui-transport";
+import {
+  shouldUseSyntheticAgUiBenchmarkStream,
+  useAgUiTransport,
+} from "@/hooks/use-ag-ui-transport";
 import {
   type ScopedRunIdState,
   selectScopedRunId,
@@ -70,6 +74,66 @@ import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
+
+export async function loadAgUiHistoryMessagesForRuntime({
+  threadId,
+  threadChatId,
+  isAgentCurrentlyWorking,
+  fallbackMessages = [],
+}: {
+  threadId: string;
+  threadChatId: string;
+  isAgentCurrentlyWorking: boolean;
+  fallbackMessages?: AgUiMessage[];
+}) {
+  // Stale-while-revalidate against the transcript collection.
+  //
+  // 1. If an active run has a cached snapshot (warmed by sidebar prefetch
+  //    or a prior visit), return it synchronously so the runtime hydrates
+  //    instantly with no "Loading task history..." placeholder.
+  //
+  // 2. Once a run is idle/finalized, bypass the stale cache and load the
+  //    authoritative history before replacing runtime state. A user-only
+  //    cached snapshot can otherwise hide the assistant response that just
+  //    finished streaming.
+  const cached = isAgentCurrentlyWorking
+    ? getCachedTranscript(threadId, threadChatId)
+    : undefined;
+  if (cached !== undefined) {
+    const controller = new AbortController();
+    void fetchAgUiHistoryMessages({
+      threadId,
+      threadChatId,
+      signal: controller.signal,
+    })
+      .then((fresh) =>
+        seedTranscript({ threadId, threadChatId, result: fresh }),
+      )
+      .catch((err) => {
+        // Background revalidation failure is non-fatal — the runtime is
+        // already hydrated. Drop the cached entry so the next visit refetches
+        // (avoids serving an entry that may be permanently broken).
+        if (!controller.signal.aborted) {
+          console.warn("[transcript-cache] revalidation failed", err);
+          invalidateCachedTranscript(threadId, threadChatId);
+        }
+      });
+    return cached;
+  }
+
+  try {
+    const fresh = await fetchAgUiHistoryMessages({ threadId, threadChatId });
+    seedTranscript({ threadId, threadChatId, result: fresh });
+    return fresh;
+  } catch (error) {
+    if (fallbackMessages.length === 0) {
+      throw error;
+    }
+    const fallback = { messages: fallbackMessages, lastSeq: -1 };
+    seedTranscript({ threadId, threadChatId, result: fallback });
+    return fallback;
+  }
+}
 
 // Wires AG-UI transport, view model, runtime mutations, and effects for an
 // active thread. Bootstrap queries + loading gate live in <ThreadProvider/>;
@@ -164,43 +228,6 @@ function ChatUIContent() {
     isReadOnly,
   });
 
-  const loadAgUiHistoryMessages = useCallback(async () => {
-    // Stale-while-revalidate against the transcript collection.
-    //
-    // 1. If we have a cached snapshot (warmed by sidebar prefetch or a prior
-    //    visit), return it synchronously so the runtime hydrates instantly
-    //    with no "Loading task history..." placeholder.
-    //
-    // 2. Always kick off a background revalidation that updates the collection
-    //    so the next open is fresh. For active runs the runtime applies
-    //    `fromSeq=cachedLastSeq` and the SSE replay fills in any gap.
-    const cached = getCachedTranscript(threadId, threadChatId);
-    if (cached) {
-      const controller = new AbortController();
-      void fetchAgUiHistoryMessages({
-        threadId,
-        threadChatId,
-        signal: controller.signal,
-      })
-        .then((fresh) =>
-          seedTranscript({ threadId, threadChatId, result: fresh }),
-        )
-        .catch((err) => {
-          // Background revalidation failure is non-fatal — the runtime is
-          // already hydrated. Drop the cached entry so the next visit refetches
-          // (avoids serving an entry that may be permanently broken).
-          if (!controller.signal.aborted) {
-            console.warn("[transcript-cache] revalidation failed", err);
-            invalidateCachedTranscript(threadId, threadChatId);
-          }
-        });
-      return cached;
-    }
-
-    const fresh = await fetchAgUiHistoryMessages({ threadId, threadChatId });
-    seedTranscript({ threadId, threadChatId, result: fresh });
-    return fresh;
-  }, [threadChatId, threadId]);
   const agUiTransport = useAgUiTransport({
     threadId,
     threadChatId,
@@ -376,8 +403,25 @@ function ChatUIContent() {
   });
 
   const effectiveThreadStatus = threadViewModel.lifecycle.threadStatus;
+  const syntheticAgUiBenchmarkStream = shouldUseSyntheticAgUiBenchmarkStream();
   const isAgentCurrentlyWorking =
-    effectiveThreadStatus !== null && isAgentWorking(effectiveThreadStatus);
+    syntheticAgUiBenchmarkStream ||
+    (effectiveThreadStatus !== null && isAgentWorking(effectiveThreadStatus));
+  const loadAgUiHistoryMessages = useCallback(
+    () =>
+      loadAgUiHistoryMessagesForRuntime({
+        threadId,
+        threadChatId,
+        isAgentCurrentlyWorking,
+        fallbackMessages: threadViewSnapshot.agUiInitialMessages,
+      }),
+    [
+      isAgentCurrentlyWorking,
+      threadChatId,
+      threadId,
+      threadViewSnapshot.agUiInitialMessages,
+    ],
+  );
   useInvalidateCreditBalanceOnAgentIdle({
     isAgentCurrentlyWorking,
     queryClient,

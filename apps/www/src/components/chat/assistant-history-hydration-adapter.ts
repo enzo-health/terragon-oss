@@ -17,7 +17,9 @@ import type {
 import {
   applyCustomPartEvent,
   isReadonlyJSONObject,
+  terragonDataPartIdentityKey,
   type ReadonlyJSONObject,
+  type TerragonDataPart,
   type TerragonCustomPartEvent,
 } from "./ag-ui-custom-parts";
 
@@ -38,6 +40,18 @@ const COMPLETE_STATUS = {
   reason: "unknown",
 } satisfies MessageStatus;
 const UNRESOLVED_TOOL_RESULT = "Tool call ended without a result.";
+
+type ToolCallLocation = {
+  messageIndex: number;
+  partIndex: number;
+};
+
+type HydrationIndexes = {
+  messageIds: Set<string>;
+  assistantMessageIndexById: Map<string, number>;
+  toolCallLocationById: Map<string, ToolCallLocation>;
+  terragonDataPartKeys: Set<string>;
+};
 
 function userMetadata(): ThreadUserMessage["metadata"] {
   return { custom: {} };
@@ -275,74 +289,128 @@ function assistantMessage(
 
 function upsertAssistantMessage(params: {
   messages: ThreadMessage[];
-  messageIds: Set<string>;
+  indexes: HydrationIndexes;
   message: Extract<AgUiMessage, { role: "assistant" }>;
 }): void {
-  const { messages, messageIds, message } = params;
+  const { messages, indexes, message } = params;
   const incoming = assistantMessage(message);
-  const existingIndex = messages.findIndex(
-    (candidate) =>
-      candidate.role === "assistant" && candidate.id === incoming.id,
-  );
-  if (existingIndex === -1) {
+  const existingIndex = indexes.assistantMessageIndexById.get(incoming.id);
+  if (existingIndex === undefined) {
     messages.push(incoming);
-    messageIds.add(incoming.id);
+    registerMessage({
+      indexes,
+      message: incoming,
+      messageIndex: messages.length - 1,
+    });
     return;
   }
 
   const existing = messages[existingIndex];
   if (!existing || existing.role !== "assistant") {
     messages.push(incoming);
-    messageIds.add(incoming.id);
+    registerMessage({
+      indexes,
+      message: incoming,
+      messageIndex: messages.length - 1,
+    });
     return;
   }
 
+  const appendedPartStartIndex = existing.content.length;
   messages[existingIndex] = {
     ...existing,
     content: [...existing.content, ...incoming.content],
     status: incoming.status,
   };
+  registerAssistantToolCalls({
+    indexes,
+    messageIndex: existingIndex,
+    content: incoming.content,
+    startPartIndex: appendedPartStartIndex,
+  });
 }
 
 function applyToolResult(params: {
   messages: ThreadMessage[];
+  toolCallLocationById: Map<string, ToolCallLocation>;
   message: Extract<AgUiMessage, { role: "tool" }>;
 }): boolean {
-  const { messages, message } = params;
+  const { messages, toolCallLocationById, message } = params;
   const isError = isFailedToolMessage(message);
-  for (
-    let messageIndex = messages.length - 1;
-    messageIndex >= 0;
-    messageIndex--
-  ) {
-    const candidate = messages[messageIndex];
-    if (!candidate || candidate.role !== "assistant") {
-      continue;
-    }
-    const partIndex = candidate.content.findIndex(
-      (part) =>
-        part.type === "tool-call" && part.toolCallId === message.toolCallId,
-    );
-    if (partIndex === -1) {
-      continue;
-    }
-    const nextContent = [...candidate.content];
-    const toolPart = nextContent[partIndex];
-    if (!toolPart || toolPart.type !== "tool-call") {
-      continue;
-    }
-    nextContent[partIndex] = {
-      ...toolPart,
-      result: message.content,
-      ...(isError ? { isError: true } : {}),
-    };
-    messages[messageIndex] = {
-      ...candidate,
-      content: nextContent,
-    };
-    return true;
+  const location = toolCallLocationById.get(message.toolCallId);
+  if (!location) {
+    return false;
   }
-  return false;
+  const candidate = messages[location.messageIndex];
+  if (!candidate || candidate.role !== "assistant") {
+    return false;
+  }
+  const nextContent = [...candidate.content];
+  const toolPart = nextContent[location.partIndex];
+  if (!toolPart || toolPart.type !== "tool-call") {
+    return false;
+  }
+  nextContent[location.partIndex] = {
+    ...toolPart,
+    result: message.content,
+    ...(isError ? { isError: true } : {}),
+  };
+  messages[location.messageIndex] = {
+    ...candidate,
+    content: nextContent,
+  };
+  return true;
+}
+
+function registerMessage(params: {
+  indexes: HydrationIndexes;
+  message: ThreadMessage;
+  messageIndex: number;
+}): void {
+  const { indexes, message, messageIndex } = params;
+  indexes.messageIds.add(message.id);
+  if (message.role !== "assistant") {
+    return;
+  }
+  if (!indexes.assistantMessageIndexById.has(message.id)) {
+    indexes.assistantMessageIndexById.set(message.id, messageIndex);
+  }
+  registerAssistantToolCalls({
+    indexes,
+    messageIndex,
+    content: message.content,
+    startPartIndex: 0,
+  });
+}
+
+function registerTerragonDataPart(
+  indexes: HydrationIndexes,
+  dataPart: TerragonDataPart,
+): void {
+  indexes.terragonDataPartKeys.add(terragonDataPartIdentityKey(dataPart));
+}
+
+function registerAssistantToolCalls(params: {
+  indexes: HydrationIndexes;
+  messageIndex: number;
+  content: readonly ThreadAssistantMessagePart[];
+  startPartIndex: number;
+}): void {
+  const { indexes, messageIndex, content, startPartIndex } = params;
+  for (let index = 0; index < content.length; index += 1) {
+    const part = content[index];
+    if (!part || part.type !== "tool-call") {
+      continue;
+    }
+    const existing = indexes.toolCallLocationById.get(part.toolCallId);
+    if (existing?.messageIndex === messageIndex) {
+      continue;
+    }
+    indexes.toolCallLocationById.set(part.toolCallId, {
+      messageIndex,
+      partIndex: startPartIndex + index,
+    });
+  }
 }
 
 function isFailedToolMessage(
@@ -381,13 +449,31 @@ export function hydrateAssistantHistoryMessages(
   agUiMessages: readonly AgUiHistoryItem[],
 ): ThreadMessage[] {
   const messages: ThreadMessage[] = [];
-  const messageIds = new Set<string>();
+  const indexes: HydrationIndexes = {
+    messageIds: new Set<string>(),
+    assistantMessageIndexById: new Map<string, number>(),
+    toolCallLocationById: new Map<string, ToolCallLocation>(),
+    terragonDataPartKeys: new Set<string>(),
+  };
 
   for (const item of agUiMessages) {
     if (!isAgUiMessage(item)) {
       applyCustomPartEvent({
         messages,
         event: item,
+        findAssistantMessageIndex: (messageId) =>
+          indexes.assistantMessageIndexById.get(messageId),
+        onAssistantMessageCreated: (messageId, messageIndex) => {
+          if (!indexes.assistantMessageIndexById.has(messageId)) {
+            indexes.assistantMessageIndexById.set(messageId, messageIndex);
+          }
+        },
+        hasTerragonDataPart: (dataPart) =>
+          indexes.terragonDataPartKeys.has(
+            terragonDataPartIdentityKey(dataPart),
+          ),
+        onTerragonDataPartAppended: (dataPart) =>
+          registerTerragonDataPart(indexes, dataPart),
         createAssistantMessage: (messageId) =>
           assistantMessage({
             id: messageId,
@@ -399,41 +485,66 @@ export function hydrateAssistantHistoryMessages(
     }
     const message = item;
     switch (message.role) {
-      case "user":
-        if (messageIds.has(message.id)) {
+      case "user": {
+        if (indexes.messageIds.has(message.id)) {
           break;
         }
-        messages.push(userMessage(message));
-        messageIds.add(message.id);
+        const nextUserMessage = userMessage(message);
+        messages.push(nextUserMessage);
+        registerMessage({
+          indexes,
+          message: nextUserMessage,
+          messageIndex: messages.length - 1,
+        });
         break;
-      case "system":
-        if (messageIds.has(message.id)) {
+      }
+      case "system": {
+        if (indexes.messageIds.has(message.id)) {
           break;
         }
-        messages.push(systemMessage(message));
-        messageIds.add(message.id);
+        const nextSystemMessage = systemMessage(message);
+        messages.push(nextSystemMessage);
+        registerMessage({
+          indexes,
+          message: nextSystemMessage,
+          messageIndex: messages.length - 1,
+        });
         break;
+      }
       case "assistant":
-        upsertAssistantMessage({ messages, messageIds, message });
+        upsertAssistantMessage({ messages, indexes, message });
         break;
       case "tool":
-        if (!applyToolResult({ messages, message })) {
-          messages.push(
-            assistantMessage({
-              id: `${message.id}:assistant`,
-              role: "assistant",
-              content: "",
-              toolCalls: [
-                {
-                  id: message.toolCallId,
-                  type: "function",
-                  function: { name: "tool", arguments: "{}" },
-                },
-              ],
-            }),
-          );
-          messageIds.add(`${message.id}:assistant`);
-          applyToolResult({ messages, message });
+        if (
+          !applyToolResult({
+            messages,
+            toolCallLocationById: indexes.toolCallLocationById,
+            message,
+          })
+        ) {
+          const fallbackAssistant = assistantMessage({
+            id: `${message.id}:assistant`,
+            role: "assistant",
+            content: "",
+            toolCalls: [
+              {
+                id: message.toolCallId,
+                type: "function",
+                function: { name: "tool", arguments: "{}" },
+              },
+            ],
+          });
+          messages.push(fallbackAssistant);
+          registerMessage({
+            indexes,
+            message: fallbackAssistant,
+            messageIndex: messages.length - 1,
+          });
+          applyToolResult({
+            messages,
+            toolCallLocationById: indexes.toolCallLocationById,
+            message,
+          });
         }
         break;
       default:

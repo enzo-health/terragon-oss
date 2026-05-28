@@ -59,6 +59,8 @@ vi.mock("@/server-actions/transcribe-audio", () => ({
 // `__pushEvent`.
 type FakeAgent = {
   subscribers: Array<(event: BaseEvent) => void>;
+  pendingDelta: BaseEvent | null;
+  scheduledFlush: ReturnType<typeof setTimeout> | null;
   subscribe: (s: AgentSubscriber) => {
     unsubscribe: () => void;
   };
@@ -67,7 +69,37 @@ type FakeAgent = {
     subscriber: AgentSubscriber,
   ) => Promise<void>;
   __pushEvent: (event: BaseEvent) => void;
+  __flush: () => void;
 };
+
+type CoalescableBudgetDelta = BaseEvent & {
+  type:
+    | EventType.TEXT_MESSAGE_CONTENT
+    | EventType.REASONING_MESSAGE_CONTENT
+    | EventType.TOOL_CALL_ARGS;
+  delta: string;
+} & ({ messageId: string } | { toolCallId: string });
+
+function isCoalescableBudgetDelta(
+  event: BaseEvent,
+): event is CoalescableBudgetDelta {
+  return (
+    (event.type === EventType.TEXT_MESSAGE_CONTENT ||
+      event.type === EventType.REASONING_MESSAGE_CONTENT ||
+      event.type === EventType.TOOL_CALL_ARGS) &&
+    "delta" in event &&
+    typeof event.delta === "string" &&
+    (("messageId" in event && typeof event.messageId === "string") ||
+      ("toolCallId" in event && typeof event.toolCallId === "string"))
+  );
+}
+
+function coalescableBudgetKey(event: CoalescableBudgetDelta): string {
+  if ("messageId" in event) {
+    return `${event.type}:${event.messageId}`;
+  }
+  return `${event.type}:${event.toolCallId}`;
+}
 
 const fakeAgentRegistry = new Map<string, FakeAgent>();
 
@@ -104,6 +136,8 @@ function createFakeAgent(): FakeAgent {
   const subscriberAgent = new HttpAgent({ url: "/test-ag-ui" });
   const fake: FakeAgent = {
     subscribers: [],
+    pendingDelta: null,
+    scheduledFlush: null,
     subscribe: (s) => {
       const handler = s.onEvent;
       const dispatch = handler
@@ -141,7 +175,37 @@ function createFakeAgent(): FakeAgent {
         }
       });
     },
+    __flush: () => {
+      if (fake.scheduledFlush !== null) {
+        clearTimeout(fake.scheduledFlush);
+        fake.scheduledFlush = null;
+      }
+      if (!fake.pendingDelta) return;
+      const event = fake.pendingDelta;
+      fake.pendingDelta = null;
+      for (const sub of [...fake.subscribers]) sub(event);
+    },
     __pushEvent: (event) => {
+      if (isCoalescableBudgetDelta(event)) {
+        if (
+          fake.pendingDelta &&
+          isCoalescableBudgetDelta(fake.pendingDelta) &&
+          coalescableBudgetKey(fake.pendingDelta) ===
+            coalescableBudgetKey(event)
+        ) {
+          fake.pendingDelta = {
+            ...event,
+            delta: `${fake.pendingDelta.delta}${event.delta}`,
+          } as BaseEvent;
+          return;
+        }
+        fake.__flush();
+        fake.pendingDelta = event;
+        fake.scheduledFlush = setTimeout(fake.__flush, 16);
+        return;
+      }
+
+      fake.__flush();
       for (const sub of [...fake.subscribers]) sub(event);
     },
   };
@@ -159,15 +223,21 @@ function getFakeAgent(threadId: string, threadChatId: string): FakeAgent {
 }
 
 vi.mock("@/hooks/use-ag-ui-transport", () => ({
+  shouldUseSyntheticAgUiBenchmarkStream: () => false,
   useAgUiTransport: (args: {
     threadId: string;
     threadChatId: string | null;
-  }): HttpAgent | null => {
-    if (!args.threadChatId) return null;
-    return getFakeAgent(
-      args.threadId,
-      args.threadChatId,
-    ) as unknown as HttpAgent;
+  }) => {
+    if (!args.threadChatId) {
+      return { agent: null, setReplayCursor: vi.fn() };
+    }
+    return {
+      agent: getFakeAgent(
+        args.threadId,
+        args.threadChatId,
+      ) as unknown as HttpAgent,
+      setReplayCursor: vi.fn(),
+    };
   },
 }));
 
@@ -376,7 +446,9 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 // ---------------------------------------------------------------------------
 
 import * as threadContextModule from "@/components/chat/assistant-ui/thread-context";
-import ChatUI from "@/components/chat/chat-ui";
+import ChatUI, {
+  loadAgUiHistoryMessagesForRuntime,
+} from "@/components/chat/chat-ui";
 import { getCachedTranscript } from "@/collections/thread-transcript-collection";
 import { ToolPart } from "@/components/chat/tool-part";
 
@@ -565,6 +637,13 @@ function pushEvent(event: BaseEvent) {
   });
 }
 
+function flushTransportFrame() {
+  const agent = getFakeAgent(THREAD_ID, CHAT_ID);
+  act(() => {
+    agent.__flush();
+  });
+}
+
 function mountToolPart(toolPart: AllToolParts): void {
   mount(
     createElement(ToolPart, {
@@ -647,6 +726,54 @@ function spyOnThreadHook() {
 // ---------------------------------------------------------------------------
 
 describe("ChatUI streaming render budget", () => {
+  it("bypasses cached transcript history after a run finalizes", async () => {
+    vi.mocked(getCachedTranscript).mockReturnValue({
+      messages: [{ id: "stale-user", role: "user", content: "stale only" }],
+      lastSeq: 1,
+    });
+
+    const result = await loadAgUiHistoryMessagesForRuntime({
+      threadId: THREAD_ID,
+      threadChatId: CHAT_ID,
+      isAgentCurrentlyWorking: false,
+    });
+
+    expect(getCachedTranscript).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("history=messages"),
+      expect.any(Object),
+    );
+    expect(result.messages).toEqual([]);
+  });
+
+  it("falls back to projected messages when AG-UI history is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not found", { status: 404 })),
+    );
+
+    const fallbackMessages = [
+      { id: "user-fallback", role: "user", content: "fallback user" },
+      {
+        id: "assistant-fallback",
+        role: "assistant",
+        content: "fallback assistant",
+      },
+    ] as const;
+
+    const result = await loadAgUiHistoryMessagesForRuntime({
+      threadId: THREAD_ID,
+      threadChatId: CHAT_ID,
+      isAgentCurrentlyWorking: false,
+      fallbackMessages: [...fallbackMessages],
+    });
+
+    expect(result).toEqual({
+      messages: fallbackMessages,
+      lastSeq: -1,
+    });
+  });
+
   it("100 text deltas trigger O(N) row body executions (Test 1)", async () => {
     const shell = makeShell();
     const initialMessages = makeHistoricalMessages(); // 5 messages
@@ -687,6 +814,7 @@ describe("ChatUI streaming render budget", () => {
         delta: "x",
       } as BaseEvent);
     }
+    flushTransportFrame();
 
     await act(async () => {
       await Promise.resolve();
@@ -705,18 +833,11 @@ describe("ChatUI streaming render budget", () => {
       deltaTotalCommits,
     });
 
-    // Bound: the rendered transcript is owned by assistant-ui. The legacy
-    // Terragon view-model intentionally ignores high-frequency text deltas,
-    // so steady text streaming should be roughly one row hook call per event,
-    // plus a few historical rows when the streaming message first appears.
-    expect(deltaHookCalls).toBeLessThanOrEqual(
-      100 + initialMessages.length + 20,
-    );
-    // All-subtree commit ceiling. Observed baseline: ~3 commits/delta
-    // (~299 for 100 events). Bound is set well above baseline so the test
-    // catches an order-of-magnitude regression (e.g. effect loop adding
-    // 5+ commits/delta) without flaking on incidental scheduling.
-    expect(deltaTotalCommits).toBeLessThanOrEqual(350);
+    // The transport now coalesces token bursts before assistant-ui sees them.
+    // A 99-delta burst should behave like one flushed content frame, plus
+    // slack for global wrappers and the message-start commit.
+    expect(deltaHookCalls).toBeLessThanOrEqual(initialMessages.length + 25);
+    expect(deltaTotalCommits).toBeLessThanOrEqual(40);
   });
 
   it("historical rows do not rerender on steady streaming (Test 2)", async () => {
@@ -772,6 +893,7 @@ describe("ChatUI streaming render budget", () => {
         delta: "y",
       } as BaseEvent);
     }
+    flushTransportFrame();
 
     await act(async () => {
       await Promise.resolve();
@@ -787,20 +909,10 @@ describe("ChatUI streaming render budget", () => {
       steadyDeltaCommits,
     });
 
-    // Streaming row is 1 UIMessage. The sidecar Terragon view-model ignores
-    // high-frequency text deltas, so every delta should produce roughly one
-    // row hook call against the streaming row. We give slack for global
-    // wrappers.
-    //
-    // If this exceeds `50 * (history.length + 1)` it strongly suggests a
-    // memo bail-out regression — every row rerendering per delta.
-    expect(steadyDeltaHookCalls).toBeLessThanOrEqual(
-      50 + historical.length + 20,
-    );
-    // Steady-state commit budget. Observed: ~152 commits for 50 deltas
-    // (~3/delta, same as Test 1). Set ceiling above baseline to catch
-    // regressions.
-    expect(steadyDeltaCommits).toBeLessThanOrEqual(200);
+    // Burst deltas are frame-coalesced, so steady streaming should no longer
+    // scale commits linearly with raw token count.
+    expect(steadyDeltaHookCalls).toBeLessThanOrEqual(historical.length + 20);
+    expect(steadyDeltaCommits).toBeLessThanOrEqual(35);
   });
 
   it("no effect loops during single delta (Test 3)", async () => {
@@ -846,6 +958,124 @@ describe("ChatUI streaming render budget", () => {
 
     // Expect a small finite number. >100 would indicate an effect loop.
     expect(totalCommits).toBeLessThanOrEqual(20);
+  });
+
+  it("100 tool argument deltas render by flushed frame, not raw fragment", async () => {
+    mockShellState.current = makeShell();
+    mockChatState.current = makeChat([
+      {
+        type: "user",
+        model: null,
+        parts: [{ type: "text", text: "run the command" }],
+      },
+    ]);
+
+    const hookSpy = spyOnThreadHook();
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    hookSpy.mockClear();
+    resetCommitCounters();
+
+    pushEvent({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool-stream-1",
+      toolCallName: "Bash",
+      parentMessageId: "assistant-tool-parent",
+    } as BaseEvent);
+
+    for (let i = 0; i < 100; i++) {
+      pushEvent({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "tool-stream-1",
+        delta: i === 0 ? '{"command":"' : "x",
+      } as BaseEvent);
+    }
+    flushTransportFrame();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(hookSpy.mock.calls.length).toBeLessThanOrEqual(30);
+    expect(totalCommits).toBeLessThanOrEqual(45);
+  });
+
+  it("long markdown streaming stays bounded across repeated frames", async () => {
+    const historical = makeHistoricalMessages();
+    mockShellState.current = makeShell();
+    mockChatState.current = makeChat(historical);
+
+    const hookSpy = spyOnThreadHook();
+
+    mount(createElement(ChatUI, { threadId: THREAD_ID, isReadOnly: true }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const STREAM_ID = "stream-markdown-frames";
+    pushEvent({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: STREAM_ID,
+      role: "assistant",
+    } as BaseEvent);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    hookSpy.mockClear();
+    resetCommitCounters();
+
+    const chunks = [
+      "## Scheduling overview\n\n",
+      "Scheduling has three moving pieces that matter for operators.\n\n",
+      "| Area | Responsibility |\n| --- | --- |\n",
+      "| Intake | Capture task metadata and requested start time |\n",
+      "| Queue | Keep runnable work ordered without starving retries |\n",
+      "| Runner | Lease work and stream progress back to the thread |\n\n",
+      "### Lifecycle\n\n",
+      "1. A task enters the queue with a durable timestamp.\n",
+      "2. The scheduler checks readiness and provider capacity.\n",
+      "3. The runner claims a lease and starts the sandbox.\n",
+      "4. Events stream back into the chat transcript.\n\n",
+      "```ts\n",
+      'type ScheduleState = "queued" | "running" | "done";\n',
+      "const next = pickReadyTask(queue);\n",
+      "```\n\n",
+      "The important invariant is that every visible state has one writer.\n\n",
+      "That keeps the UI predictable even while the answer is still growing.\n",
+    ];
+
+    for (const delta of chunks) {
+      pushEvent({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: STREAM_ID,
+        delta,
+      } as BaseEvent);
+      flushTransportFrame();
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    const markdownFrameHookCalls = hookSpy.mock.calls.length;
+    const markdownFrameCommits = totalCommits;
+
+    // eslint-disable-next-line no-console
+    console.log("[Test markdown frames] measured:", {
+      historyMessages: historical.length,
+      frames: chunks.length,
+      markdownFrameHookCalls,
+      markdownFrameCommits,
+    });
+
+    expect(markdownFrameHookCalls).toBeLessThanOrEqual(
+      historical.length + chunks.length * 4,
+    );
+    expect(markdownFrameCommits).toBeLessThanOrEqual(chunks.length * 4);
   });
 });
 

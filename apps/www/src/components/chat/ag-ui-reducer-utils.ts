@@ -4,6 +4,12 @@ import type { UIMessage } from "@terragon/shared";
 export type AgUiMessagesState = {
   /** Projected message list, rendered by TerragonThread. */
   messages: UIMessage[];
+  /** Position of every projected message by id. */
+  messageIndexes: Record<string, number>;
+  /** Position of assistant/agent messages by id. */
+  assistantMessageIndexes: Record<string, number>;
+  /** Position of tool parts by tool call id. */
+  toolPartPositions: Record<string, { messageId: string; partsIndex: number }>;
   /**
    * The agent kind to stamp on newly-created assistant messages. Derived
    * from the active thread chat; fixed for the lifetime of the reducer.
@@ -32,6 +38,42 @@ export type AgUiMessagesState = {
     { parentMessageId: string; partsIndex: number }
   >;
 };
+
+export function createAgUiMessageIndexes(
+  messages: UIMessage[],
+): Pick<
+  AgUiMessagesState,
+  "assistantMessageIndexes" | "messageIndexes" | "toolPartPositions"
+> {
+  const messageIndexes: Record<string, number> = {};
+  const assistantMessageIndexes: Record<string, number> = {};
+  const toolPartPositions: Record<
+    string,
+    { messageId: string; partsIndex: number }
+  > = {};
+
+  messages.forEach((message, messageIndex) => {
+    messageIndexes[message.id] = messageIndex;
+    if (message.role !== "agent") {
+      return;
+    }
+    assistantMessageIndexes[message.id] = messageIndex;
+    message.parts.forEach((part, partsIndex) => {
+      if (part.type === "tool") {
+        toolPartPositions[part.id] = {
+          messageId: message.id,
+          partsIndex,
+        };
+      }
+    });
+  });
+
+  return {
+    messageIndexes,
+    assistantMessageIndexes,
+    toolPartPositions,
+  };
+}
 
 export function getField<T>(value: unknown, key: string): T | undefined {
   if (!value || typeof value !== "object") return undefined;

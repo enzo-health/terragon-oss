@@ -152,6 +152,7 @@ export type ThreadViewModelState = {
   meta: ThreadMetaSnapshot;
   githubSummary: ThreadViewGithubSummary;
   lifecycle: ThreadViewLifecycle;
+  lifecycleMessages: UISystemMessage[];
   quarantine: ThreadViewQuarantineEntry[];
   hasLiveTranscriptEvents: boolean;
   hasLiveLifecycleEvents: boolean;

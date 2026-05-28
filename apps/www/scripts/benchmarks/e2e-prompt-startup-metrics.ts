@@ -138,4 +138,7 @@ export function createBrowserBenchmarkMetricHelpers(): BrowserBenchmarkMetricHel
   };
 }
 
-export const browserBenchmarkMetricHelpersSource = `(${createBrowserBenchmarkMetricHelpers.toString()})()`;
+export const browserBenchmarkMetricHelpersSource = `(() => {
+  const __name = (fn) => fn;
+  return (${createBrowserBenchmarkMetricHelpers.toString()})();
+})()`;

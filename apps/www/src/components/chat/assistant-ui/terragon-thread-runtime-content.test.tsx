@@ -30,7 +30,9 @@ const transcriptSurfaceProps = vi.hoisted(
 
 vi.mock("@assistant-ui/react", () => ({
   useAuiState: (
-    selector: (state: typeof runtimeState) => ThreadMessage[] | boolean,
+    selector: (
+      state: typeof runtimeState,
+    ) => ThreadMessage[] | boolean | number,
   ) => selector(runtimeState),
 }));
 
@@ -53,7 +55,10 @@ vi.mock("./terragon-transcript-surface", async () => {
   };
 });
 
-import { TerragonThreadRuntimeContent } from "./terragon-thread-runtime-content";
+import {
+  getRuntimeThreadFlags,
+  TerragonThreadRuntimeContent,
+} from "./terragon-thread-runtime-content";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -403,5 +408,94 @@ describe("TerragonThreadRuntimeContent", () => {
       message: "Waiting for updates",
       reason: null,
     });
+  });
+
+  it("derives render flags from the newest useful assistant row", () => {
+    const history: ThreadMessage[] = Array.from(
+      { length: 1_000 },
+      (_, index) => ({
+        id: `user-${index}`,
+        role: "user",
+        createdAt: new Date(0),
+        content: [{ type: "text", text: `Historical user ${index}` }],
+        attachments: [],
+        metadata: { custom: {} },
+      }),
+    );
+    const messages: ThreadMessage[] = [
+      ...history,
+      {
+        id: "assistant-tail",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [
+          { type: "text", text: "Streaming tail" },
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "Bash",
+            args: { command: "pnpm test" },
+            argsText: '{"command":"pnpm test"}',
+          } satisfies ThreadAssistantMessagePart,
+        ],
+        status: { type: "running" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+    let visited = 0;
+
+    const flags = getRuntimeThreadFlags(messages, () => {
+      visited += 1;
+    });
+
+    expect(flags).toBe(3);
+    expect(visited).toBe(1);
+  });
+
+  it("does not scan historical rows for pending tools after a plain assistant tail", () => {
+    const messages: ThreadMessage[] = [
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        id: `historical-assistant-${index}`,
+        role: "assistant" as const,
+        createdAt: new Date(0),
+        content: [{ type: "text" as const, text: `Historical ${index}` }],
+        status: { type: "complete" as const, reason: "stop" as const },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      })),
+      {
+        id: "assistant-tail",
+        role: "assistant",
+        createdAt: new Date(0),
+        content: [{ type: "text", text: "Streaming tail" }],
+        status: { type: "running" },
+        metadata: {
+          unstable_state: null,
+          unstable_annotations: [],
+          unstable_data: [],
+          steps: [],
+          custom: {},
+        },
+      },
+    ];
+    let visited = 0;
+
+    const flags = getRuntimeThreadFlags(messages, () => {
+      visited += 1;
+    });
+
+    expect(flags).toBe(1);
+    expect(visited).toBe(1);
   });
 });
