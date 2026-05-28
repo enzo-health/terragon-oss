@@ -39,7 +39,6 @@ import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projecto
 import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
   buildResumeRunStartedEvent,
-  getReplayDedupeKey,
   getReplayEntryRunId,
   isTerminalRunEventType,
   repairReplayTextMessageLifecycles,
@@ -153,51 +152,12 @@ export async function GET(
       abortSignal.addEventListener("abort", () => sse.close("client_abort"), {
         once: true,
       });
-      const replayedEventDedupeKeys = new Set<string>();
       let lastDeliveredSeq = replayCursorSeq;
       let hasEmittedAgUiDataEvent = false;
       let activeEmittedRunId: string | null = null;
       // Snapshot-first framing contract: always emit a baseline marker before
       // replay or live-tail frames so clients can align first-paint lifecycle.
       sse.emitBaselineComment();
-
-      const rememberReplayedEventDedupeKeys = (
-        event: BaseEvent,
-        identity?: ReplayIdentity,
-      ) => {
-        const dedupeKey = getReplayDedupeKey(event, identity);
-        if (dedupeKey !== null) {
-          replayedEventDedupeKeys.add(dedupeKey);
-        }
-        if (identity !== undefined) {
-          const structuralDedupeKey = getReplayDedupeKey(event);
-          if (structuralDedupeKey !== null) {
-            replayedEventDedupeKeys.add(structuralDedupeKey);
-          }
-        }
-      };
-
-      const consumeReplayedEventDedupeKey = (
-        event: BaseEvent,
-        identity?: ReplayIdentity,
-      ): boolean => {
-        const dedupeKey = getReplayDedupeKey(event, identity);
-        if (dedupeKey !== null && replayedEventDedupeKeys.has(dedupeKey)) {
-          replayedEventDedupeKeys.delete(dedupeKey);
-          return true;
-        }
-        if (identity !== undefined) {
-          const structuralDedupeKey = getReplayDedupeKey(event);
-          if (
-            structuralDedupeKey !== null &&
-            replayedEventDedupeKeys.has(structuralDedupeKey)
-          ) {
-            replayedEventDedupeKeys.delete(structuralDedupeKey);
-            return true;
-          }
-        }
-        return false;
-      };
 
       const ensurePostResumeStartsWithRun = (
         event: BaseEvent,
@@ -241,7 +201,7 @@ export async function GET(
           threadId,
           runId: resumeRunId,
         });
-        rememberReplayedEventDedupeKeys(runStartedEvent);
+        sse.rememberReplayedEventDedupeKeys(runStartedEvent);
         hasEmittedAgUiDataEvent = true;
         activeEmittedRunId = resumeRunId;
         sse.enqueue(encodeSseEvent(runStartedEvent));
@@ -305,7 +265,7 @@ export async function GET(
         }
 
         sse.incrementReplayCount();
-        rememberReplayedEventDedupeKeys(entry.event, entry.identity);
+        sse.rememberReplayedEventDedupeKeys(entry.event, entry.identity);
         if (entry.seq !== null) {
           lastDeliveredSeq =
             lastDeliveredSeq === null
@@ -613,7 +573,10 @@ export async function GET(
                   // we do not drop events written mid-replay. Skip the first
                   // matching live event if it was already emitted from replay.
                   if (
-                    consumeReplayedEventDedupeKey(entry.event, entry.identity)
+                    sse.consumeReplayedEventDedupeKey(
+                      entry.event,
+                      entry.identity,
+                    )
                   ) {
                     sse.incrementDedupeCount();
                     continue;
@@ -777,7 +740,7 @@ export async function GET(
               threadId,
               runId: resolvedRunId,
             });
-            rememberReplayedEventDedupeKeys(runStartedEvent);
+            sse.rememberReplayedEventDedupeKeys(runStartedEvent);
             emitAgUiEvent(runStartedEvent, null);
           }
           await liveTail({ runId: resolvedRunId, userId: session.user.id });
