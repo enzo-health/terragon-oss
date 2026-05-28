@@ -400,17 +400,22 @@ export async function getValidAccessTokenForCredential({
   if (!credentialsDecrypted?.accessToken) {
     return null;
   }
-  if (credentialsDecrypted.expiresAt) {
+  if (credentialsDecrypted.expiresAt || forceRefresh) {
     // Refresh a bit before the actual expiration.
-    // Codex OAuth tokens live much longer than Claude's, but a 10-day buffer
-    // effectively forces Codex refresh on every use.
-    const expiresAtMs = new Date(credentialsDecrypted.expiresAt).getTime();
+    // Codex OAuth tokens live much longer than Claude's, so keep a wider
+    // proactive buffer for sandbox boot while leaving forceRefresh available
+    // for paths that cannot safely hand out locally-refreshable credentials.
+    const expiresAtMs = credentialsDecrypted.expiresAt
+      ? new Date(credentialsDecrypted.expiresAt).getTime()
+      : null;
     const bufferMs =
       credentialsDecrypted.agent === "codex"
         ? 24 * 60 * 60 * 1000
         : 1 * 60 * 60 * 1000;
-    const isExpired = expiresAtMs - bufferMs < Date.now();
-    const isActuallyExpired = expiresAtMs < Date.now();
+    const isExpired =
+      forceRefresh ||
+      (expiresAtMs !== null && expiresAtMs - bufferMs < Date.now());
+    const isActuallyExpired = expiresAtMs !== null && expiresAtMs < Date.now();
     if (
       (forceRefresh || isExpired) &&
       credentialsDecrypted.refreshToken &&
@@ -474,6 +479,9 @@ export async function getValidAccessTokenForCredential({
         .set(update)
         .where(eq(schema.agentProviderCredentials.id, credentialsDecrypted.id));
       return refreshed.accessToken ?? null;
+    }
+    if (forceRefresh) {
+      return null;
     }
   }
   return credentialsDecrypted.accessToken;

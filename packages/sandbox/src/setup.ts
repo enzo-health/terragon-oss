@@ -502,8 +502,8 @@ export async function setupSandboxEveryTime({
   if (shouldProbeSandboxAgent) {
     parallelOps.push(probeSandboxAgentEndpoint({ session, options }));
   }
-  const agent = !options.fastResume ? options.agent : null;
-  if (agent) {
+  const agent = options.agent;
+  if (agent && (!options.fastResume || agent === "codex")) {
     parallelOps.push(
       updateAgentFiles({
         session,

@@ -8,6 +8,16 @@ import {
 import { refreshAccessToken } from "@/lib/openai-oauth";
 import { retryAsync } from "@terragon/utils/retry";
 
+type CodexAuthJson = {
+  tokens: {
+    id_token: string;
+    access_token: string;
+    refresh_token: string;
+    account_id: string | null;
+  };
+  last_refresh: string;
+};
+
 async function getValidAccessTokenInternal({
   userId,
   credentialId,
@@ -109,13 +119,26 @@ export async function getCodexCredentialsJSONOrNull({
     if (!credentials?.accessToken) {
       return { contents: null, error: null };
     }
-    // Try to refresh if needed
+    // Codex app-server reads auth.json as managed ChatGPT auth and may refresh
+    // locally. Terragon owns the refresh token, so every sandbox auth file must
+    // start from a server-refreshed access token.
     const validAccessToken = await getValidAccessToken({
       userId,
       credentialId: credentials.id,
+      forceRefresh: true,
     });
+    if (!validAccessToken) {
+      return {
+        contents: null,
+        error:
+          "OpenAI account session expired. Reconnect your ChatGPT account in settings.",
+      };
+    }
     // Reload auth data if token was refreshed
-    let finalCredentials = credentials;
+    let finalCredentials = {
+      ...credentials,
+      accessToken: validAccessToken,
+    };
     if (validAccessToken && validAccessToken !== credentials.accessToken) {
       const reloaded = await getAgentProviderCredentialsDecryptedById({
         db,
@@ -123,22 +146,25 @@ export async function getCodexCredentialsJSONOrNull({
         credentialId: credentials.id,
         encryptionKey: env.ENCRYPTION_MASTER_KEY,
       });
-      if (reloaded) {
-        finalCredentials = reloaded;
+      if (reloaded?.accessToken) {
+        finalCredentials = {
+          ...reloaded,
+          accessToken: reloaded.accessToken,
+        };
       }
     }
 
     if (!finalCredentials?.accessToken) {
       return { contents: null, error: null };
     }
-    const authJson: Record<string, any> = {
+    const authJson: CodexAuthJson = {
       tokens: {
         id_token: finalCredentials.idToken || "",
         access_token: finalCredentials.accessToken,
         refresh_token: "", // We don't want the cli to refresh the token
         account_id: finalCredentials.metadata?.accountId || null,
       },
-      // Always tell codex that we just refreshed the token to it doesn't try to.
+      // Always tell codex that we just refreshed the token so it doesn't try to.
       last_refresh: new Date().toISOString(),
     };
     return { contents: JSON.stringify(authJson), error: null };

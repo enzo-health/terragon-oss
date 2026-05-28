@@ -57,7 +57,7 @@ export const saveCodexAuthJson = userOnlyAction(
     const refreshToken = tokens?.refresh_token;
     const accountId = tokens?.account_id;
 
-    if (!accessToken) {
+    if (!accessToken || !refreshToken) {
       throw new UserFacingError(
         "Invalid OpenAI credentials, please paste a fresh auth.json from 'codex login'",
       );

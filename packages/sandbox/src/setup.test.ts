@@ -414,6 +414,63 @@ describe("sandbox-setup", () => {
       ).toBe(false);
     });
 
+    it("should refresh codex auth files during fast resume", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {
+        if (cmd === "cd && pwd") return "/home/user";
+        return "";
+      });
+      const writeTextFileSpy = vi
+        .spyOn(session, "writeTextFile")
+        .mockImplementation(async () => {});
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          agent: "codex",
+          fastResume: true,
+          agentCredentials: {
+            type: "json-file",
+            contents: '{"tokens":{"access_token":"fresh-access-token"}}',
+          },
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(writeTextFileSpy).toHaveBeenCalledWith(
+        "/home/user/.codex/auth.json",
+        '{"tokens":{"access_token":"fresh-access-token"}}',
+      );
+    });
+
+    it("should remove stale codex auth files during fast resume when credentials are unavailable", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd === "cd && pwd") return "/home/user";
+          return "";
+        });
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          agent: "codex",
+          fastResume: true,
+          agentCredentials: null,
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        "rm -f /home/user/.codex/auth.json",
+        { cwd: "/" },
+      );
+    });
+
     it("should still probe sandbox-agent while creating a fast resume sandbox", async () => {
       const session = new MockSession("mock-sandbox");
       const runCommandSpy = vi

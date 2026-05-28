@@ -309,6 +309,66 @@ describe("agent-provider-credentials", () => {
       expect(refreshTokenCallback).not.toHaveBeenCalled();
     });
 
+    it("should not return the stored access token when force refresh cannot refresh", async () => {
+      const credential = await insertAgentProviderCredentials({
+        db,
+        userId,
+        credentialData: {
+          ...CLAUDE_CODE_OAUTH_CREDENTIALS,
+          refreshToken: undefined,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+        encryptionKey,
+      });
+
+      const refreshTokenCallback = vi.fn();
+
+      const result = await getValidAccessTokenForCredential({
+        db,
+        userId,
+        credentialId: credential.id,
+        encryptionKey,
+        forceRefresh: true,
+        refreshTokenCallback,
+      });
+
+      expect(result).toBeNull();
+      expect(refreshTokenCallback).not.toHaveBeenCalled();
+    });
+
+    it("should force refresh even when the credential has no expiration date", async () => {
+      const credential = await insertAgentProviderCredentials({
+        db,
+        userId,
+        credentialData: {
+          ...CLAUDE_CODE_OAUTH_CREDENTIALS,
+          expiresAt: null,
+        },
+        encryptionKey,
+      });
+
+      const refreshTokenCallback = vi.fn().mockResolvedValue({
+        accessToken: "forced-access-token",
+        refreshToken: "forced-refresh-token",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        metadata: null,
+      });
+
+      const result = await getValidAccessTokenForCredential({
+        db,
+        userId,
+        credentialId: credential.id,
+        encryptionKey,
+        forceRefresh: true,
+        refreshTokenCallback,
+      });
+
+      expect(result).toBe("forced-access-token");
+      expect(refreshTokenCallback).toHaveBeenCalledWith({
+        refreshToken: "test-refresh-token",
+      });
+    });
+
     it("should use 1 hour buffer before expiration", async () => {
       // Token expires in 30 minutes (within the 1-hour buffer)
       const nearFutureDate = new Date(Date.now() + 30 * 60 * 1000);
