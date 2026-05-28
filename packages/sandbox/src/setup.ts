@@ -29,6 +29,9 @@ import { buildQualityCheckScript } from "./agents/quality-check";
 import { getEnv } from "./env";
 import path from "path";
 
+const DAYTONA_VOLUME_PROFILE_PATH = "/etc/profile.d/00-terragon-volume.sh";
+const DAYTONA_VOLUME_ARTIFACTS_DIR = "artifacts";
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -228,6 +231,8 @@ export async function setupSandboxOneTime(
     { cwd: "/" },
   );
 
+  await setupDaytonaVolumePaths(session, options);
+
   if (!options.snapshotTemplateId) {
     await gitCloneRepo(session, options);
   } else {
@@ -318,6 +323,97 @@ export async function setupSandboxOneTime(
   }
 }
 
+function getDaytonaVolumeArtifactsPath(
+  options: CreateSandboxOptions,
+): string | null {
+  if (!options.daytonaVolume) {
+    return null;
+  }
+  return path.posix.join(
+    options.daytonaVolume.workspaceMountPath,
+    DAYTONA_VOLUME_ARTIFACTS_DIR,
+  );
+}
+
+async function setupDaytonaVolumePaths(
+  session: ISandboxSession,
+  options: CreateSandboxOptions,
+): Promise<void> {
+  const volume = options.daytonaVolume;
+  if (!volume) {
+    return;
+  }
+
+  const cacheDirs = [
+    "npm",
+    "yarn",
+    "bun",
+    "pip",
+    "uv",
+    "cargo",
+    "go/pkg/mod",
+    "go/build",
+    "composer",
+    "xdg",
+    "corepack",
+    "turbo",
+    "ms-playwright",
+    "puppeteer",
+    "cypress",
+    "huggingface/transformers",
+    "huggingface/sentence-transformers",
+    "matplotlib",
+    "eslint",
+  ];
+  const cachePaths = cacheDirs.map((dir) =>
+    path.posix.join(volume.cacheMountPath, dir),
+  );
+  const artifactsPath = getDaytonaVolumeArtifactsPath(options);
+  const dirs = [
+    volume.cacheMountPath,
+    volume.workspaceMountPath,
+    ...cachePaths,
+    ...(artifactsPath ? [artifactsPath] : []),
+  ];
+
+  await session.runCommand(`mkdir -p ${dirs.map(bashQuote).join(" ")}`, {
+    cwd: "/",
+  });
+
+  const profileContents = [
+    `export npm_config_cache=${path.posix.join(volume.cacheMountPath, "npm")}`,
+    `export YARN_CACHE_FOLDER=${path.posix.join(volume.cacheMountPath, "yarn")}`,
+    `export BUN_INSTALL_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "bun")}`,
+    `export PIP_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "pip")}`,
+    `export UV_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "uv")}`,
+    `export CARGO_HOME=${path.posix.join(volume.cacheMountPath, "cargo")}`,
+    `export GOPATH=${path.posix.join(volume.cacheMountPath, "go")}`,
+    `export GOMODCACHE=${path.posix.join(volume.cacheMountPath, "go/pkg/mod")}`,
+    `export GOCACHE=${path.posix.join(volume.cacheMountPath, "go/build")}`,
+    `export COMPOSER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "composer")}`,
+    `export XDG_CACHE_HOME=${path.posix.join(volume.cacheMountPath, "xdg")}`,
+    `export COREPACK_HOME=${path.posix.join(volume.cacheMountPath, "corepack")}`,
+    `export TURBO_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "turbo")}`,
+    `export PLAYWRIGHT_BROWSERS_PATH=${path.posix.join(volume.cacheMountPath, "ms-playwright")}`,
+    `export PUPPETEER_CACHE_DIR=${path.posix.join(volume.cacheMountPath, "puppeteer")}`,
+    `export CYPRESS_CACHE_FOLDER=${path.posix.join(volume.cacheMountPath, "cypress")}`,
+    `export HF_HOME=${path.posix.join(volume.cacheMountPath, "huggingface")}`,
+    `export TRANSFORMERS_CACHE=${path.posix.join(volume.cacheMountPath, "huggingface/transformers")}`,
+    `export SENTENCE_TRANSFORMERS_HOME=${path.posix.join(volume.cacheMountPath, "huggingface/sentence-transformers")}`,
+    `export MPLCONFIGDIR=${path.posix.join(volume.cacheMountPath, "matplotlib")}`,
+    `export ESLINT_CACHE_LOCATION=${path.posix.join(volume.cacheMountPath, "eslint/.eslintcache")}`,
+    ...(artifactsPath
+      ? [`export TERRAGON_ARTIFACTS_DIR=${artifactsPath}`]
+      : []),
+  ].join("\n");
+
+  await session.writeTextFile(DAYTONA_VOLUME_PROFILE_PATH, profileContents);
+  await session.runCommand(
+    `chmod 644 ${bashQuote(DAYTONA_VOLUME_PROFILE_PATH)} && grep -qs 'terragon-volume' /${session.homeDir}/.bashrc 2>/dev/null || echo '. ${DAYTONA_VOLUME_PROFILE_PATH} # terragon-volume' >> /${session.homeDir}/.bashrc`,
+    { cwd: "/" },
+  );
+}
+
 /**
  * Launch the setup script detached inside the sandbox and install a dependency
  * barrier, then return immediately so the agent can be dispatched while setup
@@ -360,7 +456,6 @@ export async function launchSetupScriptInBackground({
   const runnerPath = "/tmp/terragon-bg-setup-runner.sh";
   const shimPath = `${binDir}/terragon-barrier-shim.sh`;
   const installerPath = "/tmp/terragon-bg-install-barrier.sh";
-
   const env = getEnv({
     userEnv: options.environmentVariables ?? [],
     githubAccessToken: options.githubAccessToken,
@@ -438,7 +533,7 @@ export async function launchSetupScriptInBackground({
 export async function gitCloneRepo(
   session: ISandboxSession,
   options: CreateSandboxOptions,
-) {
+): Promise<void> {
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",

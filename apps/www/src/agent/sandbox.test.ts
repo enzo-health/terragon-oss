@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { ISandboxSession } from "@terragon/sandbox/types";
 import { bashQuote } from "@terragon/sandbox/utils";
 import {
+  getDaytonaVolumeEnvironmentEntries,
   reconcileSandboxBranchForThread,
+  resolveDaytonaVolumeConfig,
   resolveExpectedBranchForReconciliation,
   type SandboxBranchReconciliationResult,
 } from "./sandbox";
@@ -242,5 +244,104 @@ describe("resolveExpectedBranchForReconciliation", () => {
         repoBaseBranchName: "main",
       }),
     ).toBe("feature/existing-branch");
+  });
+});
+
+describe("resolveDaytonaVolumeConfig", () => {
+  it("returns undefined when Daytona volume storage is not configured", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user-1",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        repoFullName: "owner/repo",
+        volumeName: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("builds isolated cache and workspace subpaths", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user/1",
+        environmentId: "env:1",
+        threadId: "thread 1",
+        repoFullName: "owner/repo",
+        volumeName: " terragon-workspaces ",
+      }),
+    ).toEqual({
+      volumeName: "terragon-workspaces",
+      cacheMountPath: "/mnt/terragon/cache",
+      cacheSubpath: "users/user_1/cache",
+      workspaceMountPath: "/mnt/terragon/workspace",
+      workspaceSubpath:
+        "users/user_1/environments/env_1/repos/owner_repo/threads/thread_1",
+    });
+  });
+
+  it("uses no-repo workspace isolation while still using volume-backed caches", () => {
+    expect(
+      resolveDaytonaVolumeConfig({
+        userId: "user-1",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        repoFullName: null,
+        volumeName: "terragon-workspaces",
+      }),
+    ).toMatchObject({
+      workspaceSubpath:
+        "users/user-1/environments/env-1/repos/no-repo/threads/thread-1",
+    });
+  });
+});
+
+describe("getDaytonaVolumeEnvironmentEntries", () => {
+  it("returns cache and artifact defaults for Daytona volume sandboxes", () => {
+    const daytonaVolume = resolveDaytonaVolumeConfig({
+      userId: "user-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      volumeName: "terragon-workspaces",
+    });
+
+    expect(getDaytonaVolumeEnvironmentEntries(daytonaVolume)).toEqual(
+      expect.arrayContaining([
+        { key: "GOMODCACHE", value: "/mnt/terragon/cache/go/pkg/mod" },
+        {
+          key: "TERRAGON_ARTIFACTS_DIR",
+          value: "/mnt/terragon/workspace/artifacts",
+        },
+        { key: "XDG_CACHE_HOME", value: "/mnt/terragon/cache/xdg" },
+        { key: "COREPACK_HOME", value: "/mnt/terragon/cache/corepack" },
+        { key: "TURBO_CACHE_DIR", value: "/mnt/terragon/cache/turbo" },
+        {
+          key: "PLAYWRIGHT_BROWSERS_PATH",
+          value: "/mnt/terragon/cache/ms-playwright",
+        },
+        {
+          key: "PUPPETEER_CACHE_DIR",
+          value: "/mnt/terragon/cache/puppeteer",
+        },
+        {
+          key: "CYPRESS_CACHE_FOLDER",
+          value: "/mnt/terragon/cache/cypress",
+        },
+        { key: "HF_HOME", value: "/mnt/terragon/cache/huggingface" },
+        {
+          key: "TRANSFORMERS_CACHE",
+          value: "/mnt/terragon/cache/huggingface/transformers",
+        },
+        {
+          key: "SENTENCE_TRANSFORMERS_HOME",
+          value: "/mnt/terragon/cache/huggingface/sentence-transformers",
+        },
+        { key: "MPLCONFIGDIR", value: "/mnt/terragon/cache/matplotlib" },
+        {
+          key: "ESLINT_CACHE_LOCATION",
+          value: "/mnt/terragon/cache/eslint/.eslintcache",
+        },
+      ]),
+    );
   });
 });

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ThreadInfo } from "@terragon/shared";
-import { LoaderCircle, ChevronRight } from "lucide-react";
+import { LoaderCircle, ChevronRight, EllipsisVerticalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useThreadInfoList } from "@/hooks/use-thread-info-list";
 import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
@@ -15,6 +15,8 @@ import {
   threadListCollapsedSectionsAtom,
   toggleThreadListCollapsedSectionAtom,
 } from "@/atoms/user-cookies";
+import { Button } from "./ui/button";
+import { ThreadMenuDropdown } from "./thread-menu-dropdown";
 
 export function SidebarThreadList() {
   const { threads, isLoading, isError } = useThreadInfoList({
@@ -134,24 +136,116 @@ function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
   const isActive = pathname === `/task/${thread.id}`;
   const title = useMemo(() => getThreadTitle(thread), [thread]);
   const isOptimistic = thread.id.startsWith("optimistic-");
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <Link
-      href={`/task/${thread.id}`}
-      prefetch={!isOptimistic}
-      aria-current={isActive ? "page" : undefined}
+    <div
       className={cn(
-        "group/thread flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
+        "group/thread relative flex items-center rounded-md text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         isActive
           ? "bg-sidebar-accent text-sidebar-primary-foreground font-medium"
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        isOptimistic && "opacity-60 pointer-events-none",
+        isOptimistic && "opacity-60",
       )}
     >
-      <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
-        <ThreadStatusIndicator thread={thread} isOptimistic={isOptimistic} />
+      <Link
+        href={`/task/${thread.id}`}
+        prefetch={!isOptimistic}
+        aria-current={isActive ? "page" : undefined}
+        className={cn(
+          "flex flex-1 min-w-0 items-center gap-2 rounded-md px-2 py-1.5 pr-8 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
+          isOptimistic && "pointer-events-none",
+        )}
+      >
+        <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
+          <ThreadStatusIndicator thread={thread} isOptimistic={isOptimistic} />
+        </div>
+        <span className="truncate leading-snug text-pretty">{title}</span>
+      </Link>
+      {!isOptimistic && (
+        <div
+          className={cn(
+            "absolute right-0.5 top-1/2 -translate-y-1/2 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+            menuOpen
+              ? "opacity-100"
+              : "opacity-0 group-hover/thread:opacity-100 focus-within:opacity-100",
+          )}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <SidebarThreadMenu thread={thread} onOpenChange={setMenuOpen} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Lazy menu trigger for the sidebar row. Defers mounting the heavy
+ * ThreadMenuDropdown (and its mutation hooks) until first pointer interaction.
+ * Mirrors the dashboard's LazyThreadListMenu pattern.
+ */
+function SidebarThreadMenu({
+  thread,
+  onOpenChange,
+}: {
+  thread: ThreadInfo;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [activated, setActivated] = useState(false);
+  const [pendingClick, setPendingClick] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (activated && pendingClick && triggerRef.current) {
+      triggerRef.current.click();
+      setPendingClick(false);
+    }
+  }, [activated, pendingClick]);
+
+  const triggerButton = (
+    <Button
+      ref={triggerRef}
+      variant="ghost"
+      size="icon"
+      aria-label="Thread options"
+      className="size-6 rounded-md hover:bg-sidebar-accent text-muted-foreground hover:text-sidebar-foreground"
+    >
+      <EllipsisVerticalIcon className="size-3.5" />
+    </Button>
+  );
+
+  if (!activated) {
+    return (
+      <div
+        onPointerEnter={() => setActivated(true)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setActivated(true);
+          setPendingClick(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setActivated(true);
+            setPendingClick(true);
+          }
+        }}
+      >
+        {triggerButton}
       </div>
-      <span className="truncate leading-snug text-pretty">{title}</span>
-    </Link>
+    );
+  }
+
+  return (
+    <ThreadMenuDropdown
+      thread={thread}
+      trigger={triggerButton}
+      showReadUnreadActions
+      onMenuOpenChange={onOpenChange}
+    />
   );
 }

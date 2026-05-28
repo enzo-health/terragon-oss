@@ -1,7 +1,9 @@
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
+import type { VolumeMount } from "@daytonaio/sdk";
 import {
   BackgroundCommandOptions,
   CreateSandboxOptions,
+  DaytonaVolumeConfig,
   ISandboxProvider,
   ISandboxSession,
 } from "../types";
@@ -19,6 +21,10 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
+
+type DaytonaVolumeMount = VolumeMount & {
+  subpath?: string;
+};
 
 async function reconcileLifecyclePolicy(
   sandbox: DaytonaSandbox,
@@ -94,6 +100,7 @@ async function resumeWithRetry(sandboxId: string): Promise<DaytonaSandbox> {
 async function createWithRetry(
   templateId: string,
   envs: Record<string, string>,
+  daytonaVolume?: DaytonaVolumeConfig,
 ): Promise<DaytonaSandbox> {
   const daytona = getDaytonaOrThrow();
   return await retryAsync(
@@ -102,10 +109,14 @@ async function createWithRetry(
         `[daytona] Creating sandbox with templateId: ${templateId}...`,
       );
       const startTime = Date.now();
+      const volumes = daytonaVolume
+        ? await getDaytonaVolumeMounts(daytona, daytonaVolume)
+        : undefined;
       const sandbox = await daytona.create({
         user: "root",
         snapshot: templateId,
         envVars: envs,
+        ...(volumes ? { volumes } : {}),
         autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
         autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
         autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
@@ -122,6 +133,25 @@ async function createWithRetry(
       delayMs: 1000,
     },
   );
+}
+
+async function getDaytonaVolumeMounts(
+  daytona: Daytona,
+  daytonaVolume: DaytonaVolumeConfig,
+): Promise<DaytonaVolumeMount[]> {
+  const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
+  return [
+    {
+      volumeId: volume.id,
+      mountPath: daytonaVolume.cacheMountPath,
+      subpath: daytonaVolume.cacheSubpath,
+    },
+    {
+      volumeId: volume.id,
+      mountPath: daytonaVolume.workspaceMountPath,
+      subpath: daytonaVolume.workspaceSubpath,
+    },
+  ];
 }
 
 function getDaytonaOrThrow(): Daytona {
@@ -415,7 +445,11 @@ export class DaytonaProvider implements ISandboxProvider {
         provider: "daytona",
         size: options.sandboxSize,
       });
-    const sandbox = await createWithRetry(templateId, envs);
+    const sandbox = await createWithRetry(
+      templateId,
+      envs,
+      options.daytonaVolume,
+    );
     const session = new DaytonaSession(sandbox);
     await setupDaytonaOneTime(session);
     return session;

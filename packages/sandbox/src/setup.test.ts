@@ -74,6 +74,67 @@ describe("sandbox-setup", () => {
       expect(checkoutNewBranchIndex).toBeGreaterThan(cloneIndex);
     });
 
+    it("configures Daytona volume cache paths while keeping the repo local", async () => {
+      const session = new MockSession("mock-sandbox");
+      const writes = new Map<string, string>();
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+      vi.spyOn(session, "writeTextFile").mockImplementation(
+        async (filePath, content) => {
+          writes.set(filePath, content);
+        },
+      );
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        sandboxProvider: "daytona",
+        daytonaVolume: {
+          volumeName: "terragon-workspaces",
+          cacheMountPath: "/mnt/terragon/cache",
+          cacheSubpath: "users/user-123/cache",
+          workspaceMountPath: "/mnt/terragon/workspace",
+          workspaceSubpath:
+            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
+        },
+      });
+
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "PNPM_STORE_DIR",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "pnpm_config_store_dir",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "pnpm_config_virtual_store_dir",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
+        "TERRAGON_PNPM_VIRTUAL_STORE_DIR",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "XDG_CACHE_HOME=/mnt/terragon/cache/xdg",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "PLAYWRIGHT_BROWSERS_PATH=/mnt/terragon/cache/ms-playwright",
+      );
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "TURBO_CACHE_DIR=/mnt/terragon/cache/turbo",
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining("'\/mnt\/terragon\/cache\/ms-playwright'"),
+        { cwd: "/" },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git repo",
+        { cwd: "/root" },
+      );
+      expect(
+        runCommandSpy.mock.calls.some((call) =>
+          call[0].includes("/mnt/terragon/workspace/repo"),
+        ),
+      ).toBe(false);
+    });
+
     it("should not checkout base branch if not specified", async () => {
       const session = new MockSession("mock-sandbox");
       const runCommandSpy = vi
