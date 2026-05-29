@@ -23,12 +23,6 @@ vi.mock("@/lib/db", () => ({
   db: {},
 }));
 
-vi.mock("@/lib/posthog-server", () => ({
-  getPostHogServer: () => ({
-    capture: vi.fn(),
-  }),
-}));
-
 vi.mock("@terragon/shared/model/threads", () => ({
   getThreadChat: threadMocks.getThreadChat,
   getThreadMinimal: threadMocks.getThreadMinimal,

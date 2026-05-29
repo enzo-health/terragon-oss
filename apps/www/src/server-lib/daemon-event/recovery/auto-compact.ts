@@ -60,15 +60,6 @@ export async function tryAutoCompactRecovery(params: {
         threadChatId,
       });
     }
-    deps.getPostHogServer().capture({
-      distinctId: userId,
-      event: "auto_compact_on_context_error",
-      properties: {
-        threadId,
-        threadChatId,
-        errorType: "prompt-too-long",
-      },
-    });
 
     const compactResult = await deps.compactThreadChat({
       userId,

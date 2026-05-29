@@ -17,7 +17,6 @@ import {
 import { getInstallationToken } from "@terragon/shared/github-app";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
-import { getPostHogServer } from "./posthog-server";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { updateThread } from "@terragon/shared/model/threads";
 import {
@@ -221,18 +220,6 @@ export async function updateGitHubPR({
     repoFullName,
     prNumber,
   });
-  // Capture posthog event for each thread where the PR status changed
-  for (const thread of threads) {
-    getPostHogServer().capture({
-      distinctId: thread.userId,
-      event: "github_pr_status_changed",
-      properties: {
-        repoFullName,
-        prNumber,
-        status,
-      },
-    });
-  }
   // Auto-archive threads for merged or closed PRs if user setting is enabled
   if (status === "merged" || status === "closed") {
     await Promise.all(

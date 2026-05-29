@@ -5,7 +5,6 @@ import { db } from "@/lib/db";
 import { getThread, deleteThreadById } from "@terragon/shared/model/threads";
 import { stopThread } from "./stop-thread";
 import { isAgentWorking } from "@/agent/thread-status";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { unwrapResult, requireResult } from "@/lib/server-actions";
 
 export const deleteThread = userOnlyAction(
@@ -13,13 +12,6 @@ export const deleteThread = userOnlyAction(
     if (process.env.NODE_ENV !== "production") {
       console.log("deleteThread", threadId);
     }
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "delete_thread",
-      properties: {
-        threadId,
-      },
-    });
     const thread = await requireResult(
       () => getThread({ db, userId, threadId }),
       "Task not found",

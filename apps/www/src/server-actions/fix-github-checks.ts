@@ -3,7 +3,6 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { DBSystemMessage } from "@terragon/shared";
 import { sendSystemMessage } from "@/server-lib/send-system-message";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
@@ -25,14 +24,6 @@ export const fixGithubChecks = userOnlyAction(
       () => getThreadMinimal({ db, threadId, userId }),
       "Task not found",
     );
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "fix_github_checks",
-      properties: {
-        threadId,
-        threadChatId,
-      },
-    });
 
     const systemFixGithubChecksMessage: DBSystemMessage = {
       type: "system",

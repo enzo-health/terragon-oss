@@ -500,9 +500,6 @@ importers:
       pg:
         specifier: ^8.16.0
         version: 8.16.0
-      posthog-node:
-        specifier: ^5.1.1
-        version: 5.1.1
       react:
         specifier: 19.1.2
         version: 19.1.2
@@ -9739,10 +9736,6 @@ packages:
   postgres@3.4.8:
     resolution: {integrity: sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==}
     engines: {node: '>=12'}
-
-  posthog-node@5.1.1:
-    resolution: {integrity: sha512-6VISkNdxO24ehXiDA4dugyCSIV7lpGVaEu5kn/dlAj+SJ1lgcDru9PQ8p/+GSXsXVxohd1t7kHL2JKc9NoGb0w==}
-    engines: {node: '>=20'}
 
   preact-render-to-string@6.6.5:
     resolution: {integrity: sha512-O6MHzYNIKYaiSX3bOw0gGZfEbOmlIDtDfWwN1JJdc/T3ihzRT6tGGSEWE088dWrEDGa1u7101q+6fzQnO9XCPA==}
@@ -21432,8 +21425,6 @@ snapshots:
 
   postgres@3.4.8:
     optional: true
-
-  posthog-node@5.1.1: {}
 
   preact-render-to-string@6.6.5(preact@11.0.0-beta.0):
     dependencies:

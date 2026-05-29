@@ -23,7 +23,6 @@ import {
 import { isQueuedStatus } from "@/agent/thread-status";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { db } from "@/lib/db";
-import { getPostHogServer } from "@/lib/posthog-server";
 import {
   hasInvalidTokenRetrySideEffectMarker,
   persistInvalidTokenRetrySideEffectMarker,
@@ -43,12 +42,6 @@ import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
 import { trackUsageEvents } from "@/server-lib/usage-events";
-import {
-  maybeTrackFirstAssistantLatency,
-  reportDaemonEventMetrics,
-  reportMcpToolCalls,
-  reportThreadErrorMetrics,
-} from "./analytics-reporter";
 import {
   buildInterruptedToolResultMessages,
   handleThreadFinish,
@@ -91,7 +84,6 @@ export function createDefaultDependencies(): RouterDependencies {
     updateAgentRunContext,
     getAgentRunContextByRunId,
     publishBroadcastUserMessage,
-    getPostHogServer,
     isAnthropicDownPOST,
     internalPOST,
     trackUsageEvents,
@@ -199,20 +191,6 @@ export async function routeDaemonEvent(
       assistantCount: messages.filter((m) => m.type === "assistant").length,
     });
   }
-  if (runId) {
-    waitUntil(
-      maybeTrackFirstAssistantLatency({
-        deps,
-        runId,
-        userId,
-        threadId,
-        threadChatId,
-        hasAssistantMessage: messages.some((m) => m.type === "assistant"),
-        runContext: null,
-      }),
-    );
-  }
-
   const agent = threadChat.agent ?? "claudeCode";
   const { classification, mutatedMessages } = classifyMessages({
     messages,
@@ -252,16 +230,6 @@ export async function routeDaemonEvent(
           failureSource: deriveTerminalFailureSource(messages),
         }),
       },
-    });
-  }
-
-  if (isThreadFinished) {
-    reportDaemonEventMetrics({
-      deps,
-      userId,
-      threadId,
-      classification,
-      statusBeforeUpdate,
     });
   }
 
@@ -314,10 +282,6 @@ export async function routeDaemonEvent(
     }
   }
 
-  if (mcpToolCalls.length > 0) {
-    reportMcpToolCalls({ deps, userId, threadId, mcpToolCalls });
-  }
-
   // Build interrupted tool results for unresolved open tool calls
   const messagesToAppend =
     classification.isStop || classification.isError
@@ -361,12 +325,6 @@ export async function routeDaemonEvent(
       threadChatUpdates.errorMessage = "agent-generic-error";
       threadChatUpdates.errorMessageInfo = "";
     }
-    reportThreadErrorMetrics({
-      deps,
-      userId,
-      threadId,
-      errorType: threadChatUpdates.errorMessage,
-    });
   }
 
   const allowTerminalRecoverySideEffects = !suppressTerminalRecoverySideEffects;

@@ -1,4 +1,3 @@
-import { getPostHogServer } from "@/lib/posthog-server";
 import { r2Private, r2Public } from "./r2";
 import crypto from "crypto";
 
@@ -156,15 +155,5 @@ export async function generateFileUploadUrlForUser({
   if (!publicUrl) {
     throw new Error(`Failed to get public URL for ${r2Key}`);
   }
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: `upload_url_generated`,
-    properties: {
-      fileType,
-      contentType,
-      sizeInBytes,
-      r2Key,
-    },
-  });
   return { presignedUrl, r2Key, publicUrl };
 }

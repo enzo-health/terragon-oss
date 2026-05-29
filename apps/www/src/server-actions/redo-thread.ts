@@ -6,7 +6,6 @@ import { DBUserMessage } from "@terragon/shared";
 import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { newThread } from "./new-thread";
 import { archiveThread } from "./archive-thread";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { unwrapResult, requireResult } from "@/lib/server-actions";
 
 export const redoThread = userOnlyAction(
@@ -35,18 +34,6 @@ export const redoThread = userOnlyAction(
       () => getThreadMinimal({ db, threadId, userId }),
       "Task not found",
     );
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "redo_thread",
-      properties: {
-        threadId,
-        skipSetup,
-        skipArchiving,
-        disableGitCheckpointing,
-        repoFullName,
-        branchName,
-      },
-    });
     unwrapResult(
       await newThread({
         message: userMessage,

@@ -8,7 +8,6 @@ import {
   parseRepoFullName,
   updateGitHubPR,
 } from "@/lib/github";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { requireResult, UserFacingError } from "@/lib/server-actions";
 
 export const markPRReadyForReview = userOnlyAction(
@@ -28,15 +27,6 @@ export const markPRReadyForReview = userOnlyAction(
     if (!thread.githubPRNumber) {
       throw new UserFacingError("Task has no PR number");
     }
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "mark_pr_ready_for_review",
-      properties: {
-        threadId,
-        githubRepoFullName: thread.githubRepoFullName,
-        prNumber: thread.githubPRNumber,
-      },
-    });
     const [owner, repo] = parseRepoFullName(thread.githubRepoFullName);
     const octokit = await getOctokitForUserOrThrow({ userId });
 

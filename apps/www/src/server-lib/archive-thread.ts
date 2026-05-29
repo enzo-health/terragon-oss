@@ -7,7 +7,6 @@ import {
 import { markThreadAsRead } from "@terragon/shared/model/thread-read-status";
 import { stopThread } from "./stop-thread";
 import { isAgentWorking } from "@/agent/thread-status";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { upsertGithubPR } from "@terragon/shared/model/github";
 import { getUserSettings } from "@terragon/shared/model/user";
 import {
@@ -41,7 +40,6 @@ export async function archiveAndStopThread({
     }),
   );
 
-  let prClosed = false;
   let isPRAuthor = false;
   let hasOtherThreads = false;
 
@@ -102,7 +100,6 @@ export async function archiveAndStopThread({
               status: "closed",
             },
           });
-          prClosed = true;
           console.log(
             `Closed PR #${thread.githubPRNumber} in ${thread.githubRepoFullName} created by user ${userId} for archived thread ${threadId}`,
           );
@@ -114,17 +111,6 @@ export async function archiveAndStopThread({
     }
   }
   // Track the event
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "archive_thread",
-    properties: {
-      threadId,
-      prClosed,
-      isPRAuthor,
-      hasOtherThreads,
-      prNumber: thread.githubPRNumber,
-    },
-  });
   await markThreadAsRead({
     db,
     userId,

@@ -11,7 +11,6 @@ import {
 } from "@terragon/shared/model/environments";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { requireResult } from "@/lib/server-actions";
 import {
   EnvironmentVariable,
@@ -29,14 +28,6 @@ export const updateEnvironmentVariables = userOnlyAction(
       variables: EnvironmentVariable[];
     },
   ) {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "update_environment_variables",
-      properties: {
-        environmentId,
-      },
-    });
-
     // Verify the user owns this environment
     const environment = await requireResult(
       () =>

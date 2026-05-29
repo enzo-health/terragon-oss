@@ -7,7 +7,6 @@ import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
 import { internalPOST } from "@/server-lib/internal-request";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 async function sleep(ms: number = 1000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,14 +19,6 @@ async function processOtherRateLimitedQueues() {
 
   // Log cron job queue processing metrics
   if (userIds.length > 0) {
-    getPostHogServer().capture({
-      distinctId: "system",
-      event: "cron_queue_processing",
-      properties: {
-        usersWithRateLimitedThreads: userIds.length,
-        queueType: "other_rate_limit",
-      },
-    });
   }
   // Batch the requests
   for (let i = 0; i < userIds.length; i += 10) {
@@ -59,14 +50,6 @@ async function processConcurrencyLimitedQueues() {
   if (userIds.length > 0) {
     console.log(userIds);
     // Log metrics for stuck users
-    getPostHogServer().capture({
-      distinctId: "system",
-      event: "cron_queue_stuck_users",
-      properties: {
-        stuckUserCount: userIds.length,
-        queueType: "tasks_concurrency",
-      },
-    });
   }
   // Batch the requests
   for (let i = 0; i < userIds.length; i += 10) {

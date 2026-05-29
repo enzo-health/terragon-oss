@@ -109,7 +109,6 @@
     "openai": "^5.5.1",
     "partysocket": "^1.1.4",
     "pg": "^8.16.0",
-    "posthog-node": "^5.1.1",
     "react": "19.1.2",
     "react-diff-view": "^3.3.2",
     "react-dom": "19.1.2",

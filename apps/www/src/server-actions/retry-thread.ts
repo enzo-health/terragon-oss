@@ -4,7 +4,6 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { waitUntil } from "@vercel/functions";
 import { db } from "@/lib/db";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { ensureThreadChatHasUserMessage } from "@/server-lib/retry-thread";
 import { UserFacingError } from "@/lib/server-actions";
@@ -31,14 +30,6 @@ export const retryThread = userOnlyAction(
     if (!threadChat) {
       throw new UserFacingError("Task not found");
     }
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "retry_thread",
-      properties: {
-        threadId,
-        threadChatId,
-      },
-    });
     const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,

@@ -2,12 +2,7 @@ import { db } from "@/lib/db";
 import { DBUserMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
-import { getPostHogServer } from "@/lib/posthog-server";
-import {
-  convertToPlainText,
-  estimateMessageSize,
-  imageCount,
-} from "@/lib/db-message-helpers";
+import { convertToPlainText } from "@/lib/db-message-helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   getThreadChat,
@@ -20,7 +15,7 @@ import {
 } from "./process-follow-up-queue";
 import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
 import { isAgentWorking } from "@/agent/thread-status";
-import { getDefaultModelForAgent, modelToAgent } from "@terragon/agent/utils";
+import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 
 export async function followUpInternal({
@@ -56,18 +51,6 @@ export async function followUpInternal({
     });
     return;
   }
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "follow_up",
-    properties: {
-      threadId,
-      model: message.model,
-      agentType: modelToAgent(message.model),
-      imageCount: imageCount(message),
-      promptTextSize: estimateMessageSize(message),
-      source,
-    },
-  });
   const { didUpdateStatus, updatedStatus } =
     await updateThreadChatWithTransition({
       userId,
@@ -208,24 +191,6 @@ export async function queueFollowUpInternal({
   if (messagesToQueue.length === 0) {
     return;
   }
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "queue_follow_up",
-    properties: {
-      threadId,
-      source,
-      model: messagesToQueue[0]?.model ?? null,
-      agentType: modelToAgent(messagesToQueue[0]?.model ?? null),
-      imageCount: messagesToQueue.reduce(
-        (acc, message) => acc + imageCount(message),
-        0,
-      ),
-      promptTextSize: messagesToQueue.reduce(
-        (acc, message) => acc + estimateMessageSize(message),
-        0,
-      ),
-    },
-  });
   await updateThreadChat({
     db,
     userId,

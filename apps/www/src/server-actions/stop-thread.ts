@@ -1,7 +1,6 @@
 "use server";
 
 import { userOnlyAction } from "@/lib/auth-server";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { stopThread as stopThreadInternal } from "@/server-lib/stop-thread";
 
 export const stopThread = userOnlyAction(
@@ -10,13 +9,6 @@ export const stopThread = userOnlyAction(
     { threadId, threadChatId }: { threadId: string; threadChatId: string },
   ) {
     console.log("stopThread", threadId);
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "stop_thread",
-      properties: {
-        threadId,
-      },
-    });
     await stopThreadInternal({
       userId,
       threadId,

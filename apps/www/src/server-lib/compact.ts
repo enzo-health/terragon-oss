@@ -4,7 +4,6 @@ import {
   updateThreadChat,
 } from "@terragon/shared/model/threads";
 import { MAX_CONTEXT_TOKENS, DBMessage } from "@terragon/shared";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { generateSessionSummary } from "./generate-session-summary";
 import { getNativeAgUiTranscriptForThreadChat } from "./ag-ui-side-effect-messages";
 
@@ -139,17 +138,6 @@ export async function tryAutoCompactThread({
       contextLength: threadChat.contextLength,
       messageCount,
       maxContextTokens: MAX_CONTEXT_TOKENS,
-    });
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "auto_compact",
-      properties: {
-        threadId,
-        reason: compactReason,
-        contextLength: threadChat.contextLength,
-        messageCount,
-        maxContextTokens: MAX_CONTEXT_TOKENS,
-      },
     });
     const compactResult = await compactThreadChat({
       userId,

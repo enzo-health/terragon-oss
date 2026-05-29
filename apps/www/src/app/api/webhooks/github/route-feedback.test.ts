@@ -13,26 +13,22 @@ import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { routeGithubFeedbackOrSpawnThread } from "./route-feedback";
 
-const { postHogCapture, signalInboxInsertReturning, dbInsert } = vi.hoisted(
-  () => {
-    const postHogCapture = vi.fn();
-    const signalInboxInsertReturning = vi.fn();
-    const signalInboxInsertOnConflictDoNothing = vi.fn(() => ({
-      returning: signalInboxInsertReturning,
-    }));
-    const signalInboxInsertValues = vi.fn(() => ({
-      onConflictDoNothing: signalInboxInsertOnConflictDoNothing,
-    }));
-    const dbInsert = vi.fn(() => ({
-      values: signalInboxInsertValues,
-    }));
-    return {
-      postHogCapture,
-      signalInboxInsertReturning,
-      dbInsert,
-    };
-  },
-);
+const { signalInboxInsertReturning, dbInsert } = vi.hoisted(() => {
+  const signalInboxInsertReturning = vi.fn();
+  const signalInboxInsertOnConflictDoNothing = vi.fn(() => ({
+    returning: signalInboxInsertReturning,
+  }));
+  const signalInboxInsertValues = vi.fn(() => ({
+    onConflictDoNothing: signalInboxInsertOnConflictDoNothing,
+  }));
+  const dbInsert = vi.fn(() => ({
+    values: signalInboxInsertValues,
+  }));
+  return {
+    signalInboxInsertReturning,
+    dbInsert,
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -78,12 +74,6 @@ vi.mock("@/lib/github", async () => {
     getOctokitForApp: vi.fn(),
   };
 });
-
-vi.mock("@/lib/posthog-server", () => ({
-  getPostHogServer: () => ({
-    capture: postHogCapture,
-  }),
-}));
 
 describe("routeGithubFeedbackOrSpawnThread", () => {
   beforeEach(() => {
@@ -386,16 +376,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     });
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(newThreadInternal).not.toHaveBeenCalled();
-    expect(postHogCapture).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: "github_feedback_owner_resolution_noop",
-        properties: expect.objectContaining({
-          ownerResolutionReason: "no-owner-found",
-          repoFullName: "owner/repo",
-          prNumber: 42,
-        }),
-      }),
-    );
   });
 
   it("throws to force retry when owner resolution depends on transient PR context fetch", async () => {
@@ -415,11 +395,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
 
     expect(queueFollowUpInternal).not.toHaveBeenCalled();
     expect(newThreadInternal).not.toHaveBeenCalled();
-    expect(postHogCapture).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: "github_feedback_owner_resolution_noop",
-      }),
-    );
   });
 
   it("does not fan out ambiguous-owner fallback when no canonical owner thread exists", async () => {
@@ -536,17 +511,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ).rejects.toThrow(
       "Failed to route GitHub feedback to existing thread thread-1 for owner/repo#42: Thread chat not found",
     );
-    expect(postHogCapture).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: "github_feedback_routing_failed",
-        properties: expect.objectContaining({
-          reason: "existing-thread-route-failed",
-          eventType: "pull_request_review_comment.created",
-          repoFullName: "owner/repo",
-          prNumber: 42,
-        }),
-      }),
-    );
     expect(maybeBatchThreads).not.toHaveBeenCalled();
     expect(newThreadInternal).not.toHaveBeenCalled();
   });
@@ -623,17 +587,6 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
       }),
     ).rejects.toThrow(
       "Failed to route GitHub feedback for owner/repo#42: Failed to create thread",
-    );
-    expect(postHogCapture).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: "github_feedback_routing_failed",
-        properties: expect.objectContaining({
-          reason: "spawn-failed",
-          eventType: "check_run.completed",
-          repoFullName: "owner/repo",
-          prNumber: 42,
-        }),
-      }),
     );
   });
 });

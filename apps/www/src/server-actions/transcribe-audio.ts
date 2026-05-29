@@ -4,7 +4,6 @@ import OpenAI from "openai";
 import { env } from "@terragon/env/apps-www";
 import { userOnlyAction } from "@/lib/auth-server";
 import { getR2ClientForFileUploadType } from "@/server-lib/r2-file-upload";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 const openai = new OpenAI({
   apiKey: env.OPENAI_API_KEY,
@@ -16,11 +15,6 @@ export const transcribeAudio = userOnlyAction(
     r2Key: string,
     filename: string,
   ): Promise<string> {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "transcribe_audio",
-      properties: {},
-    });
     const r2Client = getR2ClientForFileUploadType("audio");
     try {
       // Get the public URL for the uploaded file

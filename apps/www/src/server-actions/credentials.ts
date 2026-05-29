@@ -7,7 +7,6 @@ import {
   updateAgentProviderCredentialsById,
   deleteAgentProviderCredentialById,
 } from "@terragon/shared/model/agent-provider-credentials";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { env } from "@terragon/env/apps-www";
 import { UserFacingError } from "@/lib/server-actions";
 import { AIAgent } from "@terragon/agent/types";
@@ -61,14 +60,6 @@ export const saveAgentProviderApiKey = userOnlyAction(
     { agent, apiKey }: { agent: AIAgent; apiKey: string },
   ) {
     validateApiKeyFormat({ apiKey, agent });
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "agent_provider_credentials_saved",
-      properties: {
-        type: "api-key",
-        agent,
-      },
-    });
     await insertAgentProviderCredentials({
       db,
       userId,
@@ -92,13 +83,6 @@ export const deleteAgentProviderCredential = userOnlyAction(
     userId: string,
     { credentialId }: { credentialId: string },
   ) {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "agent_provider_credential_deleted",
-      properties: {
-        credentialId,
-      },
-    });
     await deleteAgentProviderCredentialById({ db, userId, credentialId });
   },
   { defaultErrorMessage: "Failed to delete" },
@@ -109,14 +93,6 @@ export const setAgentProviderCredentialActive = userOnlyAction(
     userId: string,
     { credentialId, isActive }: { credentialId: string; isActive: boolean },
   ) {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "agent_provider_credential_updated",
-      properties: {
-        credentialId,
-        isActive,
-      },
-    });
     await updateAgentProviderCredentialsById({
       db,
       userId,

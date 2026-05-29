@@ -7,7 +7,6 @@ import {
   updateUserSettings,
 } from "@terragon/shared/model/user";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 export const updateUserSettingsAction = userOnlyAction(
   async function updateUserSettingsAction(
@@ -15,13 +14,6 @@ export const updateUserSettingsAction = userOnlyAction(
     updates: Partial<Omit<UserSettings, "id" | "userId">>,
   ) {
     console.log("updateUserSettingsAction", updates);
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "update_user_settings",
-      properties: {
-        ...updates,
-      },
-    });
     await updateUserSettings({ db, userId, updates });
   },
   { defaultErrorMessage: "Failed to update settings" },

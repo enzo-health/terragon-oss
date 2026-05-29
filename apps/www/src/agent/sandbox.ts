@@ -38,7 +38,6 @@ import {
 import { bashQuote } from "@terragon/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
@@ -576,19 +575,6 @@ export async function getSandboxForThreadOrNull({
       onStatusUpdate,
     });
   } catch (error) {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "sandbox_resume_failed",
-      properties: {
-        threadId,
-        sandboxId: thread.codesandboxId,
-        sandboxProvider: thread.sandboxProvider,
-        githubRepoFullName: thread.githubRepoFullName,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorType:
-          error instanceof Error ? error.constructor.name : typeof error,
-      },
-    });
     throw wrapError("sandbox-resume-failed", error);
   }
 }
@@ -957,17 +943,6 @@ async function getOrCreateSandboxForThread({
       },
       onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
         if (sandboxId && bootingStatus === "provisioning-done") {
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "sandbox_provisioned",
-            properties: {
-              threadId,
-              sandboxId,
-              sandboxProvider: thread.sandboxProvider,
-              githubRepoFullName: thread.githubRepoFullName,
-              durationMs: Date.now() - startTime,
-            },
-          });
         }
         await onStatusUpdate({
           sandboxId,
@@ -1012,7 +987,6 @@ async function getOrCreateSandboxForThread({
   };
 
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-  const startTime = Date.now();
   const bootstrap = await getBootstrapContext();
   const bootstrapOptions = buildSandboxOptions(bootstrap);
   let session: ISandboxSession;
@@ -1260,40 +1234,5 @@ export async function getOrCreateSandbox(
   if (!sandboxId) {
     await trackSandboxCreation(options.userId);
   }
-  const startTime = Date.now();
-  try {
-    const sandbox = await getOrCreateSandboxInternal(sandboxId, options);
-    const duration = Date.now() - startTime;
-    // Log sandbox creation or resume time to PostHog
-    getPostHogServer().capture({
-      distinctId: options.userId,
-      event: sandboxId ? "sandbox_resume_time" : "sandbox_creation_time",
-      properties: {
-        sandboxId: sandbox.sandboxId,
-        sandboxProvider: options.sandboxProvider,
-        githubRepoFullName: options.githubRepoFullName,
-        durationMs: duration,
-      },
-    });
-    return sandbox;
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    // Track sandbox operation failures to PostHog
-    getPostHogServer().capture({
-      distinctId: options.userId,
-      event: sandboxId ? "sandbox_resume_failed" : "sandbox_creation_failed",
-      properties: {
-        sandboxId: sandboxId || undefined,
-        sandboxProvider: options.sandboxProvider,
-        githubRepoFullName: options.githubRepoFullName,
-        durationMs: duration,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorType:
-          error instanceof Error ? error.constructor.name : typeof error,
-        isNotFoundError:
-          error instanceof Error && error.message.includes("not found"),
-      },
-    });
-    throw error;
-  }
+  return await getOrCreateSandboxInternal(sandboxId, options);
 }
