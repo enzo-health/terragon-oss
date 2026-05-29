@@ -9,7 +9,6 @@ import {
 import { ThreadError } from "./error";
 import { env } from "@terragon/env/apps-www";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { getPostHogServer } from "@/lib/posthog-server";
 import {
   generatePRContent,
   updatePRContent,
@@ -48,14 +47,6 @@ export async function openPullRequestForThread({
     threadChatId,
     prType,
     skipCommitAndPush,
-  });
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "open_pull_request",
-    properties: {
-      threadId,
-      prType: prType,
-    },
   });
   const thread = await getThread({ db, threadId, userId });
   if (!thread) {

@@ -19,11 +19,7 @@ import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getSandboxProvider } from "@/agent/sandbox";
 import { userMessageToPlainText } from "@/components/promptbox/tiptap-to-richtext";
 import { db } from "@/lib/db";
-import {
-  convertToPlainText,
-  estimateMessageSize,
-  imageCount,
-} from "@/lib/db-message-helpers";
+import { convertToPlainText } from "@/lib/db-message-helpers";
 import {
   ensureBranchExists,
   findAndAssociatePR,
@@ -31,7 +27,6 @@ import {
   updateGitHubPR,
 } from "@/lib/github";
 import { sendLoopsEvent, updateLoopsContact } from "@/lib/loops";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { checkShadowBanTaskCreationRateLimit } from "@/lib/rate-limit";
 import { UserFacingError } from "@/lib/server-actions";
@@ -145,21 +140,6 @@ export async function createNewThread({
         }
       : null;
   // Track thread creation
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "new_thread",
-    properties: {
-      source: sourceType,
-      repoFullName: githubRepoFullName,
-      baseBranchName,
-      headBranchName,
-      model: messageWithModel.model,
-      agentType: agent,
-      promptTextSize: estimateMessageSize(messageWithModel),
-      imageCount: imageCount(messageWithModel),
-      saveAsDraft,
-    },
-  });
 
   // Send task_created event to Loops for engagement tracking
   // This enables churn/re-engagement campaigns based on user activity

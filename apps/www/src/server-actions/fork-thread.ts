@@ -5,7 +5,6 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { DBUserMessage } from "@terragon/shared";
 import { getThreadMinimal } from "@terragon/shared/model/threads";
 import { createNewThread } from "../server-lib/new-thread-shared";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { requireResult } from "@/lib/server-actions";
 
 export const forkThread = userOnlyAction(
@@ -36,20 +35,6 @@ export const forkThread = userOnlyAction(
       () => getThreadMinimal({ db, threadId, userId }),
       "Task not found",
     );
-
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "fork_thread",
-      properties: {
-        threadId,
-        threadChatId,
-        skipSetup,
-        disableGitCheckpointing,
-        repoFullName,
-        branchName,
-        createNewBranch,
-      },
-    });
 
     let baseBranchName = branchName;
     let headBranchName: string | null = null;

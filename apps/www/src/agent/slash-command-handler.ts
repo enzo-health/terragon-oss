@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { DBUserMessage, DBSystemMessage } from "@terragon/shared";
 import { updateThreadChat } from "@terragon/shared/model/threads";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { convertToPlainText } from "@/lib/db-message-helpers";
 import { compactThreadChat } from "@/server-lib/compact";
 import { updateThreadChatWithTransition } from "./update-status";
@@ -73,15 +72,6 @@ async function handleClearCommand({
   message: DBUserMessage;
 }) {
   console.log("Processing /clear command");
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "slash_command",
-    properties: {
-      threadId,
-      threadChatId,
-      command: "clear",
-    },
-  });
   const systemMessage: DBSystemMessage = {
     type: "system",
     message_type: "clear-context",
@@ -119,15 +109,6 @@ async function handleCompactCommand({
   message: DBUserMessage;
 }) {
   console.log("Processing /compact command");
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "slash_command",
-    properties: {
-      threadId,
-      threadChatId,
-      command: "compact",
-    },
-  });
   await updateThreadChat({
     db,
     userId,

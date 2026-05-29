@@ -9,7 +9,6 @@ import { ISandboxSession } from "@terragon/sandbox/types";
 import { withSandboxResource } from "./sandbox-resource";
 import { updateThreadChatWithTransition } from "./update-status";
 import { db } from "@/lib/db";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { waitUntil } from "@vercel/functions";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { trackUsageEvents } from "@/server-lib/usage-events";
@@ -55,16 +54,6 @@ export async function withThreadChat<T>({
       errorInfo = error instanceof Error ? error.message : "Unknown error";
     }
     console.error("Thread error", error);
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "thread_error",
-      properties: {
-        threadId,
-        threadChatId,
-        errorType,
-        errorInfo,
-      },
-    });
     if (threadChatId) {
       const errorMessage = {
         type: "error" as const,
@@ -184,17 +173,6 @@ export async function withThreadSandboxSession<T>({
             // Log sandbox usage duration
             if (sandboxUsageStartTime) {
               const usageDuration = Date.now() - sandboxUsageStartTime;
-              getPostHogServer().capture({
-                distinctId: userId,
-                event: "sandbox_usage_duration",
-                properties: {
-                  threadId,
-                  label,
-                  sandboxId: sandboxSessionOrNull.sandboxId,
-                  sandboxProvider: sandboxSessionOrNull.sandboxProvider,
-                  durationMs: usageDuration,
-                },
-              });
               waitUntil(
                 trackUsageEvents({
                   userId,

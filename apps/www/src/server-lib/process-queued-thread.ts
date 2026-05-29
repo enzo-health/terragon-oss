@@ -1,6 +1,5 @@
 import { db } from "@/lib/db";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { getMaxConcurrentTaskCountForUser } from "@/lib/subscription-tiers";
 import {
@@ -51,13 +50,6 @@ export async function maybeStartQueuedThreadChat({
   });
   // Log queue status metrics
   if (eligibleQueuedThreadChats.length > 0) {
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "queue_status",
-      properties: {
-        eligibleThreadChatCount: eligibleQueuedThreadChats.length,
-      },
-    });
   }
   if (eligibleQueuedThreadChats.length === 0) {
     return;
@@ -90,22 +82,6 @@ export async function maybeStartQueuedThreadChat({
     threadId,
     threadChatId: threadChat.id,
     previousStatus: oldStatus,
-  });
-  // Calculate queuing delay using updatedAt (when the thread last transitioned to queued status)
-  // This is more accurate than createdAt since threads can be queued after initial creation
-  const queuedDurationMs = threadChat.updatedAt
-    ? Date.now() - new Date(threadChat.updatedAt).getTime()
-    : 0;
-  // Log queue processing metrics
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "thread_dequeued",
-    properties: {
-      threadId,
-      threadChatId,
-      previousStatus: oldStatus,
-      queuedDurationMs,
-    },
   });
   const thread = await getThreadMinimal({
     db,

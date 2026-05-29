@@ -2,7 +2,6 @@
 
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { runScheduledThread as runScheduledThreadInternal } from "@/server-lib/scheduled-thread";
 
 export const runScheduledThread = userOnlyAction(
@@ -11,14 +10,6 @@ export const runScheduledThread = userOnlyAction(
     { threadId, threadChatId }: { threadId: string; threadChatId: string },
   ) {
     console.log("runScheduledThread", { threadId, threadChatId });
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "run_scheduled_thread",
-      properties: {
-        threadId,
-        threadChatId,
-      },
-    });
     await runScheduledThreadInternal({ threadId, threadChatId, userId });
   },
   { defaultErrorMessage: "Failed to run scheduled task" },
@@ -30,14 +21,6 @@ export const cancelScheduledThread = userOnlyAction(
     { threadId, threadChatId }: { threadId: string; threadChatId: string },
   ) {
     console.log("cancelScheduledThread", { threadId, threadChatId });
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "cancel_scheduled_thread",
-      properties: {
-        threadId,
-        threadChatId,
-      },
-    });
     const cancelMessage = {
       type: "system" as const,
       message_type: "cancel-schedule" as const,

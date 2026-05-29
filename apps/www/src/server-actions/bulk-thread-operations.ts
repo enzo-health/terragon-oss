@@ -2,7 +2,6 @@
 
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { archiveAndStopThread } from "@/server-lib/archive-thread";
 import { deleteThreadById, getThread } from "@terragon/shared/model/threads";
 import { isAgentWorking } from "@/agent/thread-status";
@@ -36,16 +35,6 @@ export const bulkArchiveThreads = userOnlyAction(
         });
       }
     }
-
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "bulk_archive_threads",
-      properties: {
-        count: threadIds.length,
-        succeeded: result.succeeded.length,
-        failed: result.failed.length,
-      },
-    });
 
     return result;
   },
@@ -82,16 +71,6 @@ export const bulkUnarchiveThreads = userOnlyAction(
         });
       }
     }
-
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "bulk_unarchive_threads",
-      properties: {
-        count: threadIds.length,
-        succeeded: result.succeeded.length,
-        failed: result.failed.length,
-      },
-    });
 
     return result;
   },
@@ -140,16 +119,6 @@ export const bulkDeleteThreads = userOnlyAction(
         });
       }
     }
-
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "bulk_delete_threads",
-      properties: {
-        count: threadIds.length,
-        succeeded: result.succeeded.length,
-        failed: result.failed.length,
-      },
-    });
 
     return result;
   },

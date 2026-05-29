@@ -16,7 +16,6 @@ import { symmetricDecrypt } from "better-auth/crypto";
 import { db } from "./db";
 import { env } from "@terragon/env/apps-www";
 import { getUserFlags } from "@terragon/shared/model/user-flags";
-import { getPostHogServer } from "./posthog-server";
 import { nonLocalhostPublicAppUrl } from "./server-utils";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { maybeGrantSignupBonus } from "@/server-lib/credits";
@@ -360,16 +359,6 @@ export const auth = betterAuth({
     user: {
       create: {
         after: async (user) => {
-          getPostHogServer().capture({
-            distinctId: user.id,
-            event: "user_created",
-            properties: {
-              name: user.name,
-              email: user.email,
-              signupMethod: "open_signup",
-            },
-          });
-
           const normalizedEmail = user.email?.trim().toLowerCase();
           if (normalizedEmail && initialAdminEmails.has(normalizedEmail)) {
             await db

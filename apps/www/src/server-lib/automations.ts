@@ -1,6 +1,5 @@
 import { db } from "@/lib/db";
 import { createNewThread } from "./new-thread-shared";
-import { getPostHogServer } from "@/lib/posthog-server";
 import {
   getAutomation,
   incrementAutomationRunCount,
@@ -91,38 +90,16 @@ export async function runAutomation({
         assertNever(automation.action.type);
       }
     }
-    const updatedAutomation = await incrementAutomationRunCount({
+    await incrementAutomationRunCount({
       db,
       automationId: automation.id,
       userId: automation.userId,
       accessTier: "pro",
     });
-    getPostHogServer().capture({
-      distinctId: automation.userId,
-      event: "automation_executed",
-      properties: {
-        automationId: automation.id,
-        automationName: automation.name,
-        triggerType: automation.triggerType,
-        actionType: automation.action.type,
-        runCount: updatedAutomation.runCount,
-        threadId,
-        threadChatId,
-      },
-    });
     return { threadId, threadChatId };
   } catch (error) {
     console.error(`Error running automation ${automation.id}:`, error);
     // Log error metrics
-    getPostHogServer().capture({
-      distinctId: automation.userId,
-      event: "automation_execution_error",
-      properties: {
-        automationId: automation.id,
-        automationName: automation.name,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
     return undefined;
   }
 }

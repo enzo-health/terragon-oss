@@ -2,7 +2,6 @@ import { db } from "@/lib/db";
 import { wrapError, ThreadError } from "@/agent/error";
 import { openPullRequestForThread } from "@/agent/pull-request";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { env } from "@terragon/env/apps-www";
 import {
   getGitDiffMaybeCutoff,
@@ -402,16 +401,6 @@ export async function checkpointThreadAndPush({
         diffStats,
       });
       chatUpdates.appendMessages = [gitDiffMessage];
-
-      getPostHogServer().capture({
-        distinctId: userId,
-        event: "git_diff_changed",
-        properties: {
-          threadId,
-          gitDiffSize: diffOutput.length,
-          ...diffStats,
-        },
-      });
     }
 
     if (Object.keys(updates).length > 0) {

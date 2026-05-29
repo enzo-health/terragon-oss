@@ -12,7 +12,6 @@ import { maybeBatchThreads } from "@/lib/batch-threads";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { getNativeAgUiTranscriptForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
 import { updateThread } from "@terragon/shared/model/threads";
 
@@ -469,23 +468,7 @@ function captureFeedbackRouting({
   mode: FeedbackRoutingMode;
   reason?: string;
   threadId: string;
-}) {
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "github_feedback_routed",
-    properties: {
-      mode,
-      reason: reason ?? null,
-      eventType: input.eventType,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-      threadId,
-      sourceType: input.sourceType ?? "automation",
-      checkRunId: input.checkRunId ?? null,
-      checkSuiteId: input.checkSuiteId ?? null,
-    },
-  });
-}
+}) {}
 
 function captureFeedbackRoutingFailure({
   userIdOrNull,
@@ -501,46 +484,6 @@ function captureFeedbackRoutingFailure({
   if (!userIdOrNull) {
     return;
   }
-  getPostHogServer().capture({
-    distinctId: userIdOrNull,
-    event: "github_feedback_routing_failed",
-    properties: {
-      reason,
-      errorMessage,
-      eventType: input.eventType,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-      sourceType: input.sourceType ?? "automation",
-      checkRunId: input.checkRunId ?? null,
-      checkSuiteId: input.checkSuiteId ?? null,
-    },
-  });
-}
-
-function captureFeedbackOwnerResolutionNoop({
-  input,
-  ownerResolutionReason,
-}: {
-  input: GithubFeedbackInput;
-  ownerResolutionReason: string;
-}) {
-  const distinctId =
-    input.userId ??
-    `github-feedback-owner-resolution:${input.repoFullName}:${input.prNumber}`;
-  getPostHogServer().capture({
-    distinctId,
-    event: "github_feedback_owner_resolution_noop",
-    properties: {
-      ownerResolutionReason,
-      eventType: input.eventType,
-      repoFullName: input.repoFullName,
-      prNumber: input.prNumber,
-      sourceType: input.sourceType ?? "automation",
-      deliveryId: input.deliveryId ?? null,
-      checkRunId: input.checkRunId ?? null,
-      checkSuiteId: input.checkSuiteId ?? null,
-    },
-  });
 }
 
 function buildOwnerResolutionFailureLogProperties({
@@ -772,10 +715,6 @@ export async function routeGithubFeedbackOrSpawnThread(
         input,
         ownerResolutionReason: ownerResolution.reason,
       }),
-    });
-    captureFeedbackOwnerResolutionNoop({
-      input,
-      ownerResolutionReason: ownerResolution.reason,
     });
     return {
       mode: "noop_owner_unresolved",

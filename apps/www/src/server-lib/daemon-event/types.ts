@@ -155,7 +155,6 @@ export type RouterDependencies = {
   updateAgentRunContext: typeof import("@terragon/shared/model/agent-run-context").updateAgentRunContext;
   getAgentRunContextByRunId: typeof import("@terragon/shared/model/agent-run-context").getAgentRunContextByRunId;
   publishBroadcastUserMessage: typeof import("@terragon/shared/broadcast-server").publishBroadcastUserMessage;
-  getPostHogServer: typeof import("@/lib/posthog-server").getPostHogServer;
   isAnthropicDownPOST: typeof import("@/server-lib/internal-request").isAnthropicDownPOST;
   internalPOST: typeof import("@/server-lib/internal-request").internalPOST;
   trackUsageEvents: typeof import("@/server-lib/usage-events").trackUsageEvents;

@@ -7,12 +7,6 @@ import { createTestUser } from "@terragon/shared/model/test-helpers";
 import { getAgentProviderCredentialsDecrypted } from "@terragon/shared/model/agent-provider-credentials";
 import { env } from "@terragon/env/apps-www";
 
-vi.mock("@/lib/posthog-server", () => ({
-  getPostHogServer: () => ({
-    capture: vi.fn(),
-  }),
-}));
-
 const saveCodexAuthJson = async ({ authJson }: { authJson: string }) => {
   return unwrapResult(await saveCodexAuthJsonAction({ authJson }));
 };

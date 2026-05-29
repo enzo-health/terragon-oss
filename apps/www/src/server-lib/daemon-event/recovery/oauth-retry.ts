@@ -19,7 +19,6 @@ export async function tryOAuthRetryRecovery(params: {
 }> {
   const {
     deps,
-    userId,
     threadId,
     threadChatId,
     threadChatUpdates,
@@ -94,14 +93,6 @@ export async function tryOAuthRetryRecovery(params: {
       ...(threadChatUpdates.appendMessages ?? []),
       invalidTokenRetryMessage,
     ];
-
-    deps.getPostHogServer().capture({
-      distinctId: userId,
-      event: "oauth_token_revoked_retry",
-      properties: {
-        threadId,
-      },
-    });
 
     return {
       recovered: true,

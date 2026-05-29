@@ -53,7 +53,6 @@ import {
   convertToPrompt,
   getUserMessageToSend,
 } from "@/lib/db-message-helpers";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
 import { getSandboxCreationRateLimitRemaining } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
@@ -367,17 +366,6 @@ export async function startAgentMessage({
           });
           queuedThreadCounts.queuedTotal++;
           queuedThreadCounts.queuedTasksConcurrency++;
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "thread_queued",
-            properties: {
-              threadId,
-              reason: "concurrency_limit",
-              activeThreadCount,
-              maxConcurrentTasks,
-              ...queuedThreadCounts,
-            },
-          });
           const contextPromise = getThreadContextPromise();
           if (contextPromise) {
             await contextPromise;
@@ -408,21 +396,6 @@ export async function startAgentMessage({
           // Check task queue limit right before we queue the task
           await checkTaskQueueLimit({ db, userId });
 
-          // Log queue metrics when a thread is queued due to rate limit
-          const queuedThreadCounts = await getQueuedThreadCounts({
-            db,
-            userId,
-          });
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "thread_queued",
-            properties: {
-              threadId,
-              reason: "sandbox_creation_rate_limit",
-              rateLimitResetMs: sandboxCreationRateLimitRemaining.reset,
-              ...queuedThreadCounts,
-            },
-          });
           const contextPromise = getThreadContextPromise();
           if (contextPromise) {
             await contextPromise;
@@ -461,8 +434,6 @@ export async function startAgentMessage({
           appendMessages: currentMessageAppend,
         },
       });
-      // Get or create sandbox for the thread
-      const startTime = Date.now();
       // We need to provide onStatusUpdate for both new and resumed threads
       // so the UI can show sandbox setup progress (e.g., "Running terragon-setup.sh")
 
@@ -569,17 +540,6 @@ export async function startAgentMessage({
           if (!session) {
             throw new ThreadError("sandbox-not-found", "", null);
           }
-          getPostHogServer().capture({
-            distinctId: userId,
-            event: "sandbox_usage_duration",
-            properties: {
-              threadId,
-              label: "start-claude-message",
-              sandboxId: session.sandboxId,
-              sandboxProvider: session.sandboxProvider,
-              durationMs: Date.now() - startTime,
-            },
-          });
           // Pull latest changes from upstream before sending daemon message
           if (!isNewThread && (await shouldPullUpstreamForThread(threadId))) {
             await gitPullUpstream(session);

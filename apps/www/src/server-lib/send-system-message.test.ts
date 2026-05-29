@@ -26,12 +26,6 @@ vi.mock("./ag-ui-side-effect-messages", () => ({
   persistSideEffectAgUiMessages: sideEffectMocks.persistSideEffectAgUiMessages,
 }));
 
-vi.mock("@/lib/posthog-server", () => ({
-  getPostHogServer: () => ({
-    capture: vi.fn(),
-  }),
-}));
-
 vi.mock("@vercel/functions", () => ({
   waitUntil: vi.fn(),
 }));

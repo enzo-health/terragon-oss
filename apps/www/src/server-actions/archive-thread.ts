@@ -3,7 +3,6 @@
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { updateThread } from "@terragon/shared/model/threads";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { archiveAndStopThread } from "@/server-lib/archive-thread";
 
 export const archiveThread = userOnlyAction(
@@ -21,13 +20,6 @@ export const unarchiveThread = userOnlyAction(
     if (process.env.NODE_ENV !== "production") {
       console.log("unarchiveThread", threadId);
     }
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "unarchive_thread",
-      properties: {
-        threadId,
-      },
-    });
     await updateThread({
       db,
       userId,

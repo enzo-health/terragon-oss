@@ -4,7 +4,6 @@ import { markThreadChatAsUnread } from "@terragon/shared/model/thread-read-statu
 import { db } from "@/lib/db";
 import { userOnlyAction } from "@/lib/auth-server";
 import { getThread } from "@terragon/shared/model/threads";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 export const unreadThread = userOnlyAction(
   async function unreadThread(
@@ -12,13 +11,6 @@ export const unreadThread = userOnlyAction(
     { threadId }: { threadId: string },
   ) {
     console.log("unreadThread", threadId);
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "mark_thread_as_unread",
-      properties: {
-        threadId,
-      },
-    });
     const thread = await getThread({
       db,
       userId,

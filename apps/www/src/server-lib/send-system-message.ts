@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
-import { getPostHogServer } from "@/lib/posthog-server";
 import { DBSystemMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
@@ -18,14 +17,6 @@ export async function sendSystemMessage({
   message: DBSystemMessage;
 }) {
   console.log("sendSystemMessage", threadId, message);
-  getPostHogServer().capture({
-    distinctId: userId,
-    event: "system_message",
-    properties: {
-      threadId,
-      messageType: message.message_type,
-    },
-  });
   const { didUpdateStatus, updatedStatus, chatSequence } =
     await updateThreadChatWithTransition({
       userId,

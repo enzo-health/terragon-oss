@@ -5,7 +5,6 @@ import { db } from "@/lib/db";
 import { env } from "@terragon/env/apps-www";
 import { insertAgentProviderCredentials } from "@terragon/shared/model/agent-provider-credentials";
 import { UserFacingError } from "@/lib/server-actions";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 type OpenAIAuthJson = {
   tokens?: {
@@ -67,11 +66,6 @@ export const saveCodexAuthJson = userOnlyAction(
       ? new Date(idTokenPayload.exp * 1000)
       : null;
 
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "codex_oauth_tokens_saved",
-      properties: {},
-    });
     await insertAgentProviderCredentials({
       db,
       userId,

@@ -8,7 +8,6 @@ import {
 } from "@/lib/claude-oauth";
 import { saveClaudeTokens } from "@/agent/msg/claudeCredentials";
 import { userOnlyAction } from "@/lib/auth-server";
-import { getPostHogServer } from "@/lib/posthog-server";
 
 export const getAuthorizationURL = userOnlyAction(
   async function getAuthorizationURL(
@@ -57,13 +56,6 @@ export const exchangeCode = userOnlyAction(
           ? new Date(Date.now() + tokenResponse.expires_in * 1000)
           : null,
         scope: tokenResponse.scope,
-      },
-    });
-    getPostHogServer().capture({
-      distinctId: userId,
-      event: "claude_oauth_token_saved",
-      properties: {
-        authType,
       },
     });
   },
