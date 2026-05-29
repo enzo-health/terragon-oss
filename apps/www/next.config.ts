@@ -36,6 +36,11 @@ loadLocalEnvFiles();
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  // The Daytona SDK lazy-loads form-data/tar/fast-glob/@iarna/toml/expand-tilde
+  // via a createRequire shim that webpack can't statically trace. Keeping the
+  // package external preserves Node's real require resolution at runtime so
+  // Vercel NFT picks up those transitive deps.
+  serverExternalPackages: ["@daytonaio/sdk"],
   // Skip Next build-time type checking in dev; tsc-check still owns type safety.
   typescript: {
     ignoreBuildErrors: process.env.NODE_ENV === "development",
