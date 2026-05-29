@@ -1,11 +1,8 @@
-import { getUserIdOrRedirect } from "@/lib/auth-server";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 import type { Metadata } from "next";
-import {
-  HydrationBoundary,
-  QueryClient,
-  dehydrate,
-} from "@tanstack/react-query";
 import { Automations } from "@/components/automations/main";
+import { getUserIdOrRedirect } from "@/lib/auth-server";
+import { getOrCreateQueryClient } from "@/lib/query-client";
 import {
   automationQueryOptions,
   hasReachedLimitOfAutomationsQueryOptions,
@@ -17,7 +14,7 @@ export const metadata: Metadata = {
 
 export default async function AutomationsPage() {
   await getUserIdOrRedirect();
-  const queryClient = new QueryClient();
+  const queryClient = getOrCreateQueryClient();
   await Promise.all([
     queryClient.prefetchQuery(automationQueryOptions()),
     queryClient.prefetchQuery(hasReachedLimitOfAutomationsQueryOptions()),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useReducer } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,26 +31,59 @@ interface BanUserActionProps {
   user: User;
 }
 
+type BanUserState = {
+  isOpen: boolean;
+  banReason: string;
+  banDuration: "permanent" | "custom";
+  customDays: string;
+  isLoading: boolean;
+};
+
+type BanUserActionType =
+  | { type: "set-open"; isOpen: boolean }
+  | { type: "set-ban-reason"; banReason: string }
+  | { type: "set-ban-duration"; banDuration: "permanent" | "custom" }
+  | { type: "set-custom-days"; customDays: string }
+  | { type: "set-loading"; isLoading: boolean };
+
+function banUserReducer(
+  state: BanUserState,
+  action: BanUserActionType,
+): BanUserState {
+  switch (action.type) {
+    case "set-open":
+      return { ...state, isOpen: action.isOpen };
+    case "set-ban-reason":
+      return { ...state, banReason: action.banReason };
+    case "set-ban-duration":
+      return { ...state, banDuration: action.banDuration };
+    case "set-custom-days":
+      return { ...state, customDays: action.customDays };
+    case "set-loading":
+      return { ...state, isLoading: action.isLoading };
+  }
+}
+
 export function BanUserAction({ user }: BanUserActionProps) {
-  const router = useRouter();
-  const [isOpen, setIsOpen] = useState(false);
-  const [banReason, setBanReason] = useState("");
-  const [banDuration, setBanDuration] = useState<"permanent" | "custom">(
-    "permanent",
-  );
-  const [customDays, setCustomDays] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const { refresh } = useRouter();
+  const [state, dispatch] = useReducer(banUserReducer, {
+    isOpen: false,
+    banReason: "",
+    banDuration: "permanent",
+    customDays: "",
+    isLoading: false,
+  });
 
   const handleBan = async () => {
-    setIsLoading(true);
+    dispatch({ type: "set-loading", isLoading: true });
     try {
       let banExpiresIn: number | undefined;
 
-      if (banDuration === "custom" && customDays) {
-        const days = parseInt(customDays);
+      if (state.banDuration === "custom" && state.customDays) {
+        const days = parseInt(state.customDays);
         if (isNaN(days) || days <= 0) {
           toast.error("Please enter a valid number of days");
-          setIsLoading(false);
+          dispatch({ type: "set-loading", isLoading: false });
           return;
         }
         banExpiresIn = days * 24 * 60 * 60; // Convert days to seconds
@@ -58,36 +91,36 @@ export function BanUserAction({ user }: BanUserActionProps) {
 
       await banUser({
         userId: user.id,
-        banReason: banReason || undefined,
+        banReason: state.banReason || undefined,
         banExpiresIn,
       });
 
       toast.success("User banned successfully");
-      setIsOpen(false);
-      router.refresh();
+      dispatch({ type: "set-open", isOpen: false });
+      refresh();
+      dispatch({ type: "set-loading", isLoading: false });
     } catch (error) {
       console.error("Failed to ban user:", error);
       toast.error(
         error instanceof Error ? error.message : "Failed to ban user",
       );
-    } finally {
-      setIsLoading(false);
+      dispatch({ type: "set-loading", isLoading: false });
     }
   };
 
   const handleUnban = async () => {
-    setIsLoading(true);
+    dispatch({ type: "set-loading", isLoading: true });
     try {
       await unbanUser(user.id);
       toast.success("User unbanned successfully");
-      router.refresh();
+      refresh();
+      dispatch({ type: "set-loading", isLoading: false });
     } catch (error) {
       console.error("Failed to unban user:", error);
       toast.error(
         error instanceof Error ? error.message : "Failed to unban user",
       );
-    } finally {
-      setIsLoading(false);
+      dispatch({ type: "set-loading", isLoading: false });
     }
   };
 
@@ -105,24 +138,27 @@ export function BanUserAction({ user }: BanUserActionProps) {
         <Button
           variant="outline"
           onClick={handleUnban}
-          disabled={isLoading}
+          disabled={state.isLoading}
           className="flex items-center gap-2 rounded-full"
         >
-          <Unlock className="h-4 w-4" />
-          {isLoading ? "Unbanning..." : "Unban User"}
+          <Unlock className="size-4" />
+          {state.isLoading ? "Unbanning..." : "Unban User"}
         </Button>
       </div>
     );
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog
+      open={state.isOpen}
+      onOpenChange={(isOpen) => dispatch({ type: "set-open", isOpen })}
+    >
       <DialogTrigger asChild>
         <Button
           variant="destructive"
           className="flex items-center gap-2 rounded-full"
         >
-          <Ban className="h-4 w-4" />
+          <Ban className="size-4" />
           Ban User
         </Button>
       </DialogTrigger>
@@ -140,17 +176,22 @@ export function BanUserAction({ user }: BanUserActionProps) {
             <Textarea
               id="banReason"
               placeholder="Enter the reason for banning this user..."
-              value={banReason}
-              onChange={(e) => setBanReason(e.target.value)}
+              value={state.banReason}
+              onChange={(e) =>
+                dispatch({
+                  type: "set-ban-reason",
+                  banReason: e.target.value,
+                })
+              }
               rows={3}
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="banDuration">Ban Duration</Label>
             <Select
-              value={banDuration}
+              value={state.banDuration}
               onValueChange={(value: "permanent" | "custom") =>
-                setBanDuration(value)
+                dispatch({ type: "set-ban-duration", banDuration: value })
               }
             >
               <SelectTrigger id="banDuration">
@@ -162,15 +203,20 @@ export function BanUserAction({ user }: BanUserActionProps) {
               </SelectContent>
             </Select>
           </div>
-          {banDuration === "custom" && (
+          {state.banDuration === "custom" && (
             <div className="space-y-2">
               <Label htmlFor="customDays">Duration in Days</Label>
               <Input
                 id="customDays"
                 type="number"
                 placeholder="Enter number of days"
-                value={customDays}
-                onChange={(e) => setCustomDays(e.target.value)}
+                value={state.customDays}
+                onChange={(e) =>
+                  dispatch({
+                    type: "set-custom-days",
+                    customDays: e.target.value,
+                  })
+                }
                 min="1"
               />
             </div>
@@ -179,8 +225,8 @@ export function BanUserAction({ user }: BanUserActionProps) {
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => setIsOpen(false)}
-            disabled={isLoading}
+            onClick={() => dispatch({ type: "set-open", isOpen: false })}
+            disabled={state.isLoading}
             className="rounded-full"
           >
             Cancel
@@ -188,10 +234,10 @@ export function BanUserAction({ user }: BanUserActionProps) {
           <Button
             variant="destructive"
             onClick={handleBan}
-            disabled={isLoading}
+            disabled={state.isLoading}
             className="rounded-full"
           >
-            {isLoading ? "Banning..." : "Ban User"}
+            {state.isLoading ? "Banning..." : "Ban User"}
           </Button>
         </DialogFooter>
       </DialogContent>

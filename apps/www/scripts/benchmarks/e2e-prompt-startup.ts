@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-import { chromium, type Browser, type Page } from "playwright";
+import { type Browser, chromium, type Page } from "playwright";
 import {
-  browserBenchmarkMetricHelpersSource,
-  createBrowserBenchmarkMetricHelpers,
   type AgUiEventToVisibleBatch,
   type BenchmarkTraceSpan,
+  browserBenchmarkMetricHelpersSource,
+  createBrowserBenchmarkMetricHelpers,
   type LongTaskSample,
 } from "./e2e-prompt-startup-metrics";
 
@@ -153,6 +153,7 @@ const { consumeAgUiReceiptBatchForVisibleUpdate, summarizeLongTaskSamples } =
 
 export {
   consumeAgUiReceiptBatchForVisibleUpdate,
+  createBrowserBenchmarkMetricHelpers,
   summarizeLongTaskSamples,
   browserBenchmarkMetricHelpersSource,
   type AgUiEventToVisibleBatch,
@@ -452,8 +453,9 @@ async function installBrowserStreamMetrics(page: Page): Promise<void> {
     };
 
     const {
-      consumeAgUiReceiptBatchForVisibleUpdate,
-      summarizeLongTaskSamples,
+  consumeAgUiReceiptBatchForVisibleUpdate,
+  createBrowserBenchmarkMetricHelpers,
+  summarizeLongTaskSamples,
     } = ${browserBenchmarkMetricHelpersSource};
 
     const lastAgentMessage = () => {

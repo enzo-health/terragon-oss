@@ -1,7 +1,9 @@
 import React from "react";
 
-const UnoptimizedLink = (props: any) => {
-  return <a {...props} />;
+type UnoptimizedLinkProps = React.ComponentPropsWithoutRef<"a">;
+
+const UnoptimizedLink = ({ children, ...props }: UnoptimizedLinkProps) => {
+  return <a {...props}>{children}</a>;
 };
 
 export default UnoptimizedLink;

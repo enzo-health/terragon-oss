@@ -125,7 +125,7 @@ function AutomationsList({
   if (isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
       </div>
     );
   }
@@ -142,7 +142,7 @@ function AutomationsList({
     <>
       {hasReachedLimit && (
         <Alert className="mb-3 bg-warning/10 text-warning border-none rounded-lg">
-          <AlertCircle className="h-4 w-4" />
+          <AlertCircle className="size-4" />
           <AlertDescription className="text-warning">
             You have reached the active automation limit. To create another,
             disable or delete an existing active automation.

@@ -1,4 +1,3 @@
-import React, { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,11 +9,11 @@ interface FileAttachmentButtonProps {
   onFileAttachment: (file: Attachment) => void;
 }
 
-export const FileAttachmentButton = memo(function FileAttachmentButton({
+export function FileAttachmentButton({
   className,
   onFileAttachment,
 }: FileAttachmentButtonProps) {
-  const handleClick = () => {
+  const openAttachmentPicker = () => {
     openFileUploadDialog((files) => {
       files.forEach(onFileAttachment);
     });
@@ -26,10 +25,10 @@ export const FileAttachmentButton = memo(function FileAttachmentButton({
       size="icon"
       type="button"
       className={cn("size-8", className)}
-      onClick={handleClick}
+      onClick={openAttachmentPicker}
       title="Attach files (images, PDFs, CSV, Markdown, etc.)"
     >
       <Paperclip className="size-4" />
     </Button>
   );
-});
+}

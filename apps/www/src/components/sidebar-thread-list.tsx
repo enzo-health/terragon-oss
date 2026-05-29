@@ -1,42 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
-import { ThreadInfo } from "@terragon/shared";
-import { LoaderCircle, ChevronRight, EllipsisVerticalIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useThreadInfoList } from "@/hooks/use-thread-info-list";
-import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
+import type { ThreadInfo } from "@terragon/shared/db/types";
+import { useAtomValue, useSetAtom } from "jotai";
+import { ChevronRight, EllipsisVerticalIcon, LoaderCircle } from "lucide-react";
 import Link from "next/link";
-import { getThreadTitle } from "@/agent/thread-utils";
-import { ThreadStatusIndicator } from "./thread-status";
-import { useAtom, useSetAtom } from "jotai";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import {
-  threadListCollapsedSectionsAtom,
+  threadListSectionCollapsedAtom,
   toggleThreadListCollapsedSectionAtom,
 } from "@/atoms/user-cookies";
-import { Button } from "./ui/button";
+import { useThreadInfoList } from "@/hooks/use-thread-info-list";
+import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
+import { cn } from "@/lib/utils";
 import { ThreadMenuDropdown } from "./thread-menu-dropdown";
+import { ThreadStatusIndicator } from "./thread-status";
+import { Button } from "./ui/button";
+
+const stopSidebarLinkEventPropagation = (
+  event: React.MouseEvent | React.PointerEvent,
+) => {
+  event.preventDefault();
+  event.stopPropagation();
+};
 
 export function SidebarThreadList() {
   const { threads, isLoading, isError } = useThreadInfoList({
     archived: false,
   });
+  const pathname = usePathname();
+  const activeThreadId = pathname.startsWith("/task/")
+    ? (pathname.slice("/task/".length).split("/")[0] ?? null)
+    : null;
 
-  const repoGroups = useMemo(() => {
-    const groups: Record<string, ThreadInfo[]> = {};
-    for (const thread of threads) {
-      const repoName = thread.githubRepoFullName || "Local Tasks";
-      if (!groups[repoName]) groups[repoName] = [];
-      groups[repoName].push(thread);
-    }
-    return Object.keys(groups)
-      .sort()
-      .map((repoName) => ({
-        repoName,
-        threads: sortThreadsUpdatedAt(groups[repoName] || []),
-      }));
-  }, [threads]);
+  const groups: Record<string, ThreadInfo[]> = {};
+  for (const thread of threads) {
+    const repoName = thread.githubRepoFullName || "Local Tasks";
+    if (!groups[repoName]) groups[repoName] = [];
+    groups[repoName].push(thread);
+  }
+  const repoGroups = Object.keys(groups)
+    .sort()
+    .map((repoName) => ({
+      repoName,
+      threads: sortThreadsUpdatedAt(groups[repoName] || []),
+    }));
 
   if (isLoading) {
     return (
@@ -73,33 +81,34 @@ export function SidebarThreadList() {
           key={group.repoName}
           repoName={group.repoName}
           threads={group.threads}
+          activeThreadId={activeThreadId}
         />
       ))}
     </div>
   );
 }
 
-function RepoSection({
-  repoName,
-  threads,
-}: {
+type RepoSectionProps = {
   repoName: string;
   threads: ThreadInfo[];
-}) {
-  const [collapsedSections] = useAtom(threadListCollapsedSectionsAtom);
+  activeThreadId: string | null;
+};
+
+function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
   const toggleCollapsed = useSetAtom(toggleThreadListCollapsedSectionAtom);
 
   const groupId = `repo-${repoName}`;
-  const isCollapsed = !!collapsedSections[groupId];
+  const isCollapsed = useAtomValue(threadListSectionCollapsedAtom(groupId));
 
-  const handleToggle = useCallback(() => {
+  const toggleRepoSection = () => {
     toggleCollapsed(groupId);
-  }, [toggleCollapsed, groupId]);
+  };
 
   return (
     <div className="flex flex-col group-data-[collapsible=icon]:hidden">
       <button
-        onClick={handleToggle}
+        type="button"
+        onClick={toggleRepoSection}
         aria-expanded={!isCollapsed}
         className={cn(
           "group/repo flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground text-left select-none",
@@ -123,7 +132,11 @@ function RepoSection({
       {!isCollapsed && (
         <div className="flex flex-col gap-0.5 px-1 pb-1">
           {threads.map((thread) => (
-            <SidebarThreadItem key={thread.id} thread={thread} />
+            <SidebarThreadItem
+              key={thread.id}
+              thread={thread}
+              isActive={activeThreadId === thread.id}
+            />
           ))}
         </div>
       )}
@@ -131,10 +144,13 @@ function RepoSection({
   );
 }
 
-function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
-  const pathname = usePathname();
-  const isActive = pathname === `/task/${thread.id}`;
-  const title = useMemo(() => getThreadTitle(thread), [thread]);
+type SidebarThreadItemProps = {
+  thread: ThreadInfo;
+  isActive: boolean;
+};
+
+function SidebarThreadItem({ thread, isActive }: SidebarThreadItemProps) {
+  const title = thread.name || "Untitled";
   const isOptimistic = thread.id.startsWith("optimistic-");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -157,7 +173,7 @@ function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
           isOptimistic && "pointer-events-none",
         )}
       >
-        <div className="w-3.5 h-3.5 flex-shrink-0 flex items-center justify-center">
+        <div className="size-3.5 flex-shrink-0 flex items-center justify-center">
           <ThreadStatusIndicator thread={thread} isOptimistic={isOptimistic} />
         </div>
         <span className="truncate leading-snug text-pretty">{title}</span>
@@ -170,10 +186,7 @@ function SidebarThreadItem({ thread }: { thread: ThreadInfo }) {
               ? "opacity-100"
               : "opacity-0 group-hover/thread:opacity-100 focus-within:opacity-100",
           )}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
+          onPointerDown={stopSidebarLinkEventPropagation}
         >
           <SidebarThreadMenu thread={thread} onOpenChange={setMenuOpen} />
         </div>
@@ -195,16 +208,32 @@ function SidebarThreadMenu({
   onOpenChange: (open: boolean) => void;
 }) {
   const [activated, setActivated] = useState(false);
-  const [pendingClick, setPendingClick] = useState(false);
+  const pendingClickRef = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (activated && pendingClick && triggerRef.current) {
+    if (activated && pendingClickRef.current && triggerRef.current) {
+      pendingClickRef.current = false;
       triggerRef.current.click();
-      setPendingClick(false);
     }
-  }, [activated, pendingClick]);
+  }, [activated]);
 
+  const activateMenu = () => {
+    setActivated(true);
+  };
+  const activateMenuFromClick = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActivated(true);
+    pendingClickRef.current = true;
+  };
+  const activateMenuFromKeyboard = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setActivated(true);
+      pendingClickRef.current = true;
+    }
+  };
   const triggerButton = (
     <Button
       ref={triggerRef}
@@ -219,24 +248,18 @@ function SidebarThreadMenu({
 
   if (!activated) {
     return (
-      <div
-        onPointerEnter={() => setActivated(true)}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setActivated(true);
-          setPendingClick(true);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setActivated(true);
-            setPendingClick(true);
-          }
-        }}
+      <Button
+        ref={triggerRef}
+        variant="ghost"
+        size="icon"
+        aria-label="Thread options"
+        className="size-6 rounded-md hover:bg-sidebar-accent text-muted-foreground hover:text-sidebar-foreground"
+        onPointerEnter={activateMenu}
+        onClick={activateMenuFromClick}
+        onKeyDown={activateMenuFromKeyboard}
       >
-        {triggerButton}
-      </div>
+        <EllipsisVerticalIcon className="size-3.5" />
+      </Button>
     );
   }
 

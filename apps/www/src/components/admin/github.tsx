@@ -9,7 +9,7 @@ import {
   refreshGitHubPR,
   postGitHubCommentForTesting,
 } from "@/server-actions/admin/github";
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
 function RefreshButton({ pr }: { pr: GitHubPR }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isRefreshing, setIsRefreshing] = useState(false);
   return (
     <Button
@@ -33,13 +33,15 @@ function RefreshButton({ pr }: { pr: GitHubPR }) {
             prNumber: pr.number,
             repoFullName: pr.repoFullName,
           });
-          router.refresh();
-        } finally {
+          refresh();
           setIsRefreshing(false);
+        } catch (error) {
+          setIsRefreshing(false);
+          throw error;
         }
       }}
     >
-      {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Refresh"}
+      {isRefreshing ? <Loader2 className="size-4 animate-spin" /> : "Refresh"}
     </Button>
   );
 }
@@ -179,43 +181,92 @@ function parseIssueOrPRUrl(url: string): {
   };
 }
 
+type GithubTesterState = {
+  issueOrPRUrl: string;
+  comment: string;
+  output: string | null;
+  error: string | null;
+  isLoading: boolean;
+};
+
+type GithubTesterAction =
+  | { type: "set-issue-or-pr-url"; issueOrPRUrl: string }
+  | { type: "set-comment"; comment: string }
+  | { type: "submit-start" }
+  | { type: "submit-success"; output: string }
+  | { type: "submit-result-error"; error: string };
+
+function githubTesterReducer(
+  state: GithubTesterState,
+  action: GithubTesterAction,
+): GithubTesterState {
+  switch (action.type) {
+    case "set-issue-or-pr-url":
+      return { ...state, issueOrPRUrl: action.issueOrPRUrl };
+    case "set-comment":
+      return { ...state, comment: action.comment };
+    case "submit-start":
+      return { ...state, isLoading: true, error: null, output: null };
+    case "submit-success":
+      return {
+        ...state,
+        isLoading: false,
+        output: action.output,
+      };
+    case "submit-result-error":
+      return {
+        ...state,
+        isLoading: false,
+        error: action.error,
+      };
+  }
+}
+
 export function AdminGithubAppTester() {
   usePageBreadcrumbs([
     { label: "Admin", href: "/internal/admin" },
     { label: "GitHub App Tester" },
   ]);
 
-  const [issueOrPRUrl, setIssueOrPRUrl] = useState("");
-  const [comment, setComment] = useState("");
-  const [output, setOutput] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [state, dispatch] = useReducer(githubTesterReducer, {
+    issueOrPRUrl: "",
+    comment: "",
+    output: null,
+    error: null,
+    isLoading: false,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-    setOutput(null);
+    dispatch({ type: "submit-start" });
 
     try {
-      const { owner, repo, issueOrPRNumber, issueOrPRType } =
-        parseIssueOrPRUrl(issueOrPRUrl);
+      const { owner, repo, issueOrPRNumber, issueOrPRType } = parseIssueOrPRUrl(
+        state.issueOrPRUrl,
+      );
       const result = await postGitHubCommentForTesting({
         owner,
         repo,
-        comment,
+        comment: state.comment,
         issueOrPRType,
         issueOrPRNumber,
       });
       if (result.success) {
-        setOutput(result.message || "Success");
+        dispatch({
+          type: "submit-success",
+          output: result.message || "Success",
+        });
       } else {
-        setError(result.error || "Unknown error");
+        dispatch({
+          type: "submit-result-error",
+          error: result.error || "Unknown error",
+        });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setIsLoading(false);
+      dispatch({
+        type: "submit-result-error",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
     }
   };
 
@@ -235,8 +286,13 @@ export function AdminGithubAppTester() {
           <Input
             id="issue-or-pr-url"
             placeholder="https://github.com/terragon-labs/terragon/issues/1"
-            value={issueOrPRUrl}
-            onChange={(e) => setIssueOrPRUrl(e.target.value)}
+            value={state.issueOrPRUrl}
+            onChange={(e) =>
+              dispatch({
+                type: "set-issue-or-pr-url",
+                issueOrPRUrl: e.target.value,
+              })
+            }
             className="font-mono text-sm"
           />
         </div>
@@ -246,21 +302,30 @@ export function AdminGithubAppTester() {
           </label>
           <Textarea
             id="comment"
-            placeholder="Enter your comment here..."
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
+            placeholder="Enter your comment here…"
+            value={state.comment}
+            onChange={(e) =>
+              dispatch({
+                type: "set-comment",
+                comment: e.target.value,
+              })
+            }
             className="font-mono text-sm"
             rows={6}
           />
         </div>
         <Button
           type="submit"
-          disabled={isLoading || !issueOrPRUrl.trim() || !comment.trim()}
+          disabled={
+            state.isLoading ||
+            !state.issueOrPRUrl.trim() ||
+            !state.comment.trim()
+          }
         >
-          {isLoading ? (
+          {state.isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              Posting...
+              <Loader2 className="size-4 animate-spin mr-2" />
+              Posting…
             </>
           ) : (
             "Post Comment"
@@ -268,22 +333,22 @@ export function AdminGithubAppTester() {
         </Button>
       </form>
 
-      {error && (
+      {state.error && (
         <div className="mt-6 p-4 bg-[var(--error)]/10 border border-[var(--error)]/40 rounded-2xl">
           <h2 className="text-lg font-semibold text-[var(--error)] mb-2">
             Error
           </h2>
           <p className="text-sm text-[var(--error)]/90 whitespace-pre-wrap font-mono">
-            {error}
+            {state.error}
           </p>
         </div>
       )}
 
-      {output && (
+      {state.output && (
         <div className="mt-6 p-4 bg-[var(--card-cream,var(--card))] rounded-2xl border border-[var(--hairline,var(--border))]">
           <h2 className="text-lg font-semibold mb-2">Comment Posted</h2>
           <pre className="text-sm whitespace-pre-wrap font-mono bg-[var(--code-floor,var(--muted))] text-[var(--on-dark,var(--foreground))] p-4 rounded-xl border border-[var(--hairline,var(--border))]">
-            {output}
+            {state.output}
           </pre>
         </div>
       )}

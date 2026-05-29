@@ -1,6 +1,5 @@
 "use client";
 
-import { memo } from "react";
 import { useTerragonThread } from "./thread-context";
 import { ChatMessage } from "../chat-message";
 import type { UIMessage } from "@terragon/shared";
@@ -12,7 +11,7 @@ import type { UIMessage } from "@terragon/shared";
  * loop so this component doesn't re-read `ctx.messages` on every token
  * delta.
  */
-export const TerragonSystemMessage = memo(function TerragonSystemMessage({
+export function TerragonSystemMessage({
   message,
   messageIndex,
   isLatestMessage,
@@ -41,4 +40,4 @@ export const TerragonSystemMessage = memo(function TerragonSystemMessage({
       />
     </div>
   );
-});
+}

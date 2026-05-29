@@ -1,11 +1,8 @@
-import { getUserInfoOrRedirect } from "@/lib/auth-server";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 import type { Metadata } from "next";
 import { Stats } from "@/components/stats/main";
-import {
-  HydrationBoundary,
-  QueryClient,
-  dehydrate,
-} from "@tanstack/react-query";
+import { getUserInfoOrRedirect } from "@/lib/auth-server";
+import { getOrCreateQueryClient } from "@/lib/query-client";
 import { statsQueryOptions } from "@/queries/stats-queries";
 
 export const metadata: Metadata = {
@@ -15,7 +12,7 @@ export const metadata: Metadata = {
 export default async function StatsPage() {
   const userInfo = await getUserInfoOrRedirect();
   // Prefetch the default data (last 7 days)
-  const queryClient = new QueryClient();
+  const queryClient = getOrCreateQueryClient();
   await queryClient.prefetchQuery(
     statsQueryOptions({
       numDays: 7,

@@ -15,12 +15,13 @@ import {
   Shield,
   SquarePen,
   SunIcon,
+  type LucideIcon,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useSyncExternalStore } from "react";
 import { userAtom } from "@/atoms/user";
 import { signOut } from "@/components/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -57,10 +58,22 @@ const SidebarThreadList = dynamic(
   { ssr: false, loading: () => <SidebarThreadListLoading /> },
 );
 
+const subscribeToClientSnapshot = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
+function useIsClient() {
+  return useSyncExternalStore(
+    subscribeToClientSnapshot,
+    getClientSnapshot,
+    getServerSnapshot,
+  );
+}
+
 // Loading fallback — used in the Suspense boundary inside the sidebar
 function SidebarThreadListLoading() {
   return (
-    <div className="flex flex-col gap-2 px-3 py-3">
+    <div className="flex flex-col gap-2 p-3">
       <div className="h-3 w-20 rounded bg-muted animate-pulse" />
       <div className="h-8 rounded-md bg-muted/70 animate-pulse" />
       <div className="h-8 rounded-md bg-muted/50 animate-pulse" />
@@ -99,13 +112,13 @@ export function AppSidebar() {
   const user = useAtomValue(userAtom);
   const isAdmin = user?.role === "admin";
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useIsClient();
+  const toggleTheme = (event: Event) => {
+    event.preventDefault();
+    setTheme(resolvedTheme === "light" ? "dark" : "light");
+  };
 
   return (
     <Sidebar collapsible="icon" variant="inset" className="bg-app-background">
@@ -144,7 +157,7 @@ export function AppSidebar() {
               <NavItem
                 title="Home"
                 href="/dashboard"
-                icon={<Home className="size-4" />}
+                icon={Home}
                 isActive={pathname === "/dashboard"}
               />
             </SidebarMenu>
@@ -191,67 +204,64 @@ export function AppSidebar() {
               >
                 <SettingsDropdownItem
                   href="/settings"
-                  icon={<Settings className="size-4" />}
+                  icon={Settings}
                   label="General"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/settings/github"
-                  icon={<GitBranch className="size-4" />}
+                  icon={GitBranch}
                   label="GitHub & Pull Requests"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/settings/agent"
-                  icon={<Bot className="size-4" />}
+                  icon={Bot}
                   label="Agent"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/settings/integrations"
-                  icon={<Blocks className="size-4" />}
+                  icon={Blocks}
                   label="Integrations"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/automations"
-                  icon={<Workflow className="size-4" />}
+                  icon={Workflow}
                   label="Automations"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/stats"
-                  icon={<ChartColumnBig className="size-4" />}
+                  icon={ChartColumnBig}
                   label="Stats"
                   onSelect={router.push}
                 />
                 <SettingsDropdownItem
                   href="/environments"
-                  icon={<Container className="size-4" />}
+                  icon={Container}
                   label="Environments"
                   onSelect={router.push}
                 />
                 {isAdmin && (
                   <SettingsDropdownItem
                     href="/internal/admin"
-                    icon={<Shield className="size-4" />}
+                    icon={Shield}
                     label="Admin Panel"
                     onSelect={router.push}
                   />
                 )}
                 {mounted && (
                   <DropdownMenuItem
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      setTheme(resolvedTheme === "light" ? "dark" : "light");
-                    }}
+                    onSelect={toggleTheme}
                     className="rounded-md gap-2 text-sm"
                   >
                     <ThemeToggle resolvedTheme={resolvedTheme} />
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
-                  onClick={() => signOut()}
+                  onClick={signOut}
                   className="rounded-md gap-2 text-sm"
                 >
                   <LogOut className="size-4 text-muted-foreground" />
@@ -289,9 +299,10 @@ function NavItem({
 }: {
   title: string;
   href: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
   isActive: boolean;
 }) {
+  const Icon = icon;
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={isActive} tooltip={title}>
@@ -300,7 +311,7 @@ function NavItem({
           aria-current={isActive ? "page" : undefined}
           className="font-normal text-xs transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
         >
-          {icon}
+          <Icon className="size-4" />
           <span>{title}</span>
         </Link>
       </SidebarMenuButton>
@@ -315,17 +326,21 @@ function SettingsDropdownItem({
   onSelect,
 }: {
   href: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
   label: string;
   onSelect: (href: string) => void;
 }) {
+  const Icon = icon;
+  const navigateToSetting = () => {
+    onSelect(href);
+  };
   return (
     <DropdownMenuItem
-      onClick={() => onSelect(href)}
+      onClick={navigateToSetting}
       className="group/item rounded-md gap-2 text-sm transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
     >
       <span className="text-muted-foreground transition-colors duration-[var(--duration-quick)] group-hover/item:text-foreground group-focus/item:text-foreground">
-        {icon}
+        <Icon className="size-4" />
       </span>
       <span>{label}</span>
     </DropdownMenuItem>

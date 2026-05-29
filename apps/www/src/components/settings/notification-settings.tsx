@@ -73,7 +73,7 @@ export function NotificationSettings() {
           }}
           className="flex items-center gap-2 transition-[transform,background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
         >
-          <Bell className="w-3 h-3" />
+          <Bell className="size-3" />
           Enable
         </Button>
       </SettingsWithCTA>

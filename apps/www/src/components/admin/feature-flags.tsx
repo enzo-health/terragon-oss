@@ -39,7 +39,7 @@ export function AdminFeatureFlags({
     { label: "Feature Flags" },
   ]);
   const user = useAtomValue(userAtom);
-  const router = useRouter();
+  const { refresh } = useRouter();
 
   const userFeatureFlagOverridesMap = new Map(
     userFeatureFlagOverrides.map((f) => [f.featureFlagId, f.value]),
@@ -68,7 +68,7 @@ export function AdminFeatureFlags({
     }
     try {
       await deleteFeatureFlagAction(flag.id);
-      router.refresh();
+      refresh();
       toast.success(`Deleted feature flag: ${flag.name}`);
     } catch (error) {
       console.error(error);
@@ -86,7 +86,7 @@ export function AdminFeatureFlags({
     }
     try {
       const result = await deleteAllUnusedFeatureFlagsAction();
-      router.refresh();
+      refresh();
       toast.success(`Deleted ${result.deletedCount} unused feature flags`);
     } catch (error) {
       console.error(error);
@@ -199,7 +199,7 @@ export function AdminFeatureFlags({
                   onClick={() => handleDelete(flag)}
                   className="text-error hover:bg-error/10 hover:text-error"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="size-4" />
                 </Button>
               </>
             )}
@@ -210,7 +210,7 @@ export function AdminFeatureFlags({
   ];
 
   return (
-    <div className="mx-auto flex h-full w-full flex-col justify-start space-y-8">
+    <div className="mx-auto flex h-full w-full flex-col justify-start gap-y-8">
       <div>
         <div className="mb-3 flex items-baseline gap-2">
           <h2 className="text-base font-semibold tracking-tight">
@@ -243,7 +243,7 @@ export function AdminFeatureFlags({
               onClick={handleDeleteAllUnused}
               className="flex items-center gap-2"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="size-4" />
               Delete all unused ({inactiveFlags.length})
             </Button>
           </div>

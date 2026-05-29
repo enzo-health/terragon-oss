@@ -22,7 +22,7 @@ export async function TopBanner() {
             className="inline-flex items-center hover:opacity-80 transition-opacity"
             aria-label="View Anthropic status page"
           >
-            <ExternalLink className="h-4 w-4" />
+            <ExternalLink className="size-4" />
           </a>
         ) : undefined
       }

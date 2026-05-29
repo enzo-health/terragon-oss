@@ -7,6 +7,7 @@ interface UnoptimizedImageProps
 
 const UnoptimizedImage: React.FC<UnoptimizedImageProps> = ({
   fill,
+  alt = "",
   ...props
 }) => {
   const style: React.CSSProperties = fill
@@ -18,7 +19,7 @@ const UnoptimizedImage: React.FC<UnoptimizedImageProps> = ({
       }
     : {};
 
-  return <img {...props} style={style} />;
+  return React.createElement("img", { ...props, alt, style });
 };
 
 export default UnoptimizedImage;

@@ -199,6 +199,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                   {/* Scroll-to-bottom button floating above scroll area */}
                   <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
                     <button
+                      type="button"
                       onClick={forceScrollToBottom}
                       className={cn(
                         "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform,scale,box-shadow,background-color] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

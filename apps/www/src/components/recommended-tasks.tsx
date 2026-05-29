@@ -1,6 +1,5 @@
 "use client";
 
-import { memo } from "react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import type { AIModel } from "@terragon/agent/types";
 import { tasksForModel } from "./recommended-tasks.utils";
@@ -16,7 +15,7 @@ interface RecommendedTasksProps {
   selectedModel?: AIModel;
 }
 
-const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
+function ListRecommendedTaskItem({
   task,
   onTaskSelect,
 }: {
@@ -25,6 +24,7 @@ const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
 }) {
   return (
     <button
+      type="button"
       onClick={() => onTaskSelect(task.prompt)}
       className="group flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left transition-[background-color,color] duration-150 hover:bg-surface-cream-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]"
     >
@@ -41,7 +41,7 @@ const ListRecommendedTaskItem = memo(function ListRecommendedTaskItem({
       />
     </button>
   );
-});
+}
 
 export function RecommendedTasks({
   onTaskSelect,

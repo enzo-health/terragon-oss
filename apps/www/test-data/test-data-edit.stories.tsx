@@ -13,8 +13,8 @@ export const Edit: Story = () => {
   const messages = toUIMessages({ dbMessages, agent: "claudeCode" });
   return (
     <div>
-      {messages.map((message, idx) => {
-        return <ChatMessage key={idx} message={message} />;
+      {messages.map((message) => {
+        return <ChatMessage key={message.id} message={message} />;
       })}
     </div>
   );

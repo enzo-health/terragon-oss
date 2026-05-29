@@ -6,12 +6,10 @@ import {
   seedThreadList,
 } from "@/collections/thread-info-collection";
 import { ThreadInfo } from "@terragon/shared/db/types";
-import { useRef, useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
 
-export function dedupeThreadInfoList(
-  threads: readonly ThreadInfo[],
-): ThreadInfo[] {
+function dedupeThreadInfoList(threads: readonly ThreadInfo[]): ThreadInfo[] {
   const seenThreadIds = new Set<string>();
   const dedupedThreads: ThreadInfo[] = [];
 
@@ -44,19 +42,20 @@ export function useThreadInfoList(filters: {
     isLoading: isQueryLoading,
     isError,
   } = useInfiniteThreadList({ archived, automationId });
-  const threads = useMemo(
-    () => dedupeThreadInfoList(data?.pages.flatMap((page) => page) ?? []),
-    [data],
+  const threads = dedupeThreadInfoList(
+    data?.pages.flatMap((page) => page) ?? [],
   );
 
   // Seed the local collection whenever React Query delivers data
   useEffect(() => {
-    if (threads.length > 0) seedThreadList(threads);
-  }, [threads]);
+    const queryThreads = dedupeThreadInfoList(
+      data?.pages.flatMap((page) => page) ?? [],
+    );
+    if (queryThreads.length > 0) seedThreadList(queryThreads);
+  }, [data]);
 
   // Read from the local collection for reactive WebSocket updates
-  const collectionRef = useRef(getThreadInfoCollection());
-  const collection = collectionRef.current;
+  const collection = getThreadInfoCollection();
   const result = useLiveQuery(
     (q) => {
       let query = q.from({ t: collection });

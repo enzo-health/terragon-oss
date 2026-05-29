@@ -113,7 +113,7 @@ export function SettingsWithExternalLink({
   description?: string | React.ReactNode;
   href: string;
 }) {
-  const router = useRouter();
+  const { push } = useRouter();
   return (
     <SettingsWithCTA label={label} description={description}>
       <Button
@@ -121,7 +121,7 @@ export function SettingsWithExternalLink({
         size="sm"
         onClick={() => {
           if (href.startsWith("/")) {
-            router.push(href);
+            push(href);
           } else {
             window.open(href, "_blank");
           }
@@ -129,7 +129,7 @@ export function SettingsWithExternalLink({
         className="flex items-center gap-2 transition-[transform,background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
       >
         Manage
-        <ExternalLink className="w-3 h-3" />
+        <ExternalLink className="size-3" />
       </Button>
     </SettingsWithCTA>
   );

@@ -15,13 +15,13 @@ import {
 import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { NativeThread } from "./native-thread";
 import {
   decodeToolGroupFlags,
   getToolGroupFlags,
-  NativeThread,
   toolArgPreview,
   toolArgsDisplayText,
-} from "./native-thread";
+} from "./native-thread-utils";
 
 beforeAll(() => {
   (

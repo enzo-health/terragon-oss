@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { AllToolParts } from "@terragon/shared";
 import {
   GenericToolPart,
@@ -13,13 +13,9 @@ export function SearchTool({
 }: {
   toolPart: Extract<AllToolParts, { name: "Grep" | "Glob" }>;
 }) {
-  const toolArg = useMemo(
-    () =>
-      formatToolParameters(toolPart.parameters, {
-        keyOrder: ["pattern", "path", "include"],
-      }),
-    [toolPart.parameters],
-  );
+  const toolArg = formatToolParameters(toolPart.parameters, {
+    keyOrder: ["pattern", "path", "include"],
+  });
 
   return (
     <GenericToolPart

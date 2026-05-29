@@ -1,4 +1,4 @@
-import { default as React, memo } from "react";
+import React from "react";
 import { ReasoningBlock } from "@/components/ai-elements/reasoning-block";
 
 interface ThinkingPartProps {
@@ -7,7 +7,7 @@ interface ThinkingPartProps {
   isAgentWorking?: boolean;
 }
 
-const ThinkingPart = memo(function ThinkingPart({
+function ThinkingPart({
   thinking,
   isLatest = false,
   isAgentWorking = false,
@@ -19,6 +19,6 @@ const ThinkingPart = memo(function ThinkingPart({
       isAgentWorking={isAgentWorking}
     />
   );
-});
+}
 
 export { ThinkingPart };

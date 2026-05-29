@@ -1,5 +1,24 @@
 import { AdminSandboxContent } from "@/components/admin/sandbox-content";
 import { getAdminUserOrThrow } from "@/lib/auth-server";
+import { getSandboxDaemonLogs } from "@/server-actions/admin/sandbox";
+import type { SandboxProvider } from "@terragon/types/sandbox";
+
+async function renderSandboxContent(
+  sandboxProvider: SandboxProvider,
+  sandboxId: string,
+) {
+  const initialLogLines = await getSandboxDaemonLogs({
+    sandboxProvider,
+    sandboxId,
+  });
+  return (
+    <AdminSandboxContent
+      sandboxProvider={sandboxProvider}
+      sandboxId={sandboxId}
+      initialLogLines={initialLogLines}
+    />
+  );
+}
 
 export default async function AdminSandboxIdPage({
   params,
@@ -9,36 +28,16 @@ export default async function AdminSandboxIdPage({
   await getAdminUserOrThrow();
   const { providerAndId } = await params;
   if (providerAndId.length === 1) {
-    return (
-      <AdminSandboxContent
-        sandboxProvider="e2b"
-        sandboxId={providerAndId[0]!}
-      />
-    );
+    return renderSandboxContent("e2b", providerAndId[0]!);
   }
   if (providerAndId.length === 2) {
     switch (providerAndId[0]) {
       case "e2b":
-        return (
-          <AdminSandboxContent
-            sandboxProvider="e2b"
-            sandboxId={providerAndId[1]!}
-          />
-        );
+        return renderSandboxContent("e2b", providerAndId[1]!);
       case "daytona":
-        return (
-          <AdminSandboxContent
-            sandboxProvider="daytona"
-            sandboxId={providerAndId[1]!}
-          />
-        );
+        return renderSandboxContent("daytona", providerAndId[1]!);
       case "docker":
-        return (
-          <AdminSandboxContent
-            sandboxProvider="docker"
-            sandboxId={providerAndId[1]!}
-          />
-        );
+        return renderSandboxContent("docker", providerAndId[1]!);
       default:
         throw new Error(`Invalid provider ${providerAndId[0]}`);
     }

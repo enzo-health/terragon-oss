@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { getSandboxDaemonLogs } from "@/server-actions/admin/sandbox";
 import { Loader2, Download } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,39 +10,11 @@ import { cn } from "@/lib/utils";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import type { SandboxProvider } from "@terragon/types/sandbox";
 
-async function fetchLogs({
-  sandboxProvider,
-  sandboxId,
-  setLogLines,
-  setIsLoadingLogs,
-}: {
-  sandboxProvider: SandboxProvider;
-  sandboxId: string;
-  setLogLines: (logLines: string[]) => void;
-  setIsLoadingLogs: (isLoading: boolean) => void;
-}) {
-  if (!sandboxId) {
-    return;
-  }
-  setIsLoadingLogs(true);
-  try {
-    const logLines = await getSandboxDaemonLogs({
-      sandboxProvider,
-      sandboxId,
-    });
-    setLogLines(logLines);
-  } catch (error) {
-    setLogLines(["Failed to fetch logs", String(error)]);
-  } finally {
-    setIsLoadingLogs(false);
-  }
-}
-
 export function AdminSandboxContent(props: {
   sandboxProvider: SandboxProvider | null;
   sandboxId: string | null;
+  initialLogLines?: string[] | null;
 }) {
-  const router = useRouter();
   usePageBreadcrumbs([
     { label: "Admin", href: "/internal/admin" },
     { label: "Sandboxes", href: "/internal/admin/sandbox" },
@@ -52,9 +22,12 @@ export function AdminSandboxContent(props: {
   ]);
 
   const [sandboxId, setSandboxId] = useState(props.sandboxId ?? "");
-  const [logLines, setLogLines] = useState<string[] | null>(null);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const logLines = props.initialLogLines ?? null;
+  const isLoadingLogs = false;
   const [wrapLines, setWrapLines] = useState(false);
+  const sandboxPath = sandboxId
+    ? `/internal/admin/sandbox/${props.sandboxProvider ?? "e2b"}/${sandboxId}`
+    : "/internal/admin/sandbox";
 
   const handleDownloadLog = () => {
     if (!logLines || logLines.length === 0) return;
@@ -74,45 +47,23 @@ export function AdminSandboxContent(props: {
     URL.revokeObjectURL(url);
   };
 
-  useEffect(() => {
-    if (props.sandboxId && props.sandboxProvider) {
-      fetchLogs({
-        sandboxProvider: props.sandboxProvider,
-        sandboxId: props.sandboxId,
-        setLogLines,
-        setIsLoadingLogs,
-      });
-    }
-  }, [props.sandboxId, props.sandboxProvider]);
-
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       <div className="mt-4 flex min-h-0 flex-1 flex-col pb-4">
-        <div className="mb-6 flex gap-2">
+        <form className="mb-6 flex gap-2" action={sandboxPath}>
           <Input
             placeholder="Enter E2B Sandbox ID"
             className="font-mono text-sm tabular-nums"
             value={sandboxId}
             autoComplete="off"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                router.push(`/internal/admin/sandbox/${sandboxId}`);
-              }
-            }}
             onChange={(e) => {
               setSandboxId(e.currentTarget.value);
             }}
           />
-          <Button
-            variant="outline"
-            onClick={() => {
-              router.push(`/internal/admin/sandbox/${sandboxId}`);
-            }}
-          >
-            Submit
+          <Button type="submit" variant="outline">
+            View sandbox
           </Button>
-        </div>
+        </form>
         {props.sandboxId && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border">
             <div className="flex w-full items-center justify-between gap-4 border-b border-border px-4 py-2.5">
@@ -126,7 +77,7 @@ export function AdminSandboxContent(props: {
                   onClick={handleDownloadLog}
                   disabled={!logLines || logLines.length === 0 || isLoadingLogs}
                 >
-                  <Download className="mr-2 h-4 w-4" />
+                  <Download className="mr-2 size-4" />
                   Download
                 </Button>
                 <div className="flex items-center gap-2">
@@ -148,15 +99,15 @@ export function AdminSandboxContent(props: {
             </div>
             {isLoadingLogs && (
               <div className="flex h-64 items-center justify-center p-4 text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading logs...
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Loading logs…
               </div>
             )}
             {logLines && (
               <ScrollArea className="flex-1 overflow-auto bg-surface-dark [&>div]:w-fit">
                 <div className="flex w-fit flex-col gap-0.5 p-4 font-mono text-xs text-on-dark">
                   {logLines.map((logLine, index) => (
-                    <div key={index} className="flex gap-3">
+                    <div key={`${index + 1}:${logLine}`} className="flex gap-3">
                       <span className="select-none tabular-nums text-on-dark-soft/60">
                         {String(index + 1).padStart(4, " ")}
                       </span>
