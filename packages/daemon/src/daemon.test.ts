@@ -931,6 +931,215 @@ describe("daemon", () => {
     ]);
   });
 
+  it("drops model reroute meta events for a different app-server thread", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            } | null;
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "thread-current",
+            },
+          };
+        }
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "model/rerouted",
+              params: {
+                threadId: "thread-other",
+                fromModel: "gpt-5.4",
+                toModel: "gpt-5.3-codex",
+                reason: "usage_limit",
+              },
+            },
+            {
+              threadId: "thread-other",
+              threadState: null,
+            },
+          );
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {},
+            },
+            {
+              threadId: "thread-current",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: null,
+    } satisfies DaemonMessageClaude);
+
+    const payload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      metaEvents?: ThreadMetaEvent[];
+    };
+    expect(payload.metaEvents ?? []).toEqual([]);
+  });
+
+  it("refreshes ChatGPT auth tokens through the daemon-authenticated server route", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accessToken: "fresh-access-token",
+          chatgptAccountId: "account-1",
+          chatgptPlanType: "plus",
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const internals = daemon as unknown as {
+      refreshCodexChatGptAuthTokens: (
+        input: DaemonMessageClaude,
+        serverRequestParams?: Record<string, unknown>,
+      ) => Promise<{
+        accessToken: string;
+        chatgptAccountId: string;
+        chatgptPlanType?: string;
+      }>;
+    };
+
+    const result = await internals.refreshCodexChatGptAuthTokens({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      transportMode: "codex-app-server",
+      codexOAuthCredentialId: "credential-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/codex/chatgpt-auth-tokens/refresh",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Daemon-Token": TEST_INPUT_MESSAGE.token,
+        },
+        body: JSON.stringify({
+          threadId: TEST_INPUT_MESSAGE.threadId,
+          threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      accessToken: "fresh-access-token",
+      chatgptAccountId: "account-1",
+      chatgptPlanType: "plus",
+    });
+  });
+
+  it("passes ChatGPT previous account id as a consistency check during refresh", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accessToken: "fresh-access-token",
+          chatgptAccountId: "account-1",
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const internals = daemon as unknown as {
+      refreshCodexChatGptAuthTokens: (
+        input: DaemonMessageClaude,
+        serverRequestParams?: Record<string, unknown>,
+      ) => Promise<{
+        accessToken: string;
+        chatgptAccountId: string;
+        chatgptPlanType?: string;
+      }>;
+    };
+
+    await internals.refreshCodexChatGptAuthTokens(
+      {
+        ...TEST_INPUT_MESSAGE,
+        agent: "codex",
+        transportMode: "codex-app-server",
+        codexOAuthCredentialId: "credential-1",
+      },
+      { previousAccountId: "account-1" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/api/codex/chatgpt-auth-tokens/refresh",
+      expect.objectContaining({
+        body: JSON.stringify({
+          threadId: TEST_INPUT_MESSAGE.threadId,
+          threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+          previousAccountId: "account-1",
+        }),
+      }),
+    );
+  });
+
+  it("wires ChatGPT refresh into production app-server managers only for pinned OAuth runs", async () => {
+    const internals = daemon as unknown as {
+      getOrCreateAppServerManager: (input: DaemonMessageClaude) => Promise<{
+        refreshChatGptAuthTokens?: unknown;
+      }>;
+    };
+
+    const managerWithCredential = await internals.getOrCreateAppServerManager({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      transportMode: "codex-app-server",
+      codexOAuthCredentialId: "credential-1",
+    });
+    const managerWithoutCredential =
+      await internals.getOrCreateAppServerManager({
+        ...TEST_INPUT_MESSAGE,
+        agent: "codex",
+        transportMode: "codex-app-server",
+      });
+
+    expect(managerWithCredential.refreshChatGptAuthTokens).toEqual(
+      expect.any(Function),
+    );
+    expect(managerWithoutCredential.refreshChatGptAuthTokens).toBeNull();
+  });
+
   it("interrupts app-server turn on stop message instead of killing process", async () => {
     (daemon as any).appServerRunContexts.set(
       TEST_STOP_MESSAGE.threadChatId,

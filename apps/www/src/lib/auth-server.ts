@@ -126,6 +126,7 @@ export type DaemonRunTokenClaims = {
   transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: number;
   providers: DaemonTokenProvider[];
+  codexOAuthCredentialId?: string;
   nonce: string;
   issuedAt: number;
   exp: number;
@@ -272,6 +273,10 @@ function parseDaemonRunTokenClaims(raw: unknown): DaemonRunTokenClaims | null {
     transportMode: claims.transportMode,
     protocolVersion: claims.protocolVersion,
     providers,
+    ...(typeof claims.codexOAuthCredentialId === "string" &&
+    claims.codexOAuthCredentialId.length > 0
+      ? { codexOAuthCredentialId: claims.codexOAuthCredentialId }
+      : {}),
     nonce: claims.nonce,
     issuedAt: claims.issuedAt,
     exp: claims.exp,

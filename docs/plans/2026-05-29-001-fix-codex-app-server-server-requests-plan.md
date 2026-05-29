@@ -127,8 +127,10 @@ sequenceDiagram
 - `packages/daemon/src/codex-app-server.ts`
 - `packages/daemon/src/codex-app-server.test.ts`
 - `packages/daemon/src/daemon.ts`
+- `apps/www/src/app/api/codex/chatgpt-auth-tokens/refresh/route.ts`
+- `apps/www/src/agent/msg/codexCredentials.ts`
 
-**Approach:** Extend `CodexAppServerManagerOptions` with an optional refresh handler. The handler returns the app-server result shape for external-token refresh: fresh `accessToken`, stable `chatgptAccountId`, and optional `chatgptPlanType`. When no handler exists, return a structured unavailable error. In `daemon.ts`, pass a run-context-aware handler stub or existing credential helper only where the run has enough credential context; keep the full internal web endpoint migration deferred if current run inputs do not expose the required credential id safely.
+**Approach:** Extend `CodexAppServerManagerOptions` with an optional refresh handler. The handler returns the app-server result shape for external-token refresh: fresh `accessToken`, stable `chatgptAccountId`, and optional `chatgptPlanType`. When no handler exists, return a structured unavailable error. In `daemon.ts`, pass a run-context-aware handler only when the daemon dispatch carries a pinned Codex OAuth credential id. The handler calls a daemon-token-authenticated `apps/www` endpoint, and the endpoint refreshes exactly that pinned credential rather than selecting the current active credential at refresh time.
 
 **Execution note:** Avoid token logging; tests should use fake opaque token strings and assert they do not appear in warning metadata.
 
@@ -139,7 +141,8 @@ sequenceDiagram
 - Refresh request succeeds when the injected handler returns a token payload.
 - Refresh request returns a structured JSON-RPC error when the handler throws.
 - Refresh request returns a structured JSON-RPC error when no handler is configured.
-- Request params preserve `reason` and previous account metadata when passed to the handler.
+- App-server request params are wrapped as untrusted metadata when passed to the handler.
+- Production refresh calls use the daemon token and pinned Codex OAuth credential id.
 - Logs include method/request id but not access tokens.
 
 **Verification:** The app-server manager can satisfy the documented refresh request without knowing DB credential internals.
@@ -210,8 +213,8 @@ sequenceDiagram
 ## Risks & Dependencies
 
 - `chatgptAuthTokens` is experimental in the official Codex app-server docs. The implementation should be tolerant of unknown methods and field-name drift.
-- The full credential-expiry fix depends on a later `account/login/start` migration and refresh-token rotation locking. This slice makes that migration possible but does not claim to complete the entire auth lifecycle.
-- If current daemon run input lacks a safe credential identifier, U2 should land the handler seam and tests, then leave the web-token endpoint wiring as deferred work rather than guessing from sandbox state.
+- A later `account/login/start` migration may still simplify initial sandbox credential setup, but this slice wires the documented refresh path for pinned OAuth-backed Codex app-server runs.
+- API-key and built-in-credit Codex runs intentionally do not receive a ChatGPT OAuth refresh handler.
 
 ## Sources & Research
 

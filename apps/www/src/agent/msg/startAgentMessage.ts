@@ -39,6 +39,7 @@ import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { waitUntil } from "@vercel/functions";
 import { sendDaemonMessage } from "@/agent/daemon";
 import { ThreadError } from "@/agent/error";
+import { getActiveCodexOAuthCredentialId } from "@/agent/msg/codexCredentials";
 import { resolveImplementationRuntimeAdapter } from "@/agent/runtime/implementation-adapter";
 import {
   createSandboxForThread,
@@ -876,6 +877,10 @@ export async function startAgentMessage({
             agentForModel,
             userCredentials,
           );
+          const codexOAuthCredentialId =
+            threadChat.agent === "codex" && !shouldUseCredits
+              ? await getActiveCodexOAuthCredentialId({ userId })
+              : null;
 
           const runId = randomUUID();
           const tokenNonce = randomUUID();
@@ -964,6 +969,7 @@ export async function startAgentMessage({
                 transportMode: implementationDispatch.transportMode,
                 protocolVersion: implementationDispatch.protocolVersion,
                 agent: threadChat.agent,
+                codexOAuthCredentialId,
               },
             });
             dispatchLaunched = true;

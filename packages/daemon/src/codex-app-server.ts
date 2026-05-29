@@ -84,9 +84,26 @@ export type ChatGptAuthTokensRefreshResult = {
   chatgptPlanType?: string;
 };
 
+export type ChatGptAuthTokensRefreshRequest = {
+  serverRequestParams: Record<string, unknown>;
+};
+
 export type ChatGptAuthTokensRefreshHandler = (
-  params: Record<string, unknown>,
+  request: ChatGptAuthTokensRefreshRequest,
 ) => Promise<ChatGptAuthTokensRefreshResult>;
+
+function buildChatGptAuthTokensLoginParams(
+  tokens: ChatGptAuthTokensRefreshResult,
+): Record<string, unknown> {
+  return {
+    type: "chatgptAuthTokens",
+    accessToken: tokens.accessToken,
+    chatgptAccountId: tokens.chatgptAccountId,
+    ...(tokens.chatgptPlanType
+      ? { chatgptPlanType: tokens.chatgptPlanType }
+      : {}),
+  };
+}
 
 export type CodexAppServerThreadState = {
   threadChatId: string;
@@ -1611,6 +1628,18 @@ export class CodexAppServerManager {
         method: "initialized",
         params: {},
       });
+      if (this.refreshChatGptAuthTokens) {
+        const tokens = await this.withServerRequestTimeout(
+          this.refreshChatGptAuthTokens({
+            serverRequestParams: { reason: "initial_login" },
+          }),
+        );
+        await this.sendRequestInternal({
+          method: "account/login/start",
+          params: buildChatGptAuthTokensLoginParams(tokens),
+          timeoutMs: this.handshakeTimeoutMs,
+        });
+      }
       this.ready = true;
     })().finally(() => {
       this.readyPromise = null;
@@ -1913,7 +1942,9 @@ export class CodexAppServerManager {
           return;
         }
         const result = await this.withServerRequestTimeout(
-          this.refreshChatGptAuthTokens(request.params),
+          this.refreshChatGptAuthTokens({
+            serverRequestParams: request.params,
+          }),
         );
         await this.writeJsonLine({
           jsonrpc: "2.0",

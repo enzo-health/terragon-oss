@@ -36,6 +36,7 @@ export async function createDaemonRunCredentials({
   agent,
   transportMode,
   protocolVersion,
+  codexOAuthCredentialId,
 }: {
   userId: string;
   threadId: string;
@@ -46,6 +47,7 @@ export async function createDaemonRunCredentials({
   agent: AIAgent;
   transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
+  codexOAuthCredentialId?: string | null;
 }): Promise<{ token: string }> {
   const nowMs = Date.now();
   const daemonRunClaims = {
@@ -58,6 +60,7 @@ export async function createDaemonRunCredentials({
     transportMode,
     protocolVersion,
     providers: providersForAgent(agent),
+    ...(codexOAuthCredentialId ? { codexOAuthCredentialId } : {}),
     nonce: tokenNonce,
     issuedAt: nowMs,
     exp: nowMs + 1000 * 60 * 60 * 24,

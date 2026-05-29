@@ -102,6 +102,7 @@ export const DaemonMessageClaudeSchema = z
     acpServerId: z.string().nullable().optional(),
     acpSessionId: z.string().nullable().optional(),
     codexPreviousResponseId: z.string().nullable().optional(),
+    codexOAuthCredentialId: z.string().nullable().optional(),
     runtimeAdapterContract: RuntimeAdapterContractSchema.optional(),
   })
   .superRefine((value, ctx) => {

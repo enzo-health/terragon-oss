@@ -242,6 +242,21 @@ async function completeInitializeHandshake(
   await waitForCondition(() => processHandle.stdinWrites.length >= 2);
 }
 
+async function completeChatGptAuthTokensLogin(
+  processHandle: MockCodexAppServerProcess,
+): Promise<Record<string, unknown>> {
+  await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+  const loginRequest = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+  const loginId = typeof loginRequest.id === "number" ? loginRequest.id : 3;
+  processHandle.emitStdoutLine(
+    JSON.stringify({
+      id: loginId,
+      result: { type: "chatgptAuthTokens" },
+    }),
+  );
+  return loginRequest;
+}
+
 describe("extractThreadEvent", () => {
   test("passes through raw ThreadEvent payloads", () => {
     const event = extractThreadEvent({
@@ -884,6 +899,41 @@ describe("CodexAppServerManager", () => {
     });
   });
 
+  test("logs in with externally managed ChatGPT tokens when refresh handler is configured", async () => {
+    const refreshChatGptAuthTokens = vi
+      .fn<ChatGptAuthTokensRefreshHandler>()
+      .mockResolvedValue({
+        accessToken: "fresh-access-token",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "plus",
+      });
+    const { manager, processes } = createManagerHarness({
+      refreshChatGptAuthTokens,
+    });
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    const loginRequest = await completeChatGptAuthTokensLogin(processHandle);
+    await readyPromise;
+
+    expect(refreshChatGptAuthTokens).toHaveBeenCalledWith({
+      serverRequestParams: { reason: "initial_login" },
+    });
+    expect(loginRequest).toMatchObject({
+      jsonrpc: "2.0",
+      method: "account/login/start",
+      params: {
+        type: "chatgptAuthTokens",
+        accessToken: "fresh-access-token",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "plus",
+      },
+    });
+    await manager.kill();
+  });
+
   test("send correlates responses by id", async () => {
     const { manager, processes } = createManagerHarness();
 
@@ -1006,6 +1056,7 @@ describe("CodexAppServerManager", () => {
     await waitForCondition(() => processes.length === 1);
     const processHandle = processes[0]!;
     await completeInitializeHandshake(processHandle);
+    await completeChatGptAuthTokensLogin(processHandle);
     await readyPromise;
 
     const params = {
@@ -1021,11 +1072,13 @@ describe("CodexAppServerManager", () => {
       }),
     );
 
-    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForCondition(() => processHandle.stdinWrites.length >= 4);
     await waitForSettledWrites();
-    expect(processHandle.stdinWrites).toHaveLength(3);
-    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
-    expect(refreshChatGptAuthTokens).toHaveBeenCalledWith(params);
+    expect(processHandle.stdinWrites).toHaveLength(4);
+    const response = parseJsonObject(processHandle.stdinWrites[3] ?? "{}");
+    expect(refreshChatGptAuthTokens).toHaveBeenLastCalledWith({
+      serverRequestParams: params,
+    });
     expect(response).toMatchObject({
       jsonrpc: "2.0",
       id: 101,
@@ -1041,7 +1094,11 @@ describe("CodexAppServerManager", () => {
   test("sanitizes ChatGPT token refresh handler failures", async () => {
     const refreshChatGptAuthTokens = vi
       .fn<ChatGptAuthTokensRefreshHandler>()
-      .mockRejectedValue(
+      .mockResolvedValueOnce({
+        accessToken: "initial-access-token",
+        chatgptAccountId: "account-1",
+      })
+      .mockRejectedValueOnce(
         new Error("upstream failed with token sk-sensitive-token"),
       );
     const { manager, processes, logger } = createManagerHarness({
@@ -1052,6 +1109,7 @@ describe("CodexAppServerManager", () => {
     await waitForCondition(() => processes.length === 1);
     const processHandle = processes[0]!;
     await completeInitializeHandshake(processHandle);
+    await completeChatGptAuthTokensLogin(processHandle);
     await readyPromise;
 
     processHandle.emitStdoutLine(
@@ -1063,10 +1121,10 @@ describe("CodexAppServerManager", () => {
       }),
     );
 
-    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForCondition(() => processHandle.stdinWrites.length >= 4);
     await waitForSettledWrites();
-    expect(processHandle.stdinWrites).toHaveLength(3);
-    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(processHandle.stdinWrites).toHaveLength(4);
+    const response = parseJsonObject(processHandle.stdinWrites[3] ?? "{}");
     expect(JSON.stringify(response)).not.toContain("sk-sensitive-token");
     expect(response).toMatchObject({
       jsonrpc: "2.0",
@@ -1083,12 +1141,18 @@ describe("CodexAppServerManager", () => {
   });
 
   test("times out hanging ChatGPT token refresh handlers", async () => {
-    const refreshChatGptAuthTokens = vi.fn<ChatGptAuthTokensRefreshHandler>(
-      () =>
-        new Promise(() => {
-          return;
-        }),
-    );
+    const refreshChatGptAuthTokens = vi
+      .fn<ChatGptAuthTokensRefreshHandler>()
+      .mockResolvedValueOnce({
+        accessToken: "initial-access-token",
+        chatgptAccountId: "account-1",
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise(() => {
+            return;
+          }),
+      );
     const { manager, processes } = createManagerHarness({
       refreshChatGptAuthTokens,
       serverRequestTimeoutMs: 10,
@@ -1098,6 +1162,7 @@ describe("CodexAppServerManager", () => {
     await waitForCondition(() => processes.length === 1);
     const processHandle = processes[0]!;
     await completeInitializeHandshake(processHandle);
+    await completeChatGptAuthTokensLogin(processHandle);
     await readyPromise;
 
     processHandle.emitStdoutLine(
@@ -1109,10 +1174,10 @@ describe("CodexAppServerManager", () => {
       }),
     );
 
-    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForCondition(() => processHandle.stdinWrites.length >= 4);
     await waitForSettledWrites();
-    expect(processHandle.stdinWrites).toHaveLength(3);
-    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(processHandle.stdinWrites).toHaveLength(4);
+    const response = parseJsonObject(processHandle.stdinWrites[3] ?? "{}");
     expect(response).toMatchObject({
       jsonrpc: "2.0",
       id: 104,

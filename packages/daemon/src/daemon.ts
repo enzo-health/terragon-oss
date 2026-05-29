@@ -36,6 +36,7 @@ import {
 import {
   type CodexAppServerDiagnostics,
   CodexAppServerManager,
+  type ChatGptAuthTokensRefreshResult,
   extractMetaEvent,
   extractThreadEvent,
   SILENTLY_IGNORED_ITEM_TYPES,
@@ -149,6 +150,50 @@ function formatAppServerDiagnostics(
     `lastStderrLine=${diagnostics.lastStderrLine ?? "null"}`,
     `lastProcessError=${diagnostics.lastProcessError ?? "null"}`,
   ].join(", ");
+}
+
+function parseChatGptAuthTokensRefreshResult(
+  value: unknown,
+): ChatGptAuthTokensRefreshResult | null {
+  const record = toRecord(value);
+  if (!record) {
+    return null;
+  }
+  const accessToken = readString(record, "accessToken");
+  const chatgptAccountId = readString(record, "chatgptAccountId");
+  if (!accessToken || !chatgptAccountId) {
+    return null;
+  }
+  const chatgptPlanType = readString(record, "chatgptPlanType");
+  return {
+    accessToken,
+    chatgptAccountId,
+    ...(chatgptPlanType ? { chatgptPlanType } : {}),
+  };
+}
+
+function isThreadScopedMetaEventForRun({
+  metaEvent,
+  belongsToThread,
+}: {
+  metaEvent: ThreadMetaEvent;
+  belongsToThread: boolean;
+}): boolean {
+  if (belongsToThread) {
+    return true;
+  }
+  switch (metaEvent.kind) {
+    case "model.rerouted":
+      return metaEvent.threadId.length === 0;
+    case "account.rate_limits_updated":
+    case "mcp_server.startup_status_updated":
+    case "config.warning":
+    case "deprecation.notice":
+    case "session.initialized":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function isDaemonEventClaimInProgressError(error: unknown): boolean {
@@ -1322,7 +1367,49 @@ export class TerragonDaemon {
       useCredits: !!input.useCredits,
       daemonToken: input.token,
       transport: "websocket",
+      ...(input.codexOAuthCredentialId
+        ? {
+            refreshChatGptAuthTokens: async (request) =>
+              await this.refreshCodexChatGptAuthTokens(
+                input,
+                request.serverRequestParams,
+              ),
+          }
+        : {}),
     });
+  }
+
+  private async refreshCodexChatGptAuthTokens(
+    input: DaemonMessageClaude,
+    serverRequestParams: Record<string, unknown> = {},
+  ): Promise<ChatGptAuthTokensRefreshResult> {
+    const previousAccountId = readString(
+      serverRequestParams,
+      "previousAccountId",
+    );
+    const response = await fetch(
+      `${this.runtime.normalizedUrl}/api/codex/chatgpt-auth-tokens/refresh`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Daemon-Token": input.token,
+        },
+        body: JSON.stringify({
+          threadId: input.threadId,
+          threadChatId: input.threadChatId,
+          ...(previousAccountId ? { previousAccountId } : {}),
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`ChatGPT auth token refresh failed: ${response.status}`);
+    }
+    const parsed = parseChatGptAuthTokensRefreshResult(await response.json());
+    if (!parsed) {
+      throw new Error("ChatGPT auth token refresh returned invalid response");
+    }
+    return parsed;
   }
 
   private async stopAppServerTurn({
@@ -1492,14 +1579,10 @@ export class TerragonDaemon {
           // daemon-event POST body via a new `metaEvents` field so we don't
           // need a new HTTP endpoint.
           const metaEvent = extractMetaEvent(notification);
-          const isGlobalMetaEvent =
-            metaEvent?.kind === "account.rate_limits_updated" ||
-            metaEvent?.kind === "model.rerouted" ||
-            metaEvent?.kind === "mcp_server.startup_status_updated" ||
-            metaEvent?.kind === "config.warning" ||
-            metaEvent?.kind === "deprecation.notice" ||
-            metaEvent?.kind === "session.initialized";
-          if (metaEvent && (belongsToThread || isGlobalMetaEvent)) {
+          if (
+            metaEvent &&
+            isThreadScopedMetaEventForRun({ metaEvent, belongsToThread })
+          ) {
             this.enqueueMetaEvent({
               metaEvent,
               threadId: input.threadId,
