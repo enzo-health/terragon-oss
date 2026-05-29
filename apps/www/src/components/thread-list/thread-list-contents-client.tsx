@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useSyncExternalStore } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { ThreadListFilters } from "@/queries/thread-queries";
 
@@ -14,8 +14,12 @@ type ThreadListContentsClientProps = {
 };
 
 const ThreadListContents = lazy(() =>
-  import("./main").then((mod) => ({ default: mod.ThreadListContents })),
+  import("./contents").then((mod) => ({ default: mod.ThreadListContents })),
 );
+
+const subscribeToClientSnapshot = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 function ThreadListLoading() {
   return (
@@ -36,11 +40,11 @@ function ThreadListLoading() {
  * The rest of the page (sidebar shell, header, layout) still SSRs normally.
  */
 export function ThreadListContentsClient(props: ThreadListContentsClientProps) {
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  const isMounted = useSyncExternalStore(
+    subscribeToClientSnapshot,
+    getClientSnapshot,
+    getServerSnapshot,
+  );
 
   if (!isMounted) {
     return <ThreadListLoading />;

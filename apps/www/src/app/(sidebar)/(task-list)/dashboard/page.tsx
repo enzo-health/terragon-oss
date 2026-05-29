@@ -1,11 +1,8 @@
-import {
-  dehydrate,
-  HydrationBoundary,
-  QueryClient,
-} from "@tanstack/react-query";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 import type { Metadata } from "next";
 import { Dashboard } from "@/components/dashboard";
 import { getUserInfoOrRedirect } from "@/lib/auth-server";
+import { getOrCreateQueryClient } from "@/lib/query-client";
 import { threadListQueryOptions } from "@/queries/thread-queries";
 
 export const metadata: Metadata = {
@@ -23,7 +20,7 @@ export default async function DashboardPage({
 }) {
   // Auth + params in parallel. Auth doesn't need the URL params.
   const [, params] = await Promise.all([getUserInfoOrRedirect(), searchParams]);
-  const queryClient = new QueryClient();
+  const queryClient = getOrCreateQueryClient();
   const showArchived = params.archived === "true";
   // If archived is true, prefetch the archived threads otherwise do nothing
   // because active threads are prefetched by the task sidebar already.

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useCallback } from "react";
+import { useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   threadSelectionAtom,
@@ -25,7 +25,7 @@ import {
 import { TaskDeleteConfirmationModal } from "@/components/delete-confirmation-dialog";
 import { toast } from "sonner";
 
-export const BulkActionToolbar = memo(function BulkActionToolbar({
+export function BulkActionToolbar({
   threadIds,
   viewFilter,
 }: {
@@ -45,15 +45,15 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
   const allSelected =
     selectedCount === threadIds.length && threadIds.length > 0;
 
-  const handleSelectAll = useCallback(() => {
+  const toggleSelectAll = () => {
     if (allSelected) {
       deselectAll();
     } else {
       selectAll(threadIds);
     }
-  }, [allSelected, threadIds, selectAll, deselectAll]);
+  };
 
-  const handleArchive = useCallback(async () => {
+  const archiveSelectedThreads = async () => {
     const ids = Array.from(selection.selectedIds);
     const isArchiving = viewFilter === "active";
 
@@ -73,14 +73,9 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
     }
 
     exitSelectionMode();
-  }, [
-    selection.selectedIds,
-    viewFilter,
-    bulkArchiveMutation,
-    exitSelectionMode,
-  ]);
+  };
 
-  const handleDelete = useCallback(async () => {
+  const deleteSelectedThreads = async () => {
     const ids = Array.from(selection.selectedIds);
     const result = await bulkDeleteMutation.mutateAsync(ids);
 
@@ -96,7 +91,10 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
 
     setShowDeleteDialog(false);
     exitSelectionMode();
-  }, [selection.selectedIds, bulkDeleteMutation, exitSelectionMode]);
+  };
+  const openDeleteDialog = () => {
+    setShowDeleteDialog(true);
+  };
 
   if (!selection.isSelectionMode) {
     return null;
@@ -113,17 +111,17 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleSelectAll}
+            onClick={toggleSelectAll}
             className="h-8 gap-1.5 text-xs font-medium"
           >
             {allSelected ? (
               <>
-                <CheckSquare className="h-4 w-4" />
+                <CheckSquare className="size-4" />
                 <span>Deselect all</span>
               </>
             ) : (
               <>
-                <Square className="h-4 w-4" />
+                <Square className="size-4" />
                 <span>Select all</span>
               </>
             )}
@@ -137,14 +135,14 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleArchive}
+            onClick={archiveSelectedThreads}
             disabled={selectedCount === 0 || bulkArchiveMutation.isPending}
             className="h-8 gap-1.5 text-xs font-medium"
           >
             {viewFilter === "active" ? (
-              <Archive className="h-4 w-4" />
+              <Archive className="size-4" />
             ) : (
-              <ArchiveRestore className="h-4 w-4" />
+              <ArchiveRestore className="size-4" />
             )}
             <span className="hidden sm:inline">
               {viewFilter === "active" ? "Archive" : "Unarchive"}
@@ -154,11 +152,11 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setShowDeleteDialog(true)}
+            onClick={openDeleteDialog}
             disabled={selectedCount === 0 || bulkDeleteMutation.isPending}
             className="h-8 gap-1.5 text-xs font-medium text-destructive hover:text-destructive"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="size-4" />
             <span className="hidden sm:inline">Delete</span>
           </Button>
 
@@ -167,10 +165,10 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => exitSelectionMode()}
-            className="h-8 w-8"
+            onClick={exitSelectionMode}
+            className="size-8"
           >
-            <X className="h-4 w-4" />
+            <X className="size-4" />
           </Button>
         </div>
       </div>
@@ -178,9 +176,9 @@ export const BulkActionToolbar = memo(function BulkActionToolbar({
       <TaskDeleteConfirmationModal
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}
-        onConfirm={handleDelete}
+        onConfirm={deleteSelectedThreads}
         itemCount={selectedCount}
       />
     </>
   );
-});
+}

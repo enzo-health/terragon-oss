@@ -1,24 +1,23 @@
-import { memo } from "react";
+import type { ReactNode } from "react";
 
-const LeafLoading = memo(function LeafLoading({
+function LeafLoading({
   message = "Loading",
 }: {
-  message?: string | React.ReactNode;
+  message?: string | ReactNode;
 }) {
   return (
-    <div
-      role="status"
+    <output
       aria-live="polite"
       className="flex items-center gap-2.5 px-2 text-muted-foreground text-sm"
     >
-      <div className="typing-dots flex items-center gap-[3px]" aria-hidden>
+      <span className="typing-dots flex items-center gap-[3px]" aria-hidden>
         <span />
         <span />
         <span />
-      </div>
+      </span>
       <span className="flex items-center gap-1">{message}</span>
-    </div>
+    </output>
   );
-});
+}
 
 export { LeafLoading };

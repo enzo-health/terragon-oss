@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useReducer } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,40 +15,98 @@ import { userAtom } from "@/atoms/user";
 import { toast } from "sonner";
 import { useUserCreditBalanceQuery } from "@/queries/user-credit-balance-queries";
 
+type CreditTesterState = {
+  amountCents: string;
+  description: string;
+  loading: boolean;
+  autoReloadLoading: boolean;
+  success: string | null;
+  error: string | null;
+};
+
+type CreditTesterAction =
+  | { type: "set-amount-cents"; amountCents: string }
+  | { type: "set-description"; description: string }
+  | { type: "adjust-start" }
+  | { type: "adjust-success"; success: string }
+  | { type: "adjust-error"; error: string }
+  | { type: "auto-reload-start" }
+  | { type: "auto-reload-success" }
+  | { type: "auto-reload-error"; error: string };
+
+function creditTesterReducer(
+  state: CreditTesterState,
+  action: CreditTesterAction,
+): CreditTesterState {
+  switch (action.type) {
+    case "set-amount-cents":
+      return { ...state, amountCents: action.amountCents };
+    case "set-description":
+      return { ...state, description: action.description };
+    case "adjust-start":
+      return { ...state, loading: true, error: null, success: null };
+    case "adjust-success":
+      return {
+        ...state,
+        loading: false,
+        success: action.success,
+      };
+    case "adjust-error":
+      return { ...state, loading: false, error: action.error };
+    case "auto-reload-start":
+      return { ...state, autoReloadLoading: true, error: null, success: null };
+    case "auto-reload-success":
+      return { ...state, autoReloadLoading: false };
+    case "auto-reload-error":
+      return {
+        ...state,
+        autoReloadLoading: false,
+        error: action.error,
+      };
+  }
+}
+
 export function CreditTesterContent() {
-  const [amountCents, setAmountCents] = useState("1000");
-  const [description, setDescription] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [autoReloadLoading, setAutoReloadLoading] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(creditTesterReducer, {
+    amountCents: "1000",
+    description: "",
+    loading: false,
+    autoReloadLoading: false,
+    success: null,
+    error: null,
+  });
   const user = useAtomValue(userAtom);
 
   const { data: balance, refetch: refetchBalance } =
     useUserCreditBalanceQuery();
 
   const handleAdjustCredits = async () => {
-    const amount = Number(amountCents);
+    const amount = Number(state.amountCents);
     if (!Number.isFinite(amount)) {
-      setError("Amount must be a valid number");
+      dispatch({
+        type: "adjust-error",
+        error: "Amount must be a valid number",
+      });
       return;
     }
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
+    dispatch({ type: "adjust-start" });
     try {
       await topUpUserCredits({
         userId: user?.id!,
         amountCents: amount,
-        description: description.trim() || undefined,
+        description: state.description.trim() || undefined,
       });
-      setSuccess(`Successfully adjusted credits by ${formatCents(amount)}`);
       // Refresh balance
       await refetchBalance();
+      dispatch({
+        type: "adjust-success",
+        success: `Successfully adjusted credits by ${formatCents(amount)}`,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to adjust credits");
-    } finally {
-      setLoading(false);
+      dispatch({
+        type: "adjust-error",
+        error: err instanceof Error ? err.message : "Failed to adjust credits",
+      });
     }
   };
 
@@ -60,20 +118,17 @@ export function CreditTesterContent() {
   };
 
   const handleTriggerAutoReload = async () => {
-    setAutoReloadLoading(true);
-    setError(null);
-    setSuccess(null);
+    dispatch({ type: "auto-reload-start" });
     try {
       await forceCreditAutoReload();
       toast.success("Auto reload triggered successfully");
       await refetchBalance();
+      dispatch({ type: "auto-reload-success" });
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Failed to trigger auto reload";
-      setError(errorMessage);
       toast.error(errorMessage);
-    } finally {
-      setAutoReloadLoading(false);
+      dispatch({ type: "auto-reload-error", error: errorMessage });
     }
   };
 
@@ -92,7 +147,7 @@ export function CreditTesterContent() {
       <div className="space-y-2 rounded-[1.25rem] border border-hairline p-6 bg-card">
         {!balance ? (
           <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-6 w-6 animate-spin" />
+            <Loader2 className="size-6 animate-spin" />
           </div>
         ) : (
           <>
@@ -138,8 +193,13 @@ export function CreditTesterContent() {
             id="amount"
             type="number"
             placeholder="1000 = $10.00"
-            value={amountCents}
-            onChange={(e) => setAmountCents(e.target.value)}
+            value={state.amountCents}
+            onChange={(e) =>
+              dispatch({
+                type: "set-amount-cents",
+                amountCents: e.target.value,
+              })
+            }
             className="font-mono tabular-nums"
           />
           <p className="text-xs text-muted-foreground">
@@ -151,22 +211,27 @@ export function CreditTesterContent() {
           <Label htmlFor="description">Description (optional)</Label>
           <Textarea
             id="description"
-            placeholder="Reason for adjustment..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Reason for adjustment…"
+            value={state.description}
+            onChange={(e) =>
+              dispatch({
+                type: "set-description",
+                description: e.target.value,
+              })
+            }
             rows={3}
           />
         </div>
 
         <Button
           onClick={handleAdjustCredits}
-          disabled={loading || !amountCents}
+          disabled={state.loading || !state.amountCents}
           className="w-full rounded-full"
         >
-          {loading ? (
+          {state.loading ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing...
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              Processing…
             </>
           ) : (
             "Adjust Credits"
@@ -178,14 +243,14 @@ export function CreditTesterContent() {
         <h2 className="text-base font-semibold">Force Credit Auto Reload</h2>
         <Button
           onClick={handleTriggerAutoReload}
-          disabled={autoReloadLoading}
+          disabled={state.autoReloadLoading}
           className="w-full rounded-full"
           variant="outline"
         >
-          {autoReloadLoading ? (
+          {state.autoReloadLoading ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Triggering...
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              Triggering…
             </>
           ) : (
             "Trigger Auto Reload"
@@ -193,21 +258,21 @@ export function CreditTesterContent() {
         </Button>
       </section>
 
-      {error && (
+      {state.error && (
         <p
           role="alert"
           className="text-sm text-error rounded-xl border border-error/30 bg-error/5 px-4 py-3"
         >
-          {error}
+          {state.error}
         </p>
       )}
 
-      {success && (
+      {state.success && (
         <p
           role="status"
           className="text-sm text-success rounded-xl border border-success/30 bg-success/5 px-4 py-3"
         >
-          {success}
+          {state.success}
         </p>
       )}
     </div>

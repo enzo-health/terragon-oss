@@ -1,18 +1,15 @@
-import dynamic from "next/dynamic";
-import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
-import { notFound, redirect } from "next/navigation";
-import type { Metadata } from "next";
-import { getThreadDocumentTitle } from "@/agent/thread-utils";
-import {
-  HydrationBoundary,
-  QueryClient,
-  dehydrate,
-} from "@tanstack/react-query";
-import { threadShellQueryOptions } from "@/queries/thread-queries";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 import { ThreadPageShell } from "@terragon/shared";
-import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
-import { unwrapResult } from "@/lib/server-actions";
+import type { Metadata } from "next";
+import dynamic from "next/dynamic";
+import { notFound, redirect } from "next/navigation";
+import { getThreadDocumentTitle } from "@/agent/thread-utils";
 import { ChatUISkeleton } from "@/components/chat/chat-ui-skeleton";
+import { getUserIdOrNull, getUserIdOrRedirect } from "@/lib/auth-server";
+import { getOrCreateQueryClient } from "@/lib/query-client";
+import { unwrapResult } from "@/lib/server-actions";
+import { threadShellQueryOptions } from "@/queries/thread-queries";
+import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell";
 
 // Dynamically import the heavy ChatUI component for code splitting
 const ChatUI = dynamic(() => import("@/components/chat/chat-ui"), {
@@ -54,7 +51,7 @@ export default async function TaskPage({
     params,
     searchParams,
   ]);
-  const queryClient = new QueryClient();
+  const queryClient = getOrCreateQueryClient();
   const shellOptions = threadShellQueryOptions(id);
   await queryClient.prefetchQuery(shellOptions);
   const thread = queryClient.getQueryData<ThreadPageShell>(

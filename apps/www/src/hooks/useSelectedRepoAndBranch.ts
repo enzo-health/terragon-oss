@@ -1,7 +1,6 @@
 "use client";
 
 import { useAtomValue, useSetAtom } from "jotai";
-import { useCallback } from "react";
 import {
   promptPreferencesPersistedAtom,
   selectedBranchAtom,
@@ -20,15 +19,15 @@ export function useSelectedRepoAndBranch(): {
   const selectedBranch = useAtomValue(selectedBranchAtom);
   const setPromptPreferences = useSetAtom(promptPreferencesPersistedAtom);
 
-  const setSelectedRepoAndBranch = useCallback(
-    async (repo: string | null, branch: string | null) => {
-      await setPromptPreferences({
-        selectedRepo: repo,
-        selectedBranch: branch,
-      });
-    },
-    [setPromptPreferences],
-  );
+  const setSelectedRepoAndBranch = async (
+    repo: string | null,
+    branch: string | null,
+  ) => {
+    await setPromptPreferences({
+      selectedRepo: repo,
+      selectedBranch: branch,
+    });
+  };
 
   return {
     selectedRepo,

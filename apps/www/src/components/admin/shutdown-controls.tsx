@@ -17,7 +17,7 @@ export function ShutdownControls() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-error" />
+            <AlertTriangle className="size-5 text-error" />
             Shutdown controls
           </CardTitle>
           <CardDescription>
@@ -26,7 +26,7 @@ export function ShutdownControls() {
         </CardHeader>
         <CardContent className="space-y-6">
           <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
+            <AlertTriangle className="size-4" />
             <AlertTitle>Warning</AlertTitle>
             <AlertDescription>{INTERNAL_TENANT_NOTICE}</AlertDescription>
           </Alert>

@@ -39,7 +39,7 @@ export function EntityIdInput({
         }}
       />
       <Button variant="outline" onClick={handleSubmit} className="rounded-full">
-        Submit
+        Open entity
       </Button>
     </div>
   );

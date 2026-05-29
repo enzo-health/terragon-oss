@@ -16,7 +16,7 @@ export function AdminEnvironmentContent({
   environmentIdOrNull: string | null;
   environmentOrNull: EnvironmentWithUser | null;
 }) {
-  const router = useRouter();
+  const { push } = useRouter();
   usePageBreadcrumbs([
     { label: "Admin", href: "/internal/admin" },
     { label: "Environments", href: "/internal/admin/environment" },
@@ -29,7 +29,7 @@ export function AdminEnvironmentContent({
         <EntityIdInput
           placeholder="Enter Environment ID or Thread ID..."
           onSubmit={(value) => {
-            router.push(`/internal/admin/environment?id=${value}`);
+            push(`/internal/admin/environment?id=${value}`);
           }}
         />
 
@@ -81,8 +81,11 @@ export function AdminEnvironmentContent({
                       environmentOrNull.environmentVariables.length > 0 ? (
                       <div className="space-y-2">
                         {environmentOrNull.environmentVariables.map(
-                          (envVar, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
+                          (envVar) => (
+                            <div
+                              key={envVar.key}
+                              className="flex items-center gap-2"
+                            >
                               <span className="font-mono text-xs">
                                 {envVar.key}
                               </span>
@@ -120,12 +123,12 @@ export function AdminEnvironmentContent({
 }
 
 export function AdminEnvironmentIdOrThreadIdInput() {
-  const router = useRouter();
+  const { push } = useRouter();
   return (
     <EntityIdInput
       placeholder="Enter Environment ID or Thread ID..."
       onSubmit={(value) => {
-        router.push(`/internal/admin/environment?id=${value}`);
+        push(`/internal/admin/environment?id=${value}`);
       }}
     />
   );
@@ -136,7 +139,7 @@ function AdminEnvironmentDangerZone({
 }: {
   environment: EnvironmentWithUser;
 }) {
-  const router = useRouter();
+  const { push, refresh } = useRouter();
   const [isDeleting, setIsDeleting] = useState(false);
 
   return (
@@ -166,11 +169,15 @@ function AdminEnvironmentDangerZone({
               alert(
                 `Deleted environment ${res.environmentId} and ${res.deletedThreadCount} thread(s).`,
               );
-              router.push(`/internal/admin/environment`);
-              router.refresh();
-            } catch (e: any) {
-              alert(e?.message ?? "Failed to delete environment");
-            } finally {
+              push(`/internal/admin/environment`);
+              refresh();
+              setIsDeleting(false);
+            } catch (error) {
+              alert(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to delete environment",
+              );
               setIsDeleting(false);
             }
           }}

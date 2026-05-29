@@ -16,6 +16,7 @@ const redisMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/redis", () => ({
   redis: redisMocks,
+  isLocalRedisHttpMode: vi.fn().mockReturnValue(true),
 }));
 
 const {

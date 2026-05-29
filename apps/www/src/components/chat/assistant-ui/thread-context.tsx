@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 import type { ThreadInfoFull, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
@@ -77,7 +77,7 @@ const MessageRenderContext = createContext<TerragonMessageRenderContext | null>(
 export const TerragonMessageRenderProvider = MessageRenderContext.Provider;
 
 export function useTerragonThread(): TerragonThreadContext {
-  const ctx = useContext(Context);
+  const ctx = use(Context);
   if (!ctx) {
     throw new Error(
       "useTerragonThread must be used within a TerragonThreadProvider",
@@ -87,7 +87,7 @@ export function useTerragonThread(): TerragonThreadContext {
 }
 
 export function useTerragonMessageRender(): TerragonMessageRenderContext {
-  const ctx = useContext(MessageRenderContext);
+  const ctx = use(MessageRenderContext);
   if (!ctx) {
     throw new Error(
       "useTerragonMessageRender must be used within a TerragonMessageRenderProvider",

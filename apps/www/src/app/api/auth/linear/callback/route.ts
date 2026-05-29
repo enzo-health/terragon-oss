@@ -1,19 +1,23 @@
-import { NextRequest } from "next/server";
-import { getUserIdOrNull } from "@/lib/auth-server";
-import { decryptValue, encryptValue } from "@terragon/utils/encryption";
+import { LinearClient } from "@linear/sdk";
 import { env } from "@terragon/env/apps-www";
-import { redirect, notFound } from "next/navigation";
-import { db } from "@/lib/db";
 import {
   upsertLinearAccount,
   upsertLinearInstallation,
 } from "@terragon/shared/model/linear";
+import { decryptValue, encryptValue } from "@terragon/utils/encryption";
+import { notFound, redirect } from "next/navigation";
+import { NextRequest } from "next/server";
+import { getUserIdOrNull } from "@/lib/auth-server";
+import { db } from "@/lib/db";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
-import { LinearClient } from "@linear/sdk";
 import type { LinearOAuthStateType } from "@/server-actions/linear";
 
 /** PostgreSQL SQLSTATE for unique constraint violation. */
 const PG_UNIQUE_VIOLATION = "23505";
+
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   // 1. Verify userId from session — redirect to notFound if missing
@@ -53,36 +57,44 @@ export async function GET(request: NextRequest) {
     return;
   }
 
-  let stateUserId: string;
-  let timestamp: number;
-  let flowType: LinearOAuthStateType;
+  let statePayload: {
+    userId: string;
+    timestamp: number;
+    type: LinearOAuthStateType;
+  } | null = null;
   try {
     const decryptedState = decryptValue(state, env.ENCRYPTION_MASTER_KEY);
     const parsed = JSON.parse(decryptedState);
-    stateUserId = parsed.userId;
-    timestamp = parsed.timestamp;
+    const parsedUserId = parsed.userId;
+    const parsedTimestamp = parsed.timestamp;
     // Validate shape: prevent cross-flow state reuse and bypass via missing
     // or non-finite timestamp (NaN < cutoff is false — expiry skipped).
     // Accept either the workspace agent install flow or the per-user account
     // link flow — both are dispatched through this callback with a state
     // discriminator (see apps/www/src/server-actions/linear.ts).
     if (
-      typeof stateUserId !== "string" ||
-      !Number.isFinite(timestamp) ||
-      (parsed.type !== "agent_install" && parsed.type !== "account_link")
+      typeof parsedUserId === "string" &&
+      Number.isFinite(parsedTimestamp) &&
+      (parsed.type === "agent_install" || parsed.type === "account_link")
     ) {
-      redirect(
-        "/settings/integrations?integration=linear&status=error&code=invalid_state",
-      );
-      return;
+      statePayload = {
+        userId: parsedUserId,
+        timestamp: parsedTimestamp,
+        type: parsed.type,
+      };
     }
-    flowType = parsed.type;
   } catch {
+    statePayload = null;
+  }
+
+  if (statePayload === null) {
     redirect(
       "/settings/integrations?integration=linear&status=error&code=invalid_state",
     );
     return;
   }
+
+  const { userId: stateUserId, timestamp, type: flowType } = statePayload;
 
   // 4. Validate state contents: userId match and <24h expiry
   if (stateUserId !== userId) {
@@ -125,7 +137,8 @@ export async function GET(request: NextRequest) {
 
   // Separate fetch from redirect to avoid calling redirect() inside try/catch
   // (Next.js redirect() throws NEXT_REDIRECT which would be swallowed by catch)
-  let tokenResponse: Response;
+  let tokenResponse: Response | null = null;
+  let tokenExchangeFailed = false;
   try {
     tokenResponse = await fetch("https://api.linear.app/oauth/token", {
       method: "POST",
@@ -133,9 +146,14 @@ export async function GET(request: NextRequest) {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: params.toString(),
+      cache: "no-store",
     });
   } catch (err) {
     console.error("Linear token exchange network error:", err);
+    tokenExchangeFailed = true;
+  }
+
+  if (tokenExchangeFailed || tokenResponse === null) {
     redirect(
       "/settings/integrations?integration=linear&status=error&code=auth_error",
     );
@@ -180,10 +198,10 @@ export async function GET(request: NextRequest) {
   }
 
   const grantedScope: string = tokenData.scope;
-  const grantedScopes = grantedScope
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const grantedScopes = grantedScope.split(",").flatMap((scope) => {
+    const trimmedScope = scope.trim();
+    return trimmedScope ? [trimmedScope] : [];
+  });
 
   if (flowType === "account_link") {
     const hasOnlyRead =
@@ -230,25 +248,36 @@ export async function GET(request: NextRequest) {
   if (flowType === "account_link") {
     // 8a. Per-user identity link — Linear's docs explicitly recommend this
     //     pattern (see https://linear.app/developers/oauth-actor-authorization).
-    let linearUserId: string;
-    let linearUserName: string;
-    let linearUserEmail: string;
-    let organizationId: string;
+    let viewerPayload: {
+      linearUserId: string;
+      linearUserName: string;
+      linearUserEmail: string;
+      organizationId: string;
+    } | null = null;
     try {
       const viewer = await linearClient.viewer;
       const viewerOrg = await viewer.organization;
-      linearUserId = viewer.id;
-      linearUserName = viewer.name;
-      linearUserEmail = viewer.email;
-      organizationId = viewerOrg.id;
+      viewerPayload = {
+        linearUserId: viewer.id,
+        linearUserName: viewer.name,
+        linearUserEmail: viewer.email,
+        organizationId: viewerOrg.id,
+      };
     } catch (err) {
       console.error("Linear viewer fetch error:", { userId, flowType, err });
+    }
+
+    if (viewerPayload === null) {
       redirect(
         "/settings/integrations?integration=linear&status=error&code=auth_error",
       );
       return;
     }
 
+    const { linearUserId, linearUserName, linearUserEmail, organizationId } =
+      viewerPayload;
+
+    let isAlreadyLinked = false;
     try {
       await upsertLinearAccount({
         db,
@@ -269,12 +298,17 @@ export async function GET(request: NextRequest) {
         "code" in err &&
         (err as { code: unknown }).code === PG_UNIQUE_VIOLATION;
       if (isUniqueViolation) {
-        redirect(
-          "/settings/integrations?integration=linear&status=error&code=already_linked",
-        );
-        return;
+        isAlreadyLinked = true;
+      } else {
+        throw err;
       }
-      throw err;
+    }
+
+    if (isAlreadyLinked) {
+      redirect(
+        "/settings/integrations?integration=linear&status=error&code=already_linked",
+      );
+      return;
     }
 
     redirect(
@@ -286,24 +320,33 @@ export async function GET(request: NextRequest) {
   // 8b. Workspace agent install — fetch org info and persist tokens.
   const tokenExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000);
 
-  let organizationId: string;
-  let organizationName: string;
-  let appUserId: string;
+  let organizationPayload: {
+    organizationId: string;
+    organizationName: string;
+    appUserId: string;
+  } | null = null;
   try {
     const [org, viewer] = await Promise.all([
       linearClient.organization,
       linearClient.viewer,
     ]);
-    organizationId = org.id;
-    organizationName = org.name;
-    appUserId = viewer.id;
+    organizationPayload = {
+      organizationId: org.id,
+      organizationName: org.name,
+      appUserId: viewer.id,
+    };
   } catch (err) {
     console.error("Linear org fetch error:", err);
+  }
+
+  if (organizationPayload === null) {
     redirect(
       "/settings/integrations?integration=linear&status=error&code=auth_error",
     );
     return;
   }
+
+  const { organizationId, organizationName, appUserId } = organizationPayload;
 
   await upsertLinearInstallation({
     db,

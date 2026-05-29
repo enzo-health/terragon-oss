@@ -12,14 +12,14 @@ export function AutomationPill({
   className?: string;
   isReadOnly?: boolean;
 }) {
-  const router = useRouter();
+  const { push } = useRouter();
   return (
     <Pill
       onClick={(e) => {
         if (!isReadOnly) {
           e.preventDefault();
           e.stopPropagation();
-          router.push(`/automations/${automationId}`);
+          push(`/automations/${automationId}`);
         }
       }}
       className={cn(

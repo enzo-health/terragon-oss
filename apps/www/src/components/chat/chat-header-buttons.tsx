@@ -2,7 +2,7 @@
 
 import { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
-import { useState, memo } from "react";
+import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { PanelRight, PanelBottom } from "@/components/icons/panels";
 import { Button } from "../ui/button";
@@ -14,7 +14,7 @@ import { CodeButton } from "./chat-header-code-button";
 import { ShareButton } from "./chat-header-share-button";
 import { ShareDrawer } from "./chat-header-share-drawer";
 
-export const ChatHeaderButtons = memo(function ChatHeaderButtons({
+export function ChatHeaderButtons({
   thread,
   threadAgent,
   redoDialogData,
@@ -110,4 +110,4 @@ export const ChatHeaderButtons = memo(function ChatHeaderButtons({
       />
     </>
   );
-});
+}

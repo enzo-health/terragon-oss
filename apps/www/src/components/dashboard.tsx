@@ -6,7 +6,7 @@ import {
 } from "./promptbox/dashboard-promptbox";
 import { ThreadListMain } from "./thread-list/main";
 import { useTypewriterEffect } from "@/hooks/useTypewriter";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useInfiniteThreadList } from "@/queries/thread-queries";
@@ -37,8 +37,7 @@ function DashboardLaunchStatus({
   const isOpening = state.kind === "opening";
 
   return (
-    <div
-      role="status"
+    <output
       aria-live="polite"
       className="rounded-xl border border-hairline bg-card/80 px-4 py-3 shadow-[var(--shadow-warm-lift)] animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
     >
@@ -77,7 +76,7 @@ function DashboardLaunchStatus({
                 {state.title}
               </p>
               <span
-                className="h-1.5 w-1.5 rounded-full bg-coral/70 transition-opacity duration-[var(--duration-base)]"
+                className="size-1.5 rounded-full bg-coral/70 transition-opacity duration-[var(--duration-base)]"
                 style={{ opacity: isOpening ? 0 : 1 }}
               />
             </div>
@@ -106,7 +105,7 @@ function DashboardLaunchStatus({
           )}
         </div>
       </div>
-    </div>
+    </output>
   );
 }
 
@@ -119,95 +118,90 @@ export function Dashboard({
   const placeholder = useTypewriterEffect(typewriterEffectEnabled);
   const createThreadMutation = useCreateThreadMutation();
   const router = useRouter();
+  const { push } = router;
   const [launchState, setLaunchState] = useState<LaunchState>({
     kind: "idle",
   });
-  const handleSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
-    async ({
-      userMessage,
-      repoFullName,
-      selectedModels,
+  const handleSubmit: DashboardPromptBoxHandleSubmit = async ({
+    userMessage,
+    repoFullName,
+    selectedModels,
+    branchName,
+    saveAsDraft,
+    scheduleAt,
+    disableGitCheckpointing,
+    skipSetup,
+    createNewBranch,
+  }) => {
+    setLaunchState({
+      kind: "creating",
+      title: saveAsDraft
+        ? "Saving draft"
+        : scheduleAt
+          ? "Scheduling task"
+          : "Creating task",
+      detail:
+        saveAsDraft || scheduleAt
+          ? "Keeping your workspace ready without starting the agent."
+          : "Creating the task and preparing the workspace. You will move there automatically.",
+    });
+    const result = await createThreadMutation.mutateAsync({
+      message: userMessage,
+      githubRepoFullName: repoFullName,
       branchName,
       saveAsDraft,
-      scheduleAt,
       disableGitCheckpointing,
       skipSetup,
       createNewBranch,
-    }) => {
+      scheduleAt,
+      selectedModels,
+    });
+    if (saveAsDraft) {
+      setLaunchState({ kind: "idle" });
+      toast.success("Task saved as draft successfully.");
+    } else {
+      const taskHref = `/task/${result.threadId}`;
       setLaunchState({
-        kind: "creating",
-        title: saveAsDraft
-          ? "Saving draft"
-          : scheduleAt
-            ? "Scheduling task"
-            : "Creating task",
-        detail:
-          saveAsDraft || scheduleAt
-            ? "Keeping your workspace ready without starting the agent."
-            : "Creating the task and preparing the workspace. You will move there automatically.",
+        kind: "opening",
+        title: scheduleAt ? "Task scheduled" : "Opening task",
+        detail: scheduleAt
+          ? "The task is ready and will run at the scheduled time."
+          : "Task created. Opening the live agent workspace now.",
+        taskHref,
       });
-      const result = await createThreadMutation.mutateAsync({
-        message: userMessage,
-        githubRepoFullName: repoFullName,
-        branchName,
-        saveAsDraft,
-        disableGitCheckpointing,
-        skipSetup,
-        createNewBranch,
-        scheduleAt,
-        selectedModels,
-      });
-      if (saveAsDraft) {
-        setLaunchState({ kind: "idle" });
-        toast.success("Task saved as draft successfully.");
-      } else {
-        const taskHref = `/task/${result.threadId}`;
-        setLaunchState({
-          kind: "opening",
-          title: scheduleAt ? "Task scheduled" : "Opening task",
-          detail: scheduleAt
-            ? "The task is ready and will run at the scheduled time."
-            : "Task created. Opening the live agent workspace now.",
-          taskHref,
+      if (scheduleAt) {
+        toast.success("Task scheduled.", {
+          icon: <Rocket className="size-4" />,
+          duration: 2000,
         });
-        if (scheduleAt) {
-          toast.success("Task scheduled.", {
-            icon: <Rocket className="size-4" />,
-            duration: 2000,
-          });
-          router.push(taskHref);
-        } else {
-          await new Promise((resolve) => setTimeout(resolve, 140));
-          router.push(taskHref);
-        }
+        push(taskHref);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        push(taskHref);
       }
-    },
-    [createThreadMutation, router],
-  );
+    }
+  };
 
-  const handlePromptSubmit = useCallback<DashboardPromptBoxHandleSubmit>(
-    async (args) => {
-      try {
-        await handleSubmit(args);
-      } catch (error) {
-        setLaunchState({ kind: "idle" });
-        throw error;
-      }
-    },
-    [handleSubmit],
-  );
+  const handlePromptSubmit: DashboardPromptBoxHandleSubmit = async (args) => {
+    try {
+      await handleSubmit(args);
+    } catch (error) {
+      setLaunchState({ kind: "idle" });
+      throw error;
+    }
+  };
 
-  const handleStop = useCallback(async () => {
+  const handleStop = async () => {
     throw new Error("Cannot stop thread in dashboard.");
-  }, []);
+  };
 
-  const onUpdate = useCallback<HandleUpdate>(({ userMessage }) => {
+  const onUpdate: HandleUpdate = ({ userMessage }) => {
     const plainText = convertToPlainText({
       message: userMessage,
       skipAttachments: true,
     });
     setTypewriterEffectEnabled(plainText.length === 0);
-  }, []);
+  };
 
   const [promptText, setPromptText] = useState<string | null>(null);
   const selectedModel = useAtomValue(selectedModelAtom);
@@ -216,19 +210,9 @@ export function Dashboard({
   const showRecommendedTasks = (threadPages?.pages[0]?.length ?? 0) < 3;
   const isLaunching = launchState.kind !== "idle";
   const showRecommendedExpanded = showRecommendedTasks && !isLaunching;
+  const threadListQueryFilters = { archived: showArchived };
 
-  const [visibleLaunchState, setVisibleLaunchState] = useState<Exclude<
-    LaunchState,
-    { kind: "idle" }
-  > | null>(null);
-  useEffect(() => {
-    if (launchState.kind !== "idle") {
-      setVisibleLaunchState(launchState);
-      return;
-    }
-    const timeout = setTimeout(() => setVisibleLaunchState(null), 240);
-    return () => clearTimeout(timeout);
-  }, [launchState]);
+  const visibleLaunchState = launchState.kind === "idle" ? null : launchState;
 
   return (
     <div
@@ -295,7 +279,7 @@ export function Dashboard({
       </div>
       <div className="md:hidden">
         <ThreadListMain
-          queryFilters={{ archived: showArchived }}
+          queryFilters={threadListQueryFilters}
           viewFilter={showArchived ? "archived" : "active"}
           allowGroupBy={true}
           showSuggestedTasks={showRecommendedExpanded}

@@ -10,17 +10,17 @@ export function ImpersonateUserButton({ userId }: { userId: string }) {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleImpersonate = async () => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       await authClient.admin.impersonateUser({
         userId,
       });
       // We want a full page refresh here.
       window.location.href = `/`;
+      setIsLoading(false);
     } catch (error) {
       console.error("Failed to impersonate user:", error);
       toast.error("Failed to impersonate user");
-    } finally {
       setIsLoading(false);
     }
   };
@@ -32,7 +32,7 @@ export function ImpersonateUserButton({ userId }: { userId: string }) {
       variant="outline"
       className="rounded-full bg-warning/10 text-warning border-warning/30 hover:bg-warning/15 hover:text-warning gap-2"
     >
-      <UserCog className="h-4 w-4" />
+      <UserCog className="size-4" />
       {isLoading ? "Impersonating..." : "Impersonate"}
     </Button>
   );

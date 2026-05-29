@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { Square } from "lucide-react";
 import {
@@ -14,7 +14,7 @@ interface StopButtonProps {
   className?: string;
 }
 
-export const StopButton = memo(function StopButton({
+export function StopButton({
   disabled,
   handleStop,
   className,
@@ -40,4 +40,4 @@ export const StopButton = memo(function StopButton({
       <TooltipContent>Stop</TooltipContent>
     </Tooltip>
   );
-});
+}

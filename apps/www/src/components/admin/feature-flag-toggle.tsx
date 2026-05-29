@@ -26,7 +26,7 @@ export function UserFeatureFlagToggle({
   flagName: string;
   value: boolean | null;
 }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
 
   const handleValueChange = async (newValue: string) => {
     try {
@@ -47,7 +47,7 @@ export function UserFeatureFlagToggle({
           value: parsedValue,
         });
       }
-      router.refresh();
+      refresh();
       toast.success("Feature flag Override updated");
     } catch (error) {
       console.error(error);
@@ -81,7 +81,7 @@ export function GlobalFeatureFlagToggle({
   flagName: string;
   value: boolean | null;
 }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [pendingValue, setPendingValue] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -109,14 +109,14 @@ export function GlobalFeatureFlagToggle({
         flagName,
         value: parsedValue,
       });
-      router.refresh();
+      refresh();
       toast.success("Global feature flag override updated");
       setConfirmDialogOpen(false);
       setPendingValue(null);
+      setIsLoading(false);
     } catch (error) {
       console.error(error);
       toast.error(`Failed to update global feature flag override`);
-    } finally {
       setIsLoading(false);
     }
   };

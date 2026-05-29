@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -23,15 +23,15 @@ import { User } from "@terragon/shared";
 import { toast } from "sonner";
 
 export function UserRoleSelector({ user }: { user: User }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingRole, setPendingRole] = useState<"admin" | "user" | null>(null);
+  const pendingRoleRef = useRef<"admin" | "user" | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
   const handleRoleChange = async (value: "admin" | "user") => {
     // If changing to admin, show confirmation dialog
     if (value === "admin" && user.role !== "admin") {
-      setPendingRole(value);
+      pendingRoleRef.current = value;
       setShowConfirmDialog(true);
       return;
     }
@@ -44,22 +44,22 @@ export function UserRoleSelector({ user }: { user: User }) {
     setIsUpdating(true);
     try {
       await changeUserRole(user.id, role);
-      router.refresh();
+      refresh();
       toast.success("User role updated");
+      setIsUpdating(false);
     } catch (error) {
       console.error(error);
       toast.error(`Failed to update user role`);
-    } finally {
       setIsUpdating(false);
     }
   };
 
   const handleConfirm = async () => {
-    if (pendingRole) {
-      await updateUserRole(pendingRole);
+    if (pendingRoleRef.current) {
+      await updateUserRole(pendingRoleRef.current);
     }
     setShowConfirmDialog(false);
-    setPendingRole(null);
+    pendingRoleRef.current = null;
   };
 
   return (
@@ -93,7 +93,7 @@ export function UserRoleSelector({ user }: { user: User }) {
               variant="outline"
               onClick={() => {
                 setShowConfirmDialog(false);
-                setPendingRole(null);
+                pendingRoleRef.current = null;
               }}
               disabled={isUpdating}
               className="rounded-full"

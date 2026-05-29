@@ -31,9 +31,9 @@ export function AdminSlackMessageDebugger() {
       } else {
         setError(result.error || "Unknown error");
       }
+      setIsLoading(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
       setIsLoading(false);
     }
   };
@@ -61,8 +61,8 @@ export function AdminSlackMessageDebugger() {
         <Button type="submit" disabled={isLoading || !url.trim()}>
           {isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              Parsing...
+              <Loader2 className="size-4 animate-spin mr-2" />
+              Parsing…
             </>
           ) : (
             "Parse URL"

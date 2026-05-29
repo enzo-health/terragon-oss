@@ -9,7 +9,7 @@ import { User } from "@terragon/shared";
 import { setShadowBanUser } from "@/server-actions/admin/user";
 
 export function ShadowBanUserToggle({ user }: { user: User }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [pending, setPending] = useState(false);
   const checked = !!user.shadowBanned;
 
@@ -19,19 +19,19 @@ export function ShadowBanUserToggle({ user }: { user: User }) {
         checked={checked}
         disabled={pending}
         onCheckedChange={async (next) => {
+          setPending(true);
           try {
-            setPending(true);
             await setShadowBanUser({ userId: user.id, shadowBanned: next });
             toast.success(
               next ? "User shadow banned (3 tasks/hour)" : "Shadow ban removed",
             );
-            router.refresh();
+            refresh();
+            setPending(false);
           } catch (err) {
             console.error(err);
             toast.error(
               err instanceof Error ? err.message : "Failed to update setting",
             );
-          } finally {
             setPending(false);
           }
         }}

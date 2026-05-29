@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Upload, Copy, X } from "lucide-react";
 import { generateImageUploadUrl } from "@/server-actions/admin/image-upload";
 import { useDropzone } from "react-dropzone";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -84,19 +85,21 @@ export function AdminImageUpload() {
       }
 
       toast.success("File uploaded successfully!");
+      setUploading(false);
+      setUploadProgress(0);
       return publicUrl;
     } catch (error) {
       console.error("Upload error:", error);
       toast.error(error instanceof Error ? error.message : "Upload failed");
-      throw error;
-    } finally {
       setUploading(false);
       setUploadProgress(0);
+      throw error;
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: uploadFile is stable via React Compiler
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+  const onDrop = async (acceptedFiles: File[]) => {
+    const validFiles: File[] = [];
+
     for (const file of acceptedFiles) {
       const isImage = file.type.startsWith("image/");
       const isSupportedVideo =
@@ -113,13 +116,21 @@ export function AdminImageUpload() {
         continue;
       }
 
-      try {
-        await uploadFile(file);
-      } catch (error) {
-        // Error already handled in uploadFile
-      }
+      validFiles.push(file);
     }
-  }, []);
+
+    await validFiles.reduce<Promise<void>>(
+      (previousUpload, file) =>
+        previousUpload.then(async () => {
+          try {
+            await uploadFile(file);
+          } catch {
+            // Error already handled in uploadFile
+          }
+        }),
+      Promise.resolve(),
+    );
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -167,8 +178,13 @@ export function AdminImageUpload() {
                   : "hover:border-coral/60 hover:bg-sunken",
               )}
             >
-              <input {...getInputProps()} />
-              <Upload className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+              <input
+                {...getInputProps({
+                  "aria-label": "Upload images or videos",
+                })}
+                title="Upload images or videos"
+              />
+              <Upload className="mx-auto mb-4 size-10 text-muted-foreground" />
               {isDragActive ? (
                 <p className="text-sm font-medium text-foreground">
                   Drop files to upload
@@ -208,22 +224,25 @@ export function AdminImageUpload() {
               <div className="divide-y divide-border rounded-xl border border-border">
                 {uploadedImages.map((image, index) => (
                   <div
-                    key={`${image.publicUrl}-${index}`}
+                    key={`${image.publicUrl}-${image.uploadedAt.toISOString()}`}
                     className="flex items-center gap-3 p-3"
                   >
                     {image.contentType.startsWith("video/") ? (
                       <video
                         src={image.publicUrl}
-                        className="h-14 w-14 rounded-md object-cover"
+                        className="size-14 rounded-md object-cover"
+                        aria-label={`Preview ${image.fileName}`}
                         controls
                         muted
                         playsInline
                       />
                     ) : (
-                      <img
+                      <Image
                         src={image.publicUrl}
                         alt={image.fileName}
-                        className="h-14 w-14 rounded-md object-cover"
+                        width={56}
+                        height={56}
+                        className="size-14 rounded-md object-cover"
                       />
                     )}
                     <div className="min-w-0 flex-1">
@@ -244,7 +263,7 @@ export function AdminImageUpload() {
                         onClick={() => copyToClipboard(image.publicUrl)}
                         aria-label="Copy URL"
                       >
-                        <Copy className="h-4 w-4" />
+                        <Copy className="size-4" />
                       </Button>
                       <Button
                         size="sm"
@@ -252,7 +271,7 @@ export function AdminImageUpload() {
                         onClick={() => removeImage(index)}
                         aria-label="Remove from list"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="size-4" />
                       </Button>
                     </div>
                   </div>

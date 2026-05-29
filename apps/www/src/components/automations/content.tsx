@@ -11,8 +11,17 @@ import { EditAutomationDialog } from "./edit-dialog";
 import { useRealtimeUser } from "@/hooks/useRealtime";
 import { ThreadListMain } from "../thread-list/main";
 
+const noopSetPromptText = () => {};
+
 export function AutomationContent({ automationId }: { automationId: string }) {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const openEditDialog = () => {
+    setIsEditDialogOpen(true);
+  };
+  const closeEditDialog = () => {
+    setIsEditDialogOpen(false);
+  };
+  const threadListQueryFilters = { automationId };
   const {
     data: automation,
     isLoading,
@@ -37,7 +46,7 @@ export function AutomationContent({ automationId }: { automationId: string }) {
   if (isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
       </div>
     );
   }
@@ -53,21 +62,18 @@ export function AutomationContent({ automationId }: { automationId: string }) {
   return (
     <>
       <div className="flex flex-col gap-6">
-        <AutomationItem
-          automation={automation}
-          onEdit={() => setIsEditDialogOpen(true)}
-        />
+        <AutomationItem automation={automation} onEdit={openEditDialog} />
         <ThreadListMain
           viewFilter="all"
           allowGroupBy={false}
-          queryFilters={{ automationId }}
+          queryFilters={threadListQueryFilters}
           showSuggestedTasks={false}
-          setPromptText={() => {}}
+          setPromptText={noopSetPromptText}
         />
       </div>
       <EditAutomationDialog
         automation={isEditDialogOpen ? automation : null}
-        onClose={() => setIsEditDialogOpen(false)}
+        onClose={closeEditDialog}
       />
     </>
   );

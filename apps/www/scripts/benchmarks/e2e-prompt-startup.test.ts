@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  type BenchmarkTraceSpan,
   browserBenchmarkMetricHelpersSource,
   buildChecks,
   consumeAgUiReceiptBatchForVisibleUpdate,
+  createBrowserBenchmarkMetricHelpers,
   summarizeLongTaskSamples,
-  type BenchmarkTraceSpan,
 } from "./e2e-prompt-startup";
 
 describe("consumeAgUiReceiptBatchForVisibleUpdate", () => {
@@ -207,11 +208,11 @@ describe("summarizeLongTaskSamples", () => {
 
 describe("browserBenchmarkMetricHelpersSource", () => {
   it("serializes the shared helpers for injected browser code", () => {
-    const loadHelpers = new Function(
-      `return ${browserBenchmarkMetricHelpersSource};`,
-    );
-    const helpers = loadHelpers();
+    const helpers = createBrowserBenchmarkMetricHelpers();
 
+    expect(browserBenchmarkMetricHelpersSource).toContain(
+      "consumeAgUiReceiptBatchForVisibleUpdate",
+    );
     expect(
       helpers.consumeAgUiReceiptBatchForVisibleUpdate({
         spans: [],

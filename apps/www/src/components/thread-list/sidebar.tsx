@@ -1,31 +1,33 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { PanelLeftClose, SquarePen } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { SquarePen, PanelLeftClose } from "lucide-react";
-import { ThreadListHeader } from "./main";
-import { ThreadListContentsClient } from "./thread-list-contents-client";
+import { type KeyboardEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useCollapsibleThreadList } from "./use-collapsible-thread-list";
 import { useResizablePanel } from "@/hooks/use-resizable-panel";
+import { cn } from "@/lib/utils";
 import { headerClassName } from "../shared/header";
+import { ThreadListHeader } from "./header";
+import { ThreadListContentsClient } from "./thread-list-contents-client";
+import { useCollapsibleThreadList } from "./use-collapsible-thread-list";
 
 const TASK_PANEL_MIN_WIDTH = 280;
 const TASK_PANEL_MAX_WIDTH = 600;
 const TASK_PANEL_DEFAULT_WIDTH = 251;
+const noopSetPromptText = () => {};
 
 export function ThreadListSidebar() {
+  const pathname = usePathname();
   const {
     canCollapseThreadList,
     isThreadListCollapsed,
     setThreadListCollapsed,
-  } = useCollapsibleThreadList();
-  const pathname = usePathname();
+  } = useCollapsibleThreadList(pathname);
   const isOnDashboard = pathname === "/dashboard";
 
   const [viewFilter, setViewFilter] = useState<"active" | "archived">("active");
+  const queryFilters = { archived: viewFilter === "archived" };
 
   const { width, isResizing, handleMouseDown } = useResizablePanel({
     minWidth: TASK_PANEL_MIN_WIDTH,
@@ -34,13 +36,22 @@ export function ThreadListSidebar() {
     mode: "fixed",
     direction: "ltr",
   });
+  const panelStyle = { width: `${width}px` };
+  const collapseThreadList = () => {
+    setThreadListCollapsed(true);
+  };
+  const handleResizeKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+    }
+  };
   if (isThreadListCollapsed) {
     return null;
   }
   return (
     <div
       className="hidden md:flex sticky top-0 h-full border-r bg-background flex-shrink-0 z-20"
-      style={{ width: `${width}px` }}
+      style={panelStyle}
     >
       <div className="flex flex-col h-full w-full overflow-hidden">
         <div
@@ -55,7 +66,7 @@ export function ThreadListSidebar() {
               href="/dashboard"
               className="flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
             >
-              <SquarePen className="h-3.5 w-3.5 text-muted-foreground" />
+              <SquarePen className="size-3.5 text-muted-foreground" />
               <span>New Task</span>
             </Link>
           )}
@@ -63,11 +74,11 @@ export function ThreadListSidebar() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setThreadListCollapsed(true)}
+              onClick={collapseThreadList}
               className="size-8 flex-shrink-0 rounded-md hover:bg-accent"
               title="Collapse task list"
             >
-              <PanelLeftClose className="h-4 w-4 text-muted-foreground" />
+              <PanelLeftClose className="size-4 text-muted-foreground" />
             </Button>
           )}
         </div>
@@ -79,30 +90,24 @@ export function ThreadListSidebar() {
         <div className="flex-1 overflow-y-auto px-1">
           <ThreadListContentsClient
             viewFilter={viewFilter}
-            queryFilters={{ archived: viewFilter === "archived" }}
+            queryFilters={queryFilters}
             allowGroupBy={true}
             showSuggestedTasks={false}
-            setPromptText={() => {}}
+            setPromptText={noopSetPromptText}
             isSidebar={true}
           />
         </div>
       </div>
 
-      <div
+      <button
+        type="button"
         className={cn(
           "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-accent transition-colors z-30",
           isResizing && "bg-accent",
         )}
         onMouseDown={handleMouseDown}
-        role="separator"
-        aria-orientation="vertical"
         aria-label="Resize task list"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-            e.preventDefault();
-          }
-        }}
+        onKeyDown={handleResizeKeyDown}
       />
     </div>
   );

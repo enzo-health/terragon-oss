@@ -16,7 +16,7 @@ export function DeleteEnvironmentButton({
   environmentId,
   repoFullName,
 }: DeleteEnvironmentButtonProps) {
-  const router = useRouter();
+  const { push, refresh } = useRouter();
   const [showDialog, setShowDialog] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -26,8 +26,8 @@ export function DeleteEnvironmentButton({
         await deleteEnvironment({ environmentId });
         toast.success(`Environment for ${repoFullName} deleted`);
         setShowDialog(false);
-        router.push("/environments");
-        router.refresh();
+        push("/environments");
+        refresh();
       } catch (error) {
         toast.error(
           error instanceof Error

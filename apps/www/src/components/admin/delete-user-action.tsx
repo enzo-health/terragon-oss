@@ -24,7 +24,7 @@ interface DeleteUserActionProps {
 }
 
 export function DeleteUserAction({ user }: DeleteUserActionProps) {
-  const router = useRouter();
+  const { push } = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -42,16 +42,17 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
       if (result.success) {
         toast.success("User deleted successfully");
         setIsOpen(false);
-        router.push("/internal/admin/user");
+        push("/internal/admin/user");
+        setIsLoading(false);
       } else {
         toast.error(result.errorMessage);
+        setIsLoading(false);
       }
     } catch (error) {
       console.error("Failed to delete user:", error);
       toast.error(
         error instanceof Error ? error.message : "Failed to delete user",
       );
-    } finally {
       setIsLoading(false);
     }
   };
@@ -77,7 +78,7 @@ export function DeleteUserAction({ user }: DeleteUserActionProps) {
           variant="destructive"
           className="flex items-center gap-2 rounded-full"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="size-4" />
           Delete User
         </Button>
       </DialogTrigger>

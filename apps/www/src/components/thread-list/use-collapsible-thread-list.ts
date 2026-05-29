@@ -1,24 +1,20 @@
-import { useCallback } from "react";
-import { useAtom } from "jotai";
-import { threadListCollapsedAtom } from "@/atoms/user-cookies";
+import { useAtomValue, useSetAtom } from "jotai";
 import { usePathname } from "next/navigation";
-import { useSidebar } from "@/components/ui/sidebar";
+import { threadListCollapsedAtom } from "@/atoms/user-cookies";
+import { usePlatform } from "@/hooks/use-platform";
 
-export function useCollapsibleThreadList() {
-  const { isMobile } = useSidebar();
-  const pathname = usePathname();
-  const [isThreadListCollapsedCookie, setIsThreadListCollapsedCookie] = useAtom(
-    threadListCollapsedAtom,
-  );
+export function useCollapsibleThreadList(pathnameOverride?: string) {
+  const currentPathname = usePathname();
+  const pathname = pathnameOverride ?? currentPathname;
+  const isMobile = usePlatform() === "mobile";
+  const isThreadListCollapsedCookie = useAtomValue(threadListCollapsedAtom);
+  const setIsThreadListCollapsedCookie = useSetAtom(threadListCollapsedAtom);
   const canCollapseThreadList = !isMobile && pathname !== "/dashboard";
-  const setThreadListCollapsed = useCallback(
-    (collapsed: boolean) => {
-      if (canCollapseThreadList) {
-        setIsThreadListCollapsedCookie(collapsed);
-      }
-    },
-    [canCollapseThreadList, setIsThreadListCollapsedCookie],
-  );
+  const setThreadListCollapsed = (collapsed: boolean) => {
+    if (canCollapseThreadList) {
+      setIsThreadListCollapsedCookie(collapsed);
+    }
+  };
   return {
     canCollapseThreadList,
     isThreadListCollapsed: canCollapseThreadList && isThreadListCollapsedCookie,

@@ -14,7 +14,7 @@ export function UserFlagToggle({
   flagName: string;
   value: boolean;
 }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   return (
     <div className="flex items-center gap-2">
       <Switch
@@ -22,7 +22,7 @@ export function UserFlagToggle({
         onCheckedChange={async (checked) => {
           try {
             await updateUserFlags(userId, { [flagName]: checked });
-            router.refresh();
+            refresh();
             toast.success("User flag updated");
           } catch (error) {
             console.error(error);

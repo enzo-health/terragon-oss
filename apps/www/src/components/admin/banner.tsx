@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   useAdminBannerQuery,
   useUpdateBannerMutation,
@@ -22,22 +22,42 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { BannerConfig } from "@/lib/banner";
 
+const EMPTY_BANNER_CONFIG: BannerConfig = {
+  message: "",
+  variant: "default",
+  enabled: false,
+};
+
 export function BannerAdmin() {
   const { data: bannerConfig, isLoading } = useAdminBannerQuery();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="size-8 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <BannerForm
+      key={bannerConfig?.message ?? "empty-banner"}
+      bannerConfig={bannerConfig ?? null}
+      initialFormData={bannerConfig ?? EMPTY_BANNER_CONFIG}
+    />
+  );
+}
+
+function BannerForm({
+  bannerConfig,
+  initialFormData,
+}: {
+  bannerConfig: BannerConfig | null;
+  initialFormData: BannerConfig;
+}) {
   const updateMutation = useUpdateBannerMutation();
   const deleteMutation = useDeleteBannerMutation();
-
-  const [formData, setFormData] = useState<BannerConfig>({
-    message: "",
-    variant: "default",
-    enabled: false,
-  });
-
-  useEffect(() => {
-    if (bannerConfig) {
-      setFormData(bannerConfig);
-    }
-  }, [bannerConfig]);
+  const [formData, setFormData] = useState<BannerConfig>(initialFormData);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,14 +88,6 @@ export function BannerAdmin() {
       });
     }
   };
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[50vh]">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    );
-  }
 
   return (
     <div className="container mx-auto max-w-2xl py-8">
@@ -176,7 +188,7 @@ export function BannerAdmin() {
                 disabled={updateMutation.isPending || deleteMutation.isPending}
               >
                 {updateMutation.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 size-4 animate-spin" />
                 )}
                 Save configuration
               </Button>
@@ -190,7 +202,7 @@ export function BannerAdmin() {
                   }
                 >
                   {deleteMutation.isPending && (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="mr-2 size-4 animate-spin" />
                   )}
                   Delete configuration
                 </Button>

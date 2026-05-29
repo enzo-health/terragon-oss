@@ -20,7 +20,7 @@ export function AdminGithubPRContent({
   prNumber: string;
   prOrNull: GithubPRForAdmin | null;
 }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   usePageBreadcrumbs([
@@ -52,14 +52,16 @@ export function AdminGithubPRContent({
                         prNumber: prOrNull.number,
                         repoFullName: prOrNull.repoFullName,
                       });
-                      router.refresh();
-                    } finally {
+                      refresh();
                       setIsRefreshing(false);
+                    } catch (error) {
+                      setIsRefreshing(false);
+                      throw error;
                     }
                   }}
                 >
                   {isRefreshing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="size-4 animate-spin" />
                   ) : (
                     "Refresh"
                   )}

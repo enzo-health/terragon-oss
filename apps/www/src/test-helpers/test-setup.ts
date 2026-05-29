@@ -1,9 +1,4 @@
 import { vi } from "vitest";
-import { createMockNextRequest } from "./mock-next";
-import { POST as processThreadQueuePOST } from "@/app/api/internal/process-thread-queue/[userId]/route";
-import { POST as processScheduledTaskPOST } from "@/app/api/internal/process-scheduled-task/[userId]/[threadId]/[threadChatId]/route";
-import { GET as cronScheduledTasksGET } from "@/app/api/internal/cron/scheduled-tasks/route";
-import { env } from "@terragon/env/apps-www";
 
 vi.mock("next/headers", async (importOriginal) => {
   const actual = (await importOriginal()) as any;
@@ -64,6 +59,15 @@ vi.mock("@/server-lib/internal-request", () => ({
   internalPOST: vi.fn().mockImplementation(async (path: string) => {
     console.log("internalPOST", path);
     if (path.startsWith("process-thread-queue/")) {
+      const [
+        { createMockNextRequest },
+        { POST: processThreadQueuePOST },
+        { env },
+      ] = await Promise.all([
+        import("./mock-next"),
+        import("@/app/api/internal/process-thread-queue/[userId]/route"),
+        import("@terragon/env/apps-www"),
+      ]);
       const userId = path.split("/")[1];
       if (!userId) {
         throw new Error(`Invalid userId in path: ${path}`);
@@ -80,6 +84,15 @@ vi.mock("@/server-lib/internal-request", () => ({
       );
     }
     if (path.startsWith("cron/scheduled-tasks")) {
+      const [
+        { createMockNextRequest },
+        { GET: cronScheduledTasksGET },
+        { env },
+      ] = await Promise.all([
+        import("./mock-next"),
+        import("@/app/api/internal/cron/scheduled-tasks/route"),
+        import("@terragon/env/apps-www"),
+      ]);
       return cronScheduledTasksGET(
         await createMockNextRequest(
           {},
@@ -92,7 +105,18 @@ vi.mock("@/server-lib/internal-request", () => ({
       );
     }
     if (path.startsWith("process-scheduled-task/")) {
-      const [_, userId, threadId, threadChatId] = path.split("/");
+      const [
+        { createMockNextRequest },
+        { POST: processScheduledTaskPOST },
+        { env },
+      ] = await Promise.all([
+        import("./mock-next"),
+        import(
+          "@/app/api/internal/process-scheduled-task/[userId]/[threadId]/[threadChatId]/route"
+        ),
+        import("@terragon/env/apps-www"),
+      ]);
+      const [, userId, threadId, threadChatId] = path.split("/");
       return processScheduledTaskPOST(
         await createMockNextRequest(
           {},
@@ -124,22 +148,35 @@ vi.mock("@terragon/shared/github-app", () => ({
   getInstallationToken: vi.fn().mockResolvedValue("mock-github-token"),
   getSandboxGithubToken: vi.fn().mockResolvedValue("mock-github-token"),
 }));
-vi.mock("@terragon/sandbox", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+vi.mock("@terragon/sandbox-image", () => ({
+  getTemplateIdForSize: vi.fn(() => "mock-template-id"),
+}));
+vi.mock("@terragon/bundled", () => ({
+  daemonAsStr: "mock-daemon-content",
+  mcpServerAsStr: "mock-mcp-server-content",
+}));
+vi.mock("@terragon/sandbox", () => {
   return {
-    ...actual,
+    extendSandboxLife: vi.fn().mockResolvedValue(undefined),
     hibernateSandbox: vi.fn().mockResolvedValue(undefined),
-    getOrCreateSandbox: vi.fn(async (sandboxId: string | null) => {
-      const mockSession = await actual.getSandboxOrNull({
-        sandboxProvider: "mock",
-        sandboxId: sandboxId ?? "mock-sandbox-id",
-      });
-      return mockSession!;
+    getSandboxOrNull: vi.fn().mockResolvedValue({
+      sandboxId: "mock-sandbox-id",
+      sandboxProvider: "mock",
+      runCommand: vi.fn(),
+      readTextFile: vi.fn(),
+      writeTextFile: vi.fn(),
     }),
+    getOrCreateSandbox: vi.fn().mockResolvedValue({
+      sandboxId: "mock-sandbox-id",
+      sandboxProvider: "mock",
+      runCommand: vi.fn(),
+      readTextFile: vi.fn(),
+      writeTextFile: vi.fn(),
+    }),
+    runSetupScript: vi.fn().mockResolvedValue(undefined),
   };
 });
-vi.mock("@terragon/sandbox/commands", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+vi.mock("@terragon/sandbox/commands", () => {
   const mockGitDiff = `
 diff --git a/test.txt b/test.txt
 index 1234567..89abcdef 100644
@@ -150,7 +187,6 @@ index 1234567..89abcdef 100644
 +Hello, world!
 `;
   return {
-    ...actual,
     getGitDiffMaybeCutoff: vi.fn().mockResolvedValue(mockGitDiff),
     gitDiffStats: vi.fn().mockResolvedValue({
       files: 1,
@@ -158,6 +194,8 @@ index 1234567..89abcdef 100644
       deletions: 0,
     }),
     gitPullUpstream: vi.fn().mockResolvedValue(undefined),
+    getCurrentBranchName: vi.fn().mockResolvedValue("terragon/test-branch"),
+    getGitDefaultBranch: vi.fn().mockResolvedValue("main"),
     gitCommitAndPushBranch: vi.fn().mockResolvedValue({
       branchName: "terragon/test-branch",
     }),

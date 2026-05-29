@@ -161,10 +161,13 @@ vi.mock("@/lib/redis", () => ({
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue("OK"),
     del: vi.fn().mockResolvedValue(1),
+    smembers: vi.fn().mockResolvedValue([]),
     xadd: vi.fn().mockResolvedValue("1-0"),
     pipeline: vi.fn(() => ({
       set: vi.fn(),
       del: vi.fn(),
+      srem: vi.fn(),
+      scard: vi.fn(),
       exec: vi.fn().mockResolvedValue([]),
     })),
   },

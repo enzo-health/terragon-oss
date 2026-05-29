@@ -2,7 +2,6 @@
 
 import type { HttpAgent } from "@ag-ui/client";
 import { EventType } from "@ag-ui/core";
-import { useMemo } from "react";
 import { useThreadQueryInvalidationScheduler } from "@/hooks/use-ag-ui-query-invalidator";
 import type { ThreadViewEvent } from "./thread-view-model/types";
 import {
@@ -60,11 +59,9 @@ export function useProductSidecars({
   threadChatId: string;
   dispatchThreadViewEvent: (event: ThreadViewEvent) => void;
 }): void {
-  const projectProductSidecarEvent = useMemo(() => {
-    const projector = createThreadViewSidecarEventProjector();
-    return (event: ThreadViewEventForAgUi) =>
-      isProductSidecarEvent(event) ? projector(event) : null;
-  }, []);
+  const projector = createThreadViewSidecarEventProjector();
+  const projectProductSidecarEvent = (event: ThreadViewEventForAgUi) =>
+    isProductSidecarEvent(event) ? projector(event) : null;
   const scheduleThreadQueryInvalidation = useThreadQueryInvalidationScheduler({
     threadId,
     threadChatId,

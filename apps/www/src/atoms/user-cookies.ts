@@ -1,20 +1,25 @@
 import { atom } from "jotai";
-import { atomWithStorage, createJSONStorage } from "jotai/utils";
 import {
-  UserCookies,
+  atomFamily,
+  atomWithStorage,
+  createJSONStorage,
+  selectAtom,
+} from "jotai/utils";
+import {
   CollapsedSections,
-  ThreadListGroupBy,
+  createNewBranchKey,
   defaultCollapsedSections,
   defaultThreadListGroupBy,
   defaultTimeZone,
-  timeZoneKey,
-  threadListCollapsedSectionsKey,
   disableGitCheckpointingKey,
-  skipSetupKey,
-  createNewBranchKey,
-  threadListGroupByKey,
-  threadListCollapsedKey,
   secondaryPaneClosedKey,
+  skipSetupKey,
+  ThreadListGroupBy,
+  threadListCollapsedKey,
+  threadListCollapsedSectionsKey,
+  threadListGroupByKey,
+  timeZoneKey,
+  UserCookies,
 } from "@/lib/cookies";
 import { getCookieOrNull, setCookie } from "@/lib/cookies-client";
 
@@ -237,6 +242,27 @@ export const threadSelectionAtom = atom<{
   isSelectionMode: false,
   lastSelectedId: null,
 });
+
+export const isThreadSelectionModeAtom = selectAtom(
+  threadSelectionAtom,
+  (selection) => selection.isSelectionMode,
+);
+
+export const lastSelectedThreadIdAtom = selectAtom(
+  threadSelectionAtom,
+  (selection) => selection.lastSelectedId,
+);
+
+export const threadListSectionCollapsedAtom = atomFamily((sectionId: string) =>
+  selectAtom(
+    threadListCollapsedSectionsAtom,
+    (collapsedSections) => !!collapsedSections[sectionId],
+  ),
+);
+
+export const selectedThreadAtom = atomFamily((threadId: string) =>
+  atom((get) => get(threadSelectionAtom).selectedIds.has(threadId)),
+);
 
 // Helper atom to toggle selection mode
 export const toggleSelectionModeAtom = atom(null, (get, set) => {

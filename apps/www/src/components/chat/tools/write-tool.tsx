@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { AllToolParts } from "@terragon/shared";
 import { WriteDiffView } from "@/components/shared/diff-view";
 import {
@@ -39,10 +39,7 @@ function WriteToolContent({
   toolPart: Extract<AllToolParts, { name: "Write" }>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const contentLineCount = useMemo(
-    () => countTextLines(toolPart.parameters.content),
-    [toolPart.parameters.content],
-  );
+  const contentLineCount = countTextLines(toolPart.parameters.content);
   if (toolPart.status === "pending") {
     return (
       <GenericToolPartContentOneLine toolStatus="pending">

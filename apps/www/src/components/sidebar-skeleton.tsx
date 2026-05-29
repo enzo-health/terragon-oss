@@ -8,7 +8,7 @@ export function SidebarSkeleton() {
       {/* Header skeleton */}
       <div className="flex items-center justify-between mb-6">
         <Skeleton className="h-8 w-24" />
-        <Skeleton className="h-8 w-8 rounded-lg" />
+        <Skeleton className="size-8 rounded-lg" />
       </div>
 
       {/* Navigation items skeleton */}
