@@ -18,6 +18,40 @@ type CodexAuthJson = {
   last_refresh: string;
 };
 
+type CodexChatGptAuthTokens = {
+  accessToken: string;
+  chatgptAccountId: string;
+  chatgptPlanType?: string;
+};
+
+function parseOpenAIIdTokenMetadata(idToken: string): {
+  chatgptAccountId?: string;
+  planType?: string;
+} {
+  try {
+    const parts = idToken.split(".");
+    if (parts.length !== 3) {
+      return {};
+    }
+    const payload = JSON.parse(
+      Buffer.from(parts[1]!, "base64url").toString("utf-8"),
+    ) as {
+      "https://api.openai.com/auth.chatgpt_account_id"?: unknown;
+      "https://api.openai.com/auth.chatgpt_plan_type"?: unknown;
+    };
+    const chatgptAccountId =
+      payload["https://api.openai.com/auth.chatgpt_account_id"];
+    const planType = payload["https://api.openai.com/auth.chatgpt_plan_type"];
+    return {
+      chatgptAccountId:
+        typeof chatgptAccountId === "string" ? chatgptAccountId : undefined,
+      planType: typeof planType === "string" ? planType : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function getValidAccessTokenInternal({
   userId,
   credentialId,
@@ -87,6 +121,82 @@ export async function forceRefreshCodexCredentials({
   credentialId: string;
 }): Promise<string | null> {
   return getValidAccessToken({ userId, credentialId, forceRefresh: true });
+}
+
+export async function refreshCodexChatGptAuthTokens({
+  userId,
+  credentialId,
+}: {
+  userId: string;
+  credentialId: string;
+}): Promise<CodexChatGptAuthTokens | null> {
+  const credentials = await getAgentProviderCredentialsDecryptedById({
+    db,
+    userId,
+    credentialId,
+    encryptionKey: env.ENCRYPTION_MASTER_KEY,
+  });
+  if (!credentials?.accessToken || credentials.type !== "oauth") {
+    return null;
+  }
+  if (credentials.agent !== "codex") {
+    return null;
+  }
+
+  const accessToken = await getValidAccessToken({
+    userId,
+    credentialId: credentials.id,
+    forceRefresh: true,
+  });
+  if (!accessToken) {
+    return null;
+  }
+
+  const reloaded = await getAgentProviderCredentialsDecryptedById({
+    db,
+    userId,
+    credentialId: credentials.id,
+    encryptionKey: env.ENCRYPTION_MASTER_KEY,
+  });
+  const finalCredentials = reloaded?.accessToken ? reloaded : credentials;
+  const metadata =
+    finalCredentials.metadata?.type === "openai"
+      ? finalCredentials.metadata
+      : null;
+  const idTokenMetadata = finalCredentials.idToken
+    ? parseOpenAIIdTokenMetadata(finalCredentials.idToken)
+    : {};
+  const chatgptAccountId =
+    idTokenMetadata.chatgptAccountId ??
+    metadata?.chatgptAccountId ??
+    metadata?.accountId;
+  if (!chatgptAccountId) {
+    return null;
+  }
+
+  const chatgptPlanType = idTokenMetadata.planType ?? metadata?.planType;
+  return {
+    accessToken,
+    chatgptAccountId,
+    ...(chatgptPlanType ? { chatgptPlanType } : {}),
+  };
+}
+
+export async function getActiveCodexOAuthCredentialId({
+  userId,
+}: {
+  userId: string;
+}): Promise<string | null> {
+  const credentials = await getAgentProviderCredentialsDecrypted({
+    db,
+    userId,
+    agent: "codex",
+    encryptionKey: env.ENCRYPTION_MASTER_KEY,
+  });
+  if (credentials?.type !== "oauth" || !credentials.accessToken) {
+    return null;
+  }
+  return credentials.id;
 }
 
 /**

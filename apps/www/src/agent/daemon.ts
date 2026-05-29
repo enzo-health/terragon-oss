@@ -22,6 +22,7 @@ type RunContext = {
   transportMode: "legacy" | "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
   agent: AIAgent;
+  codexOAuthCredentialId?: string | null;
 };
 
 type SendDaemonMessageArgsBase = {
@@ -239,6 +240,7 @@ export async function sendDaemonMessage({
           agent: runContext.agent,
           transportMode: runContext.transportMode,
           protocolVersion: runContext.protocolVersion,
+          codexOAuthCredentialId: runContext.codexOAuthCredentialId ?? null,
         }),
         getFeatureFlagsForUser({ db, userId }),
       ]);
@@ -248,6 +250,9 @@ export async function sendDaemonMessage({
         threadId,
         threadChatId,
         featureFlags,
+        ...(runContext.codexOAuthCredentialId
+          ? { codexOAuthCredentialId: runContext.codexOAuthCredentialId }
+          : {}),
       };
     } else {
       const apiKey = await auth.api.createApiKey({

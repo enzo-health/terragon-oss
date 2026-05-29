@@ -62,12 +62,48 @@ export type JsonRpcNotificationEnvelope = {
   params?: Record<string, unknown>;
 };
 
+type JsonRpcId = number | string;
+
+export type JsonRpcServerRequestEnvelope = {
+  jsonrpc?: string;
+  id: JsonRpcId;
+  method: string;
+  params: Record<string, unknown>;
+};
+
 export type CodexAppServerRequest = {
   method: string;
   params?: Record<string, unknown>;
   timeoutMs?: number;
   threadChatId?: string;
 };
+
+export type ChatGptAuthTokensRefreshResult = {
+  accessToken: string;
+  chatgptAccountId: string;
+  chatgptPlanType?: string;
+};
+
+export type ChatGptAuthTokensRefreshRequest = {
+  serverRequestParams: Record<string, unknown>;
+};
+
+export type ChatGptAuthTokensRefreshHandler = (
+  request: ChatGptAuthTokensRefreshRequest,
+) => Promise<ChatGptAuthTokensRefreshResult>;
+
+function buildChatGptAuthTokensLoginParams(
+  tokens: ChatGptAuthTokensRefreshResult,
+): Record<string, unknown> {
+  return {
+    type: "chatgptAuthTokens",
+    accessToken: tokens.accessToken,
+    chatgptAccountId: tokens.chatgptAccountId,
+    ...(tokens.chatgptPlanType
+      ? { chatgptPlanType: tokens.chatgptPlanType }
+      : {}),
+  };
+}
 
 export type CodexAppServerThreadState = {
   threadChatId: string;
@@ -284,7 +320,10 @@ type CodexItemEventType = "item.started" | "item.updated" | "item.completed";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 30_000;
+const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 10_000;
 const FORCE_KILL_TIMEOUT_MS = 5_000;
+const TERRAGON_DAEMON_CLIENT_VERSION =
+  process.env.npm_package_version?.trim() || "0.0.0";
 const EMPTY_USAGE: Usage = {
   input_tokens: 0,
   cached_input_tokens: 0,
@@ -353,6 +392,16 @@ function readNumber(
 ): number | null {
   const keyValue = value[key];
   return typeof keyValue === "number" ? keyValue : null;
+}
+
+function readJsonRpcId(
+  value: Record<string, unknown>,
+  key: string,
+): JsonRpcId | null {
+  const keyValue = value[key];
+  return typeof keyValue === "number" || typeof keyValue === "string"
+    ? keyValue
+    : null;
 }
 
 function normalizeCommandStatus(
@@ -1296,19 +1345,26 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
     return {
       kind: "model.rerouted",
       threadId,
-      originalModel: readString(params, "originalModel") ?? "",
-      reroutedModel: readString(params, "reroutedModel") ?? "",
+      originalModel:
+        readString(params, "fromModel") ??
+        readString(params, "originalModel") ??
+        "",
+      reroutedModel:
+        readString(params, "toModel") ??
+        readString(params, "reroutedModel") ??
+        "",
       reason: readString(params, "reason") ?? "",
     };
   }
 
   if (method === "mcpServer/startupStatus/updated") {
-    const serverName = readString(params, "serverName") ?? "";
+    const serverName =
+      readString(params, "name") ?? readString(params, "serverName") ?? "";
     const rawStatus = readString(params, "status") ?? "loading";
     const status: "loading" | "ready" | "error" =
       rawStatus === "ready"
         ? "ready"
-        : rawStatus === "error"
+        : rawStatus === "error" || rawStatus === "failed"
           ? "error"
           : "loading";
     const errorValue = readString(params, "error") ?? undefined;
@@ -1333,7 +1389,11 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
     };
   }
 
-  if (method === "config/warning") {
+  if (
+    method === "config/warning" ||
+    method === "warning" ||
+    method === "configWarning"
+  ) {
     const msg = readString(params, "message") ?? "";
     const ctx = readString(params, "context") ?? undefined;
     return {
@@ -1410,10 +1470,12 @@ export type CodexAppServerManagerOptions = {
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   handshakeTimeoutMs?: number;
+  serverRequestTimeoutMs?: number;
   spawnProcess?: CodexAppServerSpawn;
   transport?: CodexAppServerTransport;
   wsPort?: number;
   createWebSocket?: (url: string) => WebSocket;
+  refreshChatGptAuthTokens?: ChatGptAuthTokensRefreshHandler;
 };
 
 export type CodexAppServerDiagnostics = {
@@ -1433,12 +1495,14 @@ export class CodexAppServerManager {
   private readonly useCredits: boolean;
   private readonly requestTimeoutMs: number;
   private readonly handshakeTimeoutMs: number;
+  private readonly serverRequestTimeoutMs: number;
   private readonly spawnProcess: CodexAppServerSpawn;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly notificationHandlers =
     new Set<CodexAppServerNotificationHandler>();
   private readonly transport: CodexAppServerTransport;
   private readonly createWebSocket: (url: string) => WebSocket;
+  private readonly refreshChatGptAuthTokens: ChatGptAuthTokensRefreshHandler | null;
 
   private process: CodexAppServerProcess | null = null;
   private stdoutInterface: readline.Interface | null = null;
@@ -1467,10 +1531,12 @@ export class CodexAppServerManager {
     env = process.env,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     handshakeTimeoutMs = DEFAULT_HANDSHAKE_TIMEOUT_MS,
+    serverRequestTimeoutMs = DEFAULT_SERVER_REQUEST_TIMEOUT_MS,
     spawnProcess = defaultSpawnProcess,
     transport = "stdio",
     wsPort,
     createWebSocket = (url: string) => new WebSocket(url),
+    refreshChatGptAuthTokens,
   }: CodexAppServerManagerOptions) {
     this.logger = logger;
     this.model = model;
@@ -1479,10 +1545,12 @@ export class CodexAppServerManager {
     this.baseEnv = env;
     this.requestTimeoutMs = requestTimeoutMs;
     this.handshakeTimeoutMs = handshakeTimeoutMs;
+    this.serverRequestTimeoutMs = serverRequestTimeoutMs;
     this.spawnProcess = spawnProcess;
     this.transport = transport;
     this.wsPort = wsPort;
     this.createWebSocket = createWebSocket;
+    this.refreshChatGptAuthTokens = refreshChatGptAuthTokens ?? null;
   }
 
   spawn(): void {
@@ -1547,9 +1615,12 @@ export class CodexAppServerManager {
         params: {
           clientInfo: {
             name: "terragon-daemon",
-            version: "1.0",
+            title: "Terragon Daemon",
+            version: TERRAGON_DAEMON_CLIENT_VERSION,
           },
-          capabilities: {},
+          capabilities: {
+            experimentalApi: true,
+          },
         },
         timeoutMs: this.handshakeTimeoutMs,
       });
@@ -1557,6 +1628,18 @@ export class CodexAppServerManager {
         method: "initialized",
         params: {},
       });
+      if (this.refreshChatGptAuthTokens) {
+        const tokens = await this.withServerRequestTimeout(
+          this.refreshChatGptAuthTokens({
+            serverRequestParams: { reason: "initial_login" },
+          }),
+        );
+        await this.sendRequestInternal({
+          method: "account/login/start",
+          params: buildChatGptAuthTokensLoginParams(tokens),
+          timeoutMs: this.handshakeTimeoutMs,
+        });
+      }
       this.ready = true;
     })().finally(() => {
       this.readyPromise = null;
@@ -1815,6 +1898,26 @@ export class CodexAppServerManager {
     }
 
     const method = readString(record, "method");
+    const serverRequestId = readJsonRpcId(record, "id");
+    if (serverRequestId !== null && method) {
+      void this.handleServerRequest({
+        id: serverRequestId,
+        method,
+        params: toRecord(record.params) ?? {},
+      }).catch((error: unknown) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown server request response error";
+        this.logger.warn("Failed to respond to codex app-server request", {
+          id: serverRequestId,
+          method,
+          error: message,
+        });
+      });
+      return;
+    }
+
     if (!method || "id" in record) {
       return;
     }
@@ -1822,6 +1925,96 @@ export class CodexAppServerManager {
     this.dispatchNotification({
       method,
       params,
+    });
+  }
+
+  private async handleServerRequest(
+    request: JsonRpcServerRequestEnvelope,
+  ): Promise<void> {
+    try {
+      if (request.method === "account/chatgptAuthTokens/refresh") {
+        if (!this.refreshChatGptAuthTokens) {
+          await this.writeServerRequestError({
+            id: request.id,
+            code: -32002,
+            message: "ChatGPT auth token refresh is not configured",
+          });
+          return;
+        }
+        const result = await this.withServerRequestTimeout(
+          this.refreshChatGptAuthTokens({
+            serverRequestParams: request.params,
+          }),
+        );
+        await this.writeJsonLine({
+          jsonrpc: "2.0",
+          id: request.id,
+          result,
+        });
+        return;
+      }
+
+      this.logger.warn("Unsupported codex app-server server request", {
+        id: request.id,
+        method: request.method,
+      });
+      await this.writeServerRequestError({
+        id: request.id,
+        code: -32601,
+        message: `Unsupported server request: ${request.method}`,
+      });
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : typeof error;
+      this.logger.warn("codex app-server server request failed", {
+        id: request.id,
+        method: request.method,
+        error: errorName,
+      });
+      await this.writeServerRequestError({
+        id: request.id,
+        code: -32603,
+        message:
+          request.method === "account/chatgptAuthTokens/refresh"
+            ? "ChatGPT auth token refresh failed"
+            : "Server request handler failed",
+      });
+    }
+  }
+
+  private async withServerRequestTimeout<T>(promise: Promise<T>): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error("server request handler timed out"));
+          }, this.serverRequestTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  private async writeServerRequestError({
+    id,
+    code,
+    message,
+  }: {
+    id: JsonRpcId;
+    code: number;
+    message: string;
+  }): Promise<void> {
+    await this.writeJsonLine({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code,
+        message,
+      },
     });
   }
 
