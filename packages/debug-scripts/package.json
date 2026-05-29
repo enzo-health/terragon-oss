@@ -12,7 +12,7 @@
   "devDependencies": {
     "@e2b/cli": "^1.5.1",
     "@e2b/code-interpreter": "1.2.0-beta.4",
-    "@daytonaio/sdk": "0.115.2",
+    "@daytonaio/sdk": "0.183.0",
     "@terragon/tsconfig": "workspace:*",
     "@types/node": "^22.13.10",
     "dotenv": "^16.5.0",
