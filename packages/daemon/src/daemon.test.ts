@@ -838,6 +838,99 @@ describe("daemon", () => {
     expect(payload).not.toHaveProperty("canonicalEvents");
   });
 
+  it("preserves global model reroute meta events without thread context", async () => {
+    let notificationHandler:
+      | ((
+          notification: {
+            method: string;
+            params?: Record<string, unknown>;
+          },
+          context: {
+            threadId: string | null;
+            threadState: {
+              threadChatId: string;
+              parserState: ReturnType<typeof createCodexParserState>;
+            } | null;
+          },
+        ) => void)
+      | null = null;
+
+    const threadState = {
+      threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+      parserState: createCodexParserState(),
+    };
+    const appServerManager = {
+      restartIfTokenChanged: vi.fn().mockResolvedValue(undefined),
+      ensureReady: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(undefined),
+      onNotification: vi.fn((handler: typeof notificationHandler) => {
+        notificationHandler = handler;
+        return () => {};
+      }),
+      ensureThreadState: vi.fn(() => threadState),
+      isAlive: vi.fn(() => true),
+      send: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "thread/start") {
+          return {
+            thread: {
+              id: "thread-global-meta",
+            },
+          };
+        }
+        if (method === "turn/start" && notificationHandler) {
+          notificationHandler(
+            {
+              method: "model/rerouted",
+              params: {
+                fromModel: "gpt-5.4",
+                toModel: "gpt-5.3-codex",
+                reason: "usage_limit",
+              },
+            },
+            {
+              threadId: null,
+              threadState: null,
+            },
+          );
+          notificationHandler(
+            {
+              method: "turn/completed",
+              params: {},
+            },
+            {
+              threadId: "thread-global-meta",
+              threadState,
+            },
+          );
+        }
+        return {};
+      }),
+    };
+
+    vi.spyOn(daemon as any, "getOrCreateAppServerManager").mockResolvedValue(
+      appServerManager,
+    );
+
+    await (daemon as any).runAppServerCommand({
+      ...TEST_INPUT_MESSAGE,
+      agent: "codex",
+      model: "gpt-5",
+      transportMode: "codex-app-server",
+      sessionId: null,
+    } satisfies DaemonMessageClaude);
+
+    const payload = serverPostMock.mock.calls.at(-1)?.[0] as {
+      metaEvents?: ThreadMetaEvent[];
+    };
+    expect(payload.metaEvents).toEqual([
+      expect.objectContaining({
+        kind: "model.rerouted",
+        originalModel: "gpt-5.4",
+        reroutedModel: "gpt-5.3-codex",
+      }),
+    ]);
+  });
+
   it("interrupts app-server turn on stop message instead of killing process", async () => {
     (daemon as any).appServerRunContexts.set(
       TEST_STOP_MESSAGE.threadChatId,

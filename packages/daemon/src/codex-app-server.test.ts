@@ -14,6 +14,7 @@ import {
   type CodexAppServerSpawn,
   type CodexAppServerSpawnOptions,
   type CodexAppServerStdin,
+  type ChatGptAuthTokensRefreshHandler,
 } from "./codex-app-server";
 
 function loadFixture(name: string): Record<string, unknown> {
@@ -71,6 +72,12 @@ async function waitForCondition(
     });
   }
   throw new Error("Timed out waiting for condition");
+}
+
+async function waitForSettledWrites(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 20);
+  });
 }
 
 class MockCodexAppServerProcess
@@ -154,12 +161,16 @@ function createManagerHarness({
   writeDelayMs = 0,
   requestTimeoutMs = 200,
   handshakeTimeoutMs = 200,
+  serverRequestTimeoutMs = 200,
   daemonToken = "token-a",
+  refreshChatGptAuthTokens,
 }: {
   writeDelayMs?: number;
   requestTimeoutMs?: number;
   handshakeTimeoutMs?: number;
+  serverRequestTimeoutMs?: number;
   daemonToken?: string | null;
+  refreshChatGptAuthTokens?: ChatGptAuthTokensRefreshHandler;
 } = {}): {
   manager: CodexAppServerManager;
   logger: MockLogger;
@@ -200,7 +211,9 @@ function createManagerHarness({
     daemonToken,
     requestTimeoutMs,
     handshakeTimeoutMs,
+    serverRequestTimeoutMs,
     spawnProcess,
+    refreshChatGptAuthTokens,
   });
 
   return {
@@ -635,6 +648,26 @@ describe("extractMetaEvent (Task 2.8)", () => {
     expect(meta.reason).toBe("model_overloaded");
   });
 
+  test("model/rerouted accepts current fromModel/toModel fields", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "model/rerouted",
+      params: {
+        threadId: "thread-1",
+        fromModel: "gpt-5.4",
+        toModel: "gpt-5.3-codex",
+        reason: "usage_limit",
+      },
+    });
+
+    expect(meta?.kind).toBe("model.rerouted");
+    if (meta?.kind !== "model.rerouted") {
+      return;
+    }
+    expect(meta.originalModel).toBe("gpt-5.4");
+    expect(meta.reroutedModel).toBe("gpt-5.3-codex");
+  });
+
   // mcpServer/startupStatus/updated fixture.
   test("mcp-server-startup-status-updated fixture → mcp_server.startup_status_updated", () => {
     const fixture = loadFixture("mcp-server-startup-status-updated");
@@ -646,6 +679,26 @@ describe("extractMetaEvent (Task 2.8)", () => {
     }
     expect(meta.serverName).toBe("github-integration");
     expect(meta.status).toBe("ready");
+  });
+
+  test("mcpServer/startupStatus/updated accepts name and failed status", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        name: "linear",
+        status: "failed",
+        error: "OAuth required",
+      },
+    });
+
+    expect(meta?.kind).toBe("mcp_server.startup_status_updated");
+    if (meta?.kind !== "mcp_server.startup_status_updated") {
+      return;
+    }
+    expect(meta.serverName).toBe("linear");
+    expect(meta.status).toBe("error");
+    expect(meta.error).toBe("OAuth required");
   });
 
   // thread/status/changed (synthesized inline — no fixture).
@@ -687,6 +740,19 @@ describe("extractMetaEvent (Task 2.8)", () => {
     }
     expect(meta.message).toBe("deprecated option");
     expect(meta.context).toBe("model config");
+  });
+
+  test("configWarning inline → config.warning", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "configWarning",
+      params: { message: "unknown config key" },
+    });
+    expect(meta?.kind).toBe("config.warning");
+    if (meta?.kind !== "config.warning") {
+      return;
+    }
+    expect(meta.message).toBe("unknown config key");
   });
 
   // deprecation/notice (synthesized inline — no fixture).
@@ -798,7 +864,20 @@ describe("CodexAppServerManager", () => {
       jsonrpc: "2.0",
       method: "initialize",
       id: 1,
+      params: {
+        clientInfo: {
+          name: "terragon-daemon",
+          title: "Terragon Daemon",
+        },
+        capabilities: {
+          experimentalApi: true,
+        },
+      },
     });
+    const params = initialize.params as Record<string, unknown>;
+    const clientInfo = params.clientInfo as Record<string, unknown>;
+    expect(typeof clientInfo.version).toBe("string");
+    expect(clientInfo.version).not.toBe("");
     expect(initialized).toMatchObject({
       jsonrpc: "2.0",
       method: "initialized",
@@ -834,6 +913,246 @@ describe("CodexAppServerManager", () => {
 
     await expect(requestPromise).resolves.toEqual({
       thread: { id: "thread-1" },
+    });
+    await manager.kill();
+  });
+
+  test("responds to unsupported server-initiated JSON-RPC requests", async () => {
+    const { manager, processes, logger } = createManagerHarness();
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 99,
+        method: "item/tool/requestUserInput",
+        params: { prompt: "Approve?" },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 99,
+      error: {
+        code: -32601,
+        message: "Unsupported server request: item/tool/requestUserInput",
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Unsupported codex app-server server request",
+      {
+        id: 99,
+        method: "item/tool/requestUserInput",
+      },
+    );
+    await manager.kill();
+  });
+
+  test("echoes string ids for server-initiated JSON-RPC requests", async () => {
+    const { manager, processes } = createManagerHarness();
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "request-1",
+        method: "item/tool/requestUserInput",
+        params: { prompt: "Approve?" },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: "request-1",
+      error: {
+        code: -32601,
+        message: "Unsupported server request: item/tool/requestUserInput",
+      },
+    });
+    await manager.kill();
+  });
+
+  test("handles account/chatgptAuthTokens/refresh server requests", async () => {
+    const refreshChatGptAuthTokens = vi
+      .fn<ChatGptAuthTokensRefreshHandler>()
+      .mockResolvedValue({
+        accessToken: "fresh-access-token",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "plus",
+      });
+    const { manager, processes } = createManagerHarness({
+      refreshChatGptAuthTokens,
+    });
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    const params = {
+      reason: "unauthorized",
+      previousAccountId: "account-1",
+    };
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 101,
+        method: "account/chatgptAuthTokens/refresh",
+        params,
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(refreshChatGptAuthTokens).toHaveBeenCalledWith(params);
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 101,
+      result: {
+        accessToken: "fresh-access-token",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "plus",
+      },
+    });
+    await manager.kill();
+  });
+
+  test("sanitizes ChatGPT token refresh handler failures", async () => {
+    const refreshChatGptAuthTokens = vi
+      .fn<ChatGptAuthTokensRefreshHandler>()
+      .mockRejectedValue(
+        new Error("upstream failed with token sk-sensitive-token"),
+      );
+    const { manager, processes, logger } = createManagerHarness({
+      refreshChatGptAuthTokens,
+    });
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 103,
+        method: "account/chatgptAuthTokens/refresh",
+        params: { reason: "unauthorized" },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(JSON.stringify(response)).not.toContain("sk-sensitive-token");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 103,
+      error: {
+        code: -32603,
+        message: "ChatGPT auth token refresh failed",
+      },
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+      "sk-sensitive-token",
+    );
+    await manager.kill();
+  });
+
+  test("times out hanging ChatGPT token refresh handlers", async () => {
+    const refreshChatGptAuthTokens = vi.fn<ChatGptAuthTokensRefreshHandler>(
+      () =>
+        new Promise(() => {
+          return;
+        }),
+    );
+    const { manager, processes } = createManagerHarness({
+      refreshChatGptAuthTokens,
+      serverRequestTimeoutMs: 10,
+    });
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 104,
+        method: "account/chatgptAuthTokens/refresh",
+        params: { reason: "unauthorized" },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 104,
+      error: {
+        code: -32603,
+        message: "ChatGPT auth token refresh failed",
+      },
+    });
+    await manager.kill();
+  });
+
+  test("returns a structured error when ChatGPT token refresh is unavailable", async () => {
+    const { manager, processes } = createManagerHarness();
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 102,
+        method: "account/chatgptAuthTokens/refresh",
+        params: { reason: "unauthorized" },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    expect(processHandle.stdinWrites).toHaveLength(3);
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 102,
+      error: {
+        code: -32002,
+        message: "ChatGPT auth token refresh is not configured",
+      },
     });
     await manager.kill();
   });

@@ -1485,9 +1485,6 @@ export class TerragonDaemon {
               input.threadChatId ||
             (context.threadId !== null &&
               notificationContext.threadId === context.threadId);
-          if (!belongsToThread) {
-            return;
-          }
 
           // Dispatch meta events (token usage, rate limits, model re-routing,
           // MCP server health) on a separate channel before attempting to
@@ -1495,13 +1492,23 @@ export class TerragonDaemon {
           // daemon-event POST body via a new `metaEvents` field so we don't
           // need a new HTTP endpoint.
           const metaEvent = extractMetaEvent(notification);
-          if (metaEvent) {
+          const isGlobalMetaEvent =
+            metaEvent?.kind === "account.rate_limits_updated" ||
+            metaEvent?.kind === "model.rerouted" ||
+            metaEvent?.kind === "mcp_server.startup_status_updated" ||
+            metaEvent?.kind === "config.warning" ||
+            metaEvent?.kind === "deprecation.notice" ||
+            metaEvent?.kind === "session.initialized";
+          if (metaEvent && (belongsToThread || isGlobalMetaEvent)) {
             this.enqueueMetaEvent({
               metaEvent,
               threadId: input.threadId,
               threadChatId: input.threadChatId,
               token: input.token,
             });
+            return;
+          }
+          if (!belongsToThread) {
             return;
           }
 
