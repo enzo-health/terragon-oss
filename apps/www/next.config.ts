@@ -187,6 +187,9 @@ const nextConfig = {
 // `createRequire(import.meta.url)` shim needs node_modules layout).
 const nextConfigTyped = nextConfig as NextConfig;
 nextConfigTyped.serverExternalPackages = ["@daytonaio/sdk"];
+// Pin the file-tracing root to the monorepo root so the `../../node_modules`
+// include globs resolve inside the trace root instead of being dropped.
+nextConfigTyped.outputFileTracingRoot = repoRoot;
 nextConfigTyped.outputFileTracingIncludes = daytonaTracingIncludes;
 
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.

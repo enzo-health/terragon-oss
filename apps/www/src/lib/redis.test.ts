@@ -74,7 +74,7 @@ describe("isLocalRedisHttpMode", () => {
 describe("redis", { timeout: 60_000 }, () => {
   beforeAll(() => {
     execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
-  });
+  }, 60_000);
 
   // This test is just to make sure that the redis and redis-http containers are
   // setup correctly in tests & CI.
