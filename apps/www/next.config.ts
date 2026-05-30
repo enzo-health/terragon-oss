@@ -67,7 +67,6 @@ const nextConfig = {
   // Keep @daytonaio/sdk resolved from node_modules at runtime so its
   // `createRequire(import.meta.url)` shim can load runtime-only deps.
   serverExternalPackages: ["@daytonaio/sdk"],
-  outputFileTracingIncludes: daytonaTracingIncludes,
   images: {
     remotePatterns: [
       {
@@ -179,6 +178,10 @@ const nextConfig = {
     return config;
   },
 };
+
+// Assigned outside the literal so the property can't show up as a duplicate
+// from any type-augmentation that CI's tsc resolves differently from local.
+(nextConfig as NextConfig).outputFileTracingIncludes = daytonaTracingIncludes;
 
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.
 export default withBundleAnalyzer(nextConfig as NextConfig as any);
