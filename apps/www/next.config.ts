@@ -34,7 +34,27 @@ function loadLocalEnvFiles() {
 
 loadLocalEnvFiles();
 
-const nextConfig: NextConfig = {
+// @daytonaio/sdk uses `createRequire(import.meta.url)` and a dynamic
+// `requireMap` for runtime-only deps (busboy, tar, form-data, ...). Vercel's
+// NFT can't see those requires, and the SDK also hides ObjectStorage.js (which
+// statically imports @aws-sdk/*) behind a variable-string dynamic import.
+// Pull the relevant pnpm trees into every server bundle so they exist on disk.
+const daytonaTracingIncludes: Record<string, string[]> = {
+  "**/*": [
+    "../../node_modules/.pnpm/busboy@*/node_modules/busboy/**/*",
+    "../../node_modules/.pnpm/tar@*/node_modules/tar/**/*",
+    "../../node_modules/.pnpm/form-data@*/node_modules/form-data/**/*",
+    "../../node_modules/.pnpm/fast-glob@*/node_modules/fast-glob/**/*",
+    "../../node_modules/.pnpm/expand-tilde@*/node_modules/expand-tilde/**/*",
+    "../../node_modules/.pnpm/@iarna+toml@*/node_modules/@iarna/toml/**/*",
+    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/esm/ObjectStorage.{js,js.map}",
+    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/cjs/ObjectStorage.{js,js.map}",
+    "../../node_modules/.pnpm/@aws-sdk+client-s3@*/node_modules/@aws-sdk/client-s3/**/*",
+    "../../node_modules/.pnpm/@aws-sdk+lib-storage@*/node_modules/@aws-sdk/lib-storage/**/*",
+  ],
+};
+
+const nextConfig = {
   reactCompiler: true,
   // The Daytona SDK lazy-loads form-data/tar/fast-glob/@iarna/toml/expand-tilde
   // via a createRequire shim that webpack can't statically trace. Keeping the
@@ -140,7 +160,7 @@ const nextConfig: NextConfig = {
     ];
   },
   // Webpack configuration for faster HMR
-  webpack: (config, { dev }) => {
+  webpack: (config: any, { dev }: { dev: boolean }) => {
     if (dev) {
       // Exclude test and story files from webpack watch in dev
       config.watchOptions = {
@@ -161,5 +181,13 @@ const nextConfig: NextConfig = {
   },
 };
 
+// Assigned outside the literal because CI's tsc flagged the inline form as
+// TS1117 even though the literal had no duplicate keys; this also keeps
+// @daytonaio/sdk resolved from node_modules at runtime (its
+// `createRequire(import.meta.url)` shim needs node_modules layout).
+const nextConfigTyped = nextConfig as NextConfig;
+nextConfigTyped.serverExternalPackages = ["@daytonaio/sdk"];
+nextConfigTyped.outputFileTracingIncludes = daytonaTracingIncludes;
+
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.
-export default withBundleAnalyzer(nextConfig as any);
+export default withBundleAnalyzer(nextConfig as NextConfig as any);
