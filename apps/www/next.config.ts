@@ -64,9 +64,6 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: process.env.NODE_ENV === "development",
   },
-  // Keep @daytonaio/sdk resolved from node_modules at runtime so its
-  // `createRequire(import.meta.url)` shim can load runtime-only deps.
-  serverExternalPackages: ["@daytonaio/sdk"],
   images: {
     remotePatterns: [
       {
@@ -179,9 +176,13 @@ const nextConfig = {
   },
 };
 
-// Assigned outside the literal so the property can't show up as a duplicate
-// from any type-augmentation that CI's tsc resolves differently from local.
-(nextConfig as NextConfig).outputFileTracingIncludes = daytonaTracingIncludes;
+// Assigned outside the literal because CI's tsc flagged the inline form as
+// TS1117 even though the literal had no duplicate keys; this also keeps
+// @daytonaio/sdk resolved from node_modules at runtime (its
+// `createRequire(import.meta.url)` shim needs node_modules layout).
+const nextConfigTyped = nextConfig as NextConfig;
+nextConfigTyped.serverExternalPackages = ["@daytonaio/sdk"];
+nextConfigTyped.outputFileTracingIncludes = daytonaTracingIncludes;
 
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.
 export default withBundleAnalyzer(nextConfig as NextConfig as any);
