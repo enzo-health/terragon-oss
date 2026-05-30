@@ -2,6 +2,7 @@ import templates from "../templates.json";
 import type { SandboxSize, SandboxProvider } from "@terragon/types/sandbox";
 
 export { renderDockerfile } from "./render-dockerfile";
+export { SUPERVISORD_CONF } from "./dockerfile-template";
 
 interface TemplateEntry {
   name: string;

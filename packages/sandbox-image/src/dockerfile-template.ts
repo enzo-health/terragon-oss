@@ -103,3 +103,36 @@ RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 {{/if}}
 `;
+
+/**
+ * Contents of ../supervisord.conf, as a string for bundled environments that
+ * build the daytona image at runtime (the `COPY supervisord.conf` step needs it
+ * written into the build context). IMPORTANT: keep in sync with
+ * ../supervisord.conf.
+ */
+export const SUPERVISORD_CONF = `[supervisord]
+nodaemon=true
+logfile=/dev/null
+pidfile=/var/run/supervisord.pid
+
+[program:postgresql]
+command=/usr/bin/pg_ctlcluster 16 main start --foreground
+user=postgres
+priority=10
+autostart=true
+autorestart=true
+stdout_logfile=/dev/fd/1
+stderr_logfile=/dev/fd/2
+stdout_logfile_maxbytes=0
+stderr_logfile_maxbytes=0
+
+[program:redis]
+command=/usr/bin/redis-server --bind 127.0.0.1 --protected-mode yes --daemonize no
+priority=20
+autostart=true
+autorestart=true
+stdout_logfile=/dev/fd/1
+stderr_logfile=/dev/fd/2
+stdout_logfile_maxbytes=0
+stderr_logfile_maxbytes=0
+`;
