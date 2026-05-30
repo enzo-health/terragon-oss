@@ -34,6 +34,26 @@ function loadLocalEnvFiles() {
 
 loadLocalEnvFiles();
 
+// @daytonaio/sdk uses `createRequire(import.meta.url)` and a dynamic
+// `requireMap` for runtime-only deps (busboy, tar, form-data, ...). Vercel's
+// NFT can't see those requires, and the SDK also hides ObjectStorage.js (which
+// statically imports @aws-sdk/*) behind a variable-string dynamic import.
+// Pull the relevant pnpm trees into every server bundle so they exist on disk.
+const daytonaTracingIncludes: Record<string, string[]> = {
+  "**/*": [
+    "../../node_modules/.pnpm/busboy@*/node_modules/busboy/**/*",
+    "../../node_modules/.pnpm/tar@*/node_modules/tar/**/*",
+    "../../node_modules/.pnpm/form-data@*/node_modules/form-data/**/*",
+    "../../node_modules/.pnpm/fast-glob@*/node_modules/fast-glob/**/*",
+    "../../node_modules/.pnpm/expand-tilde@*/node_modules/expand-tilde/**/*",
+    "../../node_modules/.pnpm/@iarna+toml@*/node_modules/@iarna/toml/**/*",
+    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/esm/ObjectStorage.{js,js.map}",
+    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/cjs/ObjectStorage.{js,js.map}",
+    "../../node_modules/.pnpm/@aws-sdk+client-s3@*/node_modules/@aws-sdk/client-s3/**/*",
+    "../../node_modules/.pnpm/@aws-sdk+lib-storage@*/node_modules/@aws-sdk/lib-storage/**/*",
+  ],
+};
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
   // Skip Next build-time type checking in dev; tsc-check still owns type safety.
@@ -44,27 +64,10 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: process.env.NODE_ENV === "development",
   },
-  // @daytonaio/sdk uses `createRequire(import.meta.url)` and a dynamic
-  // `requireMap` for runtime-only deps (busboy, tar, form-data, ...). Keep it
-  // resolved from node_modules at runtime so `require()` finds those modules.
+  // Keep @daytonaio/sdk resolved from node_modules at runtime so its
+  // `createRequire(import.meta.url)` shim can load runtime-only deps.
   serverExternalPackages: ["@daytonaio/sdk"],
-  // Vercel's NFT can't see `require('busboy')` etc. inside the SDK's dynamic
-  // requireMap closures. Pull the runtime-only deps into every server bundle
-  // so they exist on disk when the SDK resolves them.
-  outputFileTracingIncludes: {
-    "**/*": [
-      "../../node_modules/.pnpm/busboy@*/node_modules/busboy/**/*",
-      "../../node_modules/.pnpm/tar@*/node_modules/tar/**/*",
-      "../../node_modules/.pnpm/form-data@*/node_modules/form-data/**/*",
-      "../../node_modules/.pnpm/fast-glob@*/node_modules/fast-glob/**/*",
-      "../../node_modules/.pnpm/expand-tilde@*/node_modules/expand-tilde/**/*",
-      "../../node_modules/.pnpm/@iarna+toml@*/node_modules/@iarna/toml/**/*",
-      "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/esm/ObjectStorage.{js,js.map}",
-      "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@daytonaio/sdk/cjs/ObjectStorage.{js,js.map}",
-      "../../node_modules/.pnpm/@aws-sdk+client-s3@*/node_modules/@aws-sdk/client-s3/**/*",
-      "../../node_modules/.pnpm/@aws-sdk+lib-storage@*/node_modules/@aws-sdk/lib-storage/**/*",
-    ],
-  },
+  outputFileTracingIncludes: daytonaTracingIncludes,
   images: {
     remotePatterns: [
       {
