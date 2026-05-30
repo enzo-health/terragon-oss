@@ -179,3 +179,18 @@ export async function deleteRepoSnapshot(snapshotName: string): Promise<void> {
   const snapshot = await daytona.snapshot.get(snapshotName);
   await daytona.snapshot.delete(snapshot);
 }
+
+// All per-repo snapshot names (the `repo-…` prefix that `buildRepoSnapshot`
+// assigns). Used by the orphan reaper to find Daytona snapshots no DB entry
+// references. Reads the first page only — `snapshot.list()` paginates, so a
+// very large account may need multiple passes across cron runs to fully drain.
+export async function listRepoSnapshotNames(): Promise<string[]> {
+  const daytona = getDaytonaClient();
+  const result = (await daytona.snapshot.list()) as
+    | { items?: Array<{ name?: string | null }> }
+    | Array<{ name?: string | null }>;
+  const items = Array.isArray(result) ? result : (result.items ?? []);
+  return items
+    .map((snapshot) => snapshot.name ?? "")
+    .filter((name) => name.startsWith("repo-"));
+}

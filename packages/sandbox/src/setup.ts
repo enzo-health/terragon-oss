@@ -236,7 +236,8 @@ export async function setupSandboxOneTime(
   if (!options.snapshotTemplateId) {
     await gitCloneRepo(session, options);
   } else {
-    // Repo already cloned in snapshot — just update git remote with fresh token
+    // Repo already cloned in snapshot — update git remote with a fresh token,
+    // then fast-forward to the live base branch.
     await options.onStatusUpdate({
       sandboxId: session.sandboxId,
       sandboxStatus: "booting",
@@ -246,6 +247,25 @@ export async function setupSandboxOneTime(
       `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
       { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
     );
+    // The snapshot froze the working tree at the commit baked in at build time,
+    // which may now be behind. Fetch + hard-reset to the live base branch so the
+    // task's new branch forks from the current tip, not the stale commit. The
+    // fetch is incremental — the snapshot already holds nearly every object.
+    // Best-effort: a deleted/renamed base branch must not fail the boot.
+    try {
+      await session.runCommand(
+        [
+          `git fetch --filter=blob:none origin ${bashQuote(options.repoBaseBranchName)}`,
+          `git reset --hard ${bashQuote(`origin/${options.repoBaseBranchName}`)}`,
+        ].join(" && "),
+        { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
+      );
+    } catch (error) {
+      console.warn(
+        `[snapshot-boot] Failed to refresh ${options.repoBaseBranchName} from origin; using baked commit:`,
+        error,
+      );
+    }
   }
   await session.runCommand(
     [
