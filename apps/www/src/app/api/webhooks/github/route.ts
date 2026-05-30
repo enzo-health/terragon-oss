@@ -10,7 +10,7 @@
  *
  * 3. Subscribe to Events:
  *    - In "Permissions & events" section
- *    - Under "Subscribe to events", check: Pull requests, Issues, Issue comments, Pull request review comments, Pull request reviews, Check runs, Check suites
+ *    - Under "Subscribe to events", check: Pull requests, Issues, Issue comments, Pull request review comments, Pull request reviews, Check runs, Check suites, Push
  *
  * 4. Set Required Permissions:
  *    - Repository permissions:
@@ -32,6 +32,7 @@
  * - PR reviews: Creates follow-up tasks when the app is mentioned in PR reviews
  * - Check runs: Updates PR check status when checks are created, completed, or rerequested
  * - Check suites: Updates PR check status when check suites are completed or rerequested
+ * - Push: Refreshes per-repo Daytona environment snapshots when the default branch advances
  */
 
 import { Webhooks } from "@octokit/webhooks";
@@ -57,6 +58,7 @@ import {
   getShadowRefreshWebhookEvent,
   shadowRefreshGitHubProjectionsForWebhook,
 } from "./shadow-refresh";
+import { handlePushSnapshotRefresh } from "./handle-snapshot-refresh";
 
 type SupportedGitHubWebhookName =
   | "pull_request"
@@ -67,7 +69,8 @@ type SupportedGitHubWebhookName =
   | "check_suite"
   | "issues"
   | "status"
-  | "deployment_status";
+  | "deployment_status"
+  | "push";
 
 const supportedGitHubWebhookNames = new Set<string>([
   "pull_request",
@@ -79,6 +82,7 @@ const supportedGitHubWebhookNames = new Set<string>([
   "issues",
   "status",
   "deployment_status",
+  "push",
 ]);
 
 type GitHubWebhookClaimOutcome =
@@ -326,6 +330,9 @@ export async function POST(request: NextRequest) {
   });
   webhooks.on("status", async ({ payload }) => {
     await handleStatusEvent(payload, requestId);
+  });
+  webhooks.on("push", async ({ payload }) => {
+    await handlePushSnapshotRefresh(payload);
   });
   webhooks.onAny(({ name, payload }) => {
     const payloadInfo: string[] = [];
