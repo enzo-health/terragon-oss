@@ -72,6 +72,8 @@ describe("isLocalRedisHttpMode", () => {
 });
 
 describe("redis", { timeout: 60_000 }, () => {
+  // `docker restart` can exceed vitest's default 10s hook timeout under CI load;
+  // the describe's `timeout` only covers tests, so the hook needs its own budget.
   beforeAll(() => {
     execSync("docker restart terragon_redis_http_test", { stdio: "ignore" });
   }, 60_000);

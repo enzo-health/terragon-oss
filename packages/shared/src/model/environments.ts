@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DB } from "../db";
 import * as schema from "../db/schema";
 import type { EnvironmentSnapshot } from "../db/schema";
-import { and, eq, getTableColumns } from "drizzle-orm";
+import { and, eq, getTableColumns, sql } from "drizzle-orm";
 import { publishBroadcastUserMessage } from "../broadcast-server";
 import { decryptValue } from "@terragon/utils/encryption";
 import type { SandboxSize } from "@terragon/types/sandbox";
@@ -314,6 +314,35 @@ export async function getEnvironmentForUserRepo({
     where: and(
       eq(schema.environment.userId, userId),
       eq(schema.environment.repoFullName, repoFullName),
+    ),
+  });
+}
+
+// Every user's non-global environment for a repo. Used by the push-refresh
+// webhook to rebuild repo snapshots when the base branch advances.
+export function getEnvironmentsByRepoFullName({
+  db,
+  repoFullName,
+}: {
+  db: DB;
+  repoFullName: string;
+}) {
+  return db.query.environment.findMany({
+    where: and(
+      eq(schema.environment.repoFullName, repoFullName),
+      eq(schema.environment.isGlobal, false),
+    ),
+  });
+}
+
+// Non-global environments that hold at least one snapshot entry. Used by the
+// refresh/reap cron so it scans only environments with snapshots rather than
+// the whole table.
+export function getEnvironmentsWithSnapshots({ db }: { db: DB }) {
+  return db.query.environment.findMany({
+    where: and(
+      eq(schema.environment.isGlobal, false),
+      sql`jsonb_array_length(coalesce(${schema.environment.snapshots}, '[]'::jsonb)) > 0`,
     ),
   });
 }

@@ -183,6 +183,39 @@ describe("sandbox-setup", () => {
         ),
       ).toBeUndefined();
     });
+
+    it("refreshes the base branch instead of cloning when booting from a snapshot", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+
+      const options = {
+        ...defaultOptions,
+        createNewBranch: false,
+        snapshotTemplateId: "repo-owner-repo-small-123",
+        repoBaseBranchName: "main",
+      };
+      await setupSandboxOneTime(session, options);
+
+      const calls = runCommandSpy.mock.calls.map((call) => call[0]);
+
+      // The repo is baked into the snapshot — no fresh clone.
+      expect(calls.some((cmd) => cmd.includes("git clone"))).toBe(false);
+
+      // Remote is re-pointed with a fresh token, then the working tree is
+      // fast-forwarded to the live base branch tip.
+      const remoteIdx = calls.findIndex((cmd) =>
+        cmd.includes("git remote set-url origin"),
+      );
+      expect(remoteIdx).toBeGreaterThanOrEqual(0);
+      const fetchResetIdx = calls.findIndex(
+        (cmd) =>
+          cmd.includes("git fetch --filter=blob:none origin 'main'") &&
+          cmd.includes("git reset --hard 'origin/main'"),
+      );
+      expect(fetchResetIdx).toBeGreaterThan(remoteIdx);
+    });
   });
 
   describe("gitCloneRepo", () => {

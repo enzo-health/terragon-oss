@@ -3,6 +3,7 @@ import type { DB } from "@terragon/shared/db";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 import type { SandboxSize } from "@terragon/types/sandbox";
 import {
+  getEnvironment,
   getReadySnapshot,
   hashEnvironmentVariables,
   hashSnapshotValue,
@@ -12,6 +13,7 @@ import {
 } from "@terragon/shared/model/environments";
 import {
   buildRepoSnapshot,
+  deleteRepoSnapshot,
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
 } from "@terragon/sandbox/snapshot-builder";
@@ -79,6 +81,15 @@ export async function buildAndStoreEnvironmentSnapshot({
     mcpConfig,
   });
 
+  // Capture the snapshot this build supersedes before the `building` write
+  // clobbers the slot, so we can delete it from Daytona once the new one is
+  // ready. Each environment holds at most one entry per (provider, size).
+  const existing = await getEnvironment({ db, environmentId, userId });
+  const previousSnapshotName =
+    existing?.snapshots?.find(
+      (s) => s.provider === "daytona" && s.size === size,
+    )?.snapshotName || null;
+
   await updateEnvironmentSnapshot({
     db,
     environmentId,
@@ -120,6 +131,15 @@ export async function buildAndStoreEnvironmentSnapshot({
         console.log(
           `[snapshot-build] Snapshot ready: ${snapshotName} for ${repoFullName}`,
         );
+        // Reap the superseded snapshot so rebuilds don't leak images in Daytona.
+        if (previousSnapshotName && previousSnapshotName !== snapshotName) {
+          await deleteRepoSnapshot(previousSnapshotName).catch((error) =>
+            console.error(
+              `[snapshot-build] Failed to delete superseded snapshot ${previousSnapshotName}:`,
+              error,
+            ),
+          );
+        }
       })
       .catch(async (error) => {
         console.error(`[snapshot-build] Failed:`, error);
@@ -163,6 +183,7 @@ export async function maybeTriggerSnapshotBuildForBoot({
   size,
   environmentVariables,
   mcpConfig,
+  force = false,
 }: {
   db: DB;
   userId: string;
@@ -175,6 +196,10 @@ export async function maybeTriggerSnapshotBuildForBoot({
   size: SandboxSize;
   environmentVariables: Array<{ key: string; value: string }>;
   mcpConfig: unknown;
+  // Rebuild even when a ready snapshot matches the current config hashes. Used
+  // by the push-refresh path: the config is unchanged but the base branch has
+  // advanced, so the baked commit is stale even though hashes still match.
+  force?: boolean;
 }): Promise<void> {
   try {
     const hashes = computeSnapshotHashes({
@@ -184,8 +209,9 @@ export async function maybeTriggerSnapshotBuildForBoot({
       mcpConfig,
     });
 
-    // A ready snapshot already covers this exact config — nothing to do.
-    if (getReadySnapshot({ snapshots }, "daytona", size, hashes)) {
+    // A ready snapshot already covers this exact config — nothing to do unless
+    // the caller is forcing a refresh for new base-branch commits.
+    if (!force && getReadySnapshot({ snapshots }, "daytona", size, hashes)) {
       return;
     }
 
