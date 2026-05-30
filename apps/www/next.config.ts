@@ -54,7 +54,7 @@ const daytonaTracingIncludes: Record<string, string[]> = {
   ],
 };
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   reactCompiler: true,
   // Skip Next build-time type checking in dev; tsc-check still owns type safety.
   typescript: {
@@ -159,7 +159,7 @@ const nextConfig: NextConfig = {
     ];
   },
   // Webpack configuration for faster HMR
-  webpack: (config, { dev }) => {
+  webpack: (config: any, { dev }: { dev: boolean }) => {
     if (dev) {
       // Exclude test and story files from webpack watch in dev
       config.watchOptions = {
@@ -181,4 +181,4 @@ const nextConfig: NextConfig = {
 };
 
 // bundle-analyzer still peer-types against Next 15, so widen here at the edge.
-export default withBundleAnalyzer(nextConfig as any);
+export default withBundleAnalyzer(nextConfig as NextConfig as any);
