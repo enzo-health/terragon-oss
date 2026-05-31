@@ -1,5 +1,12 @@
+declare module "node:module" {
+  export function _initPaths(): void;
+}
+
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 import type { VolumeMount } from "@daytonaio/sdk";
+import { existsSync, readdirSync } from "node:fs";
+import { createRequire, _initPaths } from "node:module";
+import path from "node:path";
 import {
   BackgroundCommandOptions,
   CreateSandboxOptions,
@@ -9,7 +16,6 @@ import {
 } from "../types";
 import { nanoid } from "nanoid/non-secure";
 import { bashQuote, safeEnvKey } from "../utils";
-import path from "path";
 import { getTemplateIdForSize } from "@terragon/sandbox-image";
 import { retryAsync } from "@terragon/utils/retry";
 import { formatError } from "@terragon/utils/error";
@@ -21,6 +27,27 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
+const runtimeRequire = createRequire(import.meta.url);
+const DAYTONA_SDK_RUNTIME_MODULES = [
+  "busboy",
+  "tar",
+  "form-data",
+  "fast-glob",
+  "expand-tilde",
+  "@iarna/toml",
+] as const;
+const DAYTONA_SDK_RUNTIME_PNPM_PACKAGES = [
+  { pnpmPrefix: "busboy@", packagePath: "busboy" },
+  { pnpmPrefix: "streamsearch@", packagePath: "streamsearch" },
+  { pnpmPrefix: "tar@", packagePath: "tar" },
+  { pnpmPrefix: "form-data@", packagePath: "form-data" },
+  { pnpmPrefix: "fast-glob@", packagePath: "fast-glob" },
+  { pnpmPrefix: "expand-tilde@", packagePath: "expand-tilde" },
+  {
+    pnpmPrefix: "@iarna+toml@",
+    packagePath: path.join("@iarna", "toml"),
+  },
+] as const;
 
 type DaytonaVolumeMount = VolumeMount & {
   subpath?: string;
@@ -159,8 +186,112 @@ function getDaytonaOrThrow(): Daytona {
   if (!apiKey) {
     throw new Error("DAYTONA_API_KEY is not set");
   }
+  assertDaytonaSdkRuntimeModulesAvailable();
   const daytona = new Daytona({ apiKey });
   return daytona;
+}
+
+function assertDaytonaSdkRuntimeModulesAvailable(): void {
+  let sdkEntryPoint: string;
+  try {
+    sdkEntryPoint = runtimeRequire.resolve("@daytonaio/sdk");
+  } catch (error) {
+    throw new Error(
+      `[daytona] @daytonaio/sdk is not resolvable in this runtime: ${formatError(error)}`,
+    );
+  }
+
+  installDaytonaSdkNodePathFallback(sdkEntryPoint);
+  const sdkRequire = createRequire(sdkEntryPoint);
+  const missingModules = DAYTONA_SDK_RUNTIME_MODULES.flatMap((moduleName) => {
+    try {
+      sdkRequire(moduleName);
+      return [];
+    } catch (error) {
+      return [`${moduleName}: ${formatError(error)}`];
+    }
+  });
+
+  if (missingModules.length > 0) {
+    throw new Error(
+      [
+        "[daytona] Daytona SDK runtime dependencies are missing.",
+        "Refusing to allocate a sandbox because SDK file transfer calls would fail after creation.",
+        "Missing modules:",
+        ...missingModules.map((moduleName) => `- ${moduleName}`),
+      ].join("\n"),
+    );
+  }
+}
+
+function installDaytonaSdkNodePathFallback(sdkEntryPoint: string): void {
+  const pnpmStoreDir = findPnpmStoreDir(sdkEntryPoint);
+  if (!pnpmStoreDir) {
+    return;
+  }
+
+  const nodePathEntries = findDaytonaRuntimeNodePathEntries(pnpmStoreDir);
+  if (nodePathEntries.length === 0) {
+    return;
+  }
+
+  const existingEntries = new Set(
+    (process.env.NODE_PATH ?? "").split(path.delimiter).filter(Boolean),
+  );
+  let changed = false;
+
+  for (const entry of nodePathEntries) {
+    if (!existingEntries.has(entry)) {
+      existingEntries.add(entry);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  process.env.NODE_PATH = Array.from(existingEntries).join(path.delimiter);
+  _initPaths();
+}
+
+function findPnpmStoreDir(modulePath: string): string | null {
+  const pathParts = modulePath.split(path.sep);
+  const pnpmIndex = pathParts.lastIndexOf(".pnpm");
+  if (pnpmIndex === -1) {
+    return null;
+  }
+  return pathParts.slice(0, pnpmIndex + 1).join(path.sep);
+}
+
+function findDaytonaRuntimeNodePathEntries(pnpmStoreDir: string): string[] {
+  let packageDirs: string[];
+  try {
+    packageDirs = readdirSync(pnpmStoreDir);
+  } catch {
+    return [];
+  }
+
+  return DAYTONA_SDK_RUNTIME_PNPM_PACKAGES.flatMap(
+    ({ pnpmPrefix, packagePath }) => {
+      return packageDirs.flatMap((packageDir) => {
+        if (!packageDir.startsWith(pnpmPrefix)) {
+          return [];
+        }
+
+        const nodePathEntry = path.join(
+          pnpmStoreDir,
+          packageDir,
+          "node_modules",
+        );
+        if (!existsSync(path.join(nodePathEntry, packagePath))) {
+          return [];
+        }
+
+        return [nodePathEntry];
+      });
+    },
+  );
 }
 
 class DaytonaSession implements ISandboxSession {
@@ -476,7 +607,20 @@ async function setupDaytonaOneTime(session: ISandboxSession): Promise<void> {
     "export PS1",
   ].join("\n");
   await session.runCommand(
-    `if [ ! -f /etc/profile.d/prompt.sh ]; then echo ${bashQuote(etcProfileDPromptShContents)} >> /etc/profile.d/prompt.sh; chmod 644 /etc/profile.d/prompt.sh; fi`,
+    [
+      `prompt_contents=${bashQuote(etcProfileDPromptShContents)}`,
+      "if [ -d /etc/profile.d ] && [ -w /etc/profile.d ]; then",
+      '  if [ ! -f /etc/profile.d/prompt.sh ]; then printf "%s\\n" "$prompt_contents" > /etc/profile.d/prompt.sh; chmod 644 /etc/profile.d/prompt.sh; fi',
+      "else",
+      `  bashrc=/${session.homeDir}/.bashrc`,
+      '  if touch "$bashrc" 2>/dev/null && ! grep -qs "terragon-daytona-prompt" "$bashrc"; then',
+      "    tmp_bashrc=$(mktemp)",
+      '    { printf "%s\\n" "# terragon-daytona-prompt" "$prompt_contents"; cat "$bashrc"; } > "$tmp_bashrc"',
+      '    cat "$tmp_bashrc" > "$bashrc"',
+      '    rm -f "$tmp_bashrc"',
+      "  fi",
+      "fi",
+    ].join("\n"),
     { cwd: "/" },
   );
 }
