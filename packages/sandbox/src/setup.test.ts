@@ -91,11 +91,11 @@ describe("sandbox-setup", () => {
         sandboxProvider: "daytona",
         daytonaVolume: {
           volumeName: "terragon-workspaces",
+          volumeMountPath: "/mnt/terragon",
+          volumeSubpath: "users/user-123",
           cacheMountPath: "/mnt/terragon/cache",
-          cacheSubpath: "users/user-123/cache",
-          workspaceMountPath: "/mnt/terragon/workspace",
-          workspaceSubpath:
-            "users/user-123/environments/env-123/repos/owner_repo/threads/thread-1",
+          workspaceMountPath:
+            "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1",
         },
       });
 

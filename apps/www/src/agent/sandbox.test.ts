@@ -260,7 +260,7 @@ describe("resolveDaytonaVolumeConfig", () => {
     ).toBeUndefined();
   });
 
-  it("builds isolated cache and workspace subpaths", () => {
+  it("builds one user-scoped mount with isolated cache and workspace paths", () => {
     expect(
       resolveDaytonaVolumeConfig({
         userId: "user/1",
@@ -271,11 +271,11 @@ describe("resolveDaytonaVolumeConfig", () => {
       }),
     ).toEqual({
       volumeName: "terragon-workspaces",
+      volumeMountPath: "/mnt/terragon",
+      volumeSubpath: "users/user_1",
       cacheMountPath: "/mnt/terragon/cache",
-      cacheSubpath: "users/user_1/cache",
-      workspaceMountPath: "/mnt/terragon/workspace",
-      workspaceSubpath:
-        "users/user_1/environments/env_1/repos/owner_repo/threads/thread_1",
+      workspaceMountPath:
+        "/mnt/terragon/workspace/environments/env_1/repos/owner_repo/threads/thread_1",
     });
   });
 
@@ -289,8 +289,8 @@ describe("resolveDaytonaVolumeConfig", () => {
         volumeName: "terragon-workspaces",
       }),
     ).toMatchObject({
-      workspaceSubpath:
-        "users/user-1/environments/env-1/repos/no-repo/threads/thread-1",
+      workspaceMountPath:
+        "/mnt/terragon/workspace/environments/env-1/repos/no-repo/threads/thread-1",
     });
   });
 });
@@ -310,7 +310,8 @@ describe("getDaytonaVolumeEnvironmentEntries", () => {
         { key: "GOMODCACHE", value: "/mnt/terragon/cache/go/pkg/mod" },
         {
           key: "TERRAGON_ARTIFACTS_DIR",
-          value: "/mnt/terragon/workspace/artifacts",
+          value:
+            "/mnt/terragon/workspace/environments/env-1/repos/owner_repo/threads/thread-1/artifacts",
         },
         { key: "XDG_CACHE_HOME", value: "/mnt/terragon/cache/xdg" },
         { key: "COREPACK_HOME", value: "/mnt/terragon/cache/corepack" },

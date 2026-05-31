@@ -143,13 +143,8 @@ async function getDaytonaVolumeMounts(
   return [
     {
       volumeId: volume.id,
-      mountPath: daytonaVolume.cacheMountPath,
-      subpath: daytonaVolume.cacheSubpath,
-    },
-    {
-      volumeId: volume.id,
-      mountPath: daytonaVolume.workspaceMountPath,
-      subpath: daytonaVolume.workspaceSubpath,
+      mountPath: daytonaVolume.volumeMountPath,
+      subpath: daytonaVolume.volumeSubpath,
     },
   ];
 }

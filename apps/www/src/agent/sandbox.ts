@@ -52,8 +52,9 @@ import { redis } from "@/lib/redis";
 
 const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
 const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
-const DAYTONA_VOLUME_CACHE_MOUNT_PATH = "/mnt/terragon/cache";
-const DAYTONA_VOLUME_WORKSPACE_MOUNT_PATH = "/mnt/terragon/workspace";
+const DAYTONA_VOLUME_MOUNT_PATH = "/mnt/terragon";
+const DAYTONA_VOLUME_CACHE_DIR = "cache";
+const DAYTONA_VOLUME_WORKSPACE_DIR = "workspace";
 
 type SandboxResumeMetadataCacheEntry = {
   userSettings: Awaited<ReturnType<typeof getUserSettings>>;
@@ -96,21 +97,26 @@ export function resolveDaytonaVolumeConfig({
   }
 
   const repoSegment = sanitizeVolumeSubpathSegment(repoFullName || "no-repo");
+  const userSegment = sanitizeVolumeSubpathSegment(userId);
+  const workspaceSegments = [
+    DAYTONA_VOLUME_WORKSPACE_DIR,
+    "environments",
+    sanitizeVolumeSubpathSegment(environmentId),
+    "repos",
+    repoSegment,
+    "threads",
+    sanitizeVolumeSubpathSegment(threadId),
+  ];
   return {
     volumeName: trimmedVolumeName,
-    cacheMountPath: DAYTONA_VOLUME_CACHE_MOUNT_PATH,
-    cacheSubpath: `users/${sanitizeVolumeSubpathSegment(userId)}/cache`,
-    workspaceMountPath: DAYTONA_VOLUME_WORKSPACE_MOUNT_PATH,
-    workspaceSubpath: [
-      "users",
-      sanitizeVolumeSubpathSegment(userId),
-      "environments",
-      sanitizeVolumeSubpathSegment(environmentId),
-      "repos",
-      repoSegment,
-      "threads",
-      sanitizeVolumeSubpathSegment(threadId),
-    ].join("/"),
+    volumeMountPath: DAYTONA_VOLUME_MOUNT_PATH,
+    volumeSubpath: `users/${userSegment}`,
+    cacheMountPath: [DAYTONA_VOLUME_MOUNT_PATH, DAYTONA_VOLUME_CACHE_DIR].join(
+      "/",
+    ),
+    workspaceMountPath: [DAYTONA_VOLUME_MOUNT_PATH, ...workspaceSegments].join(
+      "/",
+    ),
   };
 }
 

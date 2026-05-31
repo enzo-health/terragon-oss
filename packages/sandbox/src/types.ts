@@ -22,10 +22,10 @@ export type BootingSubstatus =
 
 export type DaytonaVolumeConfig = {
   volumeName: string;
+  volumeMountPath: string;
+  volumeSubpath: string;
   cacheMountPath: string;
-  cacheSubpath: string;
   workspaceMountPath: string;
-  workspaceSubpath: string;
 };
 
 export type CreateSandboxOptions = {
