@@ -38,23 +38,11 @@ loadLocalEnvFiles();
 // `requireMap` for runtime-only deps (busboy, tar, form-data, ...). Vercel's
 // NFT can't see those requires, and the SDK also hides ObjectStorage.js (which
 // statically imports @aws-sdk/*) behind a variable-string dynamic import.
-// Pull the relevant pnpm trees into every server bundle so they exist on disk.
+// Pull the relevant physical pnpm trees into every server bundle so they exist
+// on disk. Do not include the SDK's dependency symlink paths here: tracing
+// files through those links makes Vercel reject the serverless package.
 const daytonaTracingIncludes: Record<string, string[]> = {
   "**/*": [
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/busboy",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/busboy/**/*",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/tar",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/tar/**/*",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/form-data",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/form-data/**/*",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/fast-glob",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/fast-glob/**/*",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/expand-tilde",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/expand-tilde/**/*",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@iarna/toml",
-    "../../node_modules/.pnpm/@daytonaio+sdk@*/node_modules/@iarna/toml/**/*",
-    "../../node_modules/.pnpm/busboy@*/node_modules/streamsearch",
-    "../../node_modules/.pnpm/busboy@*/node_modules/streamsearch/**/*",
     "../../node_modules/.pnpm/busboy@*/node_modules/busboy/**/*",
     "../../node_modules/.pnpm/streamsearch@*/node_modules/streamsearch/**/*",
     "../../node_modules/.pnpm/tar@*/node_modules/tar/**/*",

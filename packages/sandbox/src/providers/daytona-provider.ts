@@ -1,6 +1,12 @@
+declare module "node:module" {
+  export function _initPaths(): void;
+}
+
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 import type { VolumeMount } from "@daytonaio/sdk";
-import { createRequire } from "node:module";
+import { existsSync, readdirSync } from "node:fs";
+import { createRequire, _initPaths } from "node:module";
+import path from "node:path";
 import {
   BackgroundCommandOptions,
   CreateSandboxOptions,
@@ -10,7 +16,6 @@ import {
 } from "../types";
 import { nanoid } from "nanoid/non-secure";
 import { bashQuote, safeEnvKey } from "../utils";
-import path from "path";
 import { getTemplateIdForSize } from "@terragon/sandbox-image";
 import { retryAsync } from "@terragon/utils/retry";
 import { formatError } from "@terragon/utils/error";
@@ -30,6 +35,18 @@ const DAYTONA_SDK_RUNTIME_MODULES = [
   "fast-glob",
   "expand-tilde",
   "@iarna/toml",
+] as const;
+const DAYTONA_SDK_RUNTIME_PNPM_PACKAGES = [
+  { pnpmPrefix: "busboy@", packagePath: "busboy" },
+  { pnpmPrefix: "streamsearch@", packagePath: "streamsearch" },
+  { pnpmPrefix: "tar@", packagePath: "tar" },
+  { pnpmPrefix: "form-data@", packagePath: "form-data" },
+  { pnpmPrefix: "fast-glob@", packagePath: "fast-glob" },
+  { pnpmPrefix: "expand-tilde@", packagePath: "expand-tilde" },
+  {
+    pnpmPrefix: "@iarna+toml@",
+    packagePath: path.join("@iarna", "toml"),
+  },
 ] as const;
 
 type DaytonaVolumeMount = VolumeMount & {
@@ -184,6 +201,7 @@ function assertDaytonaSdkRuntimeModulesAvailable(): void {
     );
   }
 
+  installDaytonaSdkNodePathFallback(sdkEntryPoint);
   const sdkRequire = createRequire(sdkEntryPoint);
   const missingModules = DAYTONA_SDK_RUNTIME_MODULES.flatMap((moduleName) => {
     try {
@@ -204,6 +222,76 @@ function assertDaytonaSdkRuntimeModulesAvailable(): void {
       ].join("\n"),
     );
   }
+}
+
+function installDaytonaSdkNodePathFallback(sdkEntryPoint: string): void {
+  const pnpmStoreDir = findPnpmStoreDir(sdkEntryPoint);
+  if (!pnpmStoreDir) {
+    return;
+  }
+
+  const nodePathEntries = findDaytonaRuntimeNodePathEntries(pnpmStoreDir);
+  if (nodePathEntries.length === 0) {
+    return;
+  }
+
+  const existingEntries = new Set(
+    (process.env.NODE_PATH ?? "").split(path.delimiter).filter(Boolean),
+  );
+  let changed = false;
+
+  for (const entry of nodePathEntries) {
+    if (!existingEntries.has(entry)) {
+      existingEntries.add(entry);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  process.env.NODE_PATH = Array.from(existingEntries).join(path.delimiter);
+  _initPaths();
+}
+
+function findPnpmStoreDir(modulePath: string): string | null {
+  const pathParts = modulePath.split(path.sep);
+  const pnpmIndex = pathParts.lastIndexOf(".pnpm");
+  if (pnpmIndex === -1) {
+    return null;
+  }
+  return pathParts.slice(0, pnpmIndex + 1).join(path.sep);
+}
+
+function findDaytonaRuntimeNodePathEntries(pnpmStoreDir: string): string[] {
+  let packageDirs: string[];
+  try {
+    packageDirs = readdirSync(pnpmStoreDir);
+  } catch {
+    return [];
+  }
+
+  return DAYTONA_SDK_RUNTIME_PNPM_PACKAGES.flatMap(
+    ({ pnpmPrefix, packagePath }) => {
+      return packageDirs.flatMap((packageDir) => {
+        if (!packageDir.startsWith(pnpmPrefix)) {
+          return [];
+        }
+
+        const nodePathEntry = path.join(
+          pnpmStoreDir,
+          packageDir,
+          "node_modules",
+        );
+        if (!existsSync(path.join(nodePathEntry, packagePath))) {
+          return [];
+        }
+
+        return [nodePathEntry];
+      });
+    },
+  );
 }
 
 class DaytonaSession implements ISandboxSession {
