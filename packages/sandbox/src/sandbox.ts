@@ -35,10 +35,21 @@ export async function getOrCreateSandbox(
         isCreatingSandbox: !sandboxId,
       });
     } catch (error) {
-      console.warn(
+      if (!sandboxId) {
+        try {
+          await sandbox.shutdown();
+        } catch (shutdownError) {
+          console.warn(
+            `[${options.sandboxProvider}] failed to clean up sandbox ${sandbox.sandboxId} after allocation persistence failed`,
+            shutdownError,
+          );
+        }
+      }
+      console.error(
         `[${options.sandboxProvider}] failed to persist allocated sandbox id ${sandbox.sandboxId}`,
         error,
       );
+      throw error;
     }
   }
   await options.onStatusUpdate({

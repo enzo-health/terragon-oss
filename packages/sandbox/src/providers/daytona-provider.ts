@@ -1,5 +1,6 @@
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 import type { VolumeMount } from "@daytonaio/sdk";
+import { createRequire } from "node:module";
 import {
   BackgroundCommandOptions,
   CreateSandboxOptions,
@@ -21,6 +22,15 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
+const runtimeRequire = createRequire(import.meta.url);
+const DAYTONA_SDK_RUNTIME_MODULES = [
+  "busboy",
+  "tar",
+  "form-data",
+  "fast-glob",
+  "expand-tilde",
+  "@iarna/toml",
+] as const;
 
 type DaytonaVolumeMount = VolumeMount & {
   subpath?: string;
@@ -159,8 +169,41 @@ function getDaytonaOrThrow(): Daytona {
   if (!apiKey) {
     throw new Error("DAYTONA_API_KEY is not set");
   }
+  assertDaytonaSdkRuntimeModulesAvailable();
   const daytona = new Daytona({ apiKey });
   return daytona;
+}
+
+function assertDaytonaSdkRuntimeModulesAvailable(): void {
+  let sdkEntryPoint: string;
+  try {
+    sdkEntryPoint = runtimeRequire.resolve("@daytonaio/sdk");
+  } catch (error) {
+    throw new Error(
+      `[daytona] @daytonaio/sdk is not resolvable in this runtime: ${formatError(error)}`,
+    );
+  }
+
+  const sdkRequire = createRequire(sdkEntryPoint);
+  const missingModules = DAYTONA_SDK_RUNTIME_MODULES.flatMap((moduleName) => {
+    try {
+      sdkRequire(moduleName);
+      return [];
+    } catch (error) {
+      return [`${moduleName}: ${formatError(error)}`];
+    }
+  });
+
+  if (missingModules.length > 0) {
+    throw new Error(
+      [
+        "[daytona] Daytona SDK runtime dependencies are missing.",
+        "Refusing to allocate a sandbox because SDK file transfer calls would fail after creation.",
+        "Missing modules:",
+        ...missingModules.map((moduleName) => `- ${moduleName}`),
+      ].join("\n"),
+    );
+  }
 }
 
 class DaytonaSession implements ISandboxSession {
