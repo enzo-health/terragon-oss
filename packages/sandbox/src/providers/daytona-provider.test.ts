@@ -151,7 +151,7 @@ describe("DaytonaProvider lifecycle policy", () => {
     });
   });
 
-  it("mounts configured Daytona cache and artifact volume subpaths", async () => {
+  it("mounts configured Daytona volume once with a user-scoped subpath", async () => {
     const sandbox = createMockSandbox();
     daytonaCreateMock.mockResolvedValue(sandbox);
 
@@ -161,11 +161,11 @@ describe("DaytonaProvider lifecycle policy", () => {
       snapshotTemplateId: "snapshot-template",
       daytonaVolume: {
         volumeName: "terragon-workspaces",
+        volumeMountPath: "/mnt/terragon",
+        volumeSubpath: "users/user-123",
         cacheMountPath: "/mnt/terragon/cache",
-        cacheSubpath: "users/user-123/cache",
-        workspaceMountPath: "/mnt/terragon/workspace",
-        workspaceSubpath:
-          "users/user-123/environments/env-123/threads/thread-1",
+        workspaceMountPath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
       },
     });
 
@@ -180,13 +180,8 @@ describe("DaytonaProvider lifecycle policy", () => {
       volumes: [
         {
           volumeId: "volume-123",
-          mountPath: "/mnt/terragon/cache",
-          subpath: "users/user-123/cache",
-        },
-        {
-          volumeId: "volume-123",
-          mountPath: "/mnt/terragon/workspace",
-          subpath: "users/user-123/environments/env-123/threads/thread-1",
+          mountPath: "/mnt/terragon",
+          subpath: "users/user-123",
         },
       ],
       autoStopInterval: 15,
