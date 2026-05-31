@@ -607,7 +607,20 @@ async function setupDaytonaOneTime(session: ISandboxSession): Promise<void> {
     "export PS1",
   ].join("\n");
   await session.runCommand(
-    `if [ ! -f /etc/profile.d/prompt.sh ]; then echo ${bashQuote(etcProfileDPromptShContents)} >> /etc/profile.d/prompt.sh; chmod 644 /etc/profile.d/prompt.sh; fi`,
+    [
+      `prompt_contents=${bashQuote(etcProfileDPromptShContents)}`,
+      "if [ -d /etc/profile.d ] && [ -w /etc/profile.d ]; then",
+      '  if [ ! -f /etc/profile.d/prompt.sh ]; then printf "%s\\n" "$prompt_contents" > /etc/profile.d/prompt.sh; chmod 644 /etc/profile.d/prompt.sh; fi',
+      "else",
+      `  bashrc=/${session.homeDir}/.bashrc`,
+      '  if touch "$bashrc" 2>/dev/null && ! grep -qs "terragon-daytona-prompt" "$bashrc"; then',
+      "    tmp_bashrc=$(mktemp)",
+      '    { printf "%s\\n" "# terragon-daytona-prompt" "$prompt_contents"; cat "$bashrc"; } > "$tmp_bashrc"',
+      '    cat "$tmp_bashrc" > "$bashrc"',
+      '    rm -f "$tmp_bashrc"',
+      "  fi",
+      "fi",
+    ].join("\n"),
     { cwd: "/" },
   );
 }
