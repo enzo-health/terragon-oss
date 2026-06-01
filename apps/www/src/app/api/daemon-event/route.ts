@@ -35,6 +35,7 @@ import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   type DaemonTokenAuthContext,
   type DaemonTokenProvider,
@@ -48,19 +49,16 @@ import {
   broadcastAgUiEventEphemeral,
   buildDeltaRunEndRows,
   metaEventsToAgUiEvents,
-  persistAgUiEvents,
-  persistAndPublishAgUiEvents,
-  publishPersistedAgUiEvents,
 } from "@/server-lib/ag-ui-publisher";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
   buildCanonicalRunTerminalEvent,
   buildPreLegacyAgUiCommitPlan,
-  buildTerminalAgUiCommitPlan,
+  commitPreLegacyAgUiEvents,
+  commitTerminalAgUiEvents,
   type CanonicalPersistenceSummary,
   type DaemonEventEnvelopeV2,
-  emptyCanonicalPersistenceSummary,
   filterCanonicalEventsForDeltaCoexistence,
   findCanonicalEventContextMismatch,
   findCanonicalRunTerminalEvent,
@@ -73,7 +71,6 @@ import {
   resolveTerminalStatusForTransition,
   shouldQueueTerminalCheckpoint,
 } from "@/server-lib/daemon-event/run-completion";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -988,77 +985,21 @@ export async function POST(request: Request) {
     response?: undefined;
   };
 
-  if (!canPersistCanonicalEvents && preLegacyCommitPlan.requiresPersistence) {
-    return Response.json(
-      {
-        success: false,
-        error: "daemon_event_canonical_persistence_unavailable",
-      },
-      { status: 503 },
-    );
+  const preLegacyCommit = await commitPreLegacyAgUiEvents({
+    db,
+    canPersistCanonicalEvents,
+    runId: runContext.runId,
+    threadId,
+    threadChatId,
+    plan: preLegacyCommitPlan,
+    canonicalEventsAttempted: canonicalEventsForPersistence?.length ?? 0,
+  });
+  if (!preLegacyCommit.ok) {
+    return Response.json(preLegacyCommit.body, {
+      status: preLegacyCommit.status,
+    });
   }
-
-  if (preLegacyCommitPlan.requiresPersistence) {
-    try {
-      const mergedResult = await persistAndPublishAgUiEvents({
-        db,
-        runId: runContext.runId,
-        threadId,
-        threadChatId,
-        rows: preLegacyCommitPlan.mergedRows,
-      });
-      canonicalPersistence = {
-        summary: {
-          attempted: canonicalEventsForPersistence?.length ?? 0,
-          inserted: mergedResult.inserted,
-          deduplicated: mergedResult.skipped,
-          insertedEventIds: mergedResult.insertedEventIds,
-          persistedEvents: [],
-          persistedEnvelopes: [],
-        },
-      };
-      recordAgentTraceSpan({
-        traceId: runContext.runId,
-        name: "server.daemon_event.merged.persisted",
-        attributes: {
-          threadId,
-          threadChatId,
-          runId: runContext.runId,
-          canonicalRowCount: preLegacyCommitPlan.canonicalRows.length,
-          deltaRowCount: preLegacyCommitPlan.deltaRows.length,
-          richPartRowCount: preLegacyCommitPlan.richPartRows.length,
-          totalRows: preLegacyCommitPlan.mergedRows.length,
-          inserted: mergedResult.inserted,
-          deduplicated: mergedResult.skipped,
-        },
-      });
-    } catch (error) {
-      console.error("[daemon-event] AG-UI merged persistence failed", {
-        runId: runContext.runId,
-        threadId,
-        threadChatId,
-        error,
-      });
-      return Response.json(
-        {
-          success: false,
-          error: "daemon_event_canonical_event_persist_failed",
-          code: "database_error",
-          detail: error instanceof Error ? error.message : String(error),
-        },
-        { status: 500 },
-      );
-    }
-  } else {
-    canonicalPersistence = {
-      summary: emptyCanonicalPersistenceSummary(),
-    };
-  }
-
-  let terminalCanonicalPersistence:
-    | { summary: CanonicalPersistenceSummary; response?: undefined }
-    | { summary?: undefined; response: Response }
-    | null = null;
+  canonicalPersistence = { summary: preLegacyCommit.summary };
 
   publishMetaEvents({ metaEvents, threadId, threadChatId });
 
@@ -1124,9 +1065,8 @@ export async function POST(request: Request) {
   // AG-UI's client-side verifyEvents forbids any event after RUN_ERROR /
   // RUN_FINISHED — out-of-order seq would surface as "Cannot send event type
   // 'MESSAGES_SNAPSHOT': The run has already errored with 'RUN_ERROR'" on
-  // reconnect. Live publish at the bottom of the route also reads from
-  // `terminalCanonicalPersistence.summary`, so the persist call still happens
-  // before the broadcast loop.
+  // reconnect. The terminal commit helper publishes only after the ordered
+  // persist succeeds.
 
   // Heartbeat shortcut: empty messages skip message/event persistence,
   // envelope validation, and run-context status transitions.
@@ -1471,7 +1411,7 @@ export async function POST(request: Request) {
         },
       );
 
-      const transitionResult = await transitionThreadChatLifecycle({
+      const transitionResult = await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId,
@@ -1672,76 +1612,20 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing" &&
     (terminalCanonicalEventsForPersistence || deltaEndRows.length > 0)
   ) {
-    const { terminalMergedRows } = buildTerminalAgUiCommitPlan({
+    const terminalCommit = await commitTerminalAgUiEvents({
+      db,
+      canPersistCanonicalEvents,
+      runId: runContext.runId,
+      threadId,
+      threadChatId,
       terminalCanonicalEventsForPersistence,
       deltaEndRows,
     });
-    if (terminalMergedRows.length > 0) {
-      if (!canPersistCanonicalEvents) {
-        return Response.json(
-          {
-            success: false,
-            error: "daemon_event_canonical_persistence_unavailable",
-          },
-          { status: 503 },
-        );
-      }
-      try {
-        const terminalPersistResult = await persistAgUiEvents({
-          db,
-          runId: runContext.runId,
-          threadId,
-          threadChatId,
-          rows: terminalMergedRows,
-        });
-        terminalCanonicalPersistence = {
-          summary: {
-            attempted:
-              terminalCanonicalEventsForPersistence?.length ??
-              0 + deltaEndRows.length,
-            inserted: terminalPersistResult.inserted,
-            deduplicated: terminalPersistResult.skipped,
-            insertedEventIds: terminalPersistResult.insertedEventIds,
-            persistedEvents: terminalPersistResult.persistedEvents,
-            persistedEnvelopes: terminalPersistResult.persistedEnvelopes,
-          },
-        };
-      } catch (error) {
-        console.error("[daemon-event] AG-UI terminal persistence failed", {
-          runId: runContext.runId,
-          threadId,
-          threadChatId,
-          error,
-        });
-        return Response.json(
-          {
-            success: false,
-            error: "daemon_event_canonical_event_persist_failed",
-            code: "database_error",
-            detail: error instanceof Error ? error.message : String(error),
-          },
-          { status: 500 },
-        );
-      }
-    } else {
-      terminalCanonicalPersistence = null;
+    if (!terminalCommit.ok) {
+      return Response.json(terminalCommit.body, {
+        status: terminalCommit.status,
+      });
     }
-  }
-
-  // Publish terminal events (delta-end + RUN_FINISHED/ERROR) that were
-  // persisted above but not yet published to Redis. Non-terminal events
-  // were already published in the merged persistAndPublishAgUiEvents call.
-  if (
-    daemonRunStatusFromMessages !== "processing" &&
-    terminalCanonicalPersistence?.summary?.persistedEvents.length
-  ) {
-    await publishPersistedAgUiEvents({
-      threadChatId,
-      persistedEvents: terminalCanonicalPersistence.summary.persistedEvents,
-      insertedEventIds: terminalCanonicalPersistence.summary.insertedEventIds,
-      persistedEnvelopes:
-        terminalCanonicalPersistence.summary.persistedEnvelopes,
-    });
   }
 
   const shouldReturnDuplicateTerminalIgnored =

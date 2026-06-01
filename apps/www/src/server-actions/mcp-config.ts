@@ -1,15 +1,17 @@
 "use server";
 
+import { waitUntil } from "@vercel/functions";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   getEnvironment,
   updateEnvironment,
+  markSnapshotsStale,
 } from "@terragon/shared/model/environments";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { McpConfig, validateMcpConfig } from "@terragon/sandbox/mcp-config";
-import { scheduleEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-scheduler";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 import { requireResult, UserFacingError } from "@/lib/server-actions";
 
 export const updateMcpConfig = userOnlyAction(
@@ -55,12 +57,13 @@ export const updateMcpConfig = userOnlyAction(
         mcpConfigEncrypted: encryptedConfig,
       },
     });
-    await scheduleEnvironmentSnapshotBuild({
+    await markSnapshotsStale({
       db,
       userId,
       environmentId,
-      reason: "environment-config-changed",
     });
+    // Rebuild eagerly against the new MCP config.
+    waitUntil(triggerEnvironmentSnapshotBuild({ db, userId, environmentId }));
 
     return { success: true };
   },

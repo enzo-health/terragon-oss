@@ -24,7 +24,6 @@ const THREAD_LIFECYCLE_MESSAGE_TYPES: DBSystemMessage["message_type"][] = [
   "cancel-schedule",
   "agent-error-retry",
   "follow-up-retry-failed",
-  "snapshot-refresh-degraded",
 ];
 
 const THREAD_LIFECYCLE_MESSAGE_TYPE_SET = new Set<

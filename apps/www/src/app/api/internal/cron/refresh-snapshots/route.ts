@@ -1,7 +1,10 @@
 import type { NextRequest } from "next/server";
 import { env } from "@terragon/env/apps-www";
+import {
+  reapOrphanEnvironmentSnapshots,
+  refreshStaleEnvironmentSnapshots,
+} from "@/server-lib/environment-snapshot-lifecycle";
 import { db } from "@/lib/db";
-import { runEnvironmentSnapshotMaintenance } from "@/server-lib/environment-snapshot-scheduler";
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -16,11 +19,14 @@ export async function GET(request: NextRequest) {
   let refreshed = 0;
   let reaped = 0;
   try {
-    const result = await runEnvironmentSnapshotMaintenance({ db });
-    refreshed = result.refreshed;
-    reaped = result.reaped;
+    refreshed = await refreshStaleEnvironmentSnapshots({ db });
   } catch (error) {
-    console.error("[refresh-snapshots] maintenance pass failed:", error);
+    console.error("[refresh-snapshots] refresh pass failed:", error);
+  }
+  try {
+    reaped = await reapOrphanEnvironmentSnapshots({ db });
+  } catch (error) {
+    console.error("[refresh-snapshots] reap pass failed:", error);
   }
   console.log(
     `[refresh-snapshots] cron done — refreshed ${refreshed}, reaped ${reaped}`,

@@ -104,10 +104,7 @@ export async function POST(req: NextRequest) {
     );
     // Process asynchronously to return 200 immediately to Slack
     waitUntil(
-      handleAppMentionEvent({
-        ...payload.event,
-        event_id: payload.event_id,
-      }).catch((error) => {
+      handleAppMentionEvent(payload.event).catch((error) => {
         console.error("[slack webhook] Error processing app mention:", error);
       }),
     );

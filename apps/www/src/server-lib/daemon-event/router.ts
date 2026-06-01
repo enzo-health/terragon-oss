@@ -40,7 +40,7 @@ import {
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { trackUsageEvents } from "@/server-lib/usage-events";
 import {
   buildInterruptedToolResultMessages,
@@ -73,7 +73,7 @@ export function createDefaultDependencies(): RouterDependencies {
     getThreadMinimal,
     touchThreadChatUpdatedAt,
     updateThreadChat,
-    updateThreadChatWithTransition: transitionThreadChatLifecycle,
+    updateThreadChatWithTransition,
     updateThread,
     getFeatureFlagForUser,
     extendSandboxLife,

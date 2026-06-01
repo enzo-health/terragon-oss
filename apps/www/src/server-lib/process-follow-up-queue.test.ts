@@ -67,8 +67,8 @@ async function loadSubject(options: {
     getThreadChat,
     getThreadMinimal,
   }));
-  vi.doMock("@/server-lib/thread-lifecycle-command", () => ({
-    transitionThreadChatLifecycle: updateThreadChatWithTransition,
+  vi.doMock("@/agent/update-status", () => ({
+    updateThreadChatWithTransition,
   }));
   vi.doMock("@/agent/msg/startAgentMessage", () => ({
     dispatchAgentMessage: startAgentMessage,

@@ -1,5 +1,6 @@
 "use server";
 
+import { waitUntil } from "@vercel/functions";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 
@@ -9,7 +10,7 @@ import {
   updateEnvironment,
   markSnapshotsStale,
 } from "@terragon/shared/model/environments";
-import { scheduleEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-scheduler";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { requireResult } from "@/lib/server-actions";
@@ -71,12 +72,15 @@ export const updateEnvironmentVariables = userOnlyAction(
         ),
       );
     } else {
-      await scheduleEnvironmentSnapshotBuild({
+      await markSnapshotsStale({
         db,
         userId,
         environmentId,
-        reason: "environment-config-changed",
       });
+      // Rebuild eagerly against the new variables. Global env-var changes fan
+      // out across every repo, so those stay lazy (mark-stale only) to bound
+      // build volume — they rebuild on next boot.
+      waitUntil(triggerEnvironmentSnapshotBuild({ db, userId, environmentId }));
     }
     return { success: true };
   },

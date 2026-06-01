@@ -1,13 +1,18 @@
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import type { DBMessage } from "@terragon/shared";
+import type { DB } from "@terragon/shared/db";
 import { toDBMessage } from "@/agent/msg/toDBMessage";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type AgUiPublishRow,
   type AssistantMessagePartsInput,
   canonicalEventsToAgUiRows,
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
+  persistAgUiEvents,
+  persistAndPublishAgUiEvents,
   type PersistAgUiEventsResult,
+  publishPersistedAgUiEvents,
 } from "@/server-lib/ag-ui-publisher";
 
 export type DaemonEventEnvelopeV2 = {
@@ -57,6 +62,29 @@ export type PreLegacyAgUiCommitPlan = {
 export type TerminalAgUiCommitPlan = {
   terminalCanonicalRows: AgUiPublishRow[];
   terminalMergedRows: AgUiPublishRow[];
+};
+
+export type DaemonEventCommitFailure = {
+  ok: false;
+  status: 500 | 503;
+  body: {
+    success: false;
+    error:
+      | "daemon_event_canonical_persistence_unavailable"
+      | "daemon_event_canonical_event_persist_failed";
+    code?: "database_error";
+    detail?: string;
+  };
+};
+
+export type DaemonEventCommitSuccess = {
+  ok: true;
+  summary: CanonicalPersistenceSummary;
+};
+
+export type DaemonTerminalCommitSuccess = {
+  ok: true;
+  summary: CanonicalPersistenceSummary | null;
 };
 
 export function emptyCanonicalPersistenceSummary(): CanonicalPersistenceSummary {
@@ -220,6 +248,173 @@ export function buildTerminalAgUiCommitPlan(params: {
   return {
     terminalCanonicalRows,
     terminalMergedRows: [...params.deltaEndRows, ...terminalCanonicalRows],
+  };
+}
+
+export async function commitPreLegacyAgUiEvents(params: {
+  db: DB;
+  canPersistCanonicalEvents: boolean;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  plan: PreLegacyAgUiCommitPlan;
+  canonicalEventsAttempted: number;
+}): Promise<DaemonEventCommitSuccess | DaemonEventCommitFailure> {
+  if (!params.canPersistCanonicalEvents && params.plan.requiresPersistence) {
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        success: false,
+        error: "daemon_event_canonical_persistence_unavailable",
+      },
+    };
+  }
+
+  if (!params.plan.requiresPersistence) {
+    return {
+      ok: true,
+      summary: emptyCanonicalPersistenceSummary(),
+    };
+  }
+
+  try {
+    const mergedResult = await persistAndPublishAgUiEvents({
+      db: params.db,
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      rows: params.plan.mergedRows,
+    });
+    recordAgentTraceSpan({
+      traceId: params.runId,
+      name: "server.daemon_event.merged.persisted",
+      attributes: {
+        threadId: params.threadId,
+        threadChatId: params.threadChatId,
+        runId: params.runId,
+        canonicalRowCount: params.plan.canonicalRows.length,
+        deltaRowCount: params.plan.deltaRows.length,
+        richPartRowCount: params.plan.richPartRows.length,
+        totalRows: params.plan.mergedRows.length,
+        inserted: mergedResult.inserted,
+        deduplicated: mergedResult.skipped,
+      },
+    });
+    return {
+      ok: true,
+      summary: {
+        attempted: params.canonicalEventsAttempted,
+        inserted: mergedResult.inserted,
+        deduplicated: mergedResult.skipped,
+        insertedEventIds: mergedResult.insertedEventIds,
+        persistedEvents: [],
+        persistedEnvelopes: [],
+      },
+    };
+  } catch (error) {
+    console.error("[daemon-event] AG-UI merged persistence failed", {
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        success: false,
+        error: "daemon_event_canonical_event_persist_failed",
+        code: "database_error",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
+export async function commitTerminalAgUiEvents(params: {
+  db: DB;
+  canPersistCanonicalEvents: boolean;
+  runId: string;
+  threadId: string;
+  threadChatId: string;
+  terminalCanonicalEventsForPersistence: CanonicalEventsPayload | null;
+  deltaEndRows: AgUiPublishRow[];
+}): Promise<DaemonTerminalCommitSuccess | DaemonEventCommitFailure> {
+  const { terminalMergedRows } = buildTerminalAgUiCommitPlan({
+    terminalCanonicalEventsForPersistence:
+      params.terminalCanonicalEventsForPersistence,
+    deltaEndRows: params.deltaEndRows,
+  });
+
+  if (terminalMergedRows.length === 0) {
+    return {
+      ok: true,
+      summary: null,
+    };
+  }
+
+  if (!params.canPersistCanonicalEvents) {
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        success: false,
+        error: "daemon_event_canonical_persistence_unavailable",
+      },
+    };
+  }
+
+  let summary: CanonicalPersistenceSummary;
+  try {
+    const terminalPersistResult = await persistAgUiEvents({
+      db: params.db,
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      rows: terminalMergedRows,
+    });
+    summary = {
+      attempted:
+        (params.terminalCanonicalEventsForPersistence?.length ?? 0) +
+        params.deltaEndRows.length,
+      inserted: terminalPersistResult.inserted,
+      deduplicated: terminalPersistResult.skipped,
+      insertedEventIds: terminalPersistResult.insertedEventIds,
+      persistedEvents: terminalPersistResult.persistedEvents,
+      persistedEnvelopes: terminalPersistResult.persistedEnvelopes,
+    };
+  } catch (error) {
+    console.error("[daemon-event] AG-UI terminal persistence failed", {
+      runId: params.runId,
+      threadId: params.threadId,
+      threadChatId: params.threadChatId,
+      error,
+    });
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        success: false,
+        error: "daemon_event_canonical_event_persist_failed",
+        code: "database_error",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  if (summary.persistedEvents.length > 0) {
+    await publishPersistedAgUiEvents({
+      threadChatId: params.threadChatId,
+      persistedEvents: summary.persistedEvents,
+      insertedEventIds: summary.insertedEventIds,
+      persistedEnvelopes: summary.persistedEnvelopes,
+    });
+  }
+
+  return {
+    ok: true,
+    summary,
   };
 }
 

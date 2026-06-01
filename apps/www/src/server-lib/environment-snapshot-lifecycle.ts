@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { waitUntil } from "@vercel/functions";
 import type { DB } from "@terragon/shared/db";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 import type { SandboxSize } from "@terragon/types/sandbox";
 import { env } from "@terragon/env/apps-www";
 import {
-  completeEnvironmentSnapshotBuild,
   getEnvironment,
   getEnvironmentsByRepoFullName,
   getEnvironmentsWithSnapshots,
@@ -24,7 +22,6 @@ import {
   deleteRepoSnapshot,
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
-  getUnsafeRepoSnapshotInputReasons,
   listRepoSnapshotNames,
 } from "@terragon/sandbox/snapshot-builder";
 import {
@@ -112,26 +109,6 @@ export function selectReadyEnvironmentSnapshot({
   return getReadySnapshot({ snapshots }, "daytona", size, fingerprint);
 }
 
-function getUnsafeSnapshotBuildReason({
-  setupScript,
-  environmentVariables,
-  mcpConfig,
-}: {
-  setupScript: string | null;
-  environmentVariables: Array<{ key: string; value: string }>;
-  mcpConfig: unknown;
-}): string | null {
-  const reasons = getUnsafeRepoSnapshotInputReasons({
-    setupScript,
-    environmentVariables,
-    mcpConfig,
-  });
-  if (reasons.length === 0) {
-    return null;
-  }
-  return `unsafe snapshot inputs: ${reasons.join(", ")}`;
-}
-
 export async function loadSnapshotBuildInputs({
   db,
   userId,
@@ -199,7 +176,6 @@ export async function buildAndStoreEnvironmentSnapshot({
   size,
   environmentVariables,
   mcpConfig,
-  buildReason = "manual",
 }: {
   db: DB;
   userId: string;
@@ -211,17 +187,7 @@ export async function buildAndStoreEnvironmentSnapshot({
   size: SandboxSize;
   environmentVariables: Array<{ key: string; value: string }>;
   mcpConfig: unknown;
-  buildReason?: string;
 }): Promise<void> {
-  const unsafeReason = getUnsafeSnapshotBuildReason({
-    setupScript,
-    environmentVariables,
-    mcpConfig,
-  });
-  if (unsafeReason) {
-    throw new Error(`Repo snapshot build disabled for ${unsafeReason}`);
-  }
-
   const fingerprint = computeSnapshotRecipeFingerprint({
     setupScript,
     size,
@@ -234,8 +200,6 @@ export async function buildAndStoreEnvironmentSnapshot({
     existing?.snapshots?.find(
       (s) => s.provider === "daytona" && s.size === size,
     )?.snapshotName || null;
-  const buildId = randomUUID();
-  const requestedAt = new Date().toISOString();
 
   await updateEnvironmentSnapshot({
     db,
@@ -246,11 +210,8 @@ export async function buildAndStoreEnvironmentSnapshot({
       size,
       snapshotName: "",
       status: "building",
-      buildId,
-      requestedAt,
-      buildReason,
       ...fingerprint,
-      builtAt: requestedAt,
+      builtAt: new Date().toISOString(),
     },
   });
 
@@ -261,12 +222,11 @@ export async function buildAndStoreEnvironmentSnapshot({
       githubAccessToken,
       setupScript,
       environmentVariables,
-      mcpConfig,
       size,
       onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
     })
       .then(async ({ snapshotName }) => {
-        const completion = await completeEnvironmentSnapshotBuild({
+        await updateEnvironmentSnapshot({
           db,
           environmentId,
           userId,
@@ -275,26 +235,10 @@ export async function buildAndStoreEnvironmentSnapshot({
             size,
             snapshotName,
             status: "ready",
-            buildId,
-            requestedAt,
-            buildReason,
             ...fingerprint,
             builtAt: new Date().toISOString(),
           },
-          expectedBuildId: buildId,
         });
-        if (!completion.applied) {
-          console.warn(
-            `[snapshot-build] Ignoring stale snapshot completion ${snapshotName} for ${repoFullName}; active build changed`,
-          );
-          await deleteRepoSnapshot(snapshotName).catch((error) =>
-            console.error(
-              `[snapshot-build] Failed to delete stale snapshot ${snapshotName}:`,
-              error,
-            ),
-          );
-          return;
-        }
         console.log(
           `[snapshot-build] Snapshot ready: ${snapshotName} for ${repoFullName}`,
         );
@@ -309,32 +253,22 @@ export async function buildAndStoreEnvironmentSnapshot({
       })
       .catch(async (error) => {
         console.error(`[snapshot-build] Failed:`, error);
-        const failedSnapshot: EnvironmentSnapshot = {
-          provider: "daytona",
-          size,
-          snapshotName: "",
-          status: "failed",
-          buildId,
-          requestedAt,
-          buildReason,
-          ...fingerprint,
-          error: error instanceof Error ? error.message : String(error),
-          builtAt: new Date().toISOString(),
-        };
-        const completion = await completeEnvironmentSnapshotBuild({
+        await updateEnvironmentSnapshot({
           db,
           environmentId,
           userId,
-          snapshot: failedSnapshot,
-          expectedBuildId: buildId,
+          snapshot: {
+            provider: "daytona",
+            size,
+            snapshotName: "",
+            status: "failed",
+            ...fingerprint,
+            error: error instanceof Error ? error.message : String(error),
+            builtAt: new Date().toISOString(),
+          },
         }).catch((e) =>
           console.error("[snapshot-build] Failed to update status:", e),
         );
-        if (completion && !completion.applied) {
-          console.warn(
-            `[snapshot-build] Ignoring stale snapshot failure for ${repoFullName}; active build changed`,
-          );
-        }
       }),
   );
 }
@@ -377,7 +311,6 @@ export async function maybeWarmEnvironmentSnapshot({
   environmentVariables,
   mcpConfig,
   force = false,
-  buildReason,
 }: {
   db: DB;
   userId: string;
@@ -391,19 +324,8 @@ export async function maybeWarmEnvironmentSnapshot({
   environmentVariables: Array<{ key: string; value: string }>;
   mcpConfig: unknown;
   force?: boolean;
-  buildReason?: string;
 }): Promise<void> {
   try {
-    const unsafeReason = getUnsafeSnapshotBuildReason({
-      setupScript,
-      environmentVariables,
-      mcpConfig,
-    });
-    if (unsafeReason) {
-      console.warn(`[snapshot-build] auto-build skipped for ${unsafeReason}`);
-      return;
-    }
-
     const fingerprint = computeSnapshotRecipeFingerprint({
       setupScript,
       size,
@@ -425,19 +347,17 @@ export async function maybeWarmEnvironmentSnapshot({
     });
 
     const now = Date.now();
-    const inProgress =
-      !force &&
-      reaped.some(
-        (s) =>
-          s.provider === "daytona" &&
-          s.size === size &&
-          s.status === "building" &&
-          s.setupScriptHash === fingerprint.setupScriptHash &&
-          s.baseDockerfileHash === fingerprint.baseDockerfileHash &&
-          s.environmentVariablesHash === fingerprint.environmentVariablesHash &&
-          s.mcpConfigHash === fingerprint.mcpConfigHash &&
-          !isSnapshotBuildStale(s, now),
-      );
+    const inProgress = reaped.some(
+      (s) =>
+        s.provider === "daytona" &&
+        s.size === size &&
+        s.status === "building" &&
+        s.setupScriptHash === fingerprint.setupScriptHash &&
+        s.baseDockerfileHash === fingerprint.baseDockerfileHash &&
+        s.environmentVariablesHash === fingerprint.environmentVariablesHash &&
+        s.mcpConfigHash === fingerprint.mcpConfigHash &&
+        !isSnapshotBuildStale(s, now),
+    );
     if (inProgress) {
       return;
     }
@@ -453,8 +373,6 @@ export async function maybeWarmEnvironmentSnapshot({
       size,
       environmentVariables,
       mcpConfig,
-      buildReason:
-        buildReason ?? (force ? "forced-refresh" : "boot-auto-build"),
     });
   } catch (error) {
     console.warn("[snapshot-build] auto-build trigger skipped:", error);
@@ -467,14 +385,12 @@ export async function triggerEnvironmentSnapshotBuild({
   environmentId,
   size = "small",
   force = false,
-  buildReason,
 }: {
   db: DB;
   userId: string;
   environmentId: string;
   size?: SandboxSize;
   force?: boolean;
-  buildReason?: string;
 }): Promise<void> {
   try {
     const result = await loadSnapshotBuildInputs({ db, userId, environmentId });
@@ -494,7 +410,6 @@ export async function triggerEnvironmentSnapshotBuild({
       environmentVariables: result.inputs.environmentVariables,
       mcpConfig: result.inputs.mcpConfig,
       force,
-      buildReason,
     });
   } catch (error) {
     console.warn(
@@ -570,7 +485,6 @@ export async function refreshEnvironmentSnapshotsForRepo({
           environmentId: environment.id,
           size,
           force: true,
-          buildReason: "github-base-push",
         }),
       );
       triggered++;
@@ -611,7 +525,6 @@ export async function refreshStaleEnvironmentSnapshots({
         environmentId: environment.id,
         size,
         force: true,
-        buildReason: "cron-stale-refresh",
       });
       refreshed++;
     }

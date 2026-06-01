@@ -20,7 +20,7 @@ import {
   type ThreadViewEventForAgUi,
   useAgUiSidecarRouter,
   useThreadViewModel,
-} from "./use-ag-ui-messages";
+} from "./use-thread-view-model";
 
 vi.mock("@/lib/agent-trace", () => ({
   recordAgentTraceSpan: vi.fn(),
@@ -66,12 +66,10 @@ function asHttpAgent(fake: FakeAgent): HttpAgent {
 function SidecarHarness({
   agent,
   initialMessages,
-  onMessages,
   onLifecycleMessages,
 }: {
   agent: HttpAgent | null;
   initialMessages: UIMessage[];
-  onMessages: (messages: UIMessage[]) => void;
   onLifecycleMessages?: (
     messages: ReturnType<typeof useThreadViewModel>["lifecycleMessages"],
   ) => void;
@@ -88,16 +86,12 @@ function SidecarHarness({
     () => createThreadViewSidecarEventProjector(),
     [],
   );
-  const viewModel = useThreadViewModel({
-    snapshot,
-    includeTranscriptMessages: false,
-  });
+  const viewModel = useThreadViewModel({ snapshot });
   useAgUiSidecarRouter({
     agent,
     dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
     projectEvent,
   });
-  onMessages(viewModel.messages);
   onLifecycleMessages?.(viewModel.lifecycleMessages);
   return null;
 }
@@ -105,13 +99,11 @@ function SidecarHarness({
 function RoutedSidecarHarness({
   agent,
   initialMessages,
-  onMessages,
   onStatusOrTerminalEvent,
   projectEvent: projectEventOverride,
 }: {
   agent: HttpAgent | null;
   initialMessages: UIMessage[];
-  onMessages: (messages: UIMessage[]) => void;
   onStatusOrTerminalEvent: () => void;
   projectEvent?: (
     event: ThreadViewEventForAgUi,
@@ -129,17 +121,13 @@ function RoutedSidecarHarness({
     () => createThreadViewSidecarEventProjector(),
     [],
   );
-  const viewModel = useThreadViewModel({
-    snapshot,
-    includeTranscriptMessages: false,
-  });
+  const viewModel = useThreadViewModel({ snapshot });
   useAgUiSidecarRouter({
     agent,
     dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
     projectEvent: projectEventOverride ?? projectEvent,
     onStatusOrTerminalEvent,
   });
-  onMessages(viewModel.messages);
   return null;
 }
 
@@ -275,7 +263,6 @@ describe("useThreadViewModel sidecar projection", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.lifecycle).toMatchObject({
       runId: "run-1",
       runStarted: true,
@@ -321,8 +308,6 @@ describe("useThreadViewModel sidecar projection", () => {
       }
     }
 
-    expect(projectThreadViewModel(state).messages).toEqual([]);
-
     const hydratedMessage: UIMessage = {
       id: "agent-durable-1",
       role: "agent",
@@ -343,7 +328,6 @@ describe("useThreadViewModel sidecar projection", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.artifacts.descriptors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -396,8 +380,6 @@ describe("useThreadViewModel sidecar projection", () => {
         });
       }
     }
-
-    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 
   it("routes run lifecycle events through the runtime event input", () => {
@@ -422,7 +404,9 @@ describe("useThreadViewModel sidecar projection", () => {
 
   it("keeps sidecar transcript empty across ordinary streamed text deltas", () => {
     const agent = createFakeAgent();
-    const seen: UIMessage[][] = [];
+    const seenLifecycle: ReturnType<
+      typeof useThreadViewModel
+    >["lifecycleMessages"][] = [];
     const initial: UIMessage[] = [
       { id: "user-0", role: "user", parts: [{ type: "text", text: "hi" }] },
     ];
@@ -436,12 +420,11 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(SidecarHarness, {
           agent: asHttpAgent(agent),
           initialMessages: initial,
-          onMessages: (messages) => seen.push(messages),
+          onLifecycleMessages: (messages) => seenLifecycle.push(messages),
         }),
       );
     });
-    const beforeStreaming = seen[seen.length - 1]!;
-    expect(beforeStreaming).toEqual([]);
+    const beforeCount = seenLifecycle.length;
 
     act(() => {
       agent.emit({
@@ -458,13 +441,11 @@ describe("useThreadViewModel sidecar projection", () => {
       }
     });
 
-    const last = seen[seen.length - 1]!;
-    expect(last).toBe(beforeStreaming);
+    expect(seenLifecycle).toHaveLength(beforeCount);
   });
 
   it("records client event receipt spans for native AG-UI events", () => {
     const agent = createFakeAgent();
-    const onMessages = vi.fn();
 
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -475,7 +456,6 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(SidecarHarness, {
           agent: asHttpAgent(agent),
           initialMessages: [],
-          onMessages,
         }),
       );
     });
@@ -500,7 +480,6 @@ describe("useThreadViewModel sidecar projection", () => {
 
   it("routes sidecar state and status invalidation through one subscription", () => {
     const agent = createFakeAgent();
-    const onMessages = vi.fn();
     const onStatusOrTerminalEvent = vi.fn();
 
     container = document.createElement("div");
@@ -512,7 +491,6 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(RoutedSidecarHarness, {
           agent: asHttpAgent(agent),
           initialMessages: [],
-          onMessages,
           onStatusOrTerminalEvent,
         }),
       );
@@ -538,7 +516,6 @@ describe("useThreadViewModel sidecar projection", () => {
     });
 
     expect(onStatusOrTerminalEvent).toHaveBeenCalledTimes(2);
-    expect(onMessages).toHaveBeenLastCalledWith([]);
     expect(recordAgentTraceSpan).toHaveBeenCalledWith(
       expect.objectContaining({
         traceId: "agent-1",
@@ -553,7 +530,6 @@ describe("useThreadViewModel sidecar projection", () => {
 
   it("invalidates status events before sidecar projection can filter them", () => {
     const agent = createFakeAgent();
-    const onMessages = vi.fn();
     const onStatusOrTerminalEvent = vi.fn();
 
     container = document.createElement("div");
@@ -565,7 +541,6 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(RoutedSidecarHarness, {
           agent: asHttpAgent(agent),
           initialMessages: [],
-          onMessages,
           onStatusOrTerminalEvent,
           projectEvent: () => null,
         }),
@@ -581,34 +556,9 @@ describe("useThreadViewModel sidecar projection", () => {
     });
 
     expect(onStatusOrTerminalEvent).toHaveBeenCalledOnce();
-    expect(onMessages).toHaveBeenLastCalledWith([]);
-  });
-
-  it("can skip legacy transcript projection for runtime-owned rendering", () => {
-    const seen: UIMessage[][] = [];
-    const initial: UIMessage[] = [
-      { id: "user-0", role: "user", parts: [{ type: "text", text: "hi" }] },
-    ];
-
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => {
-      root?.render(
-        createElement(SidecarHarness, {
-          agent: null,
-          initialMessages: initial,
-          onMessages: (messages) => seen.push(messages),
-        }),
-      );
-    });
-
-    expect(seen.at(-1)).toEqual([]);
   });
 
   it("keeps lifecycle notices while skipping long sidecar transcripts", () => {
-    const seenMessages: UIMessage[][] = [];
     const seenLifecycle: ReturnType<
       typeof useThreadViewModel
     >["lifecycleMessages"][] = [];
@@ -637,13 +587,11 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(SidecarHarness, {
           agent: null,
           initialMessages,
-          onMessages: (messages) => seenMessages.push(messages),
           onLifecycleMessages: (messages) => seenLifecycle.push(messages),
         }),
       );
     });
 
-    expect(seenMessages.at(-1)).toEqual([]);
     expect(seenLifecycle.at(-1)).toEqual([lifecycleMessage]);
   });
 
@@ -658,7 +606,6 @@ describe("useThreadViewModel sidecar projection", () => {
         createElement(SidecarHarness, {
           agent: asHttpAgent(agent),
           initialMessages: [],
-          onMessages: () => {},
         }),
       );
     });

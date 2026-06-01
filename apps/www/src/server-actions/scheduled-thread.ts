@@ -1,6 +1,6 @@
 "use server";
 
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { userOnlyAction } from "@/lib/auth-server";
 import { runScheduledThread as runScheduledThreadInternal } from "@/server-lib/scheduled-thread";
 
@@ -26,7 +26,7 @@ export const cancelScheduledThread = userOnlyAction(
       message_type: "cancel-schedule" as const,
       parts: [],
     };
-    const { didUpdateStatus } = await transitionThreadChatLifecycle({
+    const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,
       threadChatId,

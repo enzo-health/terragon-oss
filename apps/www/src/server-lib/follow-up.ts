@@ -3,7 +3,7 @@ import { DBUserMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { convertToPlainText } from "@/lib/db-message-helpers";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   getThreadChat,
   getThreadMinimal,
@@ -57,7 +57,7 @@ export async function followUpInternal({
     return;
   }
   const { didUpdateStatus, updatedStatus } =
-    await transitionThreadChatLifecycle({
+    await updateThreadChatWithTransition({
       userId,
       threadId,
       threadChatId: threadChat.id,

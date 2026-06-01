@@ -136,7 +136,6 @@ export type ThreadSourceMetadata =
     }
   | {
       type: "slack-mention";
-      teamId?: string;
       workspaceDomain: string;
       channel: string;
       messageTs: string;

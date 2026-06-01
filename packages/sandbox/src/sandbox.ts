@@ -1,7 +1,7 @@
 import type { SandboxProvider } from "@terragon/types/sandbox";
 import type { CreateSandboxOptions } from "./types";
 import { getSandboxProvider } from "./provider";
-import { setupSandboxBoot } from "./setup";
+import { setupSandboxEveryTime, setupSandboxOneTime } from "./setup";
 
 export async function getOrCreateSandbox(
   sandboxId: string | null,
@@ -57,12 +57,16 @@ export async function getOrCreateSandbox(
     sandboxStatus: "booting",
     bootingStatus: "provisioning-done",
   });
-  log(`setupSandboxBoot ${sandbox.sandboxId}...`);
-  await setupSandboxBoot({
+  log(`setupSandboxEveryTime ${sandbox.sandboxId}...`);
+  await setupSandboxEveryTime({
     session: sandbox,
     options,
     isCreatingSandbox: !sandboxId,
   });
+  if (!sandboxId) {
+    log(`setupSandboxOneTime ${sandbox.sandboxId}...`);
+    await setupSandboxOneTime(sandbox, options);
+  }
   const duration = Date.now() - startTime;
   if (sandboxId) {
     log(`Resumed sandbox ${sandbox.sandboxId} in ${duration}ms`);

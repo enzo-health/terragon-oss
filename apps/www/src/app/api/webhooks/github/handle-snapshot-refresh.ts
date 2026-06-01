@@ -1,7 +1,7 @@
 import { waitUntil } from "@vercel/functions";
 import type { EmitterWebhookEvent } from "@octokit/webhooks";
 import { db } from "@/lib/db";
-import { scheduleRepositorySnapshotRefresh } from "@/server-lib/environment-snapshot-scheduler";
+import { refreshEnvironmentSnapshotsForRepo } from "@/server-lib/environment-snapshot-lifecycle";
 
 type PushEvent = EmitterWebhookEvent<"push">["payload"];
 
@@ -28,14 +28,5 @@ export async function handlePushSnapshotRefresh(
     return;
   }
 
-  waitUntil(
-    scheduleRepositorySnapshotRefresh({
-      db,
-      verifiedRepository: {
-        fullName: repoFullName,
-        defaultBranch,
-      },
-      reason: "github-base-push",
-    }),
-  );
+  waitUntil(refreshEnvironmentSnapshotsForRepo({ db, repoFullName }));
 }

@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
-import { createThreadViewSidecarEventProjector } from "../use-ag-ui-messages";
+import { createThreadViewSidecarEventProjector } from "../use-thread-view-model";
 import {
   createThreadViewSnapshot,
   selectThreadViewDbMessages,
@@ -178,7 +178,6 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(state).toBe(initialState);
-    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 
   it("hydrates DB snapshot while leaving duplicate replay bubbles to assistant-ui", () => {
@@ -204,7 +203,6 @@ describe("ThreadViewModel reducer", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages.map((message) => message.type)).toEqual([
       "user",
       "agent",
@@ -228,7 +226,6 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.threadStatus).toBe("booting");
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages).toHaveLength(2);
     expect(viewModel.dbMessages[1]).toMatchObject({
       type: "user",
@@ -272,7 +269,6 @@ describe("ThreadViewModel reducer", () => {
       threadStatus: "complete",
       runStarted: false,
     });
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages).toHaveLength(1);
     expect(viewModel.dbMessages[0]).toMatchObject({
       type: "user",
@@ -465,7 +461,6 @@ describe("ThreadViewModel reducer", () => {
       threadStatus: "working",
       runStarted: true,
     });
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages).toHaveLength(2);
     expect(viewModel.dbMessages[1]).toMatchObject({
       type: "agent",
@@ -549,7 +544,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     expect(state).toBe(initialState);
-    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 
   it("quarantines malformed rich projection parts", () => {
@@ -567,7 +561,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.quarantine).toEqual([
       {
         reason: "malformed-rich-part",
@@ -593,7 +586,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.quarantine).toEqual([
       {
         reason: "malformed-rich-part",
@@ -630,7 +622,6 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.quarantine).toEqual([]);
-    expect(viewModel.messages).toEqual([]);
   });
 
   it("ignores native side-effect user snapshots instead of quarantining them", () => {
@@ -650,7 +641,6 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.quarantine).toEqual([]);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.lifecycleMessages).toEqual([]);
   });
 
@@ -667,7 +657,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages).toHaveLength(2);
     expect(viewModel.lifecycleMessages).toEqual([
       expect.objectContaining({
@@ -694,12 +683,7 @@ describe("ThreadViewModel reducer", () => {
         },
       ],
     } as BaseEvent);
-
-    const viewModel = projectThreadViewModel(state, {
-      includeTranscriptMessages: false,
-    });
-
-    expect(viewModel.messages).toEqual([]);
+    const viewModel = projectThreadViewModel(state);
     expect(viewModel.lifecycleMessages).toEqual([
       expect.objectContaining({
         id: "side-effect-system:invalid-token-retry-0-abc123abc123",
@@ -732,10 +716,9 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(state.lifecycleMessages).toBe(lifecycleMessages);
-    expect(
-      projectThreadViewModel(state, { includeTranscriptMessages: false })
-        .lifecycleMessages,
-    ).toBe(lifecycleMessages);
+    expect(projectThreadViewModel(state).lifecycleMessages).toBe(
+      lifecycleMessages,
+    );
   });
 
   it("reconciles durable DB messages after ignored live transcript events", () => {
@@ -774,7 +757,6 @@ describe("ThreadViewModel reducer", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages[0]).toMatchObject({
       type: "agent",
       parts: [{ type: "text", text: "later snapshot" }],
@@ -1030,8 +1012,6 @@ describe("ThreadViewModel reducer", () => {
       state = applyAgUiEvent(state, replayedEvent);
     }
 
-    expect(projectThreadViewModel(state).messages).toEqual([]);
-
     state = threadViewModelReducer(state, {
       type: "server.refetch-reconciled",
       snapshot: snapshotWithMessages([
@@ -1044,7 +1024,6 @@ describe("ThreadViewModel reducer", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.dbMessages).toHaveLength(1);
     expect(viewModel.dbMessages[0]).toMatchObject({
       type: "agent",
@@ -1085,7 +1064,6 @@ describe("ThreadViewModel reducer", () => {
     }
 
     expect(state).toBe(initialState);
-    expect(projectThreadViewModel(state).messages).toEqual([]);
   });
 
   it("keeps transcript state stable when product sidecars receive lifecycle, meta, and runtime events", () => {
@@ -1192,7 +1170,6 @@ describe("ThreadViewModel reducer", () => {
 
     for (const event of productSidecars) {
       state = threadViewModelReducer(state, event);
-      expect(projectThreadViewModel(state).messages).toEqual([]);
     }
     expect(state.lifecycle.runId).toBe("run-1");
     expect(state.runtimeState).toEqual({ sandbox: "ready" });

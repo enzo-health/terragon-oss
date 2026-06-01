@@ -23,7 +23,7 @@ import {
 import {
   getDurableAgUiHistoryItemsFromEvents,
   type DurableAgUiHistoryItem,
-} from "@terragon/shared/model/persistent-message-projection";
+} from "./ag-ui/durable-history-builder";
 import { and, eq, sql } from "drizzle-orm";
 import { persistAndPublishAgUiEvents } from "./ag-ui-publisher";
 
@@ -76,8 +76,7 @@ type NativeAgUiSideEffectSystemMessageType =
   | "generic-retry"
   | "clear-context"
   | "agent-error-retry"
-  | "follow-up-retry-failed"
-  | "snapshot-refresh-degraded";
+  | "follow-up-retry-failed";
 
 const NATIVE_AG_UI_SIDE_EFFECT_SYSTEM_MESSAGE_TYPES =
   new Set<NativeAgUiSideEffectSystemMessageType>([
@@ -89,7 +88,6 @@ const NATIVE_AG_UI_SIDE_EFFECT_SYSTEM_MESSAGE_TYPES =
     "clear-context",
     "agent-error-retry",
     "follow-up-retry-failed",
-    "snapshot-refresh-degraded",
   ]);
 
 export async function persistSideEffectAgUiMessages({
@@ -533,7 +531,6 @@ function systemMessageTypeFromId(
     case "compact-result":
     case "agent-error-retry":
     case "follow-up-retry-failed":
-    case "snapshot-refresh-degraded":
       return messageType;
     default:
       return "unknown";

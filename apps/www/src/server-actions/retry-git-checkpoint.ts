@@ -4,7 +4,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { waitUntil } from "@vercel/functions";
 import { checkpointThread } from "../server-lib/checkpoint-thread";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { requireResult } from "@/lib/server-actions";
 import { getThreadChat } from "@terragon/shared/model/threads";
 
@@ -27,7 +27,7 @@ export const retryGitCheckpoint = userOnlyAction(
         }),
       "Task not found",
     );
-    const { didUpdateStatus } = await transitionThreadChatLifecycle({
+    const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,
       threadChatId,

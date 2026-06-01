@@ -724,7 +724,6 @@ describe("handlers", () => {
           userId: user.id,
           threadId: "prompted-thread-id",
           threadChatId: "prompted-chat-id",
-          source: "linear",
           messages: expect.arrayContaining([
             expect.objectContaining({
               parts: expect.arrayContaining([

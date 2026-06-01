@@ -63,7 +63,6 @@ export type ThreadViewSnapshot = {
 export type ThreadViewModel = {
   threadId: string;
   threadChatId: string;
-  messages: UIMessage[];
   lifecycleMessages: UISystemMessage[];
   runtimeState: ThreadViewRuntimeState;
   runtimeActivities: ThreadViewRuntimeActivities;

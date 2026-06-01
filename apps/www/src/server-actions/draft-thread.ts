@@ -15,7 +15,7 @@ import {
   updateThread,
   updateThreadChat,
 } from "@terragon/shared/model/threads";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
 import { getUserMessageToSend } from "@/lib/db-message-helpers";
@@ -148,7 +148,7 @@ export const submitDraftThread = userOnlyAction(
       if (scheduleAt < Date.now()) {
         throw new UserFacingError("Schedule time must be in the future");
       }
-      const { didUpdateStatus } = await transitionThreadChatLifecycle({
+      const { didUpdateStatus } = await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId: threadChat.id,
@@ -167,7 +167,7 @@ export const submitDraftThread = userOnlyAction(
         throw new UserFacingError("Failed to schedule draft task");
       }
     } else {
-      const { didUpdateStatus } = await transitionThreadChatLifecycle({
+      const { didUpdateStatus } = await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId: threadChat.id,

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { getThreadChat } from "@terragon/shared/model/threads";
 import { waitUntil } from "@vercel/functions";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
@@ -22,7 +22,7 @@ export async function runScheduledThread({
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
-  const { didUpdateStatus } = await transitionThreadChatLifecycle({
+  const { didUpdateStatus } = await updateThreadChatWithTransition({
     userId,
     threadId,
     threadChatId,

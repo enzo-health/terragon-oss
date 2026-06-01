@@ -34,11 +34,11 @@ import type {
 import {
   useAgUiSidecarRouter,
   useThreadViewModel,
-} from "../../src/components/chat/use-ag-ui-messages";
+} from "../../src/components/chat/use-thread-view-model";
 import { runReducerHarness } from "./streaming-harness/reducer-harness";
 
 // ---------------------------------------------------------------------------
-// Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
+// Fake HttpAgent (mirrors the one in use-thread-view-model.test.tsx)
 // ---------------------------------------------------------------------------
 
 type AgUiSubscriber = (params: { event: BaseEvent }) => void;
@@ -225,10 +225,7 @@ function Harness({
     quarantine: ThreadViewQuarantineEntry[];
   }) => void;
 }): null {
-  const viewModel = useThreadViewModel({
-    snapshot,
-    includeTranscriptMessages: false,
-  });
+  const viewModel = useThreadViewModel({ snapshot });
   useAgUiSidecarRouter({
     agent,
     dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,

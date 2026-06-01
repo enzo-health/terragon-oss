@@ -7,15 +7,12 @@ import {
   getThreadsForGithubPR,
 } from "@terragon/shared/model/github";
 import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { maybeBatchThreads } from "@/lib/batch-threads";
+import { newThreadInternal } from "@/server-lib/new-thread-internal";
 import { getUserIdByGitHubAccountId } from "@terragon/shared/model/user";
 import { getOctokitForApp, parseRepoFullName } from "@/lib/github";
 import { getNativeAgUiTranscriptForThreadChat } from "@/server-lib/ag-ui-side-effect-messages";
-import { routeExternalTaskIntake } from "@/server-lib/external-task-intake/route-external-task-intake";
-import type {
-  GithubExternalActor,
-  GithubPullRequestTargetKey,
-} from "@/server-lib/external-task-intake/types";
 import { updateThread } from "@terragon/shared/model/threads";
 
 export type FeedbackRoutingMode =
@@ -459,33 +456,6 @@ function getSourceMetadataForFeedback({
   };
 }
 
-function getGithubFeedbackExternalActor({
-  input,
-  pullRequestContextOrNull,
-}: {
-  input: GithubFeedbackInput;
-  pullRequestContextOrNull: PullRequestContext | null;
-}): GithubExternalActor | null {
-  const accountId =
-    input.authorGitHubAccountId ??
-    pullRequestContextOrNull?.authorGitHubAccountId;
-  return accountId
-    ? { type: "github-user", accountId: String(accountId) }
-    : null;
-}
-
-function getGithubFeedbackTargetKey(
-  input: GithubFeedbackInput,
-): GithubPullRequestTargetKey {
-  return {
-    type: "github-pr",
-    repoFullName: input.repoFullName,
-    prNumber: input.prNumber,
-    eventType: input.eventType,
-    ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
-  };
-}
-
 function captureFeedbackRouting({
   userId,
   input,
@@ -802,22 +772,13 @@ export async function routeGithubFeedbackOrSpawnThread(
           };
         }
       }
-      const externalActor = getGithubFeedbackExternalActor({
-        input,
-        pullRequestContextOrNull,
-      });
-      await routeExternalTaskIntake({
-        intent: "follow-up",
-        source: "github",
-        ownerUserId: userId,
-        ownerReason: ownerResolution.reason,
-        ...(externalActor ? { externalActor } : {}),
-        targetKey: getGithubFeedbackTargetKey(input),
-        idempotencyKey: feedbackDeliveryMarker ?? input.deliveryId,
-        message: feedbackMessage,
+      await queueFollowUpInternal({
+        userId,
         threadId: existingThread.id,
         threadChatId: threadChat.id,
+        messages: [feedbackMessage],
         appendOrReplace: "append",
+        source: "github",
       });
       captureFeedbackRouting({
         userId,
@@ -887,19 +848,9 @@ export async function routeGithubFeedbackOrSpawnThread(
         batchKey: `github-feedback:${input.repoFullName}:${input.prNumber}`,
         expiresSecs: 60,
         maxWaitTimeMs: 5000,
-        createNewThread: async () => {
-          const externalActor = getGithubFeedbackExternalActor({
-            input,
-            pullRequestContextOrNull: pullRequestContextForSpawn,
-          });
-          return await routeExternalTaskIntake({
-            intent: "create-thread",
-            source: "github",
-            ownerUserId: userId,
-            ownerReason: ownerResolution.reason,
-            ...(externalActor ? { externalActor } : {}),
-            targetKey: getGithubFeedbackTargetKey(input),
-            idempotencyKey: feedbackDeliveryMarker ?? input.deliveryId,
+        createNewThread: async () =>
+          newThreadInternal({
+            userId,
             message: feedbackMessage,
             githubRepoFullName: input.repoFullName,
             baseBranchName: pullRequestContextForSpawn?.baseBranchName,
@@ -912,8 +863,7 @@ export async function routeGithubFeedbackOrSpawnThread(
               prNumber: input.prNumber,
               commentId: input.commentId,
             }),
-          });
-        },
+          }),
       });
     const mode: FeedbackRoutingMode = didCreateNewThread
       ? "spawned_new"

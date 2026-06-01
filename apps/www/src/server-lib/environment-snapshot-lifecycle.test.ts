@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 
 const waitUntilPromises: Promise<unknown>[] = [];
-const completeEnvironmentSnapshotBuild = vi.fn();
 const getEnvironment = vi.fn();
 const getReadySnapshot = vi.fn();
 const hashEnvironmentVariables = vi.fn();
@@ -15,7 +14,6 @@ const buildRepoSnapshot = vi.fn();
 const deleteRepoSnapshot = vi.fn();
 const getSetupScriptHash = vi.fn();
 const getSnapshotBaseTemplateId = vi.fn();
-const getUnsafeRepoSnapshotInputReasons = vi.fn();
 
 vi.mock("@vercel/functions", () => ({
   waitUntil: (promise: Promise<unknown>) => {
@@ -28,8 +26,6 @@ vi.mock("@terragon/env/apps-www", () => ({
 }));
 
 vi.mock("@terragon/shared/model/environments", () => ({
-  completeEnvironmentSnapshotBuild: (args: unknown) =>
-    completeEnvironmentSnapshotBuild(args),
   getEnvironment: (args: unknown) => getEnvironment(args),
   getEnvironmentsByRepoFullName: vi.fn(),
   getEnvironmentsWithSnapshots: vi.fn(),
@@ -50,8 +46,6 @@ vi.mock("@terragon/sandbox/snapshot-builder", () => ({
   deleteRepoSnapshot: (args: unknown) => deleteRepoSnapshot(args),
   getSetupScriptHash: (script: string | null) => getSetupScriptHash(script),
   getSnapshotBaseTemplateId: (size: string) => getSnapshotBaseTemplateId(size),
-  getUnsafeRepoSnapshotInputReasons: (args: unknown) =>
-    getUnsafeRepoSnapshotInputReasons(args),
   listRepoSnapshotNames: vi.fn(),
 }));
 
@@ -98,11 +92,6 @@ beforeEach(() => {
   );
   hashEnvironmentVariables.mockReturnValue("repo-env-hash");
   hashSnapshotValue.mockReturnValue("mcp-hash");
-  getUnsafeRepoSnapshotInputReasons.mockReturnValue([]);
-  completeEnvironmentSnapshotBuild.mockResolvedValue({
-    applied: true,
-    currentSnapshot: null,
-  });
   deleteRepoSnapshot.mockResolvedValue(undefined);
   updateEnvironmentSnapshot.mockResolvedValue(undefined);
 });
@@ -190,7 +179,7 @@ describe("maybeWarmEnvironmentSnapshot", () => {
         size: "small",
       }),
     );
-    expect(completeEnvironmentSnapshotBuild).toHaveBeenCalledWith(
+    expect(updateEnvironmentSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
         snapshot: expect.objectContaining({
           snapshotName: "new-snapshot",

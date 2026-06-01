@@ -76,20 +76,6 @@ vi.mock("@/lib/github", async () => {
 });
 
 describe("routeGithubFeedbackOrSpawnThread", () => {
-  function makeThreadChat(
-    id: string,
-    overrides: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    const timestamp = new Date("2026-05-31T12:00:00.000Z");
-    return {
-      id,
-      status: "working",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      ...overrides,
-    };
-  }
-
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getGithubPR).mockResolvedValue(undefined);
@@ -108,7 +94,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     });
     vi.mocked(getThread).mockResolvedValue({
       id: "loop-thread-id",
-      threadChats: [makeThreadChat("loop-chat-id")],
+      threadChats: [{ id: "loop-chat-id" }],
     } as Awaited<ReturnType<typeof getThread>>);
     signalInboxInsertReturning.mockResolvedValue([{ id: "signal-inbox-1" }]);
     vi.mocked(maybeBatchThreads).mockImplementation(
@@ -141,7 +127,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1")],
+      threadChats: [{ id: "chat-1" }],
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
 
     const result = await routeGithubFeedbackOrSpawnThread({
@@ -185,7 +171,12 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     });
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1", { queuedMessages: [] })],
+      threadChats: [
+        {
+          id: "chat-1",
+          queuedMessages: [],
+        },
+      ],
     } as unknown as NonNullable<
       Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
     >);
@@ -221,7 +212,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     });
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1", { queuedMessages: [] })],
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
     } as unknown as NonNullable<
       Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
     >);
@@ -253,7 +244,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1", { queuedMessages: [] })],
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
     } as unknown as NonNullable<
       Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
     >);
@@ -292,7 +283,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     });
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1", { queuedMessages: [] })],
+      threadChats: [{ id: "chat-1", queuedMessages: [] }],
     } as unknown as NonNullable<
       Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>
     >);
@@ -473,7 +464,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1")],
+      threadChats: [{ id: "chat-1" }],
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
 
     await routeGithubFeedbackOrSpawnThread({
@@ -501,7 +492,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1")],
+      threadChats: [{ id: "chat-1" }],
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
     vi.mocked(queueFollowUpInternal).mockRejectedValue(
       new Error("Thread chat not found"),
@@ -556,7 +547,7 @@ describe("routeGithubFeedbackOrSpawnThread", () => {
     ]);
     vi.mocked(getThreadForGithubPRAndUser).mockResolvedValue({
       id: "thread-1",
-      threadChats: [makeThreadChat("chat-1")],
+      threadChats: [{ id: "chat-1" }],
     } as NonNullable<Awaited<ReturnType<typeof getThreadForGithubPRAndUser>>>);
     vi.mocked(getThread).mockResolvedValue(undefined);
 

@@ -4,12 +4,6 @@ import {
   InstallProgressSnapshot,
 } from "./install-progress-parser";
 import {
-  buildBootPlan,
-  buildSandboxBootRecipe,
-  type BootPlanBranchAction,
-  type BootPlanSetupScriptMode,
-} from "./boot-plan";
-import {
   updateDaemonIfOutdated,
   restartDaemonIfNotRunning,
   installDaemon,
@@ -230,102 +224,6 @@ export async function setupSandboxOneTime(
   session: ISandboxSession,
   options: CreateSandboxOptions,
 ) {
-  await setupSandboxBoot({
-    session,
-    options,
-    isCreatingSandbox: true,
-  });
-}
-
-export async function setupSandboxBoot({
-  session,
-  options,
-  isCreatingSandbox,
-}: {
-  session: ISandboxSession;
-  options: CreateSandboxOptions;
-  isCreatingSandbox: boolean;
-}) {
-  const recipe = buildSandboxBootRecipe({ options, isCreatingSandbox });
-  let daemonInstallAndProbe: Promise<void> | null = null;
-
-  for (const step of recipe.steps) {
-    switch (step.type) {
-      case "profile":
-        await writeShellProfile(session);
-        break;
-      case "daytona-volume-paths":
-        await setupDaytonaVolumePaths(session, options);
-        break;
-      case "git-credentials":
-        await setupGitCredentials(session, options);
-        break;
-      case "clone-repo":
-        await gitCloneRepo(session, options);
-        break;
-      case "refresh-snapshot-repo":
-        await refreshSnapshotRepo(session, options);
-        break;
-      case "git-identity":
-        await setupGitIdentity(session, options);
-        break;
-      case "branch":
-        await applyBootBranchAction({
-          session,
-          options,
-          action: step.action,
-        });
-        break;
-      case "git-clean":
-        await session.runCommand(`git clean -fxd`);
-        break;
-      case "install-daemon-and-probe":
-        daemonInstallAndProbe = startDaemonInstallAndProbe({
-          session,
-          options,
-        });
-        break;
-      case "setup-script":
-        await runSetupScriptStep({
-          session,
-          options,
-          mode: step.mode,
-          daemonInstallAndProbe,
-        });
-        daemonInstallAndProbe = null;
-        break;
-      case "probe-sandbox-agent":
-        await probeSandboxAgentEndpoint({ session, options });
-        break;
-      case "update-agent-files":
-        await updateAgentFiles({
-          session,
-          customSystemPrompt: options.customSystemPrompt,
-          agent: step.agent,
-          agentCredentials: options.agentCredentials,
-          skipLocalQualityChecks: options.skipLocalQualityChecks ?? false,
-          isCreatingSandbox,
-          mcpConfig: options.mcpConfig,
-          publicUrl: options.publicUrl,
-        });
-        break;
-      case "restart-daemon":
-        if (step.updateBeforeRestart) {
-          await updateDaemonIfOutdated({ session, options });
-        }
-        await restartDaemonIfNotRunning({ session, options });
-        break;
-      default: {
-        const exhaustive: never = step;
-        return exhaustive;
-      }
-    }
-  }
-
-  await daemonInstallAndProbe;
-}
-
-async function writeShellProfile(session: ISandboxSession): Promise<void> {
   const dotProfileContents = [
     "ulimit -c 0",
     "if [ -f ~/.bashrc ]; then . ~/.bashrc; fi",
@@ -334,57 +232,43 @@ async function writeShellProfile(session: ISandboxSession): Promise<void> {
     `echo ${bashQuote(dotProfileContents)} >> ~/.profile`,
     { cwd: "/" },
   );
-}
 
-async function refreshSnapshotRepo(
-  session: ISandboxSession,
-  options: CreateSandboxOptions,
-): Promise<void> {
-  await options.onStatusUpdate({
-    sandboxId: session.sandboxId,
-    sandboxStatus: "booting",
-    bootingStatus: "cloning-repo",
-  });
-  await session.runCommand(
-    `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
-    { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
-  );
-  try {
+  await setupDaytonaVolumePaths(session, options);
+
+  if (!options.snapshotTemplateId) {
+    await gitCloneRepo(session, options);
+  } else {
+    // Repo already cloned in snapshot — update git remote with a fresh token,
+    // then fast-forward to the live base branch.
+    await options.onStatusUpdate({
+      sandboxId: session.sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "cloning-repo",
+    });
     await session.runCommand(
-      [
-        `git fetch --filter=blob:none origin ${bashQuote(options.repoBaseBranchName)}`,
-        `git reset --hard ${bashQuote(`origin/${options.repoBaseBranchName}`)}`,
-      ].join(" && "),
+      `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
       { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
     );
-  } catch (error) {
-    const errorMessage = formatSnapshotRefreshError(
-      error,
-      options.githubAccessToken,
-    );
-    console.warn(
-      `[snapshot-boot] Failed to refresh ${options.repoBaseBranchName} from origin; using baked commit:`,
-      errorMessage,
-    );
-    await options
-      .onSnapshotRefreshFailed?.({
-        sandboxId: session.sandboxId,
-        repoBaseBranchName: options.repoBaseBranchName,
-        errorMessage,
-      })
-      .catch((callbackError) => {
-        console.warn(
-          "[snapshot-boot] Failed to report degraded snapshot boot:",
-          formatSnapshotRefreshError(callbackError, options.githubAccessToken),
-        );
-      });
+    // The snapshot froze the working tree at the commit baked in at build time,
+    // which may now be behind. Fetch + hard-reset to the live base branch so the
+    // task's new branch forks from the current tip, not the stale commit. The
+    // fetch is incremental — the snapshot already holds nearly every object.
+    // Best-effort: a deleted/renamed base branch must not fail the boot.
+    try {
+      await session.runCommand(
+        [
+          `git fetch --filter=blob:none origin ${bashQuote(options.repoBaseBranchName)}`,
+          `git reset --hard ${bashQuote(`origin/${options.repoBaseBranchName}`)}`,
+        ].join(" && "),
+        { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
+      );
+    } catch (error) {
+      console.warn(
+        `[snapshot-boot] Failed to refresh ${options.repoBaseBranchName} from origin; using baked commit:`,
+        error,
+      );
+    }
   }
-}
-
-async function setupGitIdentity(
-  session: ISandboxSession,
-  options: CreateSandboxOptions,
-): Promise<void> {
   await session.runCommand(
     [
       `git config user.name ${bashQuote(options.userName)}`,
@@ -392,43 +276,25 @@ async function setupGitIdentity(
       `git config core.pager cat`,
     ].join(" && "),
   );
-}
-
-async function applyBootBranchAction({
-  session,
-  options,
-  action,
-}: {
-  session: ISandboxSession;
-  options: CreateSandboxOptions;
-  action: BootPlanBranchAction;
-}): Promise<void> {
-  if (action.type === "create") {
+  if (options.createNewBranch) {
     await createNewBranch({
       session,
       threadName: options.threadName,
       generateBranchName: options.generateBranchName,
     });
-    return;
+  } else if (options.branchName) {
+    // Checkout specific branch when createNewBranch is false but branchName is provided
+    await session.runCommand(`git checkout ${bashQuote(options.branchName)}`);
   }
-  if (action.type === "checkout") {
-    await session.runCommand(`git checkout ${bashQuote(action.branchName)}`);
-  }
-}
+  await session.runCommand(`git clean -fxd`);
 
-async function startDaemonInstallAndProbe({
-  session,
-  options,
-}: {
-  session: ISandboxSession;
-  options: CreateSandboxOptions;
-}): Promise<void> {
   await options.onStatusUpdate({
     sandboxId: session.sandboxId,
     sandboxStatus: "booting",
     bootingStatus: "installing-agent",
   });
-  await installDaemon({
+
+  const daemonInstallAndProbe = installDaemon({
     session,
     environmentVariables: options.environmentVariables || [],
     githubAccessToken: options.githubAccessToken,
@@ -436,66 +302,47 @@ async function startDaemonInstallAndProbe({
     userMcpConfig: options.mcpConfig,
     publicUrl: options.publicUrl,
     featureFlags: options.featureFlags,
-  });
-  await probeSandboxAgentEndpoint({ session, options });
-}
+  }).then(() => probeSandboxAgentEndpoint({ session, options }));
 
-async function runSetupScriptStep({
-  session,
-  options,
-  mode,
-  daemonInstallAndProbe,
-}: {
-  session: ISandboxSession;
-  options: CreateSandboxOptions;
-  mode: BootPlanSetupScriptMode;
-  daemonInstallAndProbe: Promise<void> | null;
-}): Promise<void> {
-  const daemonBarrier = daemonInstallAndProbe ?? Promise.resolve();
-  if (mode === "skip") {
+  // Only run terragon-setup.sh if not explicitly skipped and no snapshot
+  if (options.skipSetupScript || options.snapshotTemplateId) {
     console.log("Skipping setup script (snapshot or explicit skip)");
-    await daemonBarrier;
-    return;
-  }
-
-  await options.onStatusUpdate({
-    sandboxId: session.sandboxId,
-    sandboxStatus: "booting",
-    bootingStatus: "running-setup-script",
-  });
-
-  if (mode === "background") {
+    await daemonInstallAndProbe;
+  } else if (options.backgroundSetupScript) {
+    // Background mode: install the dependency barrier, then launch the setup
+    // script detached so the agent can dispatch immediately. Boot reaches
+    // `booting-done` once the daemon probe resolves — setup keeps running.
+    await options.onStatusUpdate({
+      sandboxId: session.sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "running-setup-script",
+    });
     await Promise.all([
-      daemonBarrier,
+      daemonInstallAndProbe,
       launchSetupScriptInBackground({ session, options }),
     ]);
-    return;
+  } else {
+    // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
+    // are fully independent — run them in parallel to hide the spawn latency.
+    await options.onStatusUpdate({
+      sandboxId: session.sandboxId,
+      sandboxStatus: "booting",
+      bootingStatus: "running-setup-script",
+    });
+    await Promise.all([
+      daemonInstallAndProbe,
+      runSetupScript({
+        session,
+        options: {
+          environmentVariables: options.environmentVariables,
+          githubAccessToken: options.githubAccessToken,
+          agentCredentials: options.agentCredentials,
+          setupScript: options.setupScript,
+          onInstallProgress: options.onInstallProgress,
+        },
+      }),
+    ]);
   }
-
-  await Promise.all([
-    daemonBarrier,
-    runSetupScript({
-      session,
-      options: {
-        environmentVariables: options.environmentVariables,
-        githubAccessToken: options.githubAccessToken,
-        agentCredentials: options.agentCredentials,
-        setupScript: options.setupScript,
-        onInstallProgress: options.onInstallProgress,
-      },
-    }),
-  ]);
-}
-
-function formatSnapshotRefreshError(
-  error: unknown,
-  githubAccessToken: string,
-): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (!githubAccessToken) {
-    return message;
-  }
-  return message.split(githubAccessToken).join("[redacted]");
 }
 
 async function setupDaytonaVolumePaths(
@@ -698,22 +545,20 @@ export async function setupSandboxEveryTime({
   options: CreateSandboxOptions;
   isCreatingSandbox: boolean;
 }) {
-  const bootPlan = buildBootPlan({
-    options,
-    isCreatingSandbox,
-  });
+  const shouldProbeSandboxAgent = !options.fastResume || isCreatingSandbox;
 
   // All setup operations that don't depend on each other run in parallel.
   const parallelOps: Promise<void>[] = [setupGitCredentials(session, options)];
-  if (bootPlan.shouldProbeSandboxAgent) {
+  if (shouldProbeSandboxAgent) {
     parallelOps.push(probeSandboxAgentEndpoint({ session, options }));
   }
-  if (bootPlan.shouldUpdateAgentFiles && bootPlan.agentToUpdate) {
+  const agent = options.agent;
+  if (agent && (!options.fastResume || agent === "codex")) {
     parallelOps.push(
       updateAgentFiles({
         session,
         customSystemPrompt: options.customSystemPrompt,
-        agent: bootPlan.agentToUpdate,
+        agent,
         agentCredentials: options.agentCredentials,
         skipLocalQualityChecks: options.skipLocalQualityChecks ?? false,
         isCreatingSandbox,
@@ -722,8 +567,8 @@ export async function setupSandboxEveryTime({
       }),
     );
   }
-  if (bootPlan.shouldRestartDaemon) {
-    if (bootPlan.shouldUpdateDaemonBeforeRestart) {
+  if (!isCreatingSandbox) {
+    if (options.autoUpdateDaemon && !options.fastResume) {
       parallelOps.push(
         (async () => {
           await updateDaemonIfOutdated({ session, options });

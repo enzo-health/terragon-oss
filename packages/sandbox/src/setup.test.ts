@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { parse as tomlParse } from "@iarna/toml";
 import {
   setupSandboxOneTime,
-  setupSandboxBoot,
   gitCloneRepo,
   setupSandboxEveryTime,
   launchSetupScriptInBackground,
@@ -73,30 +72,6 @@ describe("sandbox-setup", () => {
         call[0].match(/git checkout -b 'terragon\/[a-z0-9]{6}-[a-z0-9]{6}'/),
       );
       expect(checkoutNewBranchIndex).toBeGreaterThan(cloneIndex);
-    });
-
-    it("executes git credentials before cloning private repositories", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async () => "");
-
-      await setupSandboxBoot({
-        session,
-        options: defaultOptions,
-        isCreatingSandbox: true,
-      });
-
-      const runCommandCalls = runCommandSpy.mock.calls;
-      const credentialsIndex = runCommandCalls.findIndex((call) =>
-        call[0].includes("git config --global credential.helper store"),
-      );
-      const cloneIndex = runCommandCalls.findIndex((call) =>
-        call[0].includes("git clone"),
-      );
-
-      expect(credentialsIndex).toBeGreaterThanOrEqual(0);
-      expect(cloneIndex).toBeGreaterThan(credentialsIndex);
     });
 
     it("configures Daytona volume cache paths while keeping the repo local", async () => {
@@ -242,31 +217,6 @@ describe("sandbox-setup", () => {
           cmd.includes("git reset --hard 'origin/main'"),
       );
       expect(fetchResetIdx).toBeGreaterThan(remoteIdx);
-    });
-
-    it("reports degraded snapshot boots without leaking the GitHub token", async () => {
-      const session = new MockSession("mock-sandbox");
-      const onSnapshotRefreshFailed = vi.fn().mockResolvedValue(undefined);
-      vi.spyOn(session, "runCommand").mockImplementation(async (command) => {
-        if (command.includes("git fetch")) {
-          throw new Error("fatal: could not fetch test-token");
-        }
-        return "";
-      });
-
-      await setupSandboxOneTime(session, {
-        ...defaultOptions,
-        createNewBranch: false,
-        snapshotTemplateId: "repo-owner-repo-small-123",
-        repoBaseBranchName: "main",
-        onSnapshotRefreshFailed,
-      });
-
-      expect(onSnapshotRefreshFailed).toHaveBeenCalledWith({
-        sandboxId: "mock-sandbox",
-        repoBaseBranchName: "main",
-        errorMessage: "fatal: could not fetch [redacted]",
-      });
     });
   });
 

@@ -19,7 +19,7 @@ import {
 } from "@/agent/msg/startAgentMessage";
 import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
 import { isAgentWorking } from "@/agent/thread-status";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { db } from "@/lib/db";
 import { scheduleFollowUpRetryJob } from "@/server-lib/follow-up-retry-jobs";
 
@@ -457,7 +457,7 @@ async function handleFollowUpFailure({
         ],
         timestamp: new Date().toISOString(),
       } satisfies DBSystemMessage;
-      await transitionThreadChatLifecycle({
+      await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId,
@@ -495,7 +495,7 @@ async function handleFollowUpFailure({
         ],
         timestamp: new Date().toISOString(),
       } satisfies DBSystemMessage;
-      await transitionThreadChatLifecycle({
+      await updateThreadChatWithTransition({
         userId,
         threadId,
         threadChatId,
@@ -708,7 +708,7 @@ export async function maybeProcessFollowUpQueue({
     );
 
     // Remove the slash command from the queued messages.
-    const { didUpdateStatus } = await transitionThreadChatLifecycle({
+    const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,
       threadChatId: threadChatId,
@@ -792,7 +792,7 @@ export async function maybeProcessFollowUpQueue({
     }
   }
 
-  const { didUpdateStatus } = await transitionThreadChatLifecycle({
+  const { didUpdateStatus } = await updateThreadChatWithTransition({
     userId,
     threadId,
     threadChatId,

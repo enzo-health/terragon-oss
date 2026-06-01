@@ -67,9 +67,9 @@ export function threadViewModelReducer(
     case "server.refetch-reconciled":
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
-      return applyAgUiEvent(state, event.event, { projectTranscript: true });
+      return applyAgUiEvent(state, event.event);
     case "runtime.event":
-      return applyAgUiEvent(state, event.event, { projectTranscript: false });
+      return applyAgUiEvent(state, event.event);
     case "optimistic.user-submitted":
       return applyOptimisticUserSubmit(state, event);
     case "optimistic.queued-messages-updated":
@@ -113,12 +113,10 @@ export function threadViewModelReducer(
 
 export function projectThreadViewModel(
   state: ThreadViewModelState,
-  _options: { includeTranscriptMessages?: boolean } = {},
 ): ThreadViewModel {
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
-    messages: [],
     lifecycleMessages: state.lifecycleMessages,
     runtimeState: state.runtimeState,
     runtimeActivities: state.runtimeActivities,
@@ -311,7 +309,6 @@ function getTime(value: Date | string): number {
 function applyAgUiEvent(
   state: ThreadViewModelState,
   event: BaseEvent,
-  _options: { projectTranscript: boolean },
 ): ThreadViewModelState {
   const dedupeKey = getAgUiEventDedupeKey(event);
   if (dedupeKey && state.seenEventKeys.has(dedupeKey)) {

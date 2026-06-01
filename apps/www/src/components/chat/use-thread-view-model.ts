@@ -18,7 +18,6 @@ export { createThreadViewSidecarEventProjector } from "./thread-view-model/sidec
 
 type UseThreadViewModelArgs = {
   snapshot: ThreadViewSnapshot;
-  includeTranscriptMessages?: boolean;
 };
 
 export type ThreadViewModelController = ThreadViewModel & {
@@ -96,7 +95,6 @@ export function useAgUiSidecarRouter({
 
 export function useThreadViewModel({
   snapshot,
-  includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
   const projectedTraceKeysRef = useRef<Set<string>>(new Set());
   const [state, dispatch] = useReducer(
@@ -110,14 +108,12 @@ export function useThreadViewModel({
   }, [snapshot]);
 
   const viewModel = useMemo(() => {
-    const projected = projectThreadViewModel(state, {
-      includeTranscriptMessages,
-    });
+    const projected = projectThreadViewModel(state);
     return {
       ...projected,
       dispatchThreadViewEvent: dispatch,
     };
-  }, [includeTranscriptMessages, state]);
+  }, [state]);
 
   useEffect(() => {
     const runId = viewModel.lifecycle.runId;
@@ -134,7 +130,7 @@ export function useThreadViewModel({
       name: "client.ui.projected",
       attributes: {
         threadStatus: viewModel.lifecycle.threadStatus,
-        messageCount: viewModel.messages.length,
+        dbMessageCount: viewModel.dbMessages.length,
         quarantineCount: viewModel.quarantine.length,
       },
     });

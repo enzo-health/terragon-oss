@@ -4,37 +4,65 @@ import { getThreadPageShellAction } from "@/server-actions/get-thread-page-shell
 import { getThreadPageChatAction } from "@/server-actions/get-thread-page-chat";
 import { getThreadPageDiffAction } from "@/server-actions/get-thread-page-diff";
 import { getServerActionQueryOptions } from "./server-action-helpers";
-import type {
+import {
   ThreadInfo,
   ThreadPageChat,
   ThreadPageDiff,
   ThreadPageShell,
 } from "@terragon/shared/db/types";
 import {
+  QueryKey,
+  UseInfiniteQueryOptions,
+  InfiniteData,
   useInfiniteQuery,
   skipToken,
-  type InfiniteData,
-  type QueryKey,
   type SkipToken,
-  type UseInfiniteQueryOptions,
 } from "@tanstack/react-query";
 import { unwrapResult } from "@/lib/server-actions";
-import type { ThreadListFilters } from "@terragon/shared/model/thread-list-projection";
 
-export {
-  isValidThreadListFilter,
-  matchesThreadListProjectionFilter as isMatchingThreadForFilter,
-  parseThreadListProjectionFilter,
-  type ThreadListFilters,
-} from "@terragon/shared/model/thread-list-projection";
+export type ThreadListFilters = {
+  archived?: boolean;
+  automationId?: string;
+  limit?: number;
+};
 
-type ThreadListQueryKey =
-  | readonly ["threads", "list"]
-  | readonly ["threads", "list", ThreadListFilters];
+// Type guard to ensure filters has the expected properties
+export function isValidThreadListFilter(
+  filter: any,
+): filter is ThreadListFilters {
+  return (
+    filter !== null &&
+    typeof filter === "object" &&
+    (filter.archived === undefined || typeof filter.archived === "boolean") &&
+    (filter.automationId === undefined ||
+      typeof filter.automationId === "string")
+  );
+}
+
+export function isMatchingThreadForFilter(
+  thread: ThreadInfo,
+  filters: ThreadListFilters,
+): boolean {
+  if (filters.archived !== undefined && filters.archived !== thread.archived) {
+    return false;
+  }
+  if (
+    filters.automationId !== undefined &&
+    filters.automationId !== thread.automationId
+  ) {
+    return false;
+  }
+  return true;
+}
 
 export const threadQueryKeys = {
-  list: (filters: ThreadListFilters | null): ThreadListQueryKey =>
-    filters ? (["threads", "list", filters] as const) : ["threads", "list"],
+  list: (filters: ThreadListFilters | null) => {
+    const key = ["threads", "list"] as any;
+    if (filters) {
+      key.push(filters);
+    }
+    return key;
+  },
   detail: (id: string) => ["threads", "detail", id] as const,
   shell: (id: string) => ["threads", "shell", id] as const,
   chat: (threadId: string, threadChatId: string) =>

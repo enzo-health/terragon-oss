@@ -61,7 +61,7 @@ import {
   createRepoFileOpenedEvent,
   createRepoTreeOpenedEvent,
 } from "./thread-view-model/optimistic-events";
-import { useThreadViewModel } from "./use-ag-ui-messages";
+import { useThreadViewModel } from "./use-thread-view-model";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
@@ -258,7 +258,6 @@ function ChatUIContent() {
 
   const threadViewModel = useThreadViewModel({
     snapshot: threadViewSnapshot,
-    includeTranscriptMessages: false,
   });
   useProductSidecars({
     agent,

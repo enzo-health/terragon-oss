@@ -2,7 +2,6 @@ import { Daytona, Image } from "@daytonaio/sdk";
 import type { Resources } from "@daytonaio/sdk";
 import { renderDockerfile, SUPERVISORD_CONF } from "@terragon/sandbox-image";
 import type { SandboxSize } from "@terragon/types/sandbox";
-import { execFileSync } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -19,140 +18,45 @@ function getDaytonaClient(): Daytona {
   return new Daytona({ apiKey });
 }
 
-export function getUnsafeRepoSnapshotInputReasons({
-  setupScript,
-  environmentVariables,
-  mcpConfig,
-}: {
-  setupScript: string | null;
-  environmentVariables: Array<{ key: string; value: string }>;
-  mcpConfig?: unknown;
-}): string[] {
-  const reasons: string[] = [];
-  if (setupScript?.trim()) {
-    reasons.push("setup-script");
-  }
-  if (environmentVariables.length > 0) {
-    reasons.push("environment-variables");
-  }
-  if (hasSnapshotMcpConfig(mcpConfig)) {
-    reasons.push("mcp-config");
-  }
-  return reasons;
-}
-
-export function isRepoSnapshotBuildSafe(
-  input: Parameters<typeof getUnsafeRepoSnapshotInputReasons>[0],
-): boolean {
-  return getUnsafeRepoSnapshotInputReasons(input).length === 0;
-}
-
-function hasSnapshotMcpConfig(mcpConfig: unknown): boolean {
-  if (mcpConfig === null || mcpConfig === undefined) {
-    return false;
-  }
-  if (Array.isArray(mcpConfig)) {
-    return mcpConfig.length > 0;
-  }
-  if (typeof mcpConfig === "object") {
-    return Object.keys(mcpConfig).length > 0;
-  }
-  return true;
-}
-
-function assertRepoSnapshotBuildSafe(
-  input: Parameters<typeof getUnsafeRepoSnapshotInputReasons>[0],
-): void {
-  const reasons = getUnsafeRepoSnapshotInputReasons(input);
-  if (reasons.length === 0) {
-    return;
-  }
-  throw new Error(
-    `Repo snapshot build disabled for unsafe inputs: ${reasons.join(", ")}`,
-  );
-}
-
-function redactSnapshotLogChunk(chunk: string, secrets: string[]): string {
-  return secrets
-    .filter((secret) => secret.length > 0)
-    .reduce(
-      (redacted, secret) => redacted.split(secret).join("[REDACTED]"),
-      chunk,
-    );
-}
-
-function buildSnapshotPruneCommand(): string {
+// The setup runner: bring up Postgres + Redis, run the repo's setup script, then
+// stop the services so they aren't captured mid-write in the snapshot.
+function buildSetupRunnerScript(): string {
   return [
-    "rm -rf",
-    "/root/repo/.next",
-    "/root/repo/.turbo",
-    "/root/repo/node_modules/.cache",
-    "/root/.cache/ms-playwright",
-    "/root/.cache/puppeteer",
-    "/root/.cache/Cypress",
-    "/tmp/*",
-  ].join(" ");
-}
-
-function cloneRepoIntoBuildContext({
-  repoFullName,
-  baseBranch,
-  githubAccessToken,
-  tmpDir,
-}: {
-  repoFullName: string;
-  baseBranch: string;
-  githubAccessToken: string;
-  tmpDir: string;
-}): string {
-  const repoPath = path.join(tmpDir, "repo");
-  const askpassPath = path.join(tmpDir, "git-askpass.sh");
-  fs.writeFileSync(
-    askpassPath,
-    [
-      "#!/bin/sh",
-      'case "$1" in',
-      '*Username*) printf "%s\\n" "x-access-token" ;;',
-      '*) printf "%s\\n" "$GITHUB_ACCESS_TOKEN" ;;',
-      "esac",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  execFileSync(
-    "git",
-    [
-      "clone",
-      "--filter=blob:none",
-      "--no-recurse-submodules",
-      "--branch",
-      baseBranch,
-      `https://github.com/${repoFullName}.git`,
-      repoPath,
-    ],
-    {
-      env: {
-        ...process.env,
-        GIT_ASKPASS: askpassPath,
-        GIT_TERMINAL_PROMPT: "0",
-        GITHUB_ACCESS_TOKEN: githubAccessToken,
-      },
-      stdio: "pipe",
-    },
-  );
-  execFileSync(
-    "git",
-    [
-      "-C",
-      repoPath,
-      "remote",
-      "set-url",
-      "origin",
-      `https://github.com/${repoFullName}.git`,
-    ],
-    { stdio: "pipe" },
-  );
-  return repoPath;
+    "#!/usr/bin/env bash",
+    'PG_CLUSTER_LINE="$(pg_lsclusters --no-header 2>/dev/null | awk \'NF>=2 {print $1" "$2; exit}\')"',
+    'if [ -z "$PG_CLUSTER_LINE" ]; then',
+    '  PG_CLUSTER_LINE="16 main"',
+    "fi",
+    'PG_CLUSTER_VERSION="$(echo "$PG_CLUSTER_LINE" | awk \'{print $1}\')"',
+    'PG_CLUSTER_NAME="$(echo "$PG_CLUSTER_LINE" | awk \'{print $2}\')"',
+    'pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" start',
+    "redis-server --bind 127.0.0.1 --daemonize yes",
+    "for _ in $(seq 1 30); do",
+    "  pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && break",
+    "  sleep 1",
+    "done",
+    "if ! pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then",
+    '  echo "PostgreSQL failed to start"',
+    '  pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" stop || true',
+    "  redis-cli shutdown || true",
+    "  exit 1",
+    "fi",
+    "for _ in $(seq 1 30); do",
+    "  redis-cli ping >/dev/null 2>&1 && break",
+    "  sleep 1",
+    "done",
+    "if ! redis-cli ping >/dev/null 2>&1; then",
+    '  echo "Redis failed to start"',
+    '  pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" stop || true',
+    "  exit 1",
+    "fi",
+    "cd /root/repo && bash -x /tmp/terragon-setup.sh",
+    "EXIT_CODE=$?",
+    'pg_ctlcluster "$PG_CLUSTER_VERSION" "$PG_CLUSTER_NAME" stop || true',
+    "redis-cli shutdown || true",
+    "rm -f /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
+    'exit "$EXIT_CODE"',
+  ].join("\n");
 }
 
 export async function buildRepoSnapshot({
@@ -161,7 +65,6 @@ export async function buildRepoSnapshot({
   githubAccessToken,
   setupScript,
   environmentVariables,
-  mcpConfig,
   size,
   onLogs,
 }: {
@@ -170,11 +73,9 @@ export async function buildRepoSnapshot({
   githubAccessToken: string;
   setupScript: string | null;
   environmentVariables: Array<{ key: string; value: string }>;
-  mcpConfig?: unknown;
   size: SandboxSize;
   onLogs?: (chunk: string) => void;
 }): Promise<{ snapshotName: string }> {
-  assertRepoSnapshotBuildSafe({ setupScript, environmentVariables, mcpConfig });
   const daytona = getDaytonaClient();
 
   // Build the toolchain base FROM ubuntu via the maintained Dockerfile, then layer
@@ -191,14 +92,19 @@ export async function buildRepoSnapshot({
     fs.writeFileSync(path.join(tmpDir, "supervisord.conf"), SUPERVISORD_CONF);
 
     let image = Image.fromDockerfile(dockerfilePath);
-    const repoPath = cloneRepoIntoBuildContext({
-      repoFullName,
-      baseBranch,
-      githubAccessToken,
-      tmpDir,
-    });
 
-    image = image.addLocalDir(repoPath, "/root/repo");
+    if (environmentVariables.length > 0) {
+      const envObj: Record<string, string> = {};
+      for (const { key, value } of environmentVariables) {
+        envObj[key] = value;
+      }
+      image = image.env(envObj);
+    }
+
+    const cloneUrl = `https://${githubAccessToken}@github.com/${repoFullName}.git`;
+    image = image.runCommands(
+      `git clone --filter=blob:none --no-recurse-submodules --branch ${baseBranch} ${cloneUrl} /root/repo`,
+    );
 
     image = image.runCommands(
       `cd /root/repo && ` +
@@ -209,8 +115,24 @@ export async function buildRepoSnapshot({
         `elif [ -f package.json ]; then npm install; fi`,
     );
 
+    if (setupScript) {
+      const setupScriptPath = path.join(tmpDir, "terragon-setup.sh");
+      const setupRunnerPath = path.join(
+        tmpDir,
+        "terragon-snapshot-run-setup.sh",
+      );
+      fs.writeFileSync(setupScriptPath, setupScript);
+      fs.writeFileSync(setupRunnerPath, buildSetupRunnerScript());
+      image = image
+        .addLocalFile(setupScriptPath, "/tmp/terragon-setup.sh")
+        .addLocalFile(setupRunnerPath, "/tmp/terragon-snapshot-run-setup.sh")
+        .runCommands(
+          "chmod +x /tmp/terragon-setup.sh /tmp/terragon-snapshot-run-setup.sh",
+          "bash /tmp/terragon-snapshot-run-setup.sh",
+        );
+    }
+
     image = image.runCommands(
-      buildSnapshotPruneCommand(),
       "rm -f /root/.git-credentials",
       `git -C /root/repo remote set-url origin https://github.com/${repoFullName}.git`,
     );
@@ -226,19 +148,7 @@ export async function buildRepoSnapshot({
         // declarative snapshots, so set it explicitly to the Dockerfile's wrapper.
         entrypoint: ["/entrypoint.sh"],
       },
-      {
-        onLogs: onLogs
-          ? (chunk) =>
-              onLogs(
-                redactSnapshotLogChunk(chunk, [
-                  githubAccessToken,
-                  ...environmentVariables.map((entry) => entry.value),
-                  setupScript ?? "",
-                ]),
-              )
-          : undefined,
-        timeout: 0,
-      },
+      { onLogs, timeout: 0 },
     );
 
     return { snapshotName };

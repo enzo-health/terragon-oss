@@ -1,7 +1,7 @@
 import type { DBMessage } from "@terragon/shared";
 import { getAgUiEventEnvelopesForThreadChat } from "@terragon/shared/model/agent-event-log";
-import { getDurableAgUiHistoryItemsFromEvents } from "@terragon/shared/model/persistent-message-projection";
 import { db } from "@/lib/db";
+import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui/durable-history-builder";
 import {
   dropEventsAfterTerminalUntilNextRun,
   toReplayEntriesWithoutTerminalFilter,

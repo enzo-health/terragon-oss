@@ -1,5 +1,6 @@
 "use server";
 
+import { waitUntil } from "@vercel/functions";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
@@ -9,8 +10,9 @@ import {
 import {
   getEnvironment,
   updateEnvironment,
+  markSnapshotsStale,
 } from "@terragon/shared/model/environments";
-import { scheduleEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-scheduler";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 import { requireResult } from "@/lib/server-actions";
 
 export const updateEnvironmentSetupScript = userOnlyAction(
@@ -41,12 +43,10 @@ export const updateEnvironmentSetupScript = userOnlyAction(
         setupScript,
       },
     });
-    await scheduleEnvironmentSnapshotBuild({
-      db,
-      environmentId,
-      userId,
-      reason: "environment-config-changed",
-    });
+    // Mark any existing snapshots as stale since the setup script changed
+    await markSnapshotsStale({ db, environmentId, userId });
+    // Rebuild eagerly against the new setup script.
+    waitUntil(triggerEnvironmentSnapshotBuild({ db, userId, environmentId }));
   },
   { defaultErrorMessage: "Failed to update environment setup script" },
 );

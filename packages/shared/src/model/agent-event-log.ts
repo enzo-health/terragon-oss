@@ -1,4 +1,5 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
+import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
+import { mapCanonicalEventToAgui } from "@terragon/agent/ag-ui-mapper";
 import type {
   BaseEventEnvelope,
   CanonicalEvent,
@@ -10,6 +11,7 @@ import {
   BaseEventEnvelopeSchema,
   CanonicalEventSchema,
 } from "@terragon/agent/canonical-events";
+import { AIModelSchema } from "@terragon/agent/types";
 import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { DB } from "../db";
 import type { DBMessage } from "../db/db-message";
@@ -18,17 +20,6 @@ import type {
   AgentEventLog as AgentEventLogRow,
   AgentRunStatus,
 } from "../db/types";
-import {
-  agUiSnapshotToReplayMessages,
-  type AgUiEventEnvelope as ProjectedAgUiEventEnvelope,
-  type AgUiReadableRow as ProjectedAgUiReadableRow,
-  applyContextResetToReplayEntries,
-  canonicalEventToReplayMessage,
-  readAgUiEnvelope as projectAgUiEnvelope,
-  readAgUiPayload as projectAgUiPayload,
-  readAllAgUiEnvelopes as projectAllAgUiEnvelopes,
-  readAllAgUiPayloads as projectAllAgUiPayloads,
-} from "./persistent-message-projection";
 
 /**
  * Redis stream key namespace used by the AG-UI writer (/api/daemon-event) and
@@ -76,12 +67,39 @@ export type ThreadReplayEntry = {
   messages: DBMessage[];
 };
 
+type AgUiEventEnvelopeIdentity = {
+  eventId: string;
+  threadId: string;
+  timestamp: string;
+  idempotencyKey: string;
+};
+
 export type AgUiEventEnvelope<
   TEvent extends BaseEvent = BaseEvent,
   TIdentity extends "legacy" | "full" = "legacy",
-> = ProjectedAgUiEventEnvelope<TEvent, TIdentity>;
+> = (TIdentity extends "full"
+  ? AgUiEventEnvelopeIdentity
+  : Partial<AgUiEventEnvelopeIdentity>) & {
+  seq: number;
+  projectionIndex?: number;
+  projectionCount?: number;
+  runId: string;
+  threadChatId: string;
+  payload: TEvent;
+};
 
-type AgUiReadableRow = ProjectedAgUiReadableRow;
+type AgUiReadableRow = Pick<
+  AgentEventLogRow,
+  | "eventId"
+  | "runId"
+  | "threadId"
+  | "threadChatId"
+  | "seq"
+  | "eventType"
+  | "payloadJson"
+  | "idempotencyKey"
+  | "timestamp"
+>;
 
 const ENVELOPE_FIELDS = [
   "payloadVersion",
@@ -171,25 +189,152 @@ export function validateCanonicalEvent(
   return { valid: true, event: result.data };
 }
 
+const AG_UI_EVENT_TYPES: ReadonlySet<unknown> = new Set(
+  Object.values(EventType),
+);
+
+function isAgUiBaseEvent(payload: unknown): payload is BaseEvent {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const type = Reflect.get(payload, "type");
+  return typeof type === "string" && AG_UI_EVENT_TYPES.has(type);
+}
+
+/**
+ * Read an agent_event_log row's payload as an AG-UI BaseEvent.
+ *
+ * Forward-compatibility shim for the AG-UI cutover: reads rows written in
+ * either shape and returns a single BaseEvent.
+ *
+ * - Rows written after Task 2C store an AG-UI BaseEvent directly in
+ *   payload_json (detected by `type` matching the AG-UI EventType enum).
+ * - Legacy rows written before the cutover store a canonical envelope-v2
+ *   event. We parse via CanonicalEventSchema and call mapCanonicalEventToAgui
+ *   to convert.
+ *
+ * Note: some canonical events expand to multiple AG-UI events
+ * (e.g. assistant-message -> TEXT_MESSAGE_START + TEXT_MESSAGE_CONTENT +
+ * TEXT_MESSAGE_END; tool-call-start -> TOOL_CALL_START + TOOL_CALL_ARGS +
+ * TOOL_CALL_END). This shim returns only the FIRST expanded event, which is
+ * sufficient for callers that just need to know the event shape/kind.
+ *
+ * Some operational canonical events legitimately map to 0 AG-UI events
+ * (they're internal and have no user-facing representation); for those we
+ * return null silently — it's a recognized shape, just not renderable.
+ *
+ * TODO: Callers that need to replay all AG-UI events for a legacy row must
+ * iterate the full array from mapCanonicalEventToAgui. When that need arises,
+ * expose a sibling function `readAllAgUiPayloads(row)` rather than changing
+ * this signature.
+ *
+ * Returns null and logs a console.warn ONLY when the payload matches neither
+ * shape — that's real drift worth surfacing.
+ */
 export function readAgUiPayload(row: AgUiReadableRow): BaseEvent | null {
-  return projectAgUiPayload(row);
+  if (isAgUiBaseEvent(row.payloadJson)) {
+    return row.payloadJson;
+  }
+
+  const canonical = CanonicalEventSchema.safeParse(row.payloadJson);
+  if (canonical.success) {
+    const [first] = mapCanonicalEventToAgui(canonical.data);
+    // first is undefined for recognized canonical events that have no AG-UI
+    // projection (e.g. internal operational events) — return null silently.
+    return first ?? null;
+  }
+
+  console.warn(
+    "[agent-event-log] readAgUiPayload: unrecognized payload shape",
+    {
+      eventId: row.eventId,
+      runId: row.runId,
+      eventType: row.eventType,
+    },
+  );
+  return null;
+}
+
+function toAgUiEventEnvelope({
+  row,
+  payload,
+  projectionIndex,
+  projectionCount,
+}: {
+  row: Pick<
+    AgentEventLogRow,
+    | "eventId"
+    | "seq"
+    | "runId"
+    | "threadId"
+    | "threadChatId"
+    | "idempotencyKey"
+    | "timestamp"
+  >;
+  payload: BaseEvent;
+  projectionIndex?: number;
+  projectionCount?: number;
+}): AgUiEventEnvelope<BaseEvent, "full"> {
+  return {
+    eventId: row.eventId,
+    seq: row.seq,
+    projectionIndex,
+    projectionCount,
+    runId: row.runId,
+    threadId: row.threadId,
+    threadChatId: row.threadChatId,
+    timestamp: row.timestamp.toISOString(),
+    idempotencyKey: row.idempotencyKey,
+    payload,
+  };
 }
 
 export function readAgUiEnvelope(
   row: AgUiReadableRow,
 ): AgUiEventEnvelope<BaseEvent, "full"> | null {
-  return projectAgUiEnvelope(row);
+  const payload = readAgUiPayload(row);
+  if (payload === null) {
+    return null;
+  }
+  return toAgUiEventEnvelope({
+    row,
+    payload,
+    projectionIndex: 0,
+    projectionCount: 1,
+  });
 }
 
+/**
+ * Read an agent_event_log row's payload as the full list of AG-UI BaseEvents
+ * it expands to. Unlike `readAgUiPayload` (which returns only the first),
+ * this surfaces every event in the expansion so callers reconstructing
+ * lifecycle state (e.g. active TEXT_MESSAGE / TOOL_CALL IDs) don't miss the
+ * END events that close a canonical row.
+ *
+ * - AG-UI-native rows: returns the single BaseEvent wrapped in an array.
+ * - Canonical rows: returns the full `mapCanonicalEventToAgui` expansion,
+ *   which is atomic (every START has its matching END in the same row).
+ * - Unrecognized rows: returns `[]` (warning already surfaced by
+ *   `readAgUiPayload`).
+ */
 export function readAllAgUiPayloads(
-  row: Pick<AgUiReadableRow, "payloadJson">,
+  row: Pick<AgentEventLogRow, "payloadJson">,
 ): BaseEvent[] {
-  return projectAllAgUiPayloads(row);
+  if (isAgUiBaseEvent(row.payloadJson)) {
+    return [row.payloadJson];
+  }
+
+  const canonical = CanonicalEventSchema.safeParse(row.payloadJson);
+  if (canonical.success) {
+    return mapCanonicalEventToAgui(canonical.data);
+  }
+
+  return [];
 }
 
 export function readAllAgUiEnvelopes(
   row: Pick<
-    AgUiReadableRow,
+    AgentEventLogRow,
     | "eventId"
     | "seq"
     | "runId"
@@ -200,7 +345,15 @@ export function readAllAgUiEnvelopes(
     | "payloadJson"
   >,
 ): Array<AgUiEventEnvelope<BaseEvent, "full">> {
-  return projectAllAgUiEnvelopes(row);
+  const payloads = readAllAgUiPayloads(row);
+  return payloads.map((payload, projectionIndex) =>
+    toAgUiEventEnvelope({
+      row,
+      payload,
+      projectionIndex,
+      projectionCount: payloads.length,
+    }),
+  );
 }
 
 function toIdempotencyKey(envelope: BaseEventEnvelope): string {
@@ -468,6 +621,207 @@ export async function hasCanonicalReplayProjection({
     }
     throw error;
   }
+}
+
+function canonicalEventToReplayMessage(
+  event: CanonicalEvent,
+): DBMessage | null {
+  switch (event.type) {
+    case "assistant-message":
+      return {
+        type: "agent",
+        parent_tool_use_id: event.parentToolUseId ?? null,
+        parts: [{ type: "text", text: event.content }],
+      };
+    case "tool-call-start":
+      return {
+        type: "tool-call",
+        id: event.toolCallId,
+        name: event.name,
+        parameters: event.parameters,
+        parent_tool_use_id: event.parentToolUseId ?? null,
+        status: "started",
+      };
+    case "tool-call-result":
+      return {
+        type: "tool-result",
+        id: event.toolCallId,
+        is_error: event.isError,
+        parent_tool_use_id: null,
+        result: event.result,
+      };
+    case "run-started":
+    case "run-terminal":
+    case "tool-call-progress":
+    case "reasoning-message":
+    case "permission-request":
+    case "permission-response":
+    case "artifact-reference":
+    case "meta":
+    case "unknown-provider-event":
+      return null;
+    default: {
+      const _exhaustiveCheck: never = event;
+      return _exhaustiveCheck;
+    }
+  }
+}
+
+function messageContentToReplayText(content: Message["content"]): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      if (
+        part !== null &&
+        typeof part === "object" &&
+        "text" in part &&
+        typeof part.text === "string"
+      ) {
+        return part.text;
+      }
+      return "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function systemMessageTypeFromAgUiId(
+  messageIdValue: string,
+): Extract<DBMessage, { type: "system" }>["message_type"] | null {
+  const prefix = "side-effect-system:";
+  if (!messageIdValue.startsWith(prefix)) {
+    return null;
+  }
+  const withoutPrefix = messageIdValue.slice(prefix.length);
+  const match = /^(?<messageType>.+)-\d+-[a-f0-9]{12}$/.exec(withoutPrefix);
+  const messageType = match?.groups?.messageType;
+  switch (messageType) {
+    case "cancel-schedule":
+    case "fix-github-checks":
+    case "retry-git-commit-and-push":
+    case "generic-retry":
+    case "invalid-token-retry":
+    case "clear-context":
+    case "compact-result":
+    case "agent-error-retry":
+    case "follow-up-retry-failed":
+      return messageType;
+    default:
+      const _exhaustiveCheck = messageType satisfies string | undefined;
+      void _exhaustiveCheck;
+      return null;
+  }
+}
+
+function userMetadataFromAgUiName(
+  name: string | undefined,
+): Pick<Extract<DBMessage, { type: "user" }>, "model" | "permissionMode"> {
+  if (!name?.startsWith("terragon-user:")) {
+    return { model: null, permissionMode: undefined };
+  }
+  const metadata = new URLSearchParams(name.slice("terragon-user:".length));
+  const modelResult = AIModelSchema.safeParse(metadata.get("model"));
+  const permissionMode = metadata.get("permissionMode");
+  return {
+    model: modelResult.success ? modelResult.data : null,
+    permissionMode:
+      permissionMode === "allowAll" || permissionMode === "plan"
+        ? permissionMode
+        : undefined,
+  };
+}
+
+function agUiMessageToReplayMessage(message: Message): DBMessage | null {
+  const content = messageContentToReplayText(message.content);
+  if (message.role === "user" && content.length > 0) {
+    const metadata = userMetadataFromAgUiName(message.name);
+    return {
+      type: "user",
+      model: metadata.model,
+      ...(metadata.permissionMode
+        ? { permissionMode: metadata.permissionMode }
+        : {}),
+      parts: [{ type: "text", text: content }],
+    };
+  }
+  if (message.role !== "system") {
+    return null;
+  }
+  const messageType = systemMessageTypeFromAgUiId(message.id);
+  if (!messageType) {
+    return null;
+  }
+  return {
+    type: "system",
+    message_type: messageType,
+    parts: content.length > 0 ? [{ type: "text", text: content }] : [],
+  };
+}
+
+function isAgUiMessage(value: unknown): value is Message {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const role = Reflect.get(value, "role");
+  const id = Reflect.get(value, "id");
+  const content = Reflect.get(value, "content");
+  return (
+    (role === "user" || role === "system" || role === "assistant") &&
+    typeof id === "string" &&
+    (content === null || typeof content === "string" || Array.isArray(content))
+  );
+}
+
+function agUiSnapshotToReplayMessages(payload: unknown): DBMessage[] {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    payload.type !== EventType.MESSAGES_SNAPSHOT ||
+    !("messages" in payload) ||
+    !Array.isArray(payload.messages)
+  ) {
+    return [];
+  }
+  return payload.messages.flatMap((message) => {
+    if (!isAgUiMessage(message)) {
+      return [];
+    }
+    const replayMessage = agUiMessageToReplayMessage(message);
+    return replayMessage ? [replayMessage] : [];
+  });
+}
+
+function isContextResetReplayMessage(message: DBMessage): boolean {
+  return message.type === "system" && message.message_type === "compact-result";
+}
+
+function applyContextResetToReplayEntries(
+  entries: ThreadReplayEntry[],
+): ThreadReplayEntry[] {
+  const resetEntries: ThreadReplayEntry[] = [];
+
+  for (const entry of entries) {
+    let messagesForEntry: DBMessage[] = [];
+    for (const message of entry.messages) {
+      if (isContextResetReplayMessage(message)) {
+        resetEntries.length = 0;
+        messagesForEntry = [];
+      }
+      messagesForEntry.push(message);
+    }
+    if (messagesForEntry.length > 0) {
+      resetEntries.push({ seq: entry.seq, messages: messagesForEntry });
+    }
+  }
+
+  return resetEntries;
 }
 
 export async function getThreadReplayEntriesFromCanonicalEvents({

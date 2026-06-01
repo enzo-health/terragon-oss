@@ -7,7 +7,7 @@ import type { ThreadViewEvent } from "./thread-view-model/types";
 import {
   type ThreadViewEventForAgUi,
   useAgUiSidecarRouter,
-} from "./use-ag-ui-messages";
+} from "./use-thread-view-model";
 
 export function useProductSidecars({
   agent,

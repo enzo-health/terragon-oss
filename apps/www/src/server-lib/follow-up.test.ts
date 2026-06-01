@@ -34,8 +34,9 @@ vi.mock("./process-follow-up-queue", () => ({
   ensureDispatchRetryPersistenceOwnership: vi.fn(({ result }) => result),
 }));
 
-vi.mock("@/server-lib/thread-lifecycle-command", () => ({
-  transitionThreadChatLifecycle: transitionMocks.updateThreadChatWithTransition,
+vi.mock("@/agent/update-status", () => ({
+  updateThreadChatWithTransition:
+    transitionMocks.updateThreadChatWithTransition,
 }));
 
 vi.mock("@/agent/msg/startAgentMessage", () => ({

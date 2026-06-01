@@ -7,7 +7,7 @@ import {
   createTestThread,
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
-import { getDurableAgUiHistoryItemsFromEvents } from "@terragon/shared/model/persistent-message-projection";
+import { getDurableAgUiHistoryItemsFromEvents } from "./ag-ui/durable-history-builder";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

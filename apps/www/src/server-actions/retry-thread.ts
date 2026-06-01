@@ -4,7 +4,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { waitUntil } from "@vercel/functions";
 import { db } from "@/lib/db";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
-import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { ensureThreadChatHasUserMessage } from "@/server-lib/retry-thread";
 import { UserFacingError } from "@/lib/server-actions";
 import {
@@ -30,7 +30,7 @@ export const retryThread = userOnlyAction(
     if (!threadChat) {
       throw new UserFacingError("Task not found");
     }
-    const { didUpdateStatus } = await transitionThreadChatLifecycle({
+    const { didUpdateStatus } = await updateThreadChatWithTransition({
       userId,
       threadId,
       threadChatId,
