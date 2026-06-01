@@ -18,7 +18,10 @@ import {
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
 import { useThreadIntent } from "@/hooks/use-thread-intent";
-import { HandleSubmit } from "../promptbox/use-promptbox";
+import type {
+  HandleSubmit,
+  HandleSubmitArgs,
+} from "../promptbox/use-promptbox";
 import { ContextChip } from "./context-chip";
 import { ContextWarning } from "./context-warning";
 import { appendUniqueQueuedMessages } from "./queued-message-dedupe";
@@ -165,7 +168,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   const handleQueueMessage = useCallback(
-    async ({ userMessage }: { userMessage: DBUserMessage }) => {
+    async ({ userMessage, clientSubmissionId }: HandleSubmitArgs) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
         return;
@@ -175,7 +178,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       const baseQueuedMessages = queuedMessages ?? [];
       const nextMessages = appendUniqueQueuedMessages(baseQueuedMessages, [
         {
-          clientSubmissionId: crypto.randomUUID(),
+          clientSubmissionId,
           message: userMessage,
         },
       ]);

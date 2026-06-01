@@ -47,6 +47,7 @@ import {
   toBroadcastThreadShellRealtimeFields,
 } from "./thread-page";
 import { getAuthorizedThreadAccess, sqlIsUnread } from "./thread-auth";
+import { CONCURRENCY_ACTIVE_THREAD_STATUSES } from "./thread-lifecycle-policy";
 
 type GetThreadsArgs = {
   db: DB;
@@ -1538,7 +1539,9 @@ export async function atomicDequeueThreadChats({
   return undefined;
 }
 
-export const activeThreadStatuses = ["booting", "working"] as ThreadStatus[];
+export const activeThreadStatuses: ThreadStatus[] = [
+  ...CONCURRENCY_ACTIVE_THREAD_STATUSES,
+];
 
 export async function getActiveThreadCount({
   db,
@@ -1551,7 +1554,10 @@ export async function getActiveThreadCount({
     select 1
     from thread_chat tc
     where tc.thread_id = ${schema.thread.id}
-      and tc.status in ('booting', 'working')
+      and tc.status in (${sql.join(
+        CONCURRENCY_ACTIVE_THREAD_STATUSES.map((status) => sql`${status}`),
+        sql`, `,
+      )})
       and not exists (
         select 1
         from thread_chat newer
@@ -1774,4 +1780,59 @@ export async function getThreadByLinearDeliveryId({
     ),
   });
   return result ?? null;
+}
+
+export async function getThreadBySlackThreadKey({
+  db,
+  userId,
+  teamId,
+  workspaceDomain,
+  channel,
+  threadTs,
+}: {
+  db: DB;
+  userId: string;
+  teamId: string;
+  workspaceDomain?: string;
+  channel: string;
+  threadTs: string;
+}): Promise<ThreadInfoFull | null> {
+  const findThread = async (
+    conditions: Parameters<typeof and>,
+  ): Promise<Pick<Thread, "id"> | null> => {
+    const result = await db.query.thread.findFirst({
+      where: and(...conditions),
+      orderBy: [asc(schema.thread.archived), desc(schema.thread.updatedAt)],
+      columns: {
+        id: true,
+      },
+    });
+    return result ?? null;
+  };
+
+  const exactThread = await findThread([
+    eq(schema.thread.userId, userId),
+    eq(schema.thread.sourceType, "slack-mention"),
+    sql`${schema.thread.sourceMetadata}->>'teamId' = ${teamId}`,
+    sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+    sql`${schema.thread.sourceMetadata}->>'threadTs' = ${threadTs}`,
+  ]);
+  const threadOrNull =
+    exactThread ??
+    (await findThread([
+      eq(schema.thread.userId, userId),
+      eq(schema.thread.sourceType, "slack-mention"),
+      sql`${schema.thread.sourceMetadata}->>'teamId' IS NULL`,
+      ...(workspaceDomain
+        ? [
+            sql`${schema.thread.sourceMetadata}->>'workspaceDomain' = ${workspaceDomain}`,
+          ]
+        : []),
+      sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+      sql`${schema.thread.sourceMetadata}->>'threadTs' = ${threadTs}`,
+    ]));
+  if (!threadOrNull) {
+    return null;
+  }
+  return (await getThread({ db, threadId: threadOrNull.id, userId })) ?? null;
 }

@@ -261,6 +261,14 @@ describe("AG-UI replayer integration", () => {
     expect(toolPart).toMatchObject({ status: "error", result: "exit 1" });
   });
 
+  it("drops orphan tool results instead of synthesizing a transcript row", async () => {
+    const { messages } = await replayAgUi([
+      toolCallResult("tool-orphan", "late result"),
+    ]);
+
+    expect(messages).toEqual([]);
+  });
+
   it("inserts a CUSTOM rich-part (terminal) onto the referenced assistant message", async () => {
     const terminalPart = {
       type: "terminal",
@@ -386,6 +394,42 @@ describe("AG-UI replayer integration", () => {
         if (id) expect(cur.has(id)).toBe(true);
       }
     }
+  });
+
+  it("converges to the same transcript when replayed in slices", async () => {
+    const events = [
+      textStart("slice-1"),
+      textContent("slice-1", "Inspecting the repo."),
+      textEnd("slice-1"),
+      toolCallStart("slice-tool", "bash"),
+      toolCallArgs("slice-tool", JSON.stringify({ command: "pnpm test" })),
+      toolCallEnd("slice-tool"),
+      toolCallResult("slice-tool", "all green\n"),
+      textStart("slice-2"),
+      textContent("slice-2", "Finished."),
+      textEnd("slice-2"),
+      customRichPart("plan", "slice-2", {
+        type: "plan",
+        entries: [
+          {
+            content: "Ship the U0 guardrails",
+            priority: "high",
+            status: "completed",
+          },
+        ],
+      }),
+    ];
+
+    const fullReplay = await replayAgUi(events);
+    const firstSlice = await replayAgUi(events.slice(0, 5));
+    const secondSlice = await replayAgUi(events.slice(5), {
+      initialMessages: firstSlice.messages,
+    });
+
+    expect(secondSlice.messages).toEqual(fullReplay.messages);
+    expect(secondSlice.artifactDescriptors).toEqual(
+      fullReplay.artifactDescriptors,
+    );
   });
 
   it("reconstructs lifecycle from canonical run events without refetch state", async () => {

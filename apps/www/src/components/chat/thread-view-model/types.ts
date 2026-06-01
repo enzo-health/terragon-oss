@@ -13,7 +13,6 @@ import type {
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
-import type { AgUiMessagesState } from "../ag-ui-messages-reducer";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 
 /*
@@ -64,7 +63,6 @@ export type ThreadViewSnapshot = {
 export type ThreadViewModel = {
   threadId: string;
   threadChatId: string;
-  messages: UIMessage[];
   lifecycleMessages: UISystemMessage[];
   runtimeState: ThreadViewRuntimeState;
   runtimeActivities: ThreadViewRuntimeActivities;
@@ -132,7 +130,6 @@ export type ThreadViewEvent =
 export type ThreadViewModelState = {
   threadId: string;
   threadChatId: string;
-  transcript: AgUiMessagesState;
   runtimeState: ThreadViewRuntimeState;
   runtimeActivities: ThreadViewRuntimeActivities;
   dbMessages: DBMessage[];
@@ -154,9 +151,8 @@ export type ThreadViewModelState = {
   lifecycle: ThreadViewLifecycle;
   lifecycleMessages: UISystemMessage[];
   quarantine: ThreadViewQuarantineEntry[];
-  hasLiveTranscriptEvents: boolean;
   hasLiveLifecycleEvents: boolean;
-  hasOptimisticTranscriptEvents: boolean;
+  hasOptimisticUserSubmit: boolean;
   hasOptimisticQueuedMessages: boolean;
   hasOptimisticPermissionMode: boolean;
   seenEventKeys: Set<string>;

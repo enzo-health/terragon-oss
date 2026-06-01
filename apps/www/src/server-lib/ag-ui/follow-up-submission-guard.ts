@@ -13,21 +13,25 @@ export function runLockKey(threadChatId: string): string {
 }
 
 export function submissionDedupeKey(
+  userId: string,
+  threadId: string,
   threadChatId: string,
   clientSubmissionId: string,
 ): string {
-  return `dedupe:ag-ui-submission:${threadChatId}:${clientSubmissionId}`;
+  return `dedupe:ag-ui-submission:${userId}:${threadId}:${threadChatId}:${clientSubmissionId}`;
 }
 
 export async function withFollowUpSubmissionGuard<T>(args: {
+  userId: string;
+  threadId: string;
   threadChatId: string;
   clientSubmissionId: string | null;
   dispatch: (markDispatched: () => void) => Promise<T>;
 }): Promise<FollowUpSubmissionGuardResult<T>> {
-  const { threadChatId, clientSubmissionId, dispatch } = args;
+  const { userId, threadId, threadChatId, clientSubmissionId, dispatch } = args;
   const submissionKey =
     clientSubmissionId !== null
-      ? submissionDedupeKey(threadChatId, clientSubmissionId)
+      ? submissionDedupeKey(userId, threadId, threadChatId, clientSubmissionId)
       : null;
 
   if (submissionKey !== null) {

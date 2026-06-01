@@ -22,7 +22,7 @@ import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-run
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
-import type { ThreadViewModelController } from "./use-ag-ui-messages";
+import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
   () => import("./terminal-panel").then((mod) => mod.TerminalPanel),

@@ -23,4 +23,3 @@ export * from "./usage-events";
 export * from "./usage-pricing";
 export * from "./user";
 export * from "./user-flags";
-export * from "./query-helpers";

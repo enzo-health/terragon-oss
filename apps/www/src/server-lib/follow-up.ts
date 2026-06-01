@@ -10,13 +10,18 @@ import {
   updateThreadChat,
 } from "@terragon/shared/model/threads";
 import {
+  isPrimaryChatLiveThreadStatus,
+  shouldProcessQueuedFollowUpImmediately,
+} from "@terragon/shared/model/thread-lifecycle-policy";
+import {
   ensureDispatchRetryPersistenceOwnership,
   maybeProcessFollowUpQueue,
 } from "./process-follow-up-queue";
 import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
-import { isAgentWorking } from "@/agent/thread-status";
 import { getDefaultModelForAgent } from "@terragon/agent/utils";
 import { uploadUserMessageImages } from "@/lib/r2-file-upload-server";
+
+export type FollowUpSource = "www" | "github" | "linear" | "slack";
 
 export async function followUpInternal({
   userId,
@@ -29,7 +34,7 @@ export async function followUpInternal({
   threadId: string;
   threadChatId: string;
   message: DBUserMessage;
-  source: "www" | "github";
+  source: FollowUpSource;
 }) {
   const threadChat = await getThreadChat({
     db,
@@ -40,7 +45,7 @@ export async function followUpInternal({
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
-  if (isAgentWorking(threadChat.status)) {
+  if (isPrimaryChatLiveThreadStatus(threadChat.status)) {
     await queueFollowUpInternal({
       userId,
       threadId,
@@ -134,7 +139,7 @@ async function queueFollowUpIfThreadIsActive({
   threadId: string;
   threadChatId: string;
   message: DBUserMessage;
-  source: "www" | "github";
+  source: FollowUpSource;
 }): Promise<boolean> {
   const latestThreadChat = await getThreadChat({
     db,
@@ -142,7 +147,10 @@ async function queueFollowUpIfThreadIsActive({
     userId,
     threadChatId,
   });
-  if (!latestThreadChat || !isAgentWorking(latestThreadChat.status)) {
+  if (
+    !latestThreadChat ||
+    !isPrimaryChatLiveThreadStatus(latestThreadChat.status)
+  ) {
     return false;
   }
   await queueFollowUpInternal({
@@ -163,13 +171,15 @@ export async function queueFollowUpInternal({
   messages,
   appendOrReplace,
   source,
+  dedupeMarker,
 }: {
   userId: string;
   threadId: string;
   threadChatId: string;
   messages: DBUserMessage[];
   appendOrReplace: "append" | "replace";
-  source: "www" | "github";
+  source: FollowUpSource;
+  dedupeMarker?: string;
 }) {
   const threadChat = await getThreadChat({
     db,
@@ -180,14 +190,21 @@ export async function queueFollowUpInternal({
   if (!threadChat) {
     throw new Error("Thread chat not found");
   }
-  const messagesToQueue =
-    source === "github"
-      ? filterAlreadyQueuedOrSubmittedMessages({
-          incomingMessages: messages,
-          existingMessages: threadChat.messages ?? [],
-          existingQueuedMessages: threadChat.queuedMessages ?? [],
-        })
-      : messages;
+  let messagesToQueue = messages;
+  if (dedupeMarker) {
+    messagesToQueue = filterMessagesByDedupeMarker({
+      incomingMessages: messages,
+      existingMessages: threadChat.messages ?? [],
+      existingQueuedMessages: threadChat.queuedMessages ?? [],
+      dedupeMarker,
+    });
+  } else if (source === "github") {
+    messagesToQueue = filterAlreadyQueuedOrSubmittedMessages({
+      incomingMessages: messages,
+      existingMessages: threadChat.messages ?? [],
+      existingQueuedMessages: threadChat.queuedMessages ?? [],
+    });
+  }
   if (messagesToQueue.length === 0) {
     return;
   }
@@ -203,11 +220,7 @@ export async function queueFollowUpInternal({
         appendOrReplace === "replace" ? messagesToQueue : undefined,
     },
   });
-  const shouldProcessImmediately =
-    (threadChat.status !== "scheduled" && !isAgentWorking(threadChat.status)) ||
-    threadChat.status === "working-done" ||
-    threadChat.status === "working-error";
-  if (shouldProcessImmediately) {
+  if (shouldProcessQueuedFollowUpImmediately(threadChat.status)) {
     waitUntil(
       maybeProcessFollowUpQueue({ userId, threadId, threadChatId }).then(
         (result) =>
@@ -221,6 +234,43 @@ export async function queueFollowUpInternal({
       ),
     );
   }
+}
+
+function filterMessagesByDedupeMarker({
+  incomingMessages,
+  existingMessages,
+  existingQueuedMessages,
+  dedupeMarker,
+}: {
+  incomingMessages: DBUserMessage[];
+  existingMessages: unknown[];
+  existingQueuedMessages: DBUserMessage[];
+  dedupeMarker: string;
+}): DBUserMessage[] {
+  const existingHasMarker =
+    existingMessages.some(
+      (message) =>
+        isUserMessage(message) &&
+        normalizedUserMessageText(message).includes(dedupeMarker),
+    ) ||
+    existingQueuedMessages.some((message) =>
+      normalizedUserMessageText(message).includes(dedupeMarker),
+    );
+  if (existingHasMarker) {
+    return [];
+  }
+
+  let markerSeenInBatch = false;
+  return incomingMessages.filter((message) => {
+    if (!normalizedUserMessageText(message).includes(dedupeMarker)) {
+      return true;
+    }
+    if (markerSeenInBatch) {
+      return false;
+    }
+    markerSeenInBatch = true;
+    return true;
+  });
 }
 
 function filterAlreadyQueuedOrSubmittedMessages({

@@ -76,13 +76,29 @@ describe("handleAgUiPostCommand", () => {
     expect(followUpMocks.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
   });
 
-  it("opens the stream for absent or invalid bodies", async () => {
+  it("opens the stream for absent bodies", async () => {
     const result = await handleAgUiPostCommand({
       ...BASE_ARGS,
       request: makeRequest("http://localhost/api/ag-ui/thread-1"),
     });
 
     expect(result).toEqual({ type: "open-stream" });
+    expect(followUpMocks.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed non-empty bodies", async () => {
+    const result = await handleAgUiPostCommand({
+      ...BASE_ARGS,
+      request: makeRequest("http://localhost/api/ag-ui/thread-1", {
+        not: "run-agent-input",
+      }),
+    });
+
+    expect(result).toEqual({
+      type: "response",
+      status: 400,
+      body: { error: "Invalid AG-UI request body" },
+    });
     expect(followUpMocks.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
   });
 
@@ -154,6 +170,30 @@ describe("handleAgUiPostCommand", () => {
       type: "response",
       status: 409,
       body: { error: "Run already in progress" },
+    });
+  });
+
+  it("maps invalid append intents to 400 responses", async () => {
+    followUpMocks.dispatchFollowUpFromAppend.mockResolvedValue({
+      error: {
+        kind: "invalid-input",
+        reason:
+          "AG-UI runtime append does not support scheduleAt; use the draft/schedule fallback",
+      },
+    });
+
+    const result = await handleAgUiPostCommand({
+      ...BASE_ARGS,
+      request: makeRequest("http://localhost/api/ag-ui/thread-1", makeBody()),
+    });
+
+    expect(result).toEqual({
+      type: "response",
+      status: 400,
+      body: {
+        error:
+          "AG-UI runtime append does not support scheduleAt; use the draft/schedule fallback",
+      },
     });
   });
 });

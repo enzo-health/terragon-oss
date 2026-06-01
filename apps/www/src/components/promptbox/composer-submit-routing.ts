@@ -32,6 +32,7 @@ export type ComposerSubmitCommand = (args: {
   branchName: string;
   saveAsDraft: boolean;
   scheduleAt: Parameters<TSubmitForm>[0]["scheduleAt"];
+  clientSubmissionId: string;
 }) => Promise<void>;
 
 export type RouteComposerSubmitArgs = {
@@ -41,6 +42,7 @@ export type RouteComposerSubmitArgs = {
   branchName: string;
   saveAsDraft: boolean;
   scheduleAt: Parameters<TSubmitForm>[0]["scheduleAt"];
+  clientSubmissionId: string;
   threadRuntime: ComposerSubmitRuntime | null;
   isAgentWorking: boolean;
   isQueueingEnabled: boolean;
@@ -55,6 +57,7 @@ export async function routeComposerSubmit({
   branchName,
   saveAsDraft,
   scheduleAt,
+  clientSubmissionId,
   threadRuntime,
   isAgentWorking,
   isQueueingEnabled,
@@ -68,6 +71,7 @@ export async function routeComposerSubmit({
     branchName,
     saveAsDraft,
     scheduleAt,
+    clientSubmissionId,
   };
 
   if (threadRuntime !== null && (saveAsDraft || scheduleAt !== null)) {
@@ -94,7 +98,7 @@ export async function routeComposerSubmit({
         custom: encodeRunMetadata({
           selectedModel: userMessage.model,
           permissionMode: userMessage.permissionMode,
-          clientSubmissionId: crypto.randomUUID(),
+          clientSubmissionId,
         }),
       },
     });

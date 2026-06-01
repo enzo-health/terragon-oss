@@ -14,10 +14,10 @@ import type {
   ThreadViewModel,
   ThreadViewSnapshot,
 } from "./thread-view-model/types";
+export { createThreadViewSidecarEventProjector } from "./thread-view-model/sidecars";
 
 type UseThreadViewModelArgs = {
   snapshot: ThreadViewSnapshot;
-  includeTranscriptMessages?: boolean;
 };
 
 export type ThreadViewModelController = ThreadViewModel & {
@@ -95,7 +95,6 @@ export function useAgUiSidecarRouter({
 
 export function useThreadViewModel({
   snapshot,
-  includeTranscriptMessages = true,
 }: UseThreadViewModelArgs): ThreadViewModelController {
   const projectedTraceKeysRef = useRef<Set<string>>(new Set());
   const [state, dispatch] = useReducer(
@@ -109,14 +108,12 @@ export function useThreadViewModel({
   }, [snapshot]);
 
   const viewModel = useMemo(() => {
-    const projected = projectThreadViewModel(state, {
-      includeTranscriptMessages,
-    });
+    const projected = projectThreadViewModel(state);
     return {
       ...projected,
       dispatchThreadViewEvent: dispatch,
     };
-  }, [includeTranscriptMessages, state]);
+  }, [state]);
 
   useEffect(() => {
     const runId = viewModel.lifecycle.runId;
@@ -133,7 +130,7 @@ export function useThreadViewModel({
       name: "client.ui.projected",
       attributes: {
         threadStatus: viewModel.lifecycle.threadStatus,
-        messageCount: viewModel.messages.length,
+        dbMessageCount: viewModel.dbMessages.length,
         quarantineCount: viewModel.quarantine.length,
       },
     });
@@ -180,38 +177,6 @@ function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
     event.type === EventType.CUSTOM &&
     Reflect.get(event, "name") === "thread.status_changed"
   );
-}
-
-export function createThreadViewSidecarEventProjector(): (
-  event: ThreadViewEventForAgUi,
-) => ThreadViewEventForAgUi | null {
-  return (event) => {
-    switch (event.type) {
-      case EventType.RUN_STARTED:
-      case EventType.RUN_FINISHED:
-      case EventType.RUN_ERROR:
-        return event;
-      case EventType.TEXT_MESSAGE_START:
-      case EventType.TEXT_MESSAGE_CONTENT:
-      case EventType.TEXT_MESSAGE_CHUNK:
-      case EventType.TEXT_MESSAGE_END:
-      case EventType.REASONING_MESSAGE_START:
-      case EventType.REASONING_MESSAGE_CONTENT:
-      case EventType.REASONING_MESSAGE_END:
-      case EventType.REASONING_MESSAGE_CHUNK:
-      case EventType.THINKING_TEXT_MESSAGE_START:
-      case EventType.THINKING_TEXT_MESSAGE_CONTENT:
-      case EventType.THINKING_TEXT_MESSAGE_END:
-      case EventType.TOOL_CALL_START:
-      case EventType.TOOL_CALL_ARGS:
-      case EventType.TOOL_CALL_CHUNK:
-      case EventType.TOOL_CALL_END:
-      case EventType.TOOL_CALL_RESULT:
-        return null;
-      default:
-        return event;
-    }
-  };
 }
 
 function isRuntimeLifecycleEvent(event: ThreadViewEventForAgUi): boolean {

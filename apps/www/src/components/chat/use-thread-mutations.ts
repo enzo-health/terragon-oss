@@ -13,7 +13,7 @@ import {
 import { retryGitCheckpoint } from "@/server-actions/retry-git-checkpoint";
 import { retryThread } from "@/server-actions/retry-thread";
 import { createThreadViewSnapshot } from "./thread-view-model/snapshot-adapter";
-import type { ThreadViewModelController } from "./use-ag-ui-messages";
+import type { ThreadViewModelController } from "./use-thread-view-model";
 
 /**
  * Retry mutation: branches between `retryGitCheckpoint` and `retryThread`

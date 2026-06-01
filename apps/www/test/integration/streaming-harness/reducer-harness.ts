@@ -1,10 +1,9 @@
 import {
-  createInitialThreadViewModelState,
-  projectThreadViewModel,
-  threadViewModelReducer,
-} from "@/components/chat/thread-view-model/reducer";
-import { createEmptyThreadViewSnapshot } from "@/components/chat/thread-view-model/snapshot-adapter";
-import type { ThreadViewModelState } from "@/components/chat/thread-view-model/types";
+  agUiMessagesReducer,
+  createInitialAgUiMessagesState,
+  type AgUiMessagesState,
+} from "@/components/chat/ag-ui-messages-reducer";
+import { getAgUiEventDedupeKey } from "@/components/chat/thread-view-model/ag-ui-adapter";
 import type { BaseEvent } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
@@ -18,7 +17,8 @@ export type ReducerTimingEntry = {
 
 export type ReducerHarnessResult = {
   finalMessages: UIMessage[];
-  finalState: ThreadViewModelState;
+  finalState: AgUiMessagesState;
+  snapshots: UIMessage[][];
   timing: ReducerTimingEntry[];
   totalDurationMs: number;
   p50Us: number;
@@ -35,24 +35,29 @@ export function runReducerHarness(
   const agent: AIAgent = opts?.agent ?? "claudeCode";
   const initialMessages = opts?.initialMessages ?? [];
 
-  let state = createInitialThreadViewModelState(
-    createEmptyThreadViewSnapshot({ agent, initialMessages }),
-  );
+  let state = createInitialAgUiMessagesState(agent, initialMessages);
+  const snapshots: UIMessage[][] = [state.messages];
   const timing: ReducerTimingEntry[] = [];
+  const seenEventKeys = new Set<string>();
 
   const wallStart = performance.now();
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
     const t0 = performance.now();
-    state = threadViewModelReducer(state, { type: "ag-ui.event", event });
+    const dedupeKey = getAgUiEventDedupeKey(event);
+    if (!dedupeKey || !seenEventKeys.has(dedupeKey)) {
+      if (dedupeKey) seenEventKeys.add(dedupeKey);
+      state = agUiMessagesReducer(state, event);
+    }
     const t1 = performance.now();
+    snapshots.push(state.messages);
 
     timing.push({
       eventIndex: i,
       eventType: String(event.type),
       durationUs: (t1 - t0) * 1000,
-      messageCount: projectThreadViewModel(state).messages.length,
+      messageCount: state.messages.length,
     });
   }
 
@@ -62,8 +67,9 @@ export function runReducerHarness(
   const durations = timing.map((t) => t.durationUs).sort((a, b) => a - b);
 
   return {
-    finalMessages: projectThreadViewModel(state).messages,
+    finalMessages: state.messages,
     finalState: state,
+    snapshots,
     timing,
     totalDurationMs,
     p50Us: percentile(durations, 50),

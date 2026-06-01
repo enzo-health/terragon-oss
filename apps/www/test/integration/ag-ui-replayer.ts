@@ -20,22 +20,25 @@ import { EventType } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { act, createElement, useMemo } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { getStableArtifactsForMessages } from "../../src/components/chat/thread-view-model/artifact-descriptors";
 import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/snapshot-adapter";
 import type {
   ThreadViewLifecycle,
   ThreadViewQuarantineEntry,
   ThreadViewRuntimeActivities,
   ThreadViewRuntimeState,
+  ThreadViewSnapshot,
 } from "../../src/components/chat/thread-view-model/types";
 import {
   useAgUiSidecarRouter,
   useThreadViewModel,
-} from "../../src/components/chat/use-ag-ui-messages";
+} from "../../src/components/chat/use-thread-view-model";
+import { runReducerHarness } from "./streaming-harness/reducer-harness";
 
 // ---------------------------------------------------------------------------
-// Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
+// Fake HttpAgent (mirrors the one in use-thread-view-model.test.tsx)
 // ---------------------------------------------------------------------------
 
 type AgUiSubscriber = (params: { event: BaseEvent }) => void;
@@ -84,7 +87,7 @@ export type ReplayAgUiOptions = {
 };
 
 export type ReplayAgUiResult = {
-  /** Product sidecar messages after all events are drained. Transcript is runtime-owned. */
+  /** Runtime transcript projection after all events are drained. */
   messages: UIMessage[];
   /** Final artifact descriptors projected by ThreadViewModel. */
   artifactDescriptors: ArtifactDescriptor[];
@@ -116,24 +119,29 @@ export async function replayAgUi(
 ): Promise<ReplayAgUiResult> {
   const agentKind: AIAgent = options.agentKind ?? "claudeCode";
   const initialMessages: UIMessage[] = options.initialMessages ?? [];
+  const initialSnapshot = createEmptyThreadViewSnapshot({
+    agent: agentKind,
+    initialMessages,
+  });
 
   const fake = createFakeAgent();
   const agent = asHttpAgent(fake);
 
-  const snapshots: UIMessage[][] = [];
-  const artifactSnapshots: ArtifactDescriptor[][] = [];
-  let current: UIMessage[] = [];
-  let currentArtifacts: ArtifactDescriptor[] = [];
+  const transcript = runReducerHarness(events, {
+    agent: agentKind,
+    initialMessages,
+  });
+  const artifactSnapshots = getArtifactSnapshots({
+    snapshots: transcript.snapshots,
+    snapshot: initialSnapshot,
+  });
+  let currentSidecarArtifacts: ArtifactDescriptor[] = [];
   let currentQuarantine: ThreadViewQuarantineEntry[] = [];
   let currentRuntimeState: ThreadViewRuntimeState = {};
   let currentRuntimeActivities: ThreadViewRuntimeActivities = {};
-  let currentLifecycle: ThreadViewLifecycle = createEmptyThreadViewSnapshot({
-    agent: agentKind,
-    initialMessages,
-  }).lifecycle;
+  let currentLifecycle: ThreadViewLifecycle = initialSnapshot.lifecycle;
 
   function onProjection(params: {
-    messages: UIMessage[];
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
     runtimeState: ThreadViewRuntimeState;
@@ -141,15 +149,13 @@ export async function replayAgUi(
     quarantine: ThreadViewQuarantineEntry[];
   }): void {
     const {
-      messages: msgs,
       artifactDescriptors,
       lifecycle,
       runtimeState,
       runtimeActivities,
       quarantine,
     } = params;
-    current = msgs;
-    currentArtifacts = artifactDescriptors;
+    currentSidecarArtifacts = artifactDescriptors;
     currentLifecycle = lifecycle;
     currentRuntimeState = runtimeState;
     currentRuntimeActivities = runtimeActivities;
@@ -167,33 +173,29 @@ export async function replayAgUi(
       root.render(
         createElement(Harness, {
           agent,
-          agentKind,
-          initialMessages,
+          snapshot: initialSnapshot,
           onProjection,
         }),
       );
     });
 
-    // Seed snapshot captured after initial render
-    snapshots.push(current);
-    artifactSnapshots.push(currentArtifacts);
-
     for (const ev of events) {
       await act(async () => {
         fake.emit(ev);
       });
-      snapshots.push(current);
-      artifactSnapshots.push(currentArtifacts);
     }
 
     return {
-      messages: current,
-      artifactDescriptors: currentArtifacts,
+      messages: transcript.finalMessages,
+      artifactDescriptors: [
+        ...(artifactSnapshots.at(-1) ?? []),
+        ...currentSidecarArtifacts,
+      ],
       lifecycle: currentLifecycle,
       runtimeState: currentRuntimeState,
       runtimeActivities: currentRuntimeActivities,
       quarantine: currentQuarantine,
-      snapshots,
+      snapshots: transcript.snapshots,
       artifactSnapshots,
     };
   } finally {
@@ -210,15 +212,12 @@ export async function replayAgUi(
 // the replayer module (keeps this file usable from .ts tests too).
 function Harness({
   agent,
-  agentKind,
-  initialMessages,
+  snapshot,
   onProjection,
 }: {
   agent: HttpAgent | null;
-  agentKind: AIAgent;
-  initialMessages: UIMessage[];
+  snapshot: ThreadViewSnapshot;
   onProjection: (params: {
-    messages: UIMessage[];
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
     runtimeState: ThreadViewRuntimeState;
@@ -226,23 +225,12 @@ function Harness({
     quarantine: ThreadViewQuarantineEntry[];
   }) => void;
 }): null {
-  const snapshot = useMemo(
-    () =>
-      createEmptyThreadViewSnapshot({
-        agent: agentKind,
-        initialMessages,
-      }),
-    [agentKind, initialMessages],
-  );
-  const viewModel = useThreadViewModel({
-    snapshot,
-  });
+  const viewModel = useThreadViewModel({ snapshot });
   useAgUiSidecarRouter({
     agent,
     dispatchThreadViewEvent: viewModel.dispatchThreadViewEvent,
   });
   onProjection({
-    messages: viewModel.messages,
     artifactDescriptors: viewModel.artifacts.descriptors,
     lifecycle: viewModel.lifecycle,
     runtimeState: viewModel.runtimeState,
@@ -250,6 +238,24 @@ function Harness({
     quarantine: viewModel.quarantine,
   });
   return null;
+}
+
+function getArtifactSnapshots({
+  snapshots,
+  snapshot,
+}: {
+  snapshots: UIMessage[][];
+  snapshot: ThreadViewSnapshot;
+}): ArtifactDescriptor[][] {
+  let artifacts = snapshot.artifacts;
+  return snapshots.map((messages) => {
+    artifacts = getStableArtifactsForMessages({
+      previous: artifacts,
+      messages,
+      artifactThread: snapshot.artifactThread,
+    });
+    return artifacts.descriptors;
+  });
 }
 
 // ---------------------------------------------------------------------------

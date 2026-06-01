@@ -57,6 +57,7 @@ function submitArgs() {
     branchName: "main",
     saveAsDraft: false,
     scheduleAt: null,
+    clientSubmissionId: "submission-1",
   };
 }
 
@@ -141,7 +142,7 @@ describe("routeComposerSubmit", () => {
         runConfig: {
           custom: {
             terragon: expect.objectContaining({
-              clientSubmissionId: expect.any(String),
+              clientSubmissionId: "submission-1",
               intent: "append",
             }),
           },
@@ -174,6 +175,31 @@ describe("routeComposerSubmit", () => {
     expect(append).not.toHaveBeenCalled();
   });
 
+  it("falls back for scheduled submit intents while runtime is present", async () => {
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
+    const scheduleAt = Date.now() + 60_000;
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      scheduleAt,
+      userMessage: richTextMessage("schedule"),
+      threadRuntime: runtime(append),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+    });
+
+    expect(outcome).toEqual({
+      type: "fallback-submitted",
+      reason: "unsupported-intent",
+    });
+    expect(fallback).toHaveBeenCalledWith(
+      expect.objectContaining({ scheduleAt }),
+    );
+    expect(append).not.toHaveBeenCalled();
+  });
+
   it("queues active messages at the composer boundary", async () => {
     const append = vi.fn<ComposerSubmitRuntime["append"]>();
     const fallback = vi.fn<ComposerSubmitCommand>();
@@ -191,6 +217,33 @@ describe("routeComposerSubmit", () => {
 
     expect(outcome).toEqual({ type: "queued-locally" });
     expect(queue).toHaveBeenCalledOnce();
+    expect(queue).toHaveBeenCalledWith(
+      expect.objectContaining({ clientSubmissionId: "submission-1" }),
+    );
+    expect(append).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("queues active unsupported attachment messages without partial runtime append", async () => {
+    const append = vi.fn<ComposerSubmitRuntime["append"]>();
+    const fallback = vi.fn<ComposerSubmitCommand>();
+    const queue = vi.fn<ComposerSubmitCommand>();
+    const userMessage = messageWithPdf();
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      userMessage,
+      threadRuntime: runtime(append),
+      isAgentWorking: true,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+      queueMessage: queue,
+    });
+
+    expect(outcome).toEqual({ type: "queued-locally" });
+    expect(queue).toHaveBeenCalledWith(
+      expect.objectContaining({ userMessage }),
+    );
     expect(append).not.toHaveBeenCalled();
     expect(fallback).not.toHaveBeenCalled();
   });

@@ -370,10 +370,10 @@ function useThreadMutation<TVariables extends { threadId: string }>({
       const queries = cache.findAll({ queryKey: threadQueryKeys.list(null) });
 
       queries.forEach((query) => {
-        const queryKey = query.queryKey as any[];
-        const filters = queryKey[2];
+        const filters =
+          query.queryKey.length > 2 ? query.queryKey[2] : undefined;
         queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
-          queryKey,
+          query.queryKey,
           (old) => {
             if (!old) return old;
             return {
@@ -660,10 +660,10 @@ export function useBulkArchiveMutation() {
       const queries = cache.findAll({ queryKey: threadQueryKeys.list(null) });
 
       queries.forEach((query) => {
-        const queryKey = query.queryKey as any[];
-        const filters = queryKey[2];
+        const filters =
+          query.queryKey.length > 2 ? query.queryKey[2] : undefined;
         queryClient.setQueryData<InfiniteData<ThreadInfo[]>>(
-          queryKey,
+          query.queryKey,
           (old) => {
             if (!old) return old;
             return {

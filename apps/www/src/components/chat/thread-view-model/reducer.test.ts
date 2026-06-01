@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
-import { createThreadViewSidecarEventProjector } from "../use-ag-ui-messages";
+import { createThreadViewSidecarEventProjector } from "../use-thread-view-model";
 import {
   createThreadViewSnapshot,
   selectThreadViewDbMessages,
@@ -19,7 +19,11 @@ import {
   projectThreadViewModel,
   threadViewModelReducer,
 } from "./reducer";
-import type { ThreadViewModelState, ThreadViewSnapshot } from "./types";
+import type {
+  ThreadViewEvent,
+  ThreadViewModelState,
+  ThreadViewSnapshot,
+} from "./types";
 
 describe("ThreadViewModel reducer", () => {
   it("hydrates non-canonical DB snapshots through AG-UI replay only", () => {
@@ -141,7 +145,7 @@ describe("ThreadViewModel reducer", () => {
     expect(snapshot.agUiInitialMessages).toEqual([]);
   });
 
-  it("keeps native AG UI replay as the active transcript source", () => {
+  it("keeps native AG UI replay out of the sidecar transcript projection", () => {
     const legacyUser = userMessage("legacy should not render");
     const snapshot = createThreadViewSnapshot({
       threadChat: threadPageChat({
@@ -161,6 +165,7 @@ describe("ThreadViewModel reducer", () => {
     expect(snapshot.dbMessages).toEqual([]);
 
     let state = createInitialThreadViewModelState(snapshot);
+    const initialState = state;
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "native-msg-1",
@@ -172,16 +177,10 @@ describe("ThreadViewModel reducer", () => {
       delta: "rendered from replay",
     });
 
-    expect(projectThreadViewModel(state).messages).toEqual([
-      expect.objectContaining({
-        id: "native-msg-1",
-        role: "agent",
-        parts: [{ type: "text", text: "rendered from replay" }],
-      }),
-    ]);
+    expect(state).toBe(initialState);
   });
 
-  it("hydrates DB snapshot and suppresses duplicate replay assistant bubbles", () => {
+  it("hydrates DB snapshot while leaving duplicate replay bubbles to assistant-ui", () => {
     const snapshot = snapshotWithMessages([
       userMessage("hi"),
       {
@@ -204,15 +203,16 @@ describe("ThreadViewModel reducer", () => {
     });
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toHaveLength(2);
-    expect(viewModel.messages.map((message) => message.role)).toEqual([
+    expect(viewModel.dbMessages.map((message) => message.type)).toEqual([
       "user",
       "agent",
     ]);
-    expect(viewModel.messages[1]?.id).toBe("msg_abc123");
+    expect(viewModel.sidePanel.messages.map((message) => message.type)).toEqual(
+      ["user", "agent"],
+    );
   });
 
-  it("makes optimistic user submit visible on the same projection surface", () => {
+  it("adds optimistic user submit to durable sidecar state only", () => {
     const state = threadViewModelReducer(
       createInitialThreadViewModelState(
         snapshotWithMessages([userMessage("hi")]),
@@ -226,10 +226,13 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.threadStatus).toBe("booting");
-    expect(viewModel.messages).toHaveLength(2);
-    expect(viewModel.messages[1]).toMatchObject({
-      id: "user-optimistic-chat-1-1",
-      role: "user",
+    expect(viewModel.dbMessages).toHaveLength(2);
+    expect(viewModel.dbMessages[1]).toMatchObject({
+      type: "user",
+      parts: [{ type: "text", text: "next" }],
+    });
+    expect(viewModel.sidePanel.messages[1]).toMatchObject({
+      type: "user",
       parts: [{ type: "text", text: "next" }],
     });
   });
@@ -266,11 +269,12 @@ describe("ThreadViewModel reducer", () => {
       threadStatus: "complete",
       runStarted: false,
     });
-    expect(viewModel.messages).toHaveLength(1);
-    expect(viewModel.messages[0]).toMatchObject({
-      role: "user",
+    expect(viewModel.dbMessages).toHaveLength(1);
+    expect(viewModel.dbMessages[0]).toMatchObject({
+      type: "user",
       parts: [{ type: "text", text: "hi" }],
     });
+    expect(viewModel.sidePanel.messages).toHaveLength(1);
   });
 
   it("preserves optimistic permission mode across hydration until durable reconciliation", () => {
@@ -432,7 +436,7 @@ describe("ThreadViewModel reducer", () => {
     });
   });
 
-  it("allows snapshot transcript updates after lifecycle-only events", () => {
+  it("allows durable snapshot updates after lifecycle-only events", () => {
     let state = applyRuntimeEvent(
       createInitialThreadViewModelState(
         snapshotWithMessages([userMessage("hi")]),
@@ -457,9 +461,9 @@ describe("ThreadViewModel reducer", () => {
       threadStatus: "working",
       runStarted: true,
     });
-    expect(viewModel.messages).toHaveLength(2);
-    expect(viewModel.messages[1]).toMatchObject({
-      role: "agent",
+    expect(viewModel.dbMessages).toHaveLength(2);
+    expect(viewModel.dbMessages[1]).toMatchObject({
+      type: "agent",
       parts: [{ type: "text", text: "fresh snapshot" }],
     });
   });
@@ -501,7 +505,10 @@ describe("ThreadViewModel reducer", () => {
     expect(viewModel.sidePanel.messages).toHaveLength(1);
   });
 
-  it("dedupes overlapping replay/live events without dropping streamed content", () => {
+  it("ignores overlapping replay/live transcript events in the sidecar reducer", () => {
+    const initialState = createInitialThreadViewModelState(
+      snapshotWithMessages([]),
+    );
     const state = [
       {
         type: EventType.TEXT_MESSAGE_START,
@@ -533,13 +540,10 @@ describe("ThreadViewModel reducer", () => {
       },
     ].reduce(
       (current, event) => applyAgUiEvent(current, event as BaseEvent),
-      createInitialThreadViewModelState(snapshotWithMessages([])),
+      initialState,
     );
 
-    expect(projectThreadViewModel(state).messages[0]).toMatchObject({
-      role: "agent",
-      parts: [{ type: "text", text: "hello" }],
-    });
+    expect(state).toBe(initialState);
   });
 
   it("quarantines malformed rich projection parts", () => {
@@ -557,7 +561,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.quarantine).toEqual([
       {
         reason: "malformed-rich-part",
@@ -583,7 +586,6 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([]);
     expect(viewModel.quarantine).toEqual([
       {
         reason: "malformed-rich-part",
@@ -594,7 +596,7 @@ describe("ThreadViewModel reducer", () => {
     ]);
   });
 
-  it("accepts live structured plan rich projection parts", () => {
+  it("accepts live structured plan parts without sidecar transcript projection", () => {
     const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
@@ -620,24 +622,9 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.quarantine).toEqual([]);
-    expect(viewModel.messages[0]).toMatchObject({
-      role: "agent",
-      parts: [
-        {
-          type: "plan-structured",
-          entries: [
-            {
-              content: "Wire the reducer",
-              priority: "high",
-              status: "pending",
-            },
-          ],
-        },
-      ],
-    });
   });
 
-  it("projects native side-effect message snapshots instead of quarantining them", () => {
+  it("ignores native side-effect user snapshots instead of quarantining them", () => {
     const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
@@ -654,14 +641,7 @@ describe("ThreadViewModel reducer", () => {
 
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.quarantine).toEqual([]);
-    expect(viewModel.messages).toEqual([
-      {
-        id: "side-effect-user-0-abc123abc123",
-        role: "user",
-        parts: [{ type: "text", text: "Continue" }],
-        model: null,
-      },
-    ]);
+    expect(viewModel.lifecycleMessages).toEqual([]);
   });
 
   it("projects lifecycle system notices into lifecycleMessages", () => {
@@ -677,12 +657,7 @@ describe("ThreadViewModel reducer", () => {
     );
 
     const viewModel = projectThreadViewModel(state);
-    expect(viewModel.messages).toEqual([
-      expect.objectContaining({
-        role: "user",
-        parts: [{ type: "text", text: "hi" }],
-      }),
-    ]);
+    expect(viewModel.dbMessages).toHaveLength(2);
     expect(viewModel.lifecycleMessages).toEqual([
       expect.objectContaining({
         role: "system",
@@ -708,12 +683,7 @@ describe("ThreadViewModel reducer", () => {
         },
       ],
     } as BaseEvent);
-
-    const viewModel = projectThreadViewModel(state, {
-      includeTranscriptMessages: false,
-    });
-
-    expect(viewModel.messages).toEqual([]);
+    const viewModel = projectThreadViewModel(state);
     expect(viewModel.lifecycleMessages).toEqual([
       expect.objectContaining({
         id: "side-effect-system:invalid-token-retry-0-abc123abc123",
@@ -746,13 +716,12 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(state.lifecycleMessages).toBe(lifecycleMessages);
-    expect(
-      projectThreadViewModel(state, { includeTranscriptMessages: false })
-        .lifecycleMessages,
-    ).toBe(lifecycleMessages);
+    expect(projectThreadViewModel(state).lifecycleMessages).toBe(
+      lifecycleMessages,
+    );
   });
 
-  it("clears live transcript precedence after durable reconciliation", () => {
+  it("reconciles durable DB messages after ignored live transcript events", () => {
     let state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),
       {
@@ -787,8 +756,9 @@ describe("ThreadViewModel reducer", () => {
       ]),
     });
 
-    expect(projectThreadViewModel(state).messages[0]).toMatchObject({
-      role: "agent",
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.dbMessages[0]).toMatchObject({
+      type: "agent",
       parts: [{ type: "text", text: "later snapshot" }],
     });
   });
@@ -894,8 +864,9 @@ describe("ThreadViewModel reducer", () => {
     expect(projectThreadViewModel(state).permissionMode).toBe("allowAll");
   });
 
-  it("keeps artifact descriptor references stable during unrelated token streaming", () => {
+  it("does not synthesize artifacts from ordinary token streaming", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    const initialArtifacts = state.artifacts;
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "plan-msg",
@@ -905,7 +876,7 @@ describe("ThreadViewModel reducer", () => {
       messageId: "plan-msg",
       delta: "<proposed_plan>\nDo the work.\n</proposed_plan>",
     });
-    const artifactsAfterPlan = state.artifacts;
+    expect(state.artifacts).toBe(initialArtifacts);
 
     state = applyAgUiEvent(state, {
       type: EventType.TEXT_MESSAGE_CONTENT,
@@ -913,11 +884,11 @@ describe("ThreadViewModel reducer", () => {
       delta: "\nNow implementing.",
     });
 
-    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
-    expect(state.artifacts).toBe(artifactsAfterPlan);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toEqual([]);
+    expect(state.artifacts).toBe(initialArtifacts);
   });
 
-  it("refreshes plan artifacts when a streamed proposed_plan close tag completes", () => {
+  it("leaves streamed proposed_plan text to assistant-ui transcript ownership", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
     const initialArtifacts = state.artifacts;
     state = applyAgUiEvent(state, {
@@ -938,8 +909,8 @@ describe("ThreadViewModel reducer", () => {
       delta: "_plan>",
     });
 
-    expect(projectThreadViewModel(state).artifacts.descriptors).toHaveLength(1);
-    expect(state.artifacts).not.toBe(initialArtifacts);
+    expect(projectThreadViewModel(state).artifacts.descriptors).toEqual([]);
+    expect(state.artifacts).toBe(initialArtifacts);
   });
 
   it("updates artifact descriptors when artifact content changes under a stable id", () => {
@@ -1015,7 +986,7 @@ describe("ThreadViewModel reducer", () => {
     ]);
   });
 
-  it("dedupes persisted replay events across reconnect before refetch reconciliation", () => {
+  it("keeps persisted replay events out of sidecar transcript before refetch reconciliation", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
     const replayedEvents: BaseEvent[] = [
       {
@@ -1041,11 +1012,6 @@ describe("ThreadViewModel reducer", () => {
       state = applyAgUiEvent(state, replayedEvent);
     }
 
-    expect(projectThreadViewModel(state).messages[0]).toMatchObject({
-      role: "agent",
-      parts: [{ type: "text", text: "hello world" }],
-    });
-
     state = threadViewModelReducer(state, {
       type: "server.refetch-reconciled",
       snapshot: snapshotWithMessages([
@@ -1057,16 +1023,17 @@ describe("ThreadViewModel reducer", () => {
       ]),
     });
 
-    expect(projectThreadViewModel(state).messages).toHaveLength(1);
-    expect(projectThreadViewModel(state).messages[0]).toMatchObject({
-      role: "agent",
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.dbMessages).toHaveLength(1);
+    expect(viewModel.dbMessages[0]).toMatchObject({
+      type: "agent",
       parts: [{ type: "text", text: "hello world" }],
     });
   });
 
   it("keeps transcript state stable when product sidecars receive transcript events", () => {
     let state = createInitialThreadViewModelState(snapshotWithMessages([]));
-    const initialTranscript = state.transcript;
+    const initialState = state;
     const projector = createThreadViewSidecarEventProjector();
     const transcriptEvents: BaseEvent[] = [
       {
@@ -1096,8 +1063,124 @@ describe("ThreadViewModel reducer", () => {
       }
     }
 
-    expect(state.transcript).toBe(initialTranscript);
-    expect(projectThreadViewModel(state).messages).toEqual([]);
+    expect(state).toBe(initialState);
+  });
+
+  it("keeps transcript state stable when product sidecars receive lifecycle, meta, and runtime events", () => {
+    let state = createInitialThreadViewModelState(snapshotWithMessages([]));
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "agent-1",
+    } as BaseEvent);
+    state = applyAgUiEvent(state, {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "agent-1",
+      delta: "partial text",
+    } as BaseEvent);
+    state = applyAgUiEvent(state, {
+      type: EventType.REASONING_MESSAGE_START,
+      messageId: "agent-1:thinking:0",
+    } as BaseEvent);
+    state = applyAgUiEvent(state, {
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: "agent-1:thinking:0",
+      delta: "partial thought",
+    } as BaseEvent);
+    state = applyAgUiEvent(state, {
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool-1",
+      toolCallName: "Bash",
+    } as BaseEvent);
+    state = applyAgUiEvent(state, {
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "tool-1",
+      delta: '{"command":"pwd"}',
+    } as BaseEvent);
+
+    const productSidecars: ThreadViewEvent[] = [
+      {
+        type: "runtime.event",
+        event: { type: EventType.RUN_STARTED, runId: "run-1" } as BaseEvent,
+      },
+      {
+        type: "runtime.event",
+        event: { type: EventType.RUN_FINISHED, runId: "run-1" } as BaseEvent,
+      },
+      {
+        type: "runtime.event",
+        event: {
+          type: EventType.RUN_ERROR,
+          runId: "run-1",
+          message: "failed",
+        } as BaseEvent,
+      },
+      {
+        type: "ag-ui.event",
+        event: {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: { sandbox: "ready" },
+        } as BaseEvent,
+      },
+      {
+        type: "ag-ui.event",
+        event: {
+          type: EventType.ACTIVITY_SNAPSHOT,
+          messageId: "activity-1",
+          activityType: "status",
+          content: { text: "running" },
+        } as BaseEvent,
+      },
+      {
+        type: "ag-ui.event",
+        event: {
+          type: EventType.CUSTOM,
+          name: "thread.status_changed",
+          value: { status: "working" },
+        } as BaseEvent,
+      },
+      {
+        type: "ag-ui.event",
+        event: {
+          type: EventType.CUSTOM,
+          name: "artifact-reference",
+          value: {
+            artifactId: "plan-1",
+            artifactType: "plan",
+            title: "Plan",
+            status: "ready",
+          },
+        } as BaseEvent,
+      },
+      {
+        type: "ag-ui.event",
+        event: {
+          type: EventType.CUSTOM,
+          name: "thread.token_usage_updated",
+          value: {
+            kind: "thread.token_usage_updated",
+            usage: {
+              inputTokens: 1,
+              cachedInputTokens: 0,
+              outputTokens: 2,
+            },
+          },
+        } as BaseEvent,
+      },
+    ];
+
+    for (const event of productSidecars) {
+      state = threadViewModelReducer(state, event);
+    }
+    expect(state.lifecycle.runId).toBe("run-1");
+    expect(state.runtimeState).toEqual({ sandbox: "ready" });
+    expect(state.artifacts.descriptors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "artifact:reference:plan-1",
+          title: "Plan",
+        }),
+      ]),
+    );
   });
 });
 

@@ -6,26 +6,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { useAgUiAgent } from "@/components/chat/ag-ui-agent-context";
 import { threadQueryKeys } from "@/queries/thread-queries";
 import type { ThreadStatus } from "@terragon/shared";
+import { isPrimaryChatLiveThreadStatus } from "@terragon/shared/model/thread-lifecycle-policy";
 
 const HEARTBEAT_MS = 5_000;
-
-const LIVE_THREAD_STATUSES = new Set<ThreadStatus>([
-  // Legacy/deprecated: keep polling for safety while these are still in play.
-  "queued-blocked",
-  "working-stopped",
-  // Queued / booting / active.
-  "queued",
-  "queued-tasks-concurrency",
-  "queued-sandbox-creation-rate-limit",
-  "queued-agent-rate-limit",
-  "booting",
-  "working",
-  "stopping",
-  // Transitional: agent messages are done but the thread is still wrapping up.
-  "working-error",
-  "working-done",
-  "checkpointing",
-]);
 
 /**
  * Invalidates the thread-shell, thread-chat, and thread-list
@@ -120,7 +103,7 @@ export function useThreadQueryInvalidationScheduler(args: {
       // waiting for any status surface to hydrate (initial load).
       const shouldHeartbeat =
         !hasFreshEvidence ||
-        (chatStatus != null && LIVE_THREAD_STATUSES.has(chatStatus));
+        (chatStatus != null && isPrimaryChatLiveThreadStatus(chatStatus));
 
       if (!shouldHeartbeat) return;
       scheduleInvalidate();

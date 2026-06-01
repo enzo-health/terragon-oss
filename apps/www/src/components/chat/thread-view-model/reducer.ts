@@ -1,24 +1,11 @@
-import { type BaseEvent, EventType } from "@ag-ui/core";
-import type { UIMessage } from "@terragon/shared";
+import { type BaseEvent } from "@ag-ui/core";
 import {
   createRepoFileArtifactDescriptor,
   createRepoTreeArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import {
-  agUiMessagesReducer,
-  createInitialAgUiMessagesState,
-} from "../ag-ui-messages-reducer";
-import { getField } from "../ag-ui-reducer-utils";
-import {
-  getAgUiEventDedupeKey,
-  isCanonicalEventMessageId,
-  isDeltaStreamMessageId,
-  isHydrationAgentMessageId,
-  trackSeenAgUiEventKey,
-} from "./ag-ui-adapter";
+import { getAgUiEventDedupeKey, trackSeenAgUiEventKey } from "./ag-ui-adapter";
 import {
   getArtifactReferenceDescriptor,
-  getStableArtifactsForMessages,
   preserveSynthesizedDescriptors,
   upsertSynthesizedDescriptor,
 } from "./artifact-descriptors";
@@ -27,9 +14,9 @@ import {
   applyLifecycleEvent,
   applyMetaEvent,
   extractThreadLifecycleMessages,
+  extractThreadLifecycleMessagesFromAgUiSnapshot,
   getQuarantineEntry,
   mergeMetaSnapshot,
-  splitThreadLifecycleMessages,
 } from "./thread-view-model-lifecycle-events";
 import { applyNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type {
@@ -45,10 +32,6 @@ export function createInitialThreadViewModelState(
   return {
     threadId: snapshot.threadId,
     threadChatId: snapshot.threadChatId,
-    transcript: createInitialAgUiMessagesState(
-      snapshot.agent,
-      snapshot.uiMessages,
-    ),
     runtimeState: {},
     runtimeActivities: {},
     dbMessages: snapshot.dbMessages,
@@ -65,9 +48,8 @@ export function createInitialThreadViewModelState(
     lifecycle: snapshot.lifecycle,
     lifecycleMessages: extractThreadLifecycleMessages(snapshot.uiMessages),
     quarantine: snapshot.quarantine,
-    hasLiveTranscriptEvents: false,
     hasLiveLifecycleEvents: false,
-    hasOptimisticTranscriptEvents: false,
+    hasOptimisticUserSubmit: false,
     hasOptimisticQueuedMessages: false,
     hasOptimisticPermissionMode: false,
     seenEventKeys: new Set(),
@@ -85,6 +67,7 @@ export function threadViewModelReducer(
     case "server.refetch-reconciled":
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
+      return applyAgUiEvent(state, event.event);
     case "runtime.event":
       return applyAgUiEvent(state, event.event);
     case "optimistic.user-submitted":
@@ -130,11 +113,11 @@ export function threadViewModelReducer(
 
 export function projectThreadViewModel(
   state: ThreadViewModelState,
-  options: { includeTranscriptMessages?: boolean } = {},
 ): ThreadViewModel {
-  const baseProjection = {
+  return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
+    lifecycleMessages: state.lifecycleMessages,
     runtimeState: state.runtimeState,
     runtimeActivities: state.runtimeActivities,
     dbMessages: state.dbMessages,
@@ -151,90 +134,6 @@ export function projectThreadViewModel(
     lifecycle: state.lifecycle,
     quarantine: state.quarantine,
   };
-
-  if (options.includeTranscriptMessages === false) {
-    return {
-      ...baseProjection,
-      messages: [],
-      lifecycleMessages: state.lifecycleMessages,
-    };
-  }
-
-  const splitMessages = splitThreadLifecycleMessages(
-    collapseHydrationReplayTextDuplicates(state.transcript.messages),
-  );
-  return {
-    ...baseProjection,
-    messages: splitMessages.transcriptMessages,
-    lifecycleMessages: splitMessages.lifecycleMessages,
-  };
-}
-
-export function collapseHydrationReplayTextDuplicates(
-  messages: UIMessage[],
-): UIMessage[] {
-  if (messages.length < 2) {
-    return messages;
-  }
-
-  const next: UIMessage[] = [];
-  let changed = false;
-
-  for (const message of messages) {
-    const previous = next[next.length - 1];
-    if (!previous) {
-      next.push(message);
-      continue;
-    }
-
-    const previousText = getAgentMessageTextContent(previous);
-    const currentText = getAgentMessageTextContent(message);
-    const textMatches =
-      previousText !== null &&
-      currentText !== null &&
-      (previousText === currentText ||
-        previousText.startsWith(currentText) ||
-        currentText.startsWith(previousText));
-    if (!textMatches) {
-      next.push(message);
-      continue;
-    }
-
-    const previousSynthetic = isHydrationAgentMessageId(previous.id);
-    const currentSynthetic = isHydrationAgentMessageId(message.id);
-    if (previousSynthetic !== currentSynthetic) {
-      changed = true;
-      if (previousSynthetic) {
-        next[next.length - 1] = message;
-      }
-      continue;
-    }
-
-    const previousCanonical = isCanonicalEventMessageId(previous.id);
-    const currentCanonical = isCanonicalEventMessageId(message.id);
-    const previousDelta = isDeltaStreamMessageId(previous.id);
-    const currentDelta = isDeltaStreamMessageId(message.id);
-    if (
-      (previousCanonical && currentDelta) ||
-      (previousDelta && currentCanonical)
-    ) {
-      changed = true;
-      if (
-        shouldPreferHydrationReplayMessage({
-          previous,
-          current: message,
-          previousIsCanonical: previousCanonical,
-        })
-      ) {
-        next[next.length - 1] = message;
-      }
-      continue;
-    }
-
-    next.push(message);
-  }
-
-  return changed ? next : messages;
 }
 
 function applySnapshot(
@@ -246,33 +145,27 @@ function applySnapshot(
     return state;
   }
 
-  const shouldReplaceTranscript =
-    transcriptMode === "replace-transcript" ||
-    (!state.hasLiveTranscriptEvents && !state.hasOptimisticTranscriptEvents);
   const shouldReplaceLocalState = transcriptMode === "replace-transcript";
-  const shouldPreserveLocalTranscriptState =
-    !shouldReplaceLocalState && state.hasOptimisticTranscriptEvents;
+  const shouldPreserveOptimisticUser =
+    !shouldReplaceLocalState && state.hasOptimisticUserSubmit;
   const shouldPreserveLocalLifecycle =
     !shouldReplaceLocalState &&
-    (state.hasLiveLifecycleEvents || state.hasOptimisticTranscriptEvents);
+    (state.hasLiveLifecycleEvents || state.hasOptimisticUserSubmit);
   const lifecycle = shouldPreserveLocalLifecycle
     ? state.lifecycle
     : snapshot.lifecycle;
   const threadStatus = shouldPreserveLocalLifecycle
     ? state.threadStatus
     : snapshot.threadStatus;
-  const lifecycleMessages = shouldReplaceTranscript
-    ? extractThreadLifecycleMessages(snapshot.uiMessages)
-    : state.lifecycleMessages;
+  const lifecycleMessages = shouldPreserveLocalLifecycle
+    ? state.lifecycleMessages
+    : extractThreadLifecycleMessages(snapshot.uiMessages);
 
   return {
     ...state,
     threadId: snapshot.threadId,
     threadChatId: snapshot.threadChatId,
-    transcript: shouldReplaceTranscript
-      ? createInitialAgUiMessagesState(snapshot.agent, snapshot.uiMessages)
-      : state.transcript,
-    dbMessages: shouldPreserveLocalTranscriptState
+    dbMessages: shouldPreserveOptimisticUser
       ? state.dbMessages
       : snapshot.dbMessages,
     queuedMessages:
@@ -288,10 +181,11 @@ function applySnapshot(
     hasCheckpoint: snapshot.hasCheckpoint,
     latestGitDiffTimestamp: snapshot.latestGitDiffTimestamp,
     artifactThread: snapshot.artifactThread,
-    artifacts: shouldReplaceTranscript
-      ? preserveSynthesizedDescriptors(state.artifacts, snapshot.artifacts)
-      : getArtifactsForStateMessages(state, snapshot.artifactThread),
-    sidePanel: shouldPreserveLocalTranscriptState
+    artifacts: preserveSynthesizedDescriptors(
+      state.artifacts,
+      snapshot.artifacts,
+    ),
+    sidePanel: shouldPreserveOptimisticUser
       ? state.sidePanel
       : snapshot.sidePanel,
     meta: mergeMetaSnapshot(state.meta, snapshot.meta),
@@ -302,18 +196,15 @@ function applySnapshot(
       snapshot.quarantine.length > 0
         ? [...state.quarantine, ...snapshot.quarantine]
         : state.quarantine,
-    hasOptimisticTranscriptEvents: shouldReplaceTranscript
+    hasOptimisticUserSubmit: shouldReplaceLocalState
       ? false
-      : state.hasOptimisticTranscriptEvents,
+      : state.hasOptimisticUserSubmit,
     hasOptimisticQueuedMessages: shouldReplaceLocalState
       ? false
       : state.hasOptimisticQueuedMessages,
     hasOptimisticPermissionMode: shouldReplaceLocalState
       ? false
       : state.hasOptimisticPermissionMode,
-    hasLiveTranscriptEvents: shouldReplaceLocalState
-      ? false
-      : state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents: shouldReplaceLocalState
       ? false
       : state.hasLiveLifecycleEvents,
@@ -327,9 +218,8 @@ function isSnapshotNoOp(
 ): boolean {
   if (
     transcriptMode === "replace-transcript" ||
-    state.hasLiveTranscriptEvents ||
     state.hasLiveLifecycleEvents ||
-    state.hasOptimisticTranscriptEvents ||
+    state.hasOptimisticUserSubmit ||
     state.hasOptimisticQueuedMessages ||
     state.hasOptimisticPermissionMode ||
     snapshot.quarantine.length > 0
@@ -452,31 +342,22 @@ function applyAgUiEvent(
 
   const meta = applyMetaEvent(state.meta, event);
   const lifecycle = applyLifecycleEvent(state.lifecycle, event);
-  const transcript = agUiMessagesReducer(state.transcript, event);
-  const transcriptChanged = transcript !== state.transcript;
+  const snapshotLifecycleMessages =
+    extractThreadLifecycleMessagesFromAgUiSnapshot(event);
   const lifecycleMessages =
-    transcriptChanged && shouldRefreshLifecycleMessagesForEvent(event)
-      ? extractThreadLifecycleMessages(transcript.messages)
+    snapshotLifecycleMessages.length > 0
+      ? snapshotLifecycleMessages
       : state.lifecycleMessages;
   const runtimeState =
     nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
   const runtimeActivities =
     nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
-  const artifactBase =
-    transcriptChanged && shouldRefreshArtifactsForEvent(state, event)
-      ? getStableArtifactsForMessages({
-          previous: state.artifacts,
-          messages: collapseHydrationReplayTextDuplicates(transcript.messages),
-          artifactThread: state.artifactThread,
-        })
-      : state.artifacts;
   const artifacts = upsertSynthesizedDescriptor(
-    artifactBase,
+    state.artifacts,
     artifactReferenceDescriptor,
   );
   if (
-    !transcriptChanged &&
     artifacts === state.artifacts &&
     meta === state.meta &&
     lifecycle === state.lifecycle &&
@@ -490,7 +371,6 @@ function applyAgUiEvent(
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   return {
     ...state,
-    transcript,
     artifacts,
     meta,
     lifecycle,
@@ -500,7 +380,6 @@ function applyAgUiEvent(
     threadStatus: lifecycle.threadStatus,
     seenEventKeys: tracked.seenEventKeys,
     seenEventOrder: tracked.seenEventOrder,
-    hasLiveTranscriptEvents: transcriptChanged || state.hasLiveTranscriptEvents,
     hasLiveLifecycleEvents:
       lifecycle !== state.lifecycle || state.hasLiveLifecycleEvents,
   };
@@ -525,120 +404,4 @@ function trackDedupeKeyIfNeeded(
     key: dedupeKey,
   });
   return { seenEventKeys, seenEventOrder };
-}
-
-function shouldRefreshLifecycleMessagesForEvent(event: BaseEvent): boolean {
-  return event.type === EventType.MESSAGES_SNAPSHOT;
-}
-
-function shouldRefreshArtifactsForEvent(
-  state: ThreadViewModelState,
-  event: BaseEvent,
-): boolean {
-  switch (event.type) {
-    case EventType.MESSAGES_SNAPSHOT:
-    case EventType.TOOL_CALL_RESULT:
-      return true;
-    case EventType.TOOL_CALL_START:
-      return getField<string>(event, "toolCallName") === "ExitPlanMode";
-    case EventType.TEXT_MESSAGE_CONTENT:
-      return textDeltaCompletesProposedPlanArtifact(state, event);
-    case EventType.CUSTOM:
-      return getField<string>(event, "name") === "terragon.data-part";
-    default: {
-      const _exhaustiveCheck = event.type satisfies string;
-      void _exhaustiveCheck;
-      return false;
-    }
-  }
-}
-
-function textDeltaCompletesProposedPlanArtifact(
-  state: ThreadViewModelState,
-  event: BaseEvent,
-): boolean {
-  const messageId = getField<string>(event, "messageId");
-  const delta = getField<string>(event, "delta");
-  if (!messageId || !delta) {
-    return false;
-  }
-  const previousText = getAgentMessageTextContentById(state, messageId);
-  if (previousText === null) {
-    return delta.toLowerCase().includes(PROPOSED_PLAN_END_TAG);
-  }
-  const previousCloseCount = countProposedPlanCloseTags(previousText);
-  const nextCloseCount = countProposedPlanCloseTags(previousText + delta);
-  return nextCloseCount > previousCloseCount;
-}
-
-const PROPOSED_PLAN_END_TAG = "</proposed_plan>";
-
-function getAgentMessageTextContentById(
-  state: ThreadViewModelState,
-  messageId: string,
-): string | null {
-  const messageIndex = state.transcript.assistantMessageIndexes[messageId];
-  const message =
-    messageIndex === undefined
-      ? undefined
-      : state.transcript.messages[messageIndex];
-  return message ? getAgentMessageTextContent(message) : null;
-}
-
-function countProposedPlanCloseTags(text: string): number {
-  const lower = text.toLowerCase();
-  return lower.split(PROPOSED_PLAN_END_TAG).length - 1;
-}
-
-function getArtifactsForStateMessages(
-  state: ThreadViewModelState,
-  artifactThread = state.artifactThread,
-) {
-  return getStableArtifactsForMessages({
-    previous: state.artifacts,
-    messages: collapseHydrationReplayTextDuplicates(state.transcript.messages),
-    artifactThread,
-  });
-}
-
-function getAgentMessageTextContent(message: UIMessage): string | null {
-  if (message.role !== "agent") {
-    return null;
-  }
-  if (message.parts.length === 0) {
-    return null;
-  }
-  let hasTextPart = false;
-  let content = "";
-  for (const part of message.parts) {
-    if (part.type === "text") {
-      hasTextPart = true;
-      content += part.text;
-    }
-  }
-  return hasTextPart ? content : null;
-}
-
-function shouldPreferHydrationReplayMessage({
-  previous,
-  current,
-  previousIsCanonical,
-}: {
-  previous: UIMessage;
-  current: UIMessage;
-  previousIsCanonical: boolean;
-}): boolean {
-  if (previous.role !== "agent" || current.role !== "agent") {
-    return false;
-  }
-  if (previousIsCanonical) {
-    return true;
-  }
-  return (
-    countRenderableAgentParts(current) >= countRenderableAgentParts(previous)
-  );
-}
-
-function countRenderableAgentParts(message: UIMessage & { role: "agent" }) {
-  return message.parts.filter((part) => part.type !== "text").length;
 }

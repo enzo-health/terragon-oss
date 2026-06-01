@@ -353,6 +353,28 @@ describe("agUiMessagesReducer", () => {
       expect(parts[0]!.parameters).toEqual({ pattern: "foo" });
     });
 
+    it("projects complete tool args before TOOL_CALL_END for reconnect handoff", () => {
+      const next = apply(mkState(), [
+        { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "t1",
+          toolCallName: "Grep",
+        } as BaseEvent,
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "t1",
+          delta: '{"pattern":"foo"}',
+        } as BaseEvent,
+      ]);
+      const parts = (
+        next.messages[0] as { parts: Array<{ parameters: unknown }> }
+      ).parts;
+
+      expect(parts[0]!.parameters).toEqual({ pattern: "foo" });
+      expect(next.toolArgsBuffers).toEqual({ t1: '{"pattern":"foo"}' });
+    });
+
     it("duplicate TOOL_CALL_START preserves buffered argument chunks", () => {
       const next = apply(mkState(), [
         { type: EventType.TEXT_MESSAGE_START, messageId: "m1" } as BaseEvent,

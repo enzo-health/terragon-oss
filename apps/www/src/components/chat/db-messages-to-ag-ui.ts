@@ -189,8 +189,8 @@ function extractRichText(part: { nodes: unknown[] }): string {
   const out: string[] = [];
   for (const node of part.nodes) {
     if (!node || typeof node !== "object") continue;
-    const n = node as { text?: unknown };
-    if (typeof n.text === "string") out.push(n.text);
+    const text = Reflect.get(node, "text");
+    if (typeof text === "string") out.push(text);
   }
   return out.join("");
 }

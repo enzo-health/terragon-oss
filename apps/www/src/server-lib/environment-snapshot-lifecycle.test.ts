@@ -87,7 +87,9 @@ beforeEach(() => {
   getSetupScriptHash.mockImplementation((script: string | null) =>
     script ? `setup:${script}` : "",
   );
-  getSnapshotBaseTemplateId.mockImplementation((size: string) => `base:${size}`);
+  getSnapshotBaseTemplateId.mockImplementation(
+    (size: string) => `base:${size}`,
+  );
   hashEnvironmentVariables.mockReturnValue("repo-env-hash");
   hashSnapshotValue.mockReturnValue("mcp-hash");
   deleteRepoSnapshot.mockResolvedValue(undefined);

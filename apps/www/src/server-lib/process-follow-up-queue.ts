@@ -12,6 +12,7 @@ import {
   getThreadChat,
   getThreadMinimal,
 } from "@terragon/shared/model/threads";
+import { getFollowUpQueueBlockReason } from "@terragon/shared/model/thread-lifecycle-policy";
 import {
   dispatchAgentMessage,
   type StartAgentMessageParams,
@@ -146,21 +147,13 @@ function getRunnableThreadChatResult(
       },
     };
   }
-  if (threadChat.status === "queued-agent-rate-limit") {
+  const blockReason = getFollowUpQueueBlockReason(threadChat.status);
+  if (blockReason) {
     return {
       result: {
         processed: false,
         dispatchLaunched: false,
-        reason: "agent_rate_limited",
-      },
-    };
-  }
-  if (threadChat.status === "scheduled") {
-    return {
-      result: {
-        processed: false,
-        dispatchLaunched: false,
-        reason: "scheduled_not_runnable",
+        reason: blockReason,
       },
     };
   }

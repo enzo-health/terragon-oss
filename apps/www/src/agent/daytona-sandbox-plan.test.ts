@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 
 vi.mock("@terragon/sandbox/snapshot-builder", () => ({
-  getSetupScriptHash: (script: string | null) => (script ? `setup:${script}` : ""),
+  getSetupScriptHash: (script: string | null) =>
+    script ? `setup:${script}` : "",
   getSnapshotBaseTemplateId: (size: string) => `base:${size}`,
 }));
 

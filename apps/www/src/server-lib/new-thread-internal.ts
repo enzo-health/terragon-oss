@@ -23,6 +23,7 @@ export async function newThreadInternal({
   githubIssueNumber,
   sourceType,
   sourceMetadata,
+  disableGitCheckpointing,
 }: {
   userId: string;
   message: DBUserMessage;
@@ -36,6 +37,7 @@ export async function newThreadInternal({
   githubIssueNumber?: number;
   sourceType: ThreadSource;
   sourceMetadata?: ThreadSourceMetadata;
+  disableGitCheckpointing?: boolean;
 }) {
   console.log("newThreadInternal for user", {
     userId,
@@ -57,5 +59,6 @@ export async function newThreadInternal({
     githubIssueNumber,
     sourceType,
     sourceMetadata,
+    disableGitCheckpointing,
   });
 }

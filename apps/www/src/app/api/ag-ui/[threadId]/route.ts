@@ -5,13 +5,11 @@ import {
   agUiStreamKey,
   getAgUiEventEnvelopesForRun,
   getAgUiEventEnvelopesForThreadChat,
-  getLatestRunIdForThreadChat,
   isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrNull } from "@/lib/auth-server";
-import { isDevLoginEnabled } from "@/lib/auth";
 import {
   replayQueryAfterSeq,
   resolveAgUiReplayCursor,
@@ -19,7 +17,6 @@ import {
 } from "@/lib/ag-ui-replay-cursor";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
-import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
 import {
   captureStreamCursor,
@@ -39,6 +36,10 @@ import { AgUiSseSession } from "@/server-lib/ag-ui/ag-ui-sse-session";
 import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
 import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
+  buildSyntheticBenchmarkStream,
+  isSyntheticBenchmarkRequest,
+} from "@/server-lib/ag-ui/synthetic-benchmark-stream";
+import {
   buildResumeRunStartedEvent,
   isTerminalRunEventType,
   repairReplayTextMessageLifecycles,
@@ -47,6 +48,11 @@ import {
   toReplayEntries,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
 import { parseStreamEntries } from "@/server-lib/ag-ui/ag-ui-stream-entry";
+import {
+  discoverRunFromDurableLog,
+  reconcileActiveRunFromDurable,
+  replayDurableEventsAfterCursor,
+} from "@/server-lib/ag-ui/thread-event-live-tail";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -55,83 +61,6 @@ export const dynamic = "force-dynamic";
 // time (Vercel Pro cap). Client-side aborts close the stream early, so
 // typical usage will not hit this ceiling.
 export const maxDuration = 300;
-
-const SYNTHETIC_BENCHMARK_QUERY_VALUE = "long-stream";
-const SYNTHETIC_BENCHMARK_CHUNK_DELAY_MS = 35;
-
-function isSyntheticBenchmarkRequest(request: NextRequest): boolean {
-  return (
-    isDevLoginEnabled() &&
-    request.nextUrl.searchParams.get("syntheticBenchmark") ===
-      SYNTHETIC_BENCHMARK_QUERY_VALUE
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function syntheticBenchmarkChunks(): string[] {
-  return [
-    "1. Smooth streaming keeps the user oriented while the agent is still thinking.\n\n",
-    "2. Each visible update should feel incremental, not like the page is repainting from scratch.\n\n",
-    "3. The transcript can be large, so historical rows need to stay quiet while the active row changes.\n\n",
-    "4. Markdown should stabilize old blocks and only keep the live tail in motion.\n\n",
-    "5. Scroll pinning should follow the answer without layout jumps or delayed catch-up.\n\n",
-    "| Metric | Target | Why |\n| --- | ---: | --- |\n| Visible update gap | < 750ms | Users see steady progress |\n| RAF p95 | < 75ms | The main thread stays responsive |\n\n",
-    "6. File citations like 【F:apps/www/src/components/chat/text-part.tsx†L1-L6】 should not force the renderer onto a permanent slow path.\n\n",
-    "7. Tool argument deltas should coalesce before React sees them.\n\n",
-    "8. The active message can contain ordinary prose, tables, and code without freezing the transcript.\n\n",
-    '```ts\nexport function describeStreamingBudget(): string {\n  return "keep visible updates cheap";\n}\n```\n\n',
-    "9. The final paragraph includes terragon-e2e-benchmark-visible so the benchmark knows the run completed.\n",
-  ];
-}
-
-function buildSyntheticBenchmarkStream({
-  threadId,
-}: {
-  threadId: string;
-}): ReadableStream<Uint8Array> {
-  const runId = "synthetic-browser-stream-run";
-  const messageId = "synthetic-browser-stream-message";
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const emit = async (
-        event: Parameters<typeof encodeSseEvent>[0],
-        waitMs = SYNTHETIC_BENCHMARK_CHUNK_DELAY_MS,
-      ) => {
-        controller.enqueue(
-          encodeSseEvent({
-            ...event,
-            timestamp: Date.now(),
-          }),
-        );
-        await delay(waitMs);
-      };
-
-      controller.enqueue(encodeSseComment("synthetic-ag-ui-stream"));
-      await emit({ type: EventType.RUN_STARTED, threadId, runId }, 20);
-      await emit(
-        {
-          type: EventType.TEXT_MESSAGE_START,
-          messageId,
-          role: "assistant",
-        },
-        20,
-      );
-      for (const delta of syntheticBenchmarkChunks()) {
-        await emit({
-          type: EventType.TEXT_MESSAGE_CONTENT,
-          messageId,
-          delta,
-        });
-      }
-      await emit({ type: EventType.TEXT_MESSAGE_END, messageId }, 20);
-      await emit({ type: EventType.RUN_FINISHED, threadId, runId }, 0);
-      controller.close();
-    },
-  });
-}
 
 function agUiSseResponse(stream: ReadableStream<Uint8Array>): NextResponse {
   return new NextResponse(stream, {
@@ -240,49 +169,6 @@ export async function GET(
       // replay or live-tail frames so clients can align first-paint lifecycle.
       sse.emitBaselineComment();
 
-      const replayDurableEventsAfterCursor = async (): Promise<boolean> => {
-        let replayEnvelopes: AgUiEventEnvelope[];
-        try {
-          replayEnvelopes = await getAgUiEventEnvelopesForThreadChat({
-            db,
-            threadChatId,
-            afterSeq: sse.lastDeliveredSeq ?? undefined,
-          });
-        } catch (error) {
-          console.warn(
-            "[ag-ui] durable catch-up replay failed during live-tail; continuing",
-            { threadId, threadChatId, runId: sse.resolvedRunId },
-            error,
-          );
-          return false;
-        }
-
-        if (replayEnvelopes.length === 0) {
-          return false;
-        }
-
-        const replayEntries = toReplayEntries(replayEnvelopes, null);
-        if (!sse.frameResumeReplayEntries(replayEntries)) {
-          return true;
-        }
-        const repairedReplayEntries =
-          replayCursorSeq !== null && !sse.hasEmittedAgUiDataEvent
-            ? repairReplayTextMessageLifecycles(replayEntries)
-            : replayEntries;
-        let emittedReplayEntry = false;
-        for (const entry of repairedReplayEntries) {
-          if (!sse.emitReplayEntry(entry)) {
-            return true;
-          }
-          emittedReplayEntry = true;
-          if (isTerminalRunEventType(entry.event.type)) {
-            sse.close("terminal_event");
-            return true;
-          }
-        }
-        return emittedReplayEntry;
-      };
-
       // Shared live-tail helper: block-polls Redis starting from the cursor
       // captured before the DB replay. Used after both the run-replay path
       // (for active runs still in progress) and the no-history path (for
@@ -296,87 +182,23 @@ export async function GET(
           }, KEEPALIVE_INTERVAL_MS),
         );
 
-        const maybeReconcileActiveRunFromDurable = async (
-          phase: "idle" | "xread_error",
-          cause?: unknown,
-        ): Promise<boolean> => {
-          if (!liveTailParams?.runId || !liveTailParams.userId) {
-            return false;
-          }
-          try {
-            const runContext = await getAgentRunContextByRunId({
-              db,
-              runId: liveTailParams.runId,
-              userId: liveTailParams.userId,
-            });
-            if (
-              runContext !== null &&
-              isTerminalAgentRunStatus(runContext.status)
-            ) {
-              await replayDurableEventsAfterCursor();
-              if (sse.closed) {
-                return true;
-              }
-              const terminalEvent = buildRunTerminalAgUi({
-                threadId,
-                runId: liveTailParams.runId,
-                daemonRunStatus: runContext.status,
-                errorMessage: runContext.failureTerminalReason ?? null,
-                errorCode: runContext.failureCategory ?? null,
-              });
-              if (!sse.emitAgUiEvent(terminalEvent, null)) {
-                return true;
-              }
-              sse.close(
-                phase === "idle"
-                  ? "durable_terminal_idle"
-                  : "durable_terminal_after_xread_error",
-              );
-              return true;
-            }
-            await replayDurableEventsAfterCursor();
-            return sse.closed;
-          } catch (error) {
-            console.warn(
-              "[ag-ui] durable run status check failed during live-tail; continuing",
-              { phase, threadId, threadChatId, runId: liveTailParams.runId },
-              cause ?? error,
-            );
-          }
-          return false;
-        };
-
         const maybeDiscoverRunFromDurableLog = async (): Promise<boolean> => {
           if (liveTailParams?.runId) {
             return false;
           }
-          let latestRunId: string | null = null;
-          try {
-            latestRunId = await getLatestRunIdForThreadChat({
-              db,
-              threadChatId,
-            });
-          } catch (error) {
-            console.warn(
-              "[ag-ui] latest-run discovery failed during empty live-tail; continuing",
-              { threadId, threadChatId },
-              error,
-            );
-            return false;
-          }
-          if (latestRunId === null) {
-            return false;
-          }
-
-          sse.resolvedRunId = latestRunId;
-          const replayed = await replayDurableEventsAfterCursor();
-          if (!sse.closed) {
+          const discovery = await discoverRunFromDurableLog({
+            db,
+            sse,
+            threadId,
+            threadChatId,
+          });
+          if (discovery.discoveredRunId !== null && !sse.closed) {
             liveTailParams = {
-              runId: latestRunId,
+              runId: discovery.discoveredRunId,
               userId: session.user.id,
             };
           }
-          return replayed;
+          return discovery.replayed;
         };
 
         let lastId = initialLastId;
@@ -411,7 +233,17 @@ export async function GET(
                 if (!liveTailParams?.runId) {
                   await maybeDiscoverRunFromDurableLog();
                 } else if (liveTailParams.userId) {
-                  if (await maybeReconcileActiveRunFromDurable("idle")) {
+                  if (
+                    await reconcileActiveRunFromDurable({
+                      db,
+                      sse,
+                      threadId,
+                      threadChatId,
+                      runId: liveTailParams.runId,
+                      userId: liveTailParams.userId,
+                      phase: "idle",
+                    })
+                  ) {
                     break;
                   }
                 }
@@ -501,7 +333,16 @@ export async function GET(
                 await maybeDiscoverRunFromDurableLog();
               } else if (liveTailParams.userId) {
                 if (
-                  await maybeReconcileActiveRunFromDurable("xread_error", error)
+                  await reconcileActiveRunFromDurable({
+                    db,
+                    sse,
+                    threadId,
+                    threadChatId,
+                    runId: liveTailParams.runId,
+                    userId: liveTailParams.userId,
+                    phase: "xread_error",
+                    cause: error,
+                  })
                 ) {
                   break;
                 }
@@ -522,7 +363,12 @@ export async function GET(
       if (sse.resolvedRunId === null) {
         const replayed =
           replayCursorSeq !== null
-            ? await replayDurableEventsAfterCursor()
+            ? await replayDurableEventsAfterCursor({
+                db,
+                sse,
+                threadId,
+                threadChatId,
+              })
             : false;
         if (sse.closed) {
           return;

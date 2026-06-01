@@ -29,18 +29,14 @@ import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
 } from "@terragon/sandbox";
-import {
-  resolveDaytonaSandboxBootPlan,
-} from "./daytona-sandbox-plan";
+import { resolveDaytonaSandboxBootPlan } from "./daytona-sandbox-plan";
 import { bashQuote } from "@terragon/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
-import {
-  maybeWarmEnvironmentSnapshot,
-} from "@/server-lib/environment-snapshot-lifecycle";
+import { maybeWarmEnvironmentSnapshot } from "@/server-lib/environment-snapshot-lifecycle";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";

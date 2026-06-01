@@ -226,7 +226,7 @@ describe("dispatchFollowUpFromAppend", () => {
 
       expect(followUpMocks.followUpInternal).toHaveBeenCalledOnce();
       expect(redisMocks.del).not.toHaveBeenCalledWith(
-        "dedupe:ag-ui-submission:chat-1:submission-1",
+        "dedupe:ag-ui-submission:user-1:thread-1:chat-1:submission-1",
       );
       expect(redisMocks.del).toHaveBeenCalledWith("lock:run:chat-1");
     });
@@ -252,7 +252,7 @@ describe("dispatchFollowUpFromAppend", () => {
       expect(followUpMocks.followUpInternal).toHaveBeenCalledOnce();
       expect(redisMocks.set).toHaveBeenNthCalledWith(
         1,
-        "dedupe:ag-ui-submission:chat-1:submission-1",
+        "dedupe:ag-ui-submission:user-1:thread-1:chat-1:submission-1",
         "1",
         { nx: true, ex: 86400 },
       );
@@ -371,6 +371,65 @@ describe("dispatchFollowUpFromAppend", () => {
           }),
         }),
       );
+    });
+
+    it("rejects leaked draft state instead of silently dispatching it", async () => {
+      const body = makeBody({
+        state: {
+          terragon: {
+            saveAsDraft: true,
+          },
+        },
+      });
+
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+
+      expect(result).toEqual({
+        error: {
+          kind: "invalid-input",
+          reason:
+            "AG-UI runtime append does not support saveAsDraft; use the draft/schedule fallback",
+        },
+      });
+      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
+      expect(redisMocks.set).not.toHaveBeenCalled();
+    });
+
+    it("rejects leaked schedule state instead of silently dispatching it", async () => {
+      const body = makeBody({
+        state: {
+          terragon: {
+            scheduleAt: Date.now() + 60_000,
+          },
+        },
+      });
+
+      const result = await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+
+      expect(result).toEqual({
+        error: {
+          kind: "invalid-input",
+          reason:
+            "AG-UI runtime append does not support scheduleAt; use the draft/schedule fallback",
+        },
+      });
+      expect(followUpMocks.followUpInternal).not.toHaveBeenCalled();
+      expect(redisMocks.set).not.toHaveBeenCalled();
+    });
+
+    it("ignores inert draft/schedule defaults that are not submit intents", async () => {
+      const body = makeBody({
+        state: {
+          terragon: {
+            saveAsDraft: false,
+            scheduleAt: null,
+          },
+        },
+      });
+
+      await dispatchFollowUpFromAppend({ ...BASE_ARGS, body });
+
+      expect(followUpMocks.followUpInternal).toHaveBeenCalledOnce();
     });
 
     it("prefers forwardedProps.runConfig.terragon over forwardedProps.terragon when both are present", async () => {

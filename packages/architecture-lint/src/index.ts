@@ -403,10 +403,6 @@ export const defaultConfig: ArchitectureLintConfig = {
         line: 619,
       },
       {
-        file: "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
-        line: 194,
-      },
-      {
         file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
         line: 78,
       },
@@ -522,10 +518,6 @@ export const defaultConfig: ArchitectureLintConfig = {
       {
         file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
         line: 578,
-      },
-      {
-        file: "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
-        line: 178,
       },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 160 },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 176 },

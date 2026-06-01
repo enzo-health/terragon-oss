@@ -275,10 +275,10 @@ async function runAgentSmoke() {
       userId,
       timeoutMs: 240_000,
     });
-    const proofFile = await sandbox.runCommand(
-      `cat ${AGENT_PROOF_FILE}`,
-      { cwd: sandbox.repoDir, timeoutMs: 10_000 },
-    );
+    const proofFile = await sandbox.runCommand(`cat ${AGENT_PROOF_FILE}`, {
+      cwd: sandbox.repoDir,
+      timeoutMs: 10_000,
+    });
     const gitStatus = await sandbox.runCommand("git status --short", {
       cwd: sandbox.repoDir,
       timeoutMs: 10_000,

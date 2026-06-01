@@ -39,6 +39,7 @@ export type HandleSubmitArgs = {
   branchName: string;
   saveAsDraft: boolean;
   scheduleAt: Parameters<TSubmitForm>[0]["scheduleAt"];
+  clientSubmissionId: string;
 };
 
 export type HandleUpdateArgs = {
@@ -726,6 +727,7 @@ export function usePromptBox({
           model: selectedModel,
           attachedFiles,
         });
+        const clientSubmissionId = crypto.randomUUID();
 
         await routeComposerSubmit({
           userMessage,
@@ -734,6 +736,7 @@ export function usePromptBox({
           branchName: branchName ?? "",
           saveAsDraft,
           scheduleAt,
+          clientSubmissionId,
           threadRuntime,
           isAgentWorking,
           isQueueingEnabled,
