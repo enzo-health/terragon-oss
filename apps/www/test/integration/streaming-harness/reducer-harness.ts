@@ -3,6 +3,7 @@ import {
   createInitialAgUiMessagesState,
   type AgUiMessagesState,
 } from "@/components/chat/ag-ui-messages-reducer";
+import { getAgUiEventDedupeKey } from "@/components/chat/thread-view-model/ag-ui-adapter";
 import type { BaseEvent } from "@ag-ui/core";
 import type { AIAgent } from "@terragon/agent/types";
 import type { UIMessage } from "@terragon/shared";
@@ -17,6 +18,7 @@ export type ReducerTimingEntry = {
 export type ReducerHarnessResult = {
   finalMessages: UIMessage[];
   finalState: AgUiMessagesState;
+  snapshots: UIMessage[][];
   timing: ReducerTimingEntry[];
   totalDurationMs: number;
   p50Us: number;
@@ -34,15 +36,22 @@ export function runReducerHarness(
   const initialMessages = opts?.initialMessages ?? [];
 
   let state = createInitialAgUiMessagesState(agent, initialMessages);
+  const snapshots: UIMessage[][] = [state.messages];
   const timing: ReducerTimingEntry[] = [];
+  const seenEventKeys = new Set<string>();
 
   const wallStart = performance.now();
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
     const t0 = performance.now();
-    state = agUiMessagesReducer(state, event);
+    const dedupeKey = getAgUiEventDedupeKey(event);
+    if (!dedupeKey || !seenEventKeys.has(dedupeKey)) {
+      if (dedupeKey) seenEventKeys.add(dedupeKey);
+      state = agUiMessagesReducer(state, event);
+    }
     const t1 = performance.now();
+    snapshots.push(state.messages);
 
     timing.push({
       eventIndex: i,
@@ -60,6 +69,7 @@ export function runReducerHarness(
   return {
     finalMessages: state.messages,
     finalState: state,
+    snapshots,
     timing,
     totalDurationMs,
     p50Us: percentile(durations, 50),

@@ -22,12 +22,7 @@ import type { UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import {
-  agUiMessagesReducer,
-  createInitialAgUiMessagesState,
-} from "../../src/components/chat/ag-ui-messages-reducer";
 import { getStableArtifactsForMessages } from "../../src/components/chat/thread-view-model/artifact-descriptors";
-import { getAgUiEventDedupeKey } from "../../src/components/chat/thread-view-model/ag-ui-adapter";
 import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/snapshot-adapter";
 import type {
   ThreadViewLifecycle,
@@ -40,6 +35,7 @@ import {
   useAgUiSidecarRouter,
   useThreadViewModel,
 } from "../../src/components/chat/use-ag-ui-messages";
+import { runReducerHarness } from "./streaming-harness/reducer-harness";
 
 // ---------------------------------------------------------------------------
 // Fake HttpAgent (mirrors the one in use-ag-ui-messages.test.tsx)
@@ -131,20 +127,19 @@ export async function replayAgUi(
   const fake = createFakeAgent();
   const agent = asHttpAgent(fake);
 
-  const snapshots: UIMessage[][] = [];
-  const artifactSnapshots: ArtifactDescriptor[][] = [];
-  let transcriptState = createInitialAgUiMessagesState(
-    agentKind,
+  const transcript = runReducerHarness(events, {
+    agent: agentKind,
     initialMessages,
-  );
-  let current: UIMessage[] = transcriptState.messages;
-  let artifactState = initialSnapshot.artifacts;
-  let currentArtifacts: ArtifactDescriptor[] = [];
+  });
+  const artifactSnapshots = getArtifactSnapshots({
+    snapshots: transcript.snapshots,
+    snapshot: initialSnapshot,
+  });
+  let currentSidecarArtifacts: ArtifactDescriptor[] = [];
   let currentQuarantine: ThreadViewQuarantineEntry[] = [];
   let currentRuntimeState: ThreadViewRuntimeState = {};
   let currentRuntimeActivities: ThreadViewRuntimeActivities = {};
   let currentLifecycle: ThreadViewLifecycle = initialSnapshot.lifecycle;
-  const seenEventKeys = new Set<string>();
 
   function onProjection(params: {
     artifactDescriptors: ArtifactDescriptor[];
@@ -160,10 +155,7 @@ export async function replayAgUi(
       runtimeActivities,
       quarantine,
     } = params;
-    artifactState = mergeArtifactStates(artifactState, {
-      descriptors: artifactDescriptors,
-    });
-    currentArtifacts = artifactState.descriptors;
+    currentSidecarArtifacts = artifactDescriptors;
     currentLifecycle = lifecycle;
     currentRuntimeState = runtimeState;
     currentRuntimeActivities = runtimeActivities;
@@ -187,29 +179,23 @@ export async function replayAgUi(
       );
     });
 
-    // Seed snapshot captured after initial render
-    refreshArtifactsForTranscript();
-    snapshots.push(current);
-    artifactSnapshots.push(currentArtifacts);
-
     for (const ev of events) {
       await act(async () => {
-        applyTranscriptEvent(ev);
         fake.emit(ev);
       });
-      refreshArtifactsForTranscript();
-      snapshots.push(current);
-      artifactSnapshots.push(currentArtifacts);
     }
 
     return {
-      messages: current,
-      artifactDescriptors: currentArtifacts,
+      messages: transcript.finalMessages,
+      artifactDescriptors: [
+        ...(artifactSnapshots.at(-1) ?? []),
+        ...currentSidecarArtifacts,
+      ],
       lifecycle: currentLifecycle,
       runtimeState: currentRuntimeState,
       runtimeActivities: currentRuntimeActivities,
       quarantine: currentQuarantine,
-      snapshots,
+      snapshots: transcript.snapshots,
       artifactSnapshots,
     };
   } finally {
@@ -219,27 +205,6 @@ export async function replayAgUi(
       });
     }
     container.remove();
-  }
-
-  function applyTranscriptEvent(event: BaseEvent): void {
-    const dedupeKey = getAgUiEventDedupeKey(event);
-    if (dedupeKey) {
-      if (seenEventKeys.has(dedupeKey)) {
-        return;
-      }
-      seenEventKeys.add(dedupeKey);
-    }
-    transcriptState = agUiMessagesReducer(transcriptState, event);
-    current = transcriptState.messages;
-  }
-
-  function refreshArtifactsForTranscript(): void {
-    artifactState = getStableArtifactsForMessages({
-      previous: artifactState,
-      messages: current,
-      artifactThread: initialSnapshot.artifactThread,
-    });
-    currentArtifacts = artifactState.descriptors;
   }
 }
 
@@ -278,25 +243,22 @@ function Harness({
   return null;
 }
 
-function mergeArtifactStates(
-  previous: ThreadViewSnapshot["artifacts"],
-  next: ThreadViewSnapshot["artifacts"],
-): ThreadViewSnapshot["artifacts"] {
-  if (next.descriptors.length === 0) {
-    return previous;
-  }
-  const existingIds = new Set(
-    previous.descriptors.map((descriptor) => descriptor.id),
-  );
-  const missing = next.descriptors.filter(
-    (descriptor) => !existingIds.has(descriptor.id),
-  );
-  if (missing.length === 0) {
-    return previous;
-  }
-  return {
-    descriptors: [...missing, ...previous.descriptors],
-  };
+function getArtifactSnapshots({
+  snapshots,
+  snapshot,
+}: {
+  snapshots: UIMessage[][];
+  snapshot: ThreadViewSnapshot;
+}): ArtifactDescriptor[][] {
+  let artifacts = snapshot.artifacts;
+  return snapshots.map((messages) => {
+    artifacts = getStableArtifactsForMessages({
+      previous: artifacts,
+      messages,
+      artifactThread: snapshot.artifactThread,
+    });
+    return artifacts.descriptors;
+  });
 }
 
 // ---------------------------------------------------------------------------
