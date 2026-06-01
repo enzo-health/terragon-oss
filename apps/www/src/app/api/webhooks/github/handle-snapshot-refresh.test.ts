@@ -6,16 +6,10 @@ vi.mock("@vercel/functions", () => ({
 
 vi.mock("@/lib/db", () => ({ db: {} }));
 
-const getEnvironmentsByRepoFullName = vi.fn();
-vi.mock("@terragon/shared/model/environments", () => ({
-  getEnvironmentsByRepoFullName: (args: unknown) =>
-    getEnvironmentsByRepoFullName(args),
-}));
-
-const triggerEnvironmentSnapshotBuild = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/server-lib/environment-snapshot-trigger", () => ({
-  triggerEnvironmentSnapshotBuild: (args: unknown) =>
-    triggerEnvironmentSnapshotBuild(args),
+const refreshEnvironmentSnapshotsForRepo = vi.fn().mockResolvedValue(0);
+vi.mock("@/server-lib/environment-snapshot-lifecycle", () => ({
+  refreshEnvironmentSnapshotsForRepo: (args: unknown) =>
+    refreshEnvironmentSnapshotsForRepo(args),
 }));
 
 import { handlePushSnapshotRefresh } from "./handle-snapshot-refresh";
@@ -43,56 +37,24 @@ beforeEach(() => {
 });
 
 describe("handlePushSnapshotRefresh", () => {
-  it("force-refreshes each Daytona snapshot size for the repo's environments", async () => {
-    getEnvironmentsByRepoFullName.mockResolvedValue([
-      {
-        id: "env-1",
-        userId: "user-1",
-        snapshots: [
-          { provider: "daytona", size: "small", status: "ready" },
-          { provider: "daytona", size: "large", status: "stale" },
-        ],
-      },
-    ]);
-
+  it("delegates default-branch push refresh to the snapshot lifecycle", async () => {
     await handlePushSnapshotRefresh(pushPayload({}));
 
-    expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledTimes(2);
-    expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user-1",
-        environmentId: "env-1",
-        size: "small",
-        force: true,
-      }),
-    );
-    expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledWith(
-      expect.objectContaining({ size: "large", force: true }),
-    );
+    expect(refreshEnvironmentSnapshotsForRepo).toHaveBeenCalledWith({
+      db: {},
+      repoFullName: "owner/repo",
+    });
   });
 
   it("ignores pushes to non-default branches", async () => {
     await handlePushSnapshotRefresh(
       pushPayload({ ref: "refs/heads/feature-x" }),
     );
-    expect(getEnvironmentsByRepoFullName).not.toHaveBeenCalled();
-    expect(triggerEnvironmentSnapshotBuild).not.toHaveBeenCalled();
+    expect(refreshEnvironmentSnapshotsForRepo).not.toHaveBeenCalled();
   });
 
   it("ignores branch-deletion pushes", async () => {
     await handlePushSnapshotRefresh(pushPayload({ deleted: true }));
-    expect(getEnvironmentsByRepoFullName).not.toHaveBeenCalled();
-    expect(triggerEnvironmentSnapshotBuild).not.toHaveBeenCalled();
-  });
-
-  it("skips environments with no Daytona snapshot", async () => {
-    getEnvironmentsByRepoFullName.mockResolvedValue([
-      { id: "env-2", userId: "user-2", snapshots: [] },
-      { id: "env-3", userId: "user-3", snapshots: null },
-    ]);
-
-    await handlePushSnapshotRefresh(pushPayload({}));
-
-    expect(triggerEnvironmentSnapshotBuild).not.toHaveBeenCalled();
+    expect(refreshEnvironmentSnapshotsForRepo).not.toHaveBeenCalled();
   });
 });

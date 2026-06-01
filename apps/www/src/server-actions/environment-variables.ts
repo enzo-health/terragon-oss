@@ -10,7 +10,7 @@ import {
   updateEnvironment,
   markSnapshotsStale,
 } from "@terragon/shared/model/environments";
-import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-trigger";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { requireResult } from "@/lib/server-actions";
