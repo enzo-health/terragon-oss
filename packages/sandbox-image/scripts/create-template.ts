@@ -24,6 +24,7 @@ function getDockerfilePath(provider: SandboxProvider): string {
 type TemplateArgs = {
   cpuCount: number;
   memoryGB: number;
+  diskGB: number;
 };
 
 function randomSuffix() {
@@ -35,11 +36,17 @@ function randomSuffix() {
   return `${dateString}-${hex}`;
 }
 
-function getTemplateName({ cpuCount, memoryGB }: TemplateArgs): string {
+function getTemplateName({
+  cpuCount,
+  memoryGB,
+}: {
+  cpuCount: number;
+  memoryGB: number;
+}): string {
   return `${namePrefix}-vCPU-${cpuCount}-RAM-${memoryGB}GB-${randomSuffix()}`;
 }
 
-function getDaytonaBuildFlags({ cpuCount, memoryGB }: TemplateArgs) {
+function getDaytonaBuildFlags({ cpuCount, memoryGB, diskGB }: TemplateArgs) {
   const name = getTemplateName({ cpuCount, memoryGB });
   const dockerfilePath = getDockerfilePath("daytona");
   return {
@@ -51,7 +58,7 @@ function getDaytonaBuildFlags({ cpuCount, memoryGB }: TemplateArgs) {
       "--cpu",
       cpuCount.toString(),
       "--disk",
-      "10",
+      diskGB.toString(),
       "--memory",
       memoryGB.toString(),
     ],
@@ -110,15 +117,21 @@ function runCommandCapture(command: string): Promise<string> {
       shell: true,
     });
     let stdout = "";
+    let stderr = "";
     child.stdout?.on("data", (d: Buffer) => {
       stdout += d.toString();
     });
     child.stderr?.on("data", (d: Buffer) => {
-      process.stderr.write(d);
+      const text = d.toString();
+      stderr += text;
+      process.stderr.write(text);
     });
     child.on("close", (code: number | null) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(`Command failed (${code}): ${command}`));
+      else
+        reject(
+          new Error(`Command failed (${code}): ${command}\n${stdout}${stderr}`),
+        );
     });
     child.on("error", reject);
   });
@@ -149,7 +162,23 @@ async function assertActiveDaytonaOrg(): Promise<void> {
         "Example: export DAYTONA_PROD_ORG_ID=f9c41839-9458-4a4b-b51d-f54d63236df5",
     );
   }
-  const output = await runCommandCapture("daytona organization list");
+  let output: string;
+  try {
+    output = await runCommandCapture("daytona organization list");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes(
+        "organization commands are not available when using API key authentication",
+      )
+    ) {
+      console.log(
+        "Verified Daytona CLI is using API key authentication; organization selection is scoped by the key.",
+      );
+      return;
+    }
+    throw error;
+  }
   // Format: `[[Name id last-seen] [*ActiveName id last-seen]]`. Parse the
   // starred line to find the active org id.
   const activeMatch = output.match(/\*([^\s\]]+)\s+([0-9a-f-]{36})/);
@@ -232,6 +261,7 @@ async function updateTemplatesJson({
   dockerfileHash,
   cpuCount,
   memoryGB,
+  diskGB,
   provider,
   size,
 }: {
@@ -239,6 +269,7 @@ async function updateTemplatesJson({
   dockerfileHash: string;
   cpuCount: number;
   memoryGB: number;
+  diskGB: number;
   provider: SandboxProvider;
   size: SandboxSize;
 }) {
@@ -253,6 +284,7 @@ async function updateTemplatesJson({
     dockerfileHash,
     cpuCount,
     memoryGB,
+    diskGB,
     provider,
     size,
     createdAt: new Date().toISOString(),
@@ -270,15 +302,17 @@ async function main() {
   // Default to 2vCPU/4GB if not specified
   const cpuCount = size === "large" ? 4 : 2;
   const memoryGB = size === "large" ? 8 : 4;
+  const diskGB = size === "large" ? 16 : 10;
   const dockerfileHash = getDockerfileHash();
   console.log(`Creating ${provider} template for ${size} size...`);
   console.log(` * CPU: ${cpuCount} vCPU`);
   console.log(` * Memory: ${memoryGB}GB`);
+  console.log(` * Disk: ${diskGB}GB`);
   console.log(` * Dockerfile hash: ${dockerfileHash}`);
 
   const startTime = Date.now();
   let templateName: string;
-  const templateArgs: TemplateArgs = { cpuCount, memoryGB };
+  const templateArgs: TemplateArgs = { cpuCount, memoryGB, diskGB };
   switch (provider) {
     case "e2b": {
       templateName = await buildE2BTemplate(templateArgs);
@@ -295,12 +329,14 @@ async function main() {
     dockerfileHash,
     cpuCount,
     memoryGB,
+    diskGB,
     provider,
     size,
   });
   console.log(`Successfully created template: ${templateName}`, {
     cpuCount,
     memoryGB,
+    diskGB,
     dockerfileHash,
     provider,
     size,
