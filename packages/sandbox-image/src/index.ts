@@ -10,6 +10,7 @@ interface TemplateEntry {
   createdAt: string;
   cpuCount?: number;
   memoryGB?: number;
+  diskGB?: number;
   provider?: SandboxProvider;
   size?: SandboxSize;
 }
@@ -32,7 +33,7 @@ export function getTemplateIdForSize({
   const matchingTemplate = matchingTemplates[matchingTemplates.length - 1]!;
   const name = matchingTemplate.name;
   console.log(
-    `Found template: ${name} for ${provider} ${size} (${matchingTemplate.cpuCount} vCPU, ${matchingTemplate.memoryGB}GB)`,
+    `Found template: ${name} for ${provider} ${size} (${matchingTemplate.cpuCount} vCPU, ${matchingTemplate.memoryGB}GB RAM, ${matchingTemplate.diskGB ?? "unknown"}GB disk)`,
   );
   return name;
 }

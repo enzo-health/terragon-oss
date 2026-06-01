@@ -35,8 +35,8 @@ daytona login
 
 We support two sandbox resource sizes that map to the following configurations:
 
-- **small** (default): 2 vCPU cores and 4GB RAM
-- **large**: 4 vCPU cores and 8GB RAM
+- **small** (default): 2 vCPU cores, 4GB RAM, and 10GB disk for Daytona
+- **large**: 4 vCPU cores, 8GB RAM, and 16GB disk for Daytona
 
 ## Creating Templates
 
