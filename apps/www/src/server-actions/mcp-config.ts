@@ -11,7 +11,7 @@ import {
 import { encryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { McpConfig, validateMcpConfig } from "@terragon/sandbox/mcp-config";
-import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-trigger";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 import { requireResult, UserFacingError } from "@/lib/server-actions";
 
 export const updateMcpConfig = userOnlyAction(

@@ -96,6 +96,8 @@ describe("sandbox-setup", () => {
           cacheMountPath: "/mnt/terragon/cache",
           workspaceMountPath:
             "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1",
+          artifactsPath:
+            "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1/artifacts",
         },
       });
 

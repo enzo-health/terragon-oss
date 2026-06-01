@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
-import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-trigger";
+import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-lifecycle";
 
 export const createEnvironment = userOnlyAction(
   async function createEnvironment(

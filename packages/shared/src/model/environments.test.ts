@@ -9,6 +9,8 @@ import {
   reapStaleBuildingSnapshots,
   getReadySnapshot,
   SNAPSHOT_BUILD_TIMEOUT_MS,
+  markSnapshotsStale,
+  updateEnvironmentSnapshot,
 } from "./environments";
 import type { EnvironmentSnapshot } from "../db/schema";
 import { createTestUser } from "./test-helpers";
@@ -322,6 +324,87 @@ exit 0`;
       });
 
       expect(reaped[0]?.status).toBe("building");
+    });
+
+    it("marks ready snapshots stale without changing failed or building entries", async () => {
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: {
+          snapshots: [
+            buildSnapshot({
+              size: "small",
+              status: "ready",
+              snapshotName: "ready-small",
+            }),
+            buildSnapshot({
+              size: "large",
+              status: "building",
+              snapshotName: "",
+            }),
+            buildSnapshot({
+              size: "large",
+              status: "failed",
+              snapshotName: "",
+              error: "failed",
+            }),
+          ],
+        },
+      });
+
+      await markSnapshotsStale({ db, userId, environmentId });
+
+      const environment = await getEnvironment({ db, userId, environmentId });
+      expect(environment?.snapshots).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            snapshotName: "ready-small",
+            status: "stale",
+          }),
+          expect.objectContaining({ status: "building" }),
+          expect.objectContaining({ status: "failed" }),
+        ]),
+      );
+    });
+
+    it("replaces snapshots by provider and size when updating a snapshot slot", async () => {
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: {
+          snapshots: [
+            buildSnapshot({
+              size: "small",
+              status: "ready",
+              snapshotName: "old-small",
+            }),
+            buildSnapshot({
+              size: "large",
+              status: "ready",
+              snapshotName: "large",
+            }),
+          ],
+        },
+      });
+
+      await updateEnvironmentSnapshot({
+        db,
+        userId,
+        environmentId,
+        snapshot: buildSnapshot({
+          size: "small",
+          status: "ready",
+          snapshotName: "new-small",
+        }),
+      });
+
+      const environment = await getEnvironment({ db, userId, environmentId });
+      expect(environment?.snapshots).toEqual([
+        expect.objectContaining({ size: "small", snapshotName: "new-small" }),
+        expect.objectContaining({ size: "large", snapshotName: "large" }),
+      ]);
     });
   });
 

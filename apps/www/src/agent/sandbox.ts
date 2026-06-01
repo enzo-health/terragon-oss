@@ -16,18 +16,12 @@ import {
   getDecryptedEnvironmentVariables,
   getDecryptedMcpConfig,
   getDecryptedGlobalEnvironmentVariables,
-  getReadySnapshot,
   hashEnvironmentVariables,
   hashSnapshotValue,
 } from "@terragon/shared/model/environments";
-import {
-  getSetupScriptHash,
-  getSnapshotBaseTemplateId,
-} from "@terragon/sandbox/snapshot-builder";
 import { env } from "@terragon/env/apps-www";
 import type {
   CreateSandboxOptions,
-  DaytonaVolumeConfig,
   ISandboxSession,
 } from "@terragon/sandbox/types";
 import type { SandboxProvider, SandboxSize } from "@terragon/types/sandbox";
@@ -35,13 +29,18 @@ import {
   getOrCreateSandbox as getOrCreateSandboxInternal,
   hibernateSandbox as hibernateSandboxInternal,
 } from "@terragon/sandbox";
+import {
+  resolveDaytonaSandboxBootPlan,
+} from "./daytona-sandbox-plan";
 import { bashQuote } from "@terragon/sandbox/utils";
 import { shouldHibernateSandbox } from "./sandbox-resource";
 import { wrapError } from "./error";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
-import { maybeTriggerSnapshotBuildForBoot } from "@/server-lib/environment-snapshot-build";
+import {
+  maybeWarmEnvironmentSnapshot,
+} from "@/server-lib/environment-snapshot-lifecycle";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
@@ -52,9 +51,6 @@ import { redis } from "@/lib/redis";
 
 const SANDBOX_RESUME_CONTEXT_CACHE_PREFIX = "sandbox-resume-context:";
 const SANDBOX_RESUME_CONTEXT_CACHE_TTL_SECONDS = 120;
-const DAYTONA_VOLUME_MOUNT_PATH = "/mnt/terragon";
-const DAYTONA_VOLUME_CACHE_DIR = "cache";
-const DAYTONA_VOLUME_WORKSPACE_DIR = "workspace";
 
 type SandboxResumeMetadataCacheEntry = {
   userSettings: Awaited<ReturnType<typeof getUserSettings>>;
@@ -72,114 +68,6 @@ export type SandboxBranchReconciliationResult = {
 function normalizeBranchName(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function sanitizeVolumeSubpathSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-export function resolveDaytonaVolumeConfig({
-  userId,
-  environmentId,
-  threadId,
-  repoFullName,
-  volumeName = env.DAYTONA_VOLUME_NAME,
-}: {
-  userId: string;
-  environmentId: string;
-  threadId: string;
-  repoFullName: string | null;
-  volumeName?: string;
-}): DaytonaVolumeConfig | undefined {
-  const trimmedVolumeName = volumeName.trim();
-  if (!trimmedVolumeName) {
-    return undefined;
-  }
-
-  const repoSegment = sanitizeVolumeSubpathSegment(repoFullName || "no-repo");
-  const userSegment = sanitizeVolumeSubpathSegment(userId);
-  const workspaceSegments = [
-    DAYTONA_VOLUME_WORKSPACE_DIR,
-    "environments",
-    sanitizeVolumeSubpathSegment(environmentId),
-    "repos",
-    repoSegment,
-    "threads",
-    sanitizeVolumeSubpathSegment(threadId),
-  ];
-  return {
-    volumeName: trimmedVolumeName,
-    volumeMountPath: DAYTONA_VOLUME_MOUNT_PATH,
-    volumeSubpath: `users/${userSegment}`,
-    cacheMountPath: [DAYTONA_VOLUME_MOUNT_PATH, DAYTONA_VOLUME_CACHE_DIR].join(
-      "/",
-    ),
-    workspaceMountPath: [DAYTONA_VOLUME_MOUNT_PATH, ...workspaceSegments].join(
-      "/",
-    ),
-  };
-}
-
-export function getDaytonaVolumeEnvironmentEntries(
-  daytonaVolume: DaytonaVolumeConfig | undefined,
-): Array<{ key: string; value: string }> {
-  if (!daytonaVolume) {
-    return [];
-  }
-  return [
-    { key: "npm_config_cache", value: `${daytonaVolume.cacheMountPath}/npm` },
-    { key: "YARN_CACHE_FOLDER", value: `${daytonaVolume.cacheMountPath}/yarn` },
-    {
-      key: "BUN_INSTALL_CACHE_DIR",
-      value: `${daytonaVolume.cacheMountPath}/bun`,
-    },
-    { key: "PIP_CACHE_DIR", value: `${daytonaVolume.cacheMountPath}/pip` },
-    { key: "UV_CACHE_DIR", value: `${daytonaVolume.cacheMountPath}/uv` },
-    { key: "CARGO_HOME", value: `${daytonaVolume.cacheMountPath}/cargo` },
-    { key: "GOPATH", value: `${daytonaVolume.cacheMountPath}/go` },
-    { key: "GOMODCACHE", value: `${daytonaVolume.cacheMountPath}/go/pkg/mod` },
-    { key: "GOCACHE", value: `${daytonaVolume.cacheMountPath}/go/build` },
-    {
-      key: "COMPOSER_CACHE_DIR",
-      value: `${daytonaVolume.cacheMountPath}/composer`,
-    },
-    { key: "XDG_CACHE_HOME", value: `${daytonaVolume.cacheMountPath}/xdg` },
-    { key: "COREPACK_HOME", value: `${daytonaVolume.cacheMountPath}/corepack` },
-    { key: "TURBO_CACHE_DIR", value: `${daytonaVolume.cacheMountPath}/turbo` },
-    {
-      key: "PLAYWRIGHT_BROWSERS_PATH",
-      value: `${daytonaVolume.cacheMountPath}/ms-playwright`,
-    },
-    {
-      key: "PUPPETEER_CACHE_DIR",
-      value: `${daytonaVolume.cacheMountPath}/puppeteer`,
-    },
-    {
-      key: "CYPRESS_CACHE_FOLDER",
-      value: `${daytonaVolume.cacheMountPath}/cypress`,
-    },
-    { key: "HF_HOME", value: `${daytonaVolume.cacheMountPath}/huggingface` },
-    {
-      key: "TRANSFORMERS_CACHE",
-      value: `${daytonaVolume.cacheMountPath}/huggingface/transformers`,
-    },
-    {
-      key: "SENTENCE_TRANSFORMERS_HOME",
-      value: `${daytonaVolume.cacheMountPath}/huggingface/sentence-transformers`,
-    },
-    {
-      key: "MPLCONFIGDIR",
-      value: `${daytonaVolume.cacheMountPath}/matplotlib`,
-    },
-    {
-      key: "ESLINT_CACHE_LOCATION",
-      value: `${daytonaVolume.cacheMountPath}/eslint/.eslintcache`,
-    },
-    {
-      key: "TERRAGON_ARTIFACTS_DIR",
-      value: `${daytonaVolume.workspaceMountPath}/artifacts`,
-    },
-  ];
 }
 
 export function resolveExpectedBranchForReconciliation(params: {
@@ -781,7 +669,7 @@ async function getOrCreateSandboxForThread({
       resolvedRepositoryEnvironment.repoFullName &&
       githubAccessToken
     ) {
-      void maybeTriggerSnapshotBuildForBoot({
+      void maybeWarmEnvironmentSnapshot({
         db,
         userId,
         environmentId: resolvedRepositoryEnvironment.id,
@@ -854,37 +742,25 @@ async function getOrCreateSandboxForThread({
         ? localDockerPublicUrl
         : nonLocalhostPublicAppUrl();
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-    const daytonaVolume =
-      thread.sandboxProvider === "daytona" && context.repositoryEnvironment
-        ? resolveDaytonaVolumeConfig({
-            userId,
-            environmentId: context.repositoryEnvironment.id,
-            threadId,
-            repoFullName: context.repositoryEnvironment.repoFullName,
-          })
-        : undefined;
+    const daytonaPlan = resolveDaytonaSandboxBootPlan({
+      sandboxProvider: thread.sandboxProvider,
+      existingSandboxId: thread.codesandboxId,
+      userId,
+      environmentId: context.repositoryEnvironment?.id ?? null,
+      threadId,
+      repoFullName: context.repositoryEnvironment?.repoFullName ?? null,
+      volumeEnabled: env.DAYTONA_VOLUME_ENABLED,
+      volumeName: env.DAYTONA_VOLUME_NAME,
+      sandboxSize,
+      setupScript: context.resolvedSetupScript,
+      snapshots: context.repositoryEnvironment?.snapshots ?? null,
+      environmentVariablesHash: context.environmentVariablesHash,
+      mcpConfigHash: context.mcpConfigHash,
+    });
     const environmentVariablesWithVolumeDefaults = [
-      ...getDaytonaVolumeEnvironmentEntries(daytonaVolume),
+      ...daytonaPlan.volumeEnvironmentEntries,
       ...context.finalEnvironmentVariables,
     ];
-    const setupScriptHash = getSetupScriptHash(context.resolvedSetupScript);
-    const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
-    const snapshot =
-      !thread.codesandboxId &&
-      thread.sandboxProvider === "daytona" &&
-      context.repositoryEnvironment
-        ? getReadySnapshot(
-            context.repositoryEnvironment,
-            "daytona",
-            sandboxSize,
-            {
-              setupScriptHash,
-              baseDockerfileHash,
-              environmentVariablesHash: context.environmentVariablesHash,
-              mcpConfigHash: context.mcpConfigHash,
-            },
-          )
-        : null;
 
     return {
       threadName: thread.name,
@@ -910,8 +786,8 @@ async function getOrCreateSandboxForThread({
       // boot; skip setup script by default in local dev unless explicitly needed.
       skipSetupScript: thread.skipSetup || shouldAutoSkipSetupInLocalDocker,
       backgroundSetupScript: !!userFeatureFlags.backgroundSetupScript,
-      snapshotTemplateId: snapshot?.snapshotName ?? undefined,
-      daytonaVolume,
+      snapshotTemplateId: daytonaPlan.snapshotTemplateId,
+      daytonaVolume: daytonaPlan.daytonaVolume,
       publicUrl: resolvedPublicUrl,
       featureFlags: userFeatureFlags,
       generateBranchName: context.generateBranchNameWithPrefix,

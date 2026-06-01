@@ -11,6 +11,7 @@
     "./utils": "./src/utils.ts",
     "./env": "./src/env.ts",
     "./constants": "./src/constants.ts",
+    "./daytona-volume": "./src/daytona-volume.ts",
     "./snapshot-builder": "./src/snapshot-builder.ts"
   },
   "scripts": {

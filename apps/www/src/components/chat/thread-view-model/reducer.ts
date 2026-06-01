@@ -545,8 +545,11 @@ function shouldRefreshArtifactsForEvent(
       return textDeltaCompletesProposedPlanArtifact(state, event);
     case EventType.CUSTOM:
       return getField<string>(event, "name") === "terragon.data-part";
-    default:
+    default: {
+      const _exhaustiveCheck = event.type satisfies string;
+      void _exhaustiveCheck;
       return false;
+    }
   }
 }
 
