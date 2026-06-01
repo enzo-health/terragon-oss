@@ -43,22 +43,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function extractStateMetadata(body: RunAgentInput): void {
-  // TODO: handle body.state?.terragon?.saveAsDraft and body.state?.terragon?.scheduleAt
-  // These were never wired into followUp() and are out of scope for this first cut.
+function unsupportedStateMetadataReason(body: RunAgentInput): string | null {
   const state = body.state;
-  if (!isRecord(state)) return;
+  if (!isRecord(state)) return null;
   const terragon = state["terragon"];
-  if (!isRecord(terragon)) return;
-  if ("saveAsDraft" in terragon || "scheduleAt" in terragon) {
-    console.log(
-      "[follow-up-command] ignoring unsupported state fields: saveAsDraft/scheduleAt",
-      {
-        saveAsDraft: terragon["saveAsDraft"],
-        scheduleAt: terragon["scheduleAt"],
-      },
-    );
+  if (!isRecord(terragon)) return null;
+
+  const saveAsDraft = terragon["saveAsDraft"];
+  const scheduleAt = terragon["scheduleAt"];
+  const unsupportedFields: string[] = [];
+  if (
+    saveAsDraft !== undefined &&
+    saveAsDraft !== null &&
+    saveAsDraft !== false
+  ) {
+    unsupportedFields.push("saveAsDraft");
   }
+  if (scheduleAt !== undefined && scheduleAt !== null) {
+    unsupportedFields.push("scheduleAt");
+  }
+
+  if (unsupportedFields.length === 0) return null;
+
+  return `AG-UI runtime append does not support ${unsupportedFields.join(
+    " or ",
+  )}; use the draft/schedule fallback`;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +116,15 @@ export async function dispatchFollowUpFromAppend(args: {
       },
     };
   }
+  const unsupportedStateReason = unsupportedStateMetadataReason(body);
+  if (unsupportedStateReason !== null) {
+    return {
+      error: {
+        kind: "invalid-input",
+        reason: unsupportedStateReason,
+      },
+    };
+  }
 
   // 2. Extract the new user message
   const agUiUserMessage = extractUserMessage(body);
@@ -139,9 +157,6 @@ export async function dispatchFollowUpFromAppend(args: {
     };
   }
 
-  // 5. Extract metadata
-  extractStateMetadata(body); // logs TODO for unsupported fields
-
   const message: DBUserMessage = {
     type: "user",
     model: selectedModel,
@@ -151,6 +166,8 @@ export async function dispatchFollowUpFromAppend(args: {
 
   // 6. Guard and dispatch
   const guarded = await withFollowUpSubmissionGuard({
+    userId,
+    threadId,
     threadChatId,
     clientSubmissionId,
     dispatch: async (markDispatched) => {

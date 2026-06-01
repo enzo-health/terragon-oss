@@ -1,5 +1,4 @@
 import { db } from "@/lib/db";
-import { createNewThread } from "./new-thread-shared";
 import {
   getAutomation,
   incrementAutomationRunCount,
@@ -34,6 +33,7 @@ import {
 } from "./github";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import { UserFacingError } from "@/lib/server-actions";
+import { routeExternalTaskIntake } from "./external-task-intake/route-external-task-intake";
 
 export async function runAutomation({
   userId,
@@ -68,11 +68,25 @@ export async function runAutomation({
     let threadChatId: string | undefined;
     switch (automation.action.type) {
       case "user_message": {
-        const newThreadResult = await createNewThread({
-          userId: automation.userId,
-          message: options?.transformMessage
-            ? options.transformMessage(automation.action.config.message)
-            : automation.action.config.message,
+        const message = options?.transformMessage
+          ? options.transformMessage(automation.action.config.message)
+          : automation.action.config.message;
+        const newThreadResult = await routeExternalTaskIntake({
+          intent: "create-thread",
+          source: "automation",
+          ownerUserId: automation.userId,
+          ownerReason: source,
+          targetKey: {
+            type: "automation-run",
+            automationId: automation.id,
+            triggerType: automation.triggerType,
+            runSource: source,
+            ...(options?.prNumber ? { githubPRNumber: options.prNumber } : {}),
+            ...(options?.issueNumber
+              ? { githubIssueNumber: options.issueNumber }
+              : {}),
+          },
+          message,
           githubRepoFullName: automation.repoFullName,
           baseBranchName: options?.branchName ?? automation.branchName,
           headBranchName: null,

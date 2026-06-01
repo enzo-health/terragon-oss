@@ -7,6 +7,7 @@ import {
   createTestThread,
   createTestUser,
 } from "@terragon/shared/model/test-helpers";
+import { getDurableAgUiHistoryItemsFromEvents } from "@terragon/shared/model/persistent-message-projection";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,7 +21,6 @@ vi.mock("@/lib/redis", () => ({
 }));
 
 const {
-  getDurableAgUiHistoryItemsFromEvents,
   getLatestNativeAgUiSnapshotMessage,
   getNativeAgUiTranscriptForThreadChat,
   hasInvalidTokenRetrySideEffectMarker,

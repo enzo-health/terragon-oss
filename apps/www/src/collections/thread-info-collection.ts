@@ -4,8 +4,9 @@ import {
   createCollection,
   localOnlyCollectionOptions,
 } from "@tanstack/react-db";
-import { ThreadInfo } from "@terragon/shared/db/types";
-import { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import type { ThreadInfo } from "@terragon/shared/db/types";
+import type { BroadcastThreadPatch } from "@terragon/types/broadcast";
+import { shouldReplaceThreadListProjectionSeed } from "@terragon/shared/model/thread-list-projection";
 import {
   applyThreadPatchToListThread,
   threadPatchToListThread,
@@ -91,7 +92,15 @@ export function seedThreadList(threads: ThreadInfo[]): void {
   applyCollectionWrite((collection) => {
     for (const thread of threads) {
       if (collection.state.has(thread.id)) {
-        collection.update(thread.id, () => thread);
+        const existing = collection.state.get(thread.id) as
+          | ThreadInfo
+          | undefined;
+        if (
+          existing === undefined ||
+          shouldReplaceThreadListProjectionSeed(existing, thread)
+        ) {
+          collection.update(thread.id, () => thread);
+        }
       } else {
         collection.insert(thread);
       }

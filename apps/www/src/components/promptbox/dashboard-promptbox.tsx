@@ -91,6 +91,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
       branchName,
       saveAsDraft,
       scheduleAt,
+      clientSubmissionId,
     }) => {
       return handleSubmit({
         userMessage,
@@ -99,6 +100,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         branchName,
         saveAsDraft,
         scheduleAt,
+        clientSubmissionId,
         disableGitCheckpointing,
         skipSetup,
         createNewBranch,

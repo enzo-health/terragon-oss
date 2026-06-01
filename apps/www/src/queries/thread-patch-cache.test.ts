@@ -113,7 +113,9 @@ function createThreadChat(
   };
 }
 
-function createThreadListEntry(): ThreadInfo {
+function createThreadListEntry(
+  overrides: Partial<ThreadInfo> = {},
+): ThreadInfo {
   const shell = createThreadShell();
   return {
     id: shell.id,
@@ -157,6 +159,7 @@ function createThreadListEntry(): ThreadInfo {
         errorMessage: shell.primaryThreadChat.errorMessage,
       },
     ],
+    ...overrides,
   };
 }
 
@@ -251,6 +254,73 @@ describe("applyThreadPatchToListQueries", () => {
     ) as { pageParams: number[]; pages: ThreadInfo[][] };
 
     expect(nextList).not.toBe(previousList);
+    expect(nextList.pages[0]?.[0]?.updatedAt).toEqual(
+      new Date(NEXT_CHAT_UPDATED_AT),
+    );
+  });
+
+  it("keeps list query pages in canonical updatedAt desc order after patches", () => {
+    const queryClient = createQueryClient();
+    setThreadListData(queryClient, { archived: false }, [
+      createThreadListEntry({
+        id: "thread-2",
+        updatedAt: new Date("2026-03-09T00:00:10.000Z"),
+      }),
+      createThreadListEntry({
+        id: "thread-1",
+        updatedAt: new Date("2026-03-09T00:00:00.000Z"),
+      }),
+    ]);
+
+    applyThreadPatchToListQueries({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        op: "upsert",
+        chat: {
+          updatedAt: "2026-03-09T00:00:20.000Z",
+        },
+      },
+    });
+
+    const nextList = queryClient.getQueryData(
+      threadQueryKeys.list({ archived: false }),
+    ) as { pageParams: number[]; pages: ThreadInfo[][] };
+
+    expect(nextList.pages[0]?.map((thread) => thread.id)).toEqual([
+      "thread-1",
+      "thread-2",
+    ]);
+  });
+
+  it("does not move list timestamps backward when stale shell patches arrive", () => {
+    const queryClient = createQueryClient();
+    setThreadListData(queryClient, { archived: false }, [
+      {
+        ...createThreadListEntry(),
+        updatedAt: new Date(NEXT_CHAT_UPDATED_AT),
+      },
+    ]);
+
+    applyThreadPatchToListQueries({
+      queryClient,
+      patch: {
+        threadId: "thread-1",
+        op: "upsert",
+        shell: {
+          userId: "user-1",
+          name: "Renamed by stale shell",
+          updatedAt: INITIAL_CHAT_UPDATED_AT,
+        },
+      },
+    });
+
+    const nextList = queryClient.getQueryData(
+      threadQueryKeys.list({ archived: false }),
+    ) as { pageParams: number[]; pages: ThreadInfo[][] };
+
+    expect(nextList.pages[0]?.[0]?.name).toBe("Renamed by stale shell");
     expect(nextList.pages[0]?.[0]?.updatedAt).toEqual(
       new Date(NEXT_CHAT_UPDATED_AT),
     );

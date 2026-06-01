@@ -17,9 +17,8 @@ vi.mock("@/agent/msg/startAgentMessage", () => ({
   dispatchAgentMessage: vi.fn(),
 }));
 
-vi.mock("@/agent/update-status", () => ({
-  updateThreadChatWithTransition:
-    transitionMocks.updateThreadChatWithTransition,
+vi.mock("@/server-lib/thread-lifecycle-command", () => ({
+  transitionThreadChatLifecycle: transitionMocks.updateThreadChatWithTransition,
 }));
 
 vi.mock("./ag-ui-side-effect-messages", () => ({

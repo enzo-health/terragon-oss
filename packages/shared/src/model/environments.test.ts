@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createDb, type DB } from "../db";
 import * as schema from "../db/schema";
 import {
+  applyEnvironmentSnapshotBuildCompletion,
+  completeEnvironmentSnapshotBuild,
   getEnvironment,
   updateEnvironment,
   getOrCreateEnvironment,
@@ -322,6 +324,163 @@ exit 0`;
       });
 
       expect(reaped[0]?.status).toBe("building");
+    });
+  });
+
+  describe("snapshot build completion", () => {
+    it("only applies a completion to the matching active build", () => {
+      const active = buildSnapshot({
+        size: "large",
+        status: "building",
+        buildId: "build-active",
+      });
+      const small = buildSnapshot({
+        size: "small",
+        status: "ready",
+        snapshotName: "ready-small",
+      });
+      const ready = buildSnapshot({
+        size: "large",
+        status: "ready",
+        snapshotName: "ready-large",
+        buildId: "build-active",
+      });
+
+      const applied = applyEnvironmentSnapshotBuildCompletion({
+        snapshots: [active, small],
+        snapshot: ready,
+        expectedBuildId: "build-active",
+      });
+
+      expect(applied.applied).toBe(true);
+      expect(applied.snapshots).toEqual([ready, small]);
+      expect(applied.currentSnapshot).toEqual(active);
+    });
+
+    it("rejects a stale completion when the active build changed", () => {
+      const newer = buildSnapshot({
+        status: "building",
+        buildId: "build-newer",
+      });
+      const staleReady = buildSnapshot({
+        status: "ready",
+        snapshotName: "stale-ready",
+        buildId: "build-stale",
+      });
+
+      const applied = applyEnvironmentSnapshotBuildCompletion({
+        snapshots: [newer],
+        snapshot: staleReady,
+        expectedBuildId: "build-stale",
+      });
+
+      expect(applied.applied).toBe(false);
+      expect(applied.snapshots).toEqual([newer]);
+      expect(applied.currentSnapshot).toEqual(newer);
+    });
+
+    it("persists a matching build completion and leaves stale completions untouched", async () => {
+      const active = buildSnapshot({
+        status: "building",
+        buildId: "build-active",
+      });
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: { snapshots: [active] },
+      });
+
+      const stale = buildSnapshot({
+        status: "ready",
+        snapshotName: "stale-ready",
+        buildId: "build-stale",
+      });
+      const staleResult = await completeEnvironmentSnapshotBuild({
+        db,
+        userId,
+        environmentId,
+        snapshot: stale,
+        expectedBuildId: "build-stale",
+      });
+
+      expect(staleResult.applied).toBe(false);
+      expect(
+        (await getEnvironment({ db, userId, environmentId }))?.snapshots,
+      ).toEqual([active]);
+
+      const ready = buildSnapshot({
+        status: "ready",
+        snapshotName: "ready-large",
+        buildId: "build-active",
+      });
+      const readyResult = await completeEnvironmentSnapshotBuild({
+        db,
+        userId,
+        environmentId,
+        snapshot: ready,
+        expectedBuildId: "build-active",
+      });
+
+      expect(readyResult.applied).toBe(true);
+      expect(
+        (await getEnvironment({ db, userId, environmentId }))?.snapshots,
+      ).toEqual([ready]);
+    });
+
+    it("allows unrelated snapshot slots to complete concurrently", async () => {
+      const activeSmall = buildSnapshot({
+        size: "small",
+        status: "building",
+        buildId: "build-small",
+      });
+      const activeLarge = buildSnapshot({
+        size: "large",
+        status: "building",
+        buildId: "build-large",
+      });
+      await updateEnvironment({
+        db,
+        userId,
+        environmentId,
+        updates: { snapshots: [activeSmall, activeLarge] },
+      });
+
+      const readySmall = buildSnapshot({
+        size: "small",
+        status: "ready",
+        snapshotName: "ready-small",
+        buildId: "build-small",
+      });
+      const readyLarge = buildSnapshot({
+        size: "large",
+        status: "ready",
+        snapshotName: "ready-large",
+        buildId: "build-large",
+      });
+
+      const [smallResult, largeResult] = await Promise.all([
+        completeEnvironmentSnapshotBuild({
+          db,
+          userId,
+          environmentId,
+          snapshot: readySmall,
+          expectedBuildId: "build-small",
+        }),
+        completeEnvironmentSnapshotBuild({
+          db,
+          userId,
+          environmentId,
+          snapshot: readyLarge,
+          expectedBuildId: "build-large",
+        }),
+      ]);
+
+      expect(smallResult.applied).toBe(true);
+      expect(largeResult.applied).toBe(true);
+      expect(
+        (await getEnvironment({ db, userId, environmentId }))?.snapshots,
+      ).toEqual([readySmall, readyLarge]);
     });
   });
 

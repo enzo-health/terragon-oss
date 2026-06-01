@@ -817,6 +817,9 @@ export type EnvironmentSnapshot = {
   size: SandboxSize;
   snapshotName: string;
   status: "building" | "ready" | "failed" | "stale";
+  buildId?: string;
+  requestedAt?: string;
+  buildReason?: string;
   setupScriptHash: string;
   baseDockerfileHash: string;
   environmentVariablesHash?: string;

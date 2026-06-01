@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { waitUntil } from "@vercel/functions";
 import type { DB } from "@terragon/shared/db";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 import type { SandboxSize } from "@terragon/types/sandbox";
 import {
+  completeEnvironmentSnapshotBuild,
   getEnvironment,
   getReadySnapshot,
   hashEnvironmentVariables,
@@ -16,6 +18,7 @@ import {
   deleteRepoSnapshot,
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
+  getUnsafeRepoSnapshotInputReasons,
 } from "@terragon/sandbox/snapshot-builder";
 
 type SnapshotHashes = {
@@ -44,6 +47,26 @@ function computeSnapshotHashes({
   };
 }
 
+function getUnsafeSnapshotBuildReason({
+  setupScript,
+  environmentVariables,
+  mcpConfig,
+}: {
+  setupScript: string | null;
+  environmentVariables: Array<{ key: string; value: string }>;
+  mcpConfig: unknown;
+}): string | null {
+  const reasons = getUnsafeRepoSnapshotInputReasons({
+    setupScript,
+    environmentVariables,
+    mcpConfig,
+  });
+  if (reasons.length === 0) {
+    return null;
+  }
+  return `unsafe snapshot inputs: ${reasons.join(", ")}`;
+}
+
 /**
  * Build a Daytona repo snapshot and persist its lifecycle (`building` →
  * `ready`/`failed`) on the environment. The Daytona build runs under
@@ -62,6 +85,7 @@ export async function buildAndStoreEnvironmentSnapshot({
   size,
   environmentVariables,
   mcpConfig,
+  buildReason = "manual",
 }: {
   db: DB;
   userId: string;
@@ -73,7 +97,17 @@ export async function buildAndStoreEnvironmentSnapshot({
   size: SandboxSize;
   environmentVariables: Array<{ key: string; value: string }>;
   mcpConfig: unknown;
+  buildReason?: string;
 }): Promise<void> {
+  const unsafeReason = getUnsafeSnapshotBuildReason({
+    setupScript,
+    environmentVariables,
+    mcpConfig,
+  });
+  if (unsafeReason) {
+    throw new Error(`Repo snapshot build disabled for ${unsafeReason}`);
+  }
+
   const hashes = computeSnapshotHashes({
     setupScript,
     size,
@@ -89,6 +123,8 @@ export async function buildAndStoreEnvironmentSnapshot({
     existing?.snapshots?.find(
       (s) => s.provider === "daytona" && s.size === size,
     )?.snapshotName || null;
+  const buildId = randomUUID();
+  const requestedAt = new Date().toISOString();
 
   await updateEnvironmentSnapshot({
     db,
@@ -99,8 +135,11 @@ export async function buildAndStoreEnvironmentSnapshot({
       size,
       snapshotName: "",
       status: "building",
+      buildId,
+      requestedAt,
+      buildReason,
       ...hashes,
-      builtAt: new Date().toISOString(),
+      builtAt: requestedAt,
     },
   });
 
@@ -111,11 +150,12 @@ export async function buildAndStoreEnvironmentSnapshot({
       githubAccessToken,
       setupScript,
       environmentVariables,
+      mcpConfig,
       size,
       onLogs: (chunk) => console.log(`[snapshot-build] ${chunk}`),
     })
       .then(async ({ snapshotName }) => {
-        await updateEnvironmentSnapshot({
+        const completion = await completeEnvironmentSnapshotBuild({
           db,
           environmentId,
           userId,
@@ -124,10 +164,26 @@ export async function buildAndStoreEnvironmentSnapshot({
             size,
             snapshotName,
             status: "ready",
+            buildId,
+            requestedAt,
+            buildReason,
             ...hashes,
             builtAt: new Date().toISOString(),
           },
+          expectedBuildId: buildId,
         });
+        if (!completion.applied) {
+          console.warn(
+            `[snapshot-build] Ignoring stale snapshot completion ${snapshotName} for ${repoFullName}; active build changed`,
+          );
+          await deleteRepoSnapshot(snapshotName).catch((error) =>
+            console.error(
+              `[snapshot-build] Failed to delete stale snapshot ${snapshotName}:`,
+              error,
+            ),
+          );
+          return;
+        }
         console.log(
           `[snapshot-build] Snapshot ready: ${snapshotName} for ${repoFullName}`,
         );
@@ -143,22 +199,32 @@ export async function buildAndStoreEnvironmentSnapshot({
       })
       .catch(async (error) => {
         console.error(`[snapshot-build] Failed:`, error);
-        await updateEnvironmentSnapshot({
+        const failedSnapshot: EnvironmentSnapshot = {
+          provider: "daytona",
+          size,
+          snapshotName: "",
+          status: "failed",
+          buildId,
+          requestedAt,
+          buildReason,
+          ...hashes,
+          error: error instanceof Error ? error.message : String(error),
+          builtAt: new Date().toISOString(),
+        };
+        const completion = await completeEnvironmentSnapshotBuild({
           db,
           environmentId,
           userId,
-          snapshot: {
-            provider: "daytona",
-            size,
-            snapshotName: "",
-            status: "failed",
-            ...hashes,
-            error: error instanceof Error ? error.message : String(error),
-            builtAt: new Date().toISOString(),
-          },
+          snapshot: failedSnapshot,
+          expectedBuildId: buildId,
         }).catch((e) =>
           console.error("[snapshot-build] Failed to update status:", e),
         );
+        if (completion && !completion.applied) {
+          console.warn(
+            `[snapshot-build] Ignoring stale snapshot failure for ${repoFullName}; active build changed`,
+          );
+        }
       }),
   );
 }
@@ -184,6 +250,7 @@ export async function maybeTriggerSnapshotBuildForBoot({
   environmentVariables,
   mcpConfig,
   force = false,
+  buildReason,
 }: {
   db: DB;
   userId: string;
@@ -200,8 +267,19 @@ export async function maybeTriggerSnapshotBuildForBoot({
   // by the push-refresh path: the config is unchanged but the base branch has
   // advanced, so the baked commit is stale even though hashes still match.
   force?: boolean;
+  buildReason?: string;
 }): Promise<void> {
   try {
+    const unsafeReason = getUnsafeSnapshotBuildReason({
+      setupScript,
+      environmentVariables,
+      mcpConfig,
+    });
+    if (unsafeReason) {
+      console.warn(`[snapshot-build] auto-build skipped for ${unsafeReason}`);
+      return;
+    }
+
     const hashes = computeSnapshotHashes({
       setupScript,
       size,
@@ -224,17 +302,19 @@ export async function maybeTriggerSnapshotBuildForBoot({
 
     // Debounce: a genuinely in-progress build for this size/config is enough.
     const now = Date.now();
-    const inProgress = reaped.some(
-      (s) =>
-        s.provider === "daytona" &&
-        s.size === size &&
-        s.status === "building" &&
-        s.setupScriptHash === hashes.setupScriptHash &&
-        s.baseDockerfileHash === hashes.baseDockerfileHash &&
-        s.environmentVariablesHash === hashes.environmentVariablesHash &&
-        s.mcpConfigHash === hashes.mcpConfigHash &&
-        !isSnapshotBuildStale(s, now),
-    );
+    const inProgress =
+      !force &&
+      reaped.some(
+        (s) =>
+          s.provider === "daytona" &&
+          s.size === size &&
+          s.status === "building" &&
+          s.setupScriptHash === hashes.setupScriptHash &&
+          s.baseDockerfileHash === hashes.baseDockerfileHash &&
+          s.environmentVariablesHash === hashes.environmentVariablesHash &&
+          s.mcpConfigHash === hashes.mcpConfigHash &&
+          !isSnapshotBuildStale(s, now),
+      );
     if (inProgress) {
       return;
     }
@@ -250,6 +330,8 @@ export async function maybeTriggerSnapshotBuildForBoot({
       size,
       environmentVariables,
       mcpConfig,
+      buildReason:
+        buildReason ?? (force ? "forced-refresh" : "boot-auto-build"),
     });
   } catch (error) {
     console.warn("[snapshot-build] auto-build trigger skipped:", error);

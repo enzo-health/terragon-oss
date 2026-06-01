@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DBMessage } from "@terragon/shared";
-import { dbMessagesToAgUiMessages } from "./db-messages-to-ag-ui";
+import { dbMessagesToAgUiMessages } from "@terragon/shared/model/persistent-message-projection";
 
 describe("dbMessagesToAgUiMessages", () => {
   it("returns empty array for no messages", () => {

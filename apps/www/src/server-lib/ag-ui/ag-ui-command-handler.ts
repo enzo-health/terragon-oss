@@ -28,16 +28,31 @@ export async function handleAgUiPostCommand(args: {
     return { type: "open-stream" };
   }
 
+  const hasRequestBody =
+    request.body !== null ||
+    request.headers.has("content-type") ||
+    request.headers.has("content-length");
   let rawBody: unknown;
   try {
     rawBody = await request.json();
   } catch {
+    if (hasRequestBody) {
+      return {
+        type: "response",
+        status: 400,
+        body: { error: "Invalid AG-UI request body" },
+      };
+    }
     return { type: "open-stream" };
   }
 
   const parsed = RunAgentInputSchema.safeParse(rawBody);
   if (!parsed.success) {
-    return { type: "open-stream" };
+    return {
+      type: "response",
+      status: 400,
+      body: { error: "Invalid AG-UI request body" },
+    };
   }
 
   const body = parsed.data;

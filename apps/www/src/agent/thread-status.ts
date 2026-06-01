@@ -3,6 +3,7 @@ import {
   ThreadStatus,
   ThreadQueuedStatus,
 } from "@terragon/shared";
+import { isPrimaryChatLiveThreadStatus } from "@terragon/shared/model/thread-lifecycle-policy";
 
 /** Type guard: true when the thread is waiting in a queue before sandbox boot. */
 export function isQueuedStatus(
@@ -54,30 +55,7 @@ export function isPreSandboxStatus(status: ThreadStatus): boolean {
 }
 
 export function isAgentWorking(status: ThreadStatus) {
-  switch (status) {
-    case "queued":
-    case "queued-blocked":
-    case "queued-sandbox-creation-rate-limit":
-    case "queued-tasks-concurrency":
-    case "queued-agent-rate-limit":
-    case "booting":
-    case "working":
-    case "stopping":
-    case "working-stopped":
-    case "working-error":
-    case "working-done":
-    case "checkpointing":
-      return true;
-    case "draft":
-    case "scheduled":
-    case "stopped":
-    case "complete":
-    case "error":
-      return false;
-    default:
-      const _exhaustiveCheck: never = status;
-      return _exhaustiveCheck && false;
-  }
+  return isPrimaryChatLiveThreadStatus(status);
 }
 
 export function isAgentStoppable(status: ThreadStatus) {

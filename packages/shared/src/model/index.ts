@@ -13,8 +13,31 @@ export * from "./github-projections";
 export * from "./github-surface-bindings";
 export * from "./github-workspaces";
 export * from "./linear";
+export {
+  agUiSnapshotToReplayMessages,
+  applyContextResetToReplayEntries,
+  canonicalEventToReplayMessage,
+  dbMessagesToAgUiMessages,
+  getDurableAgUiHistoryItemsFromEvents,
+} from "./persistent-message-projection";
+export type {
+  DbMessagesToAgUiOptions,
+  DurableAgUiHistoryItem,
+  ProjectionReplayEntry,
+} from "./persistent-message-projection";
 export * from "./slack";
 export * from "./thread-auth";
+export {
+  applyThreadListProjectionPatch,
+  buildThreadListProjectionFromPatch,
+  compareThreadListProjection,
+  getThreadListEffectiveUpdatedAt,
+  isValidThreadListFilter,
+  matchesThreadListProjectionFilter,
+  parseThreadListProjectionFilter,
+  shouldReplaceThreadListProjectionSeed,
+} from "./thread-list-projection";
+export type { ThreadListFilters } from "./thread-list-projection";
 export * from "./thread-page";
 export * from "./thread-read-status";
 export * from "./thread-visibility";
@@ -23,4 +46,3 @@ export * from "./usage-events";
 export * from "./usage-pricing";
 export * from "./user";
 export * from "./user-flags";
-export * from "./query-helpers";

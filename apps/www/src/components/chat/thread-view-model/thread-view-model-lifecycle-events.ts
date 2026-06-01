@@ -16,16 +16,29 @@ import {
 import { isUnsupportedNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type { ThreadViewModelState, ThreadViewQuarantineEntry } from "./types";
 
-const THREAD_LIFECYCLE_MESSAGE_TYPES = new Set<DBSystemMessage["message_type"]>(
-  [
-    "retry-git-commit-and-push",
-    "fix-github-checks",
-    "generic-retry",
-    "invalid-token-retry",
-    "cancel-schedule",
-    "agent-error-retry",
-    "follow-up-retry-failed",
-  ],
+const THREAD_LIFECYCLE_MESSAGE_TYPES: DBSystemMessage["message_type"][] = [
+  "retry-git-commit-and-push",
+  "fix-github-checks",
+  "generic-retry",
+  "invalid-token-retry",
+  "cancel-schedule",
+  "agent-error-retry",
+  "follow-up-retry-failed",
+  "snapshot-refresh-degraded",
+];
+
+const THREAD_LIFECYCLE_MESSAGE_TYPE_SET = new Set<
+  DBSystemMessage["message_type"]
+>(THREAD_LIFECYCLE_MESSAGE_TYPES);
+
+const THREAD_LIFECYCLE_MESSAGE_TYPE_BY_ID = new Map<
+  string,
+  DBSystemMessage["message_type"]
+>(
+  THREAD_LIFECYCLE_MESSAGE_TYPES.map((messageType) => [
+    messageType,
+    messageType,
+  ]),
 );
 
 function isThreadLifecycleMessage(
@@ -35,7 +48,7 @@ function isThreadLifecycleMessage(
     message.role === "system" &&
     message.message_type !== "stop" &&
     message.message_type !== "git-diff" &&
-    THREAD_LIFECYCLE_MESSAGE_TYPES.has(message.message_type)
+    THREAD_LIFECYCLE_MESSAGE_TYPE_SET.has(message.message_type)
   );
 }
 
@@ -67,6 +80,65 @@ export function extractThreadLifecycleMessages(
     }
   }
   return lifecycleMessages;
+}
+
+export function extractThreadLifecycleMessagesFromAgUiSnapshot(
+  event: BaseEvent,
+): UISystemMessage[] {
+  if (event.type !== EventType.MESSAGES_SNAPSHOT) {
+    return [];
+  }
+  const messages = Reflect.get(event, "messages");
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  const lifecycleMessages: UISystemMessage[] = [];
+  for (const message of messages) {
+    if (!message || typeof message !== "object") {
+      continue;
+    }
+    const id = getStringField(message, "id");
+    const role = getStringField(message, "role");
+    if (!id || role !== "system") {
+      continue;
+    }
+    const messageType = sideEffectSystemMessageTypeFromId(id);
+    if (!messageType || !THREAD_LIFECYCLE_MESSAGE_TYPE_SET.has(messageType)) {
+      continue;
+    }
+    lifecycleMessages.push({
+      id,
+      role: "system",
+      message_type: messageType,
+      parts: [{ type: "text", text: snapshotContentToText(message) }],
+    });
+  }
+  return lifecycleMessages;
+}
+
+function sideEffectSystemMessageTypeFromId(
+  id: string,
+): DBSystemMessage["message_type"] | null {
+  const match = /^side-effect-system:(.+)-\d+-[a-f0-9]{12}$/.exec(id);
+  const messageType = match?.[1];
+  return messageType
+    ? (THREAD_LIFECYCLE_MESSAGE_TYPE_BY_ID.get(messageType) ?? null)
+    : null;
+}
+
+function snapshotContentToText(message: object): string {
+  const content = Reflect.get(message, "content");
+  if (typeof content === "string") {
+    return content;
+  }
+  if (content === null || content === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
 }
 
 export function applyLifecycleEvent(

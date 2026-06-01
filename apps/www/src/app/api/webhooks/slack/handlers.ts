@@ -1,16 +1,19 @@
 import { WebClient } from "@slack/web-api";
+import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   getSlackAccountForSlackUserId,
   getSlackInstallationForTeam,
   getSlackSettingsForTeam,
 } from "@terragon/shared/model/slack";
-import { SlackAccount } from "@terragon/shared";
+import { DBUserMessage, SlackAccount } from "@terragon/shared";
 import { decryptValue } from "@terragon/utils/encryption";
 import { env } from "@terragon/env/apps-www";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getUserFlags } from "@terragon/shared/model/user-flags";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
+import { getThreadBySlackThreadKey } from "@terragon/shared/model/threads";
+import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
+import { routeExternalTaskIntake } from "@/server-lib/external-task-intake/route-external-task-intake";
 import { getUserCredentials } from "@/server-lib/user-credentials";
 import { getDefaultModel } from "@/lib/default-ai-model";
 import { formatThreadContext } from "@/server-lib/ext-thread-context";
@@ -23,6 +26,7 @@ export interface SlackAppMentionEvent {
   channel: string;
   thread_ts?: string;
   team?: string;
+  event_id?: string;
   edited?: {
     user: string;
     ts: string;
@@ -34,6 +38,10 @@ export interface SlackInteractiveAction {
   value: string;
   type: string;
 }
+
+type SlackMentionIntakeResult =
+  | { kind: "created"; threadId: string }
+  | { kind: "updated"; threadId: string };
 
 /**
  * Replaces user mentions like <@U123456> and bot mentions like <@B123456> with readable names
@@ -475,6 +483,7 @@ export async function handleAppMentionEvent(
       });
       return;
     }
+    const defaultRepoFullName = slackSettings.defaultRepoFullName;
 
     const [defaultModel, formattedMessage] = await Promise.all([
       (async () => {
@@ -493,46 +502,116 @@ export async function handleAppMentionEvent(
         event,
       }),
     ]);
-    console.log(
-      "[slack webhook] Creating thread for user",
-      slackAccount.userId,
-    );
+    const message: DBUserMessage = {
+      type: "user",
+      model: defaultModel,
+      parts: [
+        {
+          type: "text",
+          text: formattedMessage,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+    const targetKey = {
+      type: "slack-thread",
+      teamId,
+      channel: event.channel,
+      threadTs,
+    } as const;
+    const idempotencyKey =
+      event.event_id ?? `${teamId}:${event.channel}:${event.ts}`;
+    const slackThreadLockKey = `${teamId}:${event.channel}:${threadTs}`;
+    const intakeResult = await withSlackMentionDeliveryLock({
+      lockKey: slackThreadLockKey,
+      run: async (): Promise<SlackMentionIntakeResult> => {
+        const existingThread = await getThreadBySlackThreadKey({
+          db,
+          userId: slackAccount.userId,
+          teamId,
+          workspaceDomain: slackAccount.slackTeamDomain,
+          channel: event.channel,
+          threadTs,
+        });
+        if (existingThread) {
+          const primaryChat = getPrimaryThreadChat(existingThread);
+          await routeExternalTaskIntake({
+            intent: "follow-up",
+            source: "slack",
+            ownerUserId: slackAccount.userId,
+            ownerReason: "slack-thread-key",
+            externalActor: { type: "slack-user", id: event.user },
+            targetKey,
+            idempotencyKey,
+            message,
+            threadId: existingThread.id,
+            threadChatId: primaryChat.id,
+            appendOrReplace: "append",
+          });
+          return { kind: "updated", threadId: existingThread.id };
+        }
 
-    const { threadId } = await newThreadInternal({
-      userId: slackAccount.userId,
-      message: {
-        type: "user",
-        model: defaultModel,
-        parts: [
-          {
-            type: "text",
-            text: formattedMessage,
+        console.log(
+          "[slack webhook] Creating thread for user",
+          slackAccount.userId,
+        );
+
+        const { threadId } = await routeExternalTaskIntake({
+          intent: "create-thread",
+          source: "slack",
+          ownerUserId: slackAccount.userId,
+          ownerReason: "slack-account-link",
+          externalActor: { type: "slack-user", id: event.user },
+          targetKey,
+          idempotencyKey,
+          message,
+          githubRepoFullName: defaultRepoFullName,
+          baseBranchName: null,
+          headBranchName: null,
+          sourceType: "slack-mention",
+          sourceMetadata: {
+            type: "slack-mention",
+            teamId,
+            workspaceDomain: slackAccount.slackTeamDomain,
+            channel: event.channel,
+            messageTs: event.ts,
+            threadTs,
           },
-        ],
-        timestamp: new Date().toISOString(),
-      },
-      parentThreadId: undefined,
-      parentToolId: undefined,
-      githubRepoFullName: slackSettings.defaultRepoFullName,
-      baseBranchName: null,
-      headBranchName: null,
-      sourceType: "slack-mention",
-      sourceMetadata: {
-        type: "slack-mention",
-        workspaceDomain: slackAccount.slackTeamDomain,
-        channel: event.channel,
-        messageTs: event.ts,
-        threadTs,
+        });
+        return { kind: "created", threadId };
       },
     });
     // Send an acknowledgment
     await slack.chat.postMessage({
       channel: event.channel,
       thread_ts: threadTs,
-      text: `✅ Task created in ${slackSettings.defaultRepoFullName}: ${publicAppUrl()}/task/${threadId}`,
+      text:
+        intakeResult.kind === "created"
+          ? `✅ Task created in ${defaultRepoFullName}: ${publicAppUrl()}/task/${intakeResult.threadId}`
+          : `✅ Task updated in ${defaultRepoFullName}: ${publicAppUrl()}/task/${intakeResult.threadId}`,
     });
-    console.log("[slack webhook] Successfully created thread", threadId);
+    console.log(
+      intakeResult.kind === "created"
+        ? "[slack webhook] Successfully created thread"
+        : "[slack webhook] Successfully queued follow-up",
+      { threadId: intakeResult.threadId },
+    );
   } catch (error) {
     console.error("[slack webhook] Error handling app mention:", error);
   }
+}
+
+async function withSlackMentionDeliveryLock<T>({
+  lockKey,
+  run,
+}: {
+  lockKey: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  return await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('slack-external-task-intake'), hashtext(${lockKey}))`,
+    );
+    return await run();
+  });
 }

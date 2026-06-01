@@ -11,28 +11,13 @@ import {
   ThreadPageChatSummary,
   ThreadPageDiff,
   ThreadPageShell,
-  ThreadStatus,
 } from "../db/types";
 import {
   getThreadReplayEntriesFromCanonicalEvents,
   hasCanonicalReplayProjection,
 } from "./agent-event-log";
 import { getAuthorizedThreadAccess, sqlIsUnread } from "./thread-auth";
-
-const activeThreadStatuses: ReadonlySet<ThreadStatus> = new Set([
-  "queued",
-  "queued-blocked",
-  "queued-sandbox-creation-rate-limit",
-  "queued-tasks-concurrency",
-  "queued-agent-rate-limit",
-  "booting",
-  "working",
-  "stopping",
-  "working-stopped",
-  "working-error",
-  "working-done",
-  "checkpointing",
-]);
+import { isPrimaryChatLiveThreadStatus } from "./thread-lifecycle-policy";
 
 type ThreadPageChatSummaryWithCreatedAt = ThreadPageChatSummary & {
   createdAt: Date;
@@ -53,10 +38,10 @@ function getThreadChatTimestampValue(chat: ThreadPageChatSummaryWithCreatedAt) {
 function getPrimaryThreadChatSummary(
   chats: ThreadPageChatSummaryWithCreatedAt[],
 ): ThreadPageChatSummary {
-  const activeChats = chats.filter((chat) =>
-    activeThreadStatuses.has(chat.status),
+  const liveChats = chats.filter((chat) =>
+    isPrimaryChatLiveThreadStatus(chat.status),
   );
-  const candidateChats = activeChats.length > 0 ? activeChats : chats;
+  const candidateChats = liveChats.length > 0 ? liveChats : chats;
   const primaryChat = [...candidateChats].sort(
     (left, right) =>
       getThreadChatTimestampValue(right) - getThreadChatTimestampValue(left),

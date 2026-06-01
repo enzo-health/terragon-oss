@@ -1,7 +1,7 @@
 import { sendDaemonMessage } from "@/agent/daemon";
 import { waitUntil } from "@vercel/functions";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 
 export async function stopThread({
   userId,
@@ -19,7 +19,7 @@ export async function stopThread({
       userId,
       threadChatId,
       onBeforeExec: async () => {
-        const { updatedStatus } = await updateThreadChatWithTransition({
+        const { updatedStatus } = await transitionThreadChatLifecycle({
           userId,
           threadId,
           threadChatId,

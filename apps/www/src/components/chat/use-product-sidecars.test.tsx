@@ -180,6 +180,113 @@ describe("useProductSidecars", () => {
     expect(invalidateSpy).toHaveBeenCalled();
   });
 
+  it("drops every transcript event family before dispatch", () => {
+    const agent = createFakeAgent();
+    const dispatchThreadViewEvent = vi.fn<(event: ThreadViewEvent) => void>();
+    const queryClient = createQueryClient();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        createElement(QueryClientProvider, {
+          client: queryClient,
+          children: createElement(Harness, {
+            agent: asHttpAgent(agent),
+            dispatchThreadViewEvent,
+          }),
+        }),
+      );
+    });
+
+    const transcriptEvents: BaseEvent[] = [
+      { type: EventType.TEXT_MESSAGE_START, messageId: "assistant-1" },
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "assistant-1",
+        delta: "token",
+      },
+      {
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "assistant-1",
+        delta: " chunk",
+      },
+      { type: EventType.TEXT_MESSAGE_END, messageId: "assistant-1" },
+      {
+        type: EventType.REASONING_MESSAGE_START,
+        messageId: "assistant-1:thinking:0",
+      },
+      {
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: "assistant-1:thinking:0",
+        delta: "thought",
+      },
+      {
+        type: EventType.REASONING_MESSAGE_CHUNK,
+        messageId: "assistant-1:thinking:0",
+        delta: " chunk",
+      },
+      {
+        type: EventType.REASONING_MESSAGE_END,
+        messageId: "assistant-1:thinking:0",
+      },
+      {
+        type: EventType.THINKING_TEXT_MESSAGE_START,
+        messageId: "thinking-1",
+      },
+      {
+        type: EventType.THINKING_TEXT_MESSAGE_CONTENT,
+        messageId: "thinking-1",
+        delta: "legacy thought",
+      },
+      {
+        type: EventType.THINKING_TEXT_MESSAGE_END,
+        messageId: "thinking-1",
+      },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "Bash",
+      },
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "tool-1",
+        delta: '{"command":"pwd"}',
+      },
+      {
+        type: EventType.TOOL_CALL_CHUNK,
+        toolCallId: "tool-1",
+        delta: "running",
+      },
+      { type: EventType.TOOL_CALL_END, toolCallId: "tool-1" },
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId: "tool-1",
+        content: "/repo",
+      },
+      { type: EventType.MESSAGES_SNAPSHOT, messages: [] },
+      {
+        type: EventType.CUSTOM,
+        name: "terragon.data-part",
+        value: {
+          messageId: "assistant-1",
+          partIndex: 0,
+          name: "terragon.terminal",
+          data: { type: "terminal", chunks: [] },
+        },
+      },
+    ];
+
+    act(() => {
+      for (const event of transcriptEvents) {
+        agent.emit(event);
+      }
+    });
+
+    expect(dispatchThreadViewEvent).not.toHaveBeenCalled();
+  });
+
   it("allows meta and native runtime sidecars", () => {
     const agent = createFakeAgent();
     const dispatchThreadViewEvent = vi.fn<(event: ThreadViewEvent) => void>();

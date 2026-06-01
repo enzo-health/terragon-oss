@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { dispatchAgentMessage } from "@/agent/msg/startAgentMessage";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 import { DBSystemMessage } from "@terragon/shared";
 import { waitUntil } from "@vercel/functions";
 import { persistSideEffectAgUiMessages } from "./ag-ui-side-effect-messages";
@@ -18,7 +18,7 @@ export async function sendSystemMessage({
 }) {
   console.log("sendSystemMessage", threadId, message);
   const { didUpdateStatus, updatedStatus, chatSequence } =
-    await updateThreadChatWithTransition({
+    await transitionThreadChatLifecycle({
       userId,
       threadId,
       threadChatId,

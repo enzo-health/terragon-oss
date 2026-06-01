@@ -34,9 +34,8 @@ vi.mock("./process-follow-up-queue", () => ({
   ensureDispatchRetryPersistenceOwnership: vi.fn(({ result }) => result),
 }));
 
-vi.mock("@/agent/update-status", () => ({
-  updateThreadChatWithTransition:
-    transitionMocks.updateThreadChatWithTransition,
+vi.mock("@/server-lib/thread-lifecycle-command", () => ({
+  transitionThreadChatLifecycle: transitionMocks.updateThreadChatWithTransition,
 }));
 
 vi.mock("@/agent/msg/startAgentMessage", () => ({
@@ -134,6 +133,67 @@ describe("queueFollowUpInternal", () => {
       messages: [TEST_USER_MESSAGE],
       appendOrReplace: "append",
       source: "github",
+    });
+
+    expect(threadMocks.updateThreadChat).not.toHaveBeenCalled();
+    expect(queueMocks.maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("queues Linear follow-ups without GitHub text dedupe", async () => {
+    threadMocks.getThreadChat.mockResolvedValue({
+      id: "chat-1",
+      status: "working",
+      messages: [TEST_USER_MESSAGE],
+      queuedMessages: [TEST_USER_MESSAGE],
+    });
+
+    await queueFollowUpInternal({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messages: [TEST_USER_MESSAGE],
+      appendOrReplace: "append",
+      source: "linear",
+    });
+
+    expect(threadMocks.updateThreadChat).toHaveBeenCalledWith({
+      db: {},
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      updates: {
+        appendQueuedMessages: [TEST_USER_MESSAGE],
+        replaceQueuedMessages: undefined,
+      },
+    });
+  });
+
+  it("dedupes non-GitHub external follow-ups by delivery marker", async () => {
+    const messageWithMarker = {
+      ...TEST_USER_MESSAGE,
+      parts: [
+        ...TEST_USER_MESSAGE.parts,
+        {
+          type: "text",
+          text: "\n\n<!-- terragon-external-task-intake:linear:delivery-1 -->",
+        },
+      ],
+    } satisfies DBUserMessage;
+    threadMocks.getThreadChat.mockResolvedValue({
+      id: "chat-1",
+      status: "working",
+      messages: [],
+      queuedMessages: [messageWithMarker],
+    });
+
+    await queueFollowUpInternal({
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      messages: [messageWithMarker],
+      appendOrReplace: "append",
+      source: "linear",
+      dedupeMarker: "<!-- terragon-external-task-intake:linear:delivery-1 -->",
     });
 
     expect(threadMocks.updateThreadChat).not.toHaveBeenCalled();

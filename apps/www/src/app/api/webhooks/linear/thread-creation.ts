@@ -16,13 +16,13 @@ import {
 import { getThreadByLinearDeliveryId } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
 import { getDefaultModel } from "@/server-lib/default-ai-model";
+import { routeExternalTaskIntake } from "@/server-lib/external-task-intake/route-external-task-intake";
 import {
   type AgentSessionExternalUrlInput,
   emitAgentActivity,
   type LinearClientFactory,
   updateAgentSession,
 } from "@/server-lib/linear-agent-activity";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
 
 export interface LinearAgentSessionForThreadCreation {
   id: string;
@@ -348,8 +348,20 @@ async function createThreadRecord({
     ...(deliveryId ? { linearDeliveryId: deliveryId } : {}),
   };
 
-  const { threadId } = await newThreadInternal({
-    userId,
+  const { threadId } = await routeExternalTaskIntake({
+    intent: "create-thread",
+    source: "linear",
+    ownerUserId: userId,
+    ownerReason: "linear-account-link",
+    externalActor: { type: "linear-user", id: actorId },
+    targetKey: {
+      type: "linear-agent-session",
+      organizationId,
+      agentSessionId: agentSession.id,
+      issueId,
+      ...(deliveryId ? { deliveryId } : {}),
+    },
+    idempotencyKey: deliveryId,
     message: {
       type: "user",
       model: defaultModel,

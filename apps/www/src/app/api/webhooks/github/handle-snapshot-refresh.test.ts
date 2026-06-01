@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const waitUntilPromises = vi.hoisted(() => [] as Promise<unknown>[]);
+
 vi.mock("@vercel/functions", () => ({
-  waitUntil: (promise: Promise<unknown>) => promise,
+  waitUntil: (promise: Promise<unknown>) => {
+    waitUntilPromises.push(promise);
+    return promise;
+  },
 }));
 
 vi.mock("@/lib/db", () => ({ db: {} }));
@@ -10,6 +15,13 @@ const getEnvironmentsByRepoFullName = vi.fn();
 vi.mock("@terragon/shared/model/environments", () => ({
   getEnvironmentsByRepoFullName: (args: unknown) =>
     getEnvironmentsByRepoFullName(args),
+  getEnvironmentsWithSnapshots: vi.fn(),
+  markSnapshotsStale: vi.fn(),
+}));
+
+vi.mock("@terragon/sandbox/snapshot-builder", () => ({
+  deleteRepoSnapshot: vi.fn(),
+  listRepoSnapshotNames: vi.fn(),
 }));
 
 const triggerEnvironmentSnapshotBuild = vi.fn().mockResolvedValue(undefined);
@@ -40,6 +52,7 @@ function pushPayload(overrides: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  waitUntilPromises.length = 0;
 });
 
 describe("handlePushSnapshotRefresh", () => {
@@ -56,6 +69,7 @@ describe("handlePushSnapshotRefresh", () => {
     ]);
 
     await handlePushSnapshotRefresh(pushPayload({}));
+    await Promise.all(waitUntilPromises);
 
     expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledTimes(2);
     expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledWith(
@@ -64,10 +78,15 @@ describe("handlePushSnapshotRefresh", () => {
         environmentId: "env-1",
         size: "small",
         force: true,
+        buildReason: "github-base-push",
       }),
     );
     expect(triggerEnvironmentSnapshotBuild).toHaveBeenCalledWith(
-      expect.objectContaining({ size: "large", force: true }),
+      expect.objectContaining({
+        size: "large",
+        force: true,
+        buildReason: "github-base-push",
+      }),
     );
   });
 
@@ -92,6 +111,7 @@ describe("handlePushSnapshotRefresh", () => {
     ]);
 
     await handlePushSnapshotRefresh(pushPayload({}));
+    await Promise.all(waitUntilPromises);
 
     expect(triggerEnvironmentSnapshotBuild).not.toHaveBeenCalled();
   });

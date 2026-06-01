@@ -12,13 +12,14 @@ import {
   getThreadChat,
   getThreadMinimal,
 } from "@terragon/shared/model/threads";
+import { getFollowUpQueueBlockReason } from "@terragon/shared/model/thread-lifecycle-policy";
 import {
   dispatchAgentMessage,
   type StartAgentMessageParams,
 } from "@/agent/msg/startAgentMessage";
 import { getSlashCommandOrNull } from "@/agent/slash-command-handler";
 import { isAgentWorking } from "@/agent/thread-status";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 import { db } from "@/lib/db";
 import { scheduleFollowUpRetryJob } from "@/server-lib/follow-up-retry-jobs";
 
@@ -146,21 +147,13 @@ function getRunnableThreadChatResult(
       },
     };
   }
-  if (threadChat.status === "queued-agent-rate-limit") {
+  const blockReason = getFollowUpQueueBlockReason(threadChat.status);
+  if (blockReason) {
     return {
       result: {
         processed: false,
         dispatchLaunched: false,
-        reason: "agent_rate_limited",
-      },
-    };
-  }
-  if (threadChat.status === "scheduled") {
-    return {
-      result: {
-        processed: false,
-        dispatchLaunched: false,
-        reason: "scheduled_not_runnable",
+        reason: blockReason,
       },
     };
   }
@@ -464,7 +457,7 @@ async function handleFollowUpFailure({
         ],
         timestamp: new Date().toISOString(),
       } satisfies DBSystemMessage;
-      await updateThreadChatWithTransition({
+      await transitionThreadChatLifecycle({
         userId,
         threadId,
         threadChatId,
@@ -502,7 +495,7 @@ async function handleFollowUpFailure({
         ],
         timestamp: new Date().toISOString(),
       } satisfies DBSystemMessage;
-      await updateThreadChatWithTransition({
+      await transitionThreadChatLifecycle({
         userId,
         threadId,
         threadChatId,
@@ -715,7 +708,7 @@ export async function maybeProcessFollowUpQueue({
     );
 
     // Remove the slash command from the queued messages.
-    const { didUpdateStatus } = await updateThreadChatWithTransition({
+    const { didUpdateStatus } = await transitionThreadChatLifecycle({
       userId,
       threadId,
       threadChatId: threadChatId,
@@ -799,7 +792,7 @@ export async function maybeProcessFollowUpQueue({
     }
   }
 
-  const { didUpdateStatus } = await updateThreadChatWithTransition({
+  const { didUpdateStatus } = await transitionThreadChatLifecycle({
     userId,
     threadId,
     threadChatId,

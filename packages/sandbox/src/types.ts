@@ -69,6 +69,11 @@ export type CreateSandboxOptions = {
     sandboxId: string;
     isCreatingSandbox: boolean;
   }) => Promise<void>;
+  onSnapshotRefreshFailed?: (params: {
+    sandboxId: string;
+    repoBaseBranchName: string;
+    errorMessage: string;
+  }) => Promise<void>;
   /**
    * Called (throttled, at most once per 200 ms) with the latest accumulated
    * install-progress snapshot while the setup script's `pnpm install` step

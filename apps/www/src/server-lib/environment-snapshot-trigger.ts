@@ -94,12 +94,14 @@ export async function triggerEnvironmentSnapshotBuild({
   environmentId,
   size = "small",
   force = false,
+  buildReason,
 }: {
   db: DB;
   userId: string;
   environmentId: string;
   size?: SandboxSize;
   force?: boolean;
+  buildReason?: string;
 }): Promise<void> {
   try {
     const inputs = await loadSnapshotBuildInputs({ db, userId, environmentId });
@@ -119,6 +121,7 @@ export async function triggerEnvironmentSnapshotBuild({
       environmentVariables: inputs.environmentVariables,
       mcpConfig: inputs.mcpConfig,
       force,
+      buildReason,
     });
   } catch (error) {
     console.warn(

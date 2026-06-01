@@ -5,7 +5,6 @@ import {
 } from "@terragon/daemon/shared";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
-import { type DBMessage } from "@terragon/shared";
 import * as schema from "@terragon/shared/db/schema";
 import {
   assignThreadChatMessageSeqToCanonicalEvents,
@@ -32,12 +31,10 @@ import {
 } from "@terragon/shared/runtime/failure";
 import { waitUntil } from "@vercel/functions";
 import { and, eq } from "drizzle-orm";
-import { toDBMessage } from "@/agent/msg/toDBMessage";
 import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   type DaemonTokenAuthContext,
   type DaemonTokenProvider,
@@ -48,12 +45,8 @@ import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import {
   type AgUiPublishRow,
-  type AssistantMessagePartsInput,
   broadcastAgUiEventEphemeral,
   buildDeltaRunEndRows,
-  canonicalEventsToAgUiRows,
-  daemonDeltasToAgUiRows,
-  dbAgentMessagePartsToAgUiRows,
   metaEventsToAgUiEvents,
   persistAgUiEvents,
   persistAndPublishAgUiEvents,
@@ -61,14 +54,26 @@ import {
 } from "@/server-lib/ag-ui-publisher";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
+import {
+  buildCanonicalRunTerminalEvent,
+  buildPreLegacyAgUiCommitPlan,
+  buildTerminalAgUiCommitPlan,
+  type CanonicalPersistenceSummary,
+  type DaemonEventEnvelopeV2,
+  emptyCanonicalPersistenceSummary,
+  filterCanonicalEventsForDeltaCoexistence,
+  findCanonicalEventContextMismatch,
+  findCanonicalRunTerminalEvent,
+  splitCanonicalEventsForCommit,
+} from "@/server-lib/daemon-event/event-commit";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
-
-type DaemonEventEnvelopeV2 = {
-  payloadVersion: 2;
-  eventId: string;
-  runId: string;
-  seq: number;
-};
+import {
+  buildFailedTerminalErrorMetadata,
+  buildTerminalLifecyclePolicy,
+  resolveTerminalStatusForTransition,
+  shouldQueueTerminalCheckpoint,
+} from "@/server-lib/daemon-event/run-completion";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -84,56 +89,6 @@ type TerminalAckBase = {
 };
 
 type TerminalAckState = TerminalAckBase;
-
-type CanonicalPersistenceSummary = {
-  attempted: number;
-  inserted: number;
-  deduplicated: number;
-  /**
-   * eventIds of AG-UI rows that were freshly inserted for the incoming
-   * canonical events (expanded 1→N). Used to backfill
-   * `thread_chat_message_seq` after `handleDaemonEvent` returns a replay
-   * sequence number — the route must NOT re-map via
-   * `canonicalEventsToAgUiRows` because that would risk drift between
-   * producer and consumer.
-   */
-  insertedEventIds: string[];
-  persistedEvents: Awaited<
-    ReturnType<typeof persistAgUiEvents>
-  >["persistedEvents"];
-  persistedEnvelopes: Awaited<
-    ReturnType<typeof persistAgUiEvents>
-  >["persistedEnvelopes"];
-};
-
-type CanonicalEventsPayload = NonNullable<
-  DaemonEventAPIBody["canonicalEvents"]
->;
-
-type DaemonDeltasPayload = NonNullable<DaemonEventAPIBody["deltas"]>;
-
-function filterCanonicalEventsForDeltaCoexistence(params: {
-  canonicalEvents: CanonicalEventsPayload | null;
-  deltas: DaemonDeltasPayload | null | undefined;
-}): CanonicalEventsPayload | null {
-  const { canonicalEvents, deltas } = params;
-  if (!canonicalEvents || canonicalEvents.length === 0) {
-    return canonicalEvents;
-  }
-  if (!deltas || deltas.length === 0) {
-    return canonicalEvents;
-  }
-
-  // Daemon v2 can emit both:
-  // 1) canonical assistant-message events (full text), and
-  // 2) incremental deltas for the same turn.
-  //
-  // Replaying both produces duplicated assistant bubbles in the UI.
-  // Keep streaming deltas as the source of truth for assistant text when
-  // they are present, and persist only the non-assistant canonical events
-  // (run-started, run-terminal, tool lifecycle, etc.).
-  return canonicalEvents.filter((event) => event.type !== "assistant-message");
-}
 
 function jsonTerminalAckResponse(state: TerminalAckState): Response {
   return Response.json(
@@ -171,33 +126,6 @@ function getDaemonEventEnvelopeV2(
     runId: body.runId,
     seq,
   };
-}
-
-function findCanonicalEventContextMismatch(params: {
-  canonicalEvents: CanonicalEventsPayload;
-  runId: string;
-  threadId: string;
-  threadChatId: string;
-}): {
-  eventId: string;
-  reason: "payloadVersion" | "runId" | "threadId" | "threadChatId";
-} | null {
-  for (const event of params.canonicalEvents) {
-    if (event.payloadVersion !== 2) {
-      return { eventId: event.eventId, reason: "payloadVersion" };
-    }
-    if (event.runId !== params.runId) {
-      return { eventId: event.eventId, reason: "runId" };
-    }
-    if (event.threadId !== params.threadId) {
-      return { eventId: event.eventId, reason: "threadId" };
-    }
-    if (event.threadChatId !== params.threadChatId) {
-      return { eventId: event.eventId, reason: "threadChatId" };
-    }
-  }
-
-  return null;
 }
 
 function requiredDaemonProviderScopesForAgent(
@@ -324,57 +252,6 @@ function deriveDaemonTerminalErrorInfo(
   return {
     errorMessage: null,
     errorCategory: "unknown",
-  };
-}
-
-function findCanonicalRunTerminalEvent(
-  canonicalEvents: CanonicalEventsPayload,
-): {
-  eventId: string;
-  seq: number;
-  status: "completed" | "failed" | "stopped";
-  errorMessage: string | null;
-  errorCode: string | null;
-  headShaAtCompletion: string | null;
-} | null {
-  for (const event of canonicalEvents) {
-    if (event.category !== "operational") continue;
-    if (event.type !== "run-terminal") continue;
-    return {
-      eventId: event.eventId,
-      seq: event.seq,
-      status: event.status,
-      errorMessage: event.errorMessage ?? null,
-      errorCode: event.errorCode ?? null,
-      headShaAtCompletion: event.headShaAtCompletion ?? null,
-    };
-  }
-  return null;
-}
-
-function buildCanonicalRunTerminalEvent(params: {
-  envelope: DaemonEventEnvelopeV2;
-  threadId: string;
-  threadChatId: string;
-  status: "completed" | "failed" | "stopped";
-  errorMessage: string | null;
-  errorCode: string | null;
-  headShaAtCompletion: string | null;
-}): CanonicalEventsPayload[number] {
-  return {
-    payloadVersion: 2,
-    eventId: params.envelope.eventId,
-    runId: params.envelope.runId,
-    threadId: params.threadId,
-    threadChatId: params.threadChatId,
-    seq: params.envelope.seq,
-    timestamp: new Date().toISOString(),
-    category: "operational",
-    type: "run-terminal",
-    status: params.status,
-    errorMessage: params.errorMessage,
-    errorCode: params.errorCode,
-    headShaAtCompletion: params.headShaAtCompletion,
   };
 }
 
@@ -1074,15 +951,13 @@ export async function POST(request: Request) {
     runContext = terminalFenceResult.runContext;
   }
 
-  const terminalCanonicalEvents =
-    canonicalEvents?.filter((event) => event.type === "run-terminal") ?? [];
-  let canonicalEventsForPersistence: CanonicalEventsPayload | null =
-    canonicalEvents?.filter((event) => event.type !== "run-terminal") ?? null;
-  if (canonicalEventsForPersistence?.length === 0) {
-    canonicalEventsForPersistence = null;
-  }
-  let terminalCanonicalEventsForPersistence: CanonicalEventsPayload | null =
-    terminalCanonicalEvents.length > 0 ? terminalCanonicalEvents : null;
+  const {
+    canonicalEventsForPersistence,
+    terminalCanonicalEventsForPersistence:
+      initialTerminalCanonicalEventsForPersistence,
+  } = splitCanonicalEventsForCommit(canonicalEvents);
+  let terminalCanonicalEventsForPersistence =
+    initialTerminalCanonicalEventsForPersistence;
   if (
     daemonRunStatusFromMessages !== "processing" &&
     envelopeV2 &&
@@ -1100,83 +975,20 @@ export async function POST(request: Request) {
     terminalCanonicalEventsForPersistence = [synthesizedTerminal];
   }
 
-  // --- Build all non-terminal AG-UI rows upfront for a single merged persist ---
-  // Merging canonical + delta + rich-part rows into one persistAndPublishAgUiEvents
-  // call reduces advisory-lock acquisitions from 3 to 1 and cuts DB round-trips.
-  // Rich-part rows are computed from toDBMessage (pure, deterministic) before
-  // handleDaemonEvent — the second toDBMessage call in the old code is eliminated.
-
-  const canonicalRows = canonicalEventsForPersistence
-    ? canonicalEventsToAgUiRows(canonicalEventsForPersistence)
-    : [];
-  const deltaRows =
-    deltas && deltas.length > 0
-      ? daemonDeltasToAgUiRows({ runId: authoritativeRunId, deltas })
-      : [];
-
-  // Pre-compute toDBMessage results once for rich-part extraction.
-  // This eliminates the redundant second call that previously ran after
-  // handleDaemonEvent. toDBMessage is pure, so the output is identical.
-  let richPartRows: AgUiPublishRow[] = [];
-  const precomputedDBMessages: Map<number, DBMessage[]> = new Map();
-  if (canPersistCanonicalEvents && envelopeV2) {
-    const richPartInputs: AssistantMessagePartsInput[] = [];
-    let messageIndex = 0;
-    for (const claudeMessage of messages) {
-      const isCodexDeltaStreamed =
-        claudeMessage.type === "assistant" &&
-        claudeMessage._codexItemId !== undefined;
-      // W-ID.3: For Claude/ACP messages with _claudeStreamedBlockIndices,
-      // text/thinking at those indices was already delta-streamed. Filter
-      // those parts from the rich-part input so we don't emit duplicate
-      // CUSTOM events for content the delta stream already owns.
-      const claudeStreamedBlockSet = new Set<number>(
-        claudeMessage.type === "assistant"
-          ? (claudeMessage._claudeStreamedBlockIndices ?? [])
-          : [],
-      );
-      const dbMsgs = toDBMessage(claudeMessage);
-      precomputedDBMessages.set(messageIndex, dbMsgs);
-      for (const dbMsg of dbMsgs) {
-        const currentIndex = messageIndex;
-        messageIndex++;
-        if (dbMsg.type !== "agent") continue;
-        if (isCodexDeltaStreamed) continue;
-        // Filter out text/thinking parts whose block index was delta-streamed.
-        const filteredParts =
-          claudeStreamedBlockSet.size > 0
-            ? dbMsg.parts.filter(
-                (part, idx) =>
-                  !(
-                    (part.type === "text" || part.type === "thinking") &&
-                    claudeStreamedBlockSet.has(idx)
-                  ),
-              )
-            : dbMsg.parts;
-        const hasRichParts = filteredParts.some((part) => part.type !== "text");
-        if (!hasRichParts) continue;
-        richPartInputs.push({
-          messageId: `${envelopeV2.eventId}:msg:${currentIndex}`,
-          parts: filteredParts,
-        });
-      }
-    }
-    if (richPartInputs.length > 0) {
-      richPartRows = dbAgentMessagePartsToAgUiRows(richPartInputs);
-    }
-  }
-
-  const hasPersistableRows =
-    canonicalEventsForPersistence != null ||
-    (deltas != null && deltas.length > 0) ||
-    richPartRows.length > 0;
-  const mergedRows = [...canonicalRows, ...deltaRows, ...richPartRows];
+  const preLegacyCommitPlan = buildPreLegacyAgUiCommitPlan({
+    canPersistCanonicalEvents,
+    envelopeV2,
+    messages,
+    canonicalEventsForPersistence,
+    deltas,
+    runId: authoritativeRunId,
+  });
   let canonicalPersistence: {
     summary: CanonicalPersistenceSummary;
     response?: undefined;
   };
 
-  if (!canPersistCanonicalEvents && hasPersistableRows) {
+  if (!canPersistCanonicalEvents && preLegacyCommitPlan.requiresPersistence) {
     return Response.json(
       {
         success: false,
@@ -1186,14 +998,14 @@ export async function POST(request: Request) {
     );
   }
 
-  if (hasPersistableRows) {
+  if (preLegacyCommitPlan.requiresPersistence) {
     try {
       const mergedResult = await persistAndPublishAgUiEvents({
         db,
         runId: runContext.runId,
         threadId,
         threadChatId,
-        rows: mergedRows,
+        rows: preLegacyCommitPlan.mergedRows,
       });
       canonicalPersistence = {
         summary: {
@@ -1212,10 +1024,10 @@ export async function POST(request: Request) {
           threadId,
           threadChatId,
           runId: runContext.runId,
-          canonicalRowCount: canonicalRows.length,
-          deltaRowCount: deltaRows.length,
-          richPartRowCount: richPartRows.length,
-          totalRows: mergedRows.length,
+          canonicalRowCount: preLegacyCommitPlan.canonicalRows.length,
+          deltaRowCount: preLegacyCommitPlan.deltaRows.length,
+          richPartRowCount: preLegacyCommitPlan.richPartRows.length,
+          totalRows: preLegacyCommitPlan.mergedRows.length,
           inserted: mergedResult.inserted,
           deduplicated: mergedResult.skipped,
         },
@@ -1239,14 +1051,7 @@ export async function POST(request: Request) {
     }
   } else {
     canonicalPersistence = {
-      summary: {
-        attempted: 0,
-        inserted: 0,
-        deduplicated: 0,
-        insertedEventIds: [],
-        persistedEvents: [],
-        persistedEnvelopes: [],
-      },
+      summary: emptyCanonicalPersistenceSummary(),
     };
   }
 
@@ -1651,27 +1456,22 @@ export async function POST(request: Request) {
     const terminalOps: Array<Promise<unknown>> = [];
 
     if (fenceTerminalTransition) {
-      const terminalStatusForTransition = result.terminalRecoveryQueued
-        ? ("completed" as const)
-        : resolvedStatus;
+      const terminalStatusForTransition = resolveTerminalStatusForTransition({
+        resolvedStatus,
+        terminalRecoveryQueued: result.terminalRecoveryQueued,
+      });
       const terminalThread =
         terminalStatusForTransition === "completed"
           ? await getThreadMinimal({ db, threadId, userId })
           : null;
-      const shouldSkipCheckpoint =
-        terminalStatusForTransition === "stopped" ||
-        (terminalStatusForTransition === "completed" &&
-          !!terminalThread?.disableGitCheckpointing);
-      const eventType =
-        terminalStatusForTransition === "stopped"
-          ? ("assistant.message_stop" as const)
-          : terminalStatusForTransition === "failed"
-            ? ("assistant.message_error" as const)
-            : shouldSkipCheckpoint
-              ? ("assistant.message_done_skip_checkpoint" as const)
-              : ("assistant.message_done" as const);
+      const { eventType, checkpointReadyStatus } = buildTerminalLifecyclePolicy(
+        {
+          status: terminalStatusForTransition,
+          disableGitCheckpointing: !!terminalThread?.disableGitCheckpointing,
+        },
+      );
 
-      const transitionResult = await updateThreadChatWithTransition({
+      const transitionResult = await transitionThreadChatLifecycle({
         userId,
         threadId,
         threadChatId,
@@ -1712,12 +1512,6 @@ export async function POST(request: Request) {
           );
         }
       }
-      const checkpointReadyStatus =
-        eventType === "assistant.message_done"
-          ? "working-done"
-          : eventType === "assistant.message_error"
-            ? "working-error"
-            : null;
       if (
         checkpointReadyStatus !== null &&
         !transitionResult.didUpdateStatus &&
@@ -1730,11 +1524,13 @@ export async function POST(request: Request) {
           threadChatId,
         });
       }
-      const shouldQueueCheckpoint =
-        checkpointReadyStatus !== null &&
-        (transitionResult.didUpdateStatus ||
-          latestThreadChatAfterTransition?.status === checkpointReadyStatus);
-      if (shouldQueueCheckpoint) {
+      if (
+        shouldQueueTerminalCheckpoint({
+          checkpointReadyStatus,
+          didUpdateStatus: transitionResult.didUpdateStatus,
+          latestStatus: latestThreadChatAfterTransition?.status,
+        })
+      ) {
         waitUntil(checkpointThread({ userId, threadId, threadChatId }));
       }
 
@@ -1767,21 +1563,9 @@ export async function POST(request: Request) {
           }),
         ]);
       } else if (resolvedStatus === "failed") {
-        const errorMessageStr = daemonTerminalErrorInfo.errorMessage;
-        const isPromptTooLong =
-          !!errorMessageStr &&
-          /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
-            errorMessageStr,
-          );
-        const errorMetadata: {
-          errorMessage: "prompt-too-long" | "agent-generic-error";
-          errorMessageInfo: string | null;
-        } = {
-          errorMessage: isPromptTooLong
-            ? "prompt-too-long"
-            : "agent-generic-error",
-          errorMessageInfo: isPromptTooLong ? null : (errorMessageStr ?? ""),
-        };
+        const errorMetadata = buildFailedTerminalErrorMetadata(
+          daemonTerminalErrorInfo.errorMessage,
+        );
         const { didUpdate } = await updateThreadChatTerminalMetadataIfTerminal({
           db,
           userId,
@@ -1888,13 +1672,10 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing" &&
     (terminalCanonicalEventsForPersistence || deltaEndRows.length > 0)
   ) {
-    const terminalCanonicalRows = terminalCanonicalEventsForPersistence
-      ? canonicalEventsToAgUiRows(terminalCanonicalEventsForPersistence)
-      : [];
-    // Delta-end rows must come BEFORE terminal events in the array so they
-    // receive lower seq numbers (replay is seq-ordered; END must precede
-    // RUN_FINISHED).
-    const terminalMergedRows = [...deltaEndRows, ...terminalCanonicalRows];
+    const { terminalMergedRows } = buildTerminalAgUiCommitPlan({
+      terminalCanonicalEventsForPersistence,
+      deltaEndRows,
+    });
     if (terminalMergedRows.length > 0) {
       if (!canPersistCanonicalEvents) {
         return Response.json(

@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { getOrCreateEnvironment } from "@terragon/shared/model/environments";
-import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-trigger";
+import { scheduleEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-scheduler";
 
 export const createEnvironment = userOnlyAction(
   async function createEnvironment(
@@ -18,10 +18,11 @@ export const createEnvironment = userOnlyAction(
     });
     // Warm a snapshot eagerly so the first task on this repo skips clone+install.
     waitUntil(
-      triggerEnvironmentSnapshotBuild({
+      scheduleEnvironmentSnapshotBuild({
         db,
         userId,
         environmentId: environment.id,
+        reason: "environment-created",
       }),
     );
     return environment;

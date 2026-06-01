@@ -14,6 +14,7 @@ import type {
   ThreadViewModel,
   ThreadViewSnapshot,
 } from "./thread-view-model/types";
+export { createThreadViewSidecarEventProjector } from "./thread-view-model/sidecars";
 
 type UseThreadViewModelArgs = {
   snapshot: ThreadViewSnapshot;
@@ -180,38 +181,6 @@ function isStatusOrTerminalEvent(event: ThreadViewEventForAgUi): boolean {
     event.type === EventType.CUSTOM &&
     Reflect.get(event, "name") === "thread.status_changed"
   );
-}
-
-export function createThreadViewSidecarEventProjector(): (
-  event: ThreadViewEventForAgUi,
-) => ThreadViewEventForAgUi | null {
-  return (event) => {
-    switch (event.type) {
-      case EventType.RUN_STARTED:
-      case EventType.RUN_FINISHED:
-      case EventType.RUN_ERROR:
-        return event;
-      case EventType.TEXT_MESSAGE_START:
-      case EventType.TEXT_MESSAGE_CONTENT:
-      case EventType.TEXT_MESSAGE_CHUNK:
-      case EventType.TEXT_MESSAGE_END:
-      case EventType.REASONING_MESSAGE_START:
-      case EventType.REASONING_MESSAGE_CONTENT:
-      case EventType.REASONING_MESSAGE_END:
-      case EventType.REASONING_MESSAGE_CHUNK:
-      case EventType.THINKING_TEXT_MESSAGE_START:
-      case EventType.THINKING_TEXT_MESSAGE_CONTENT:
-      case EventType.THINKING_TEXT_MESSAGE_END:
-      case EventType.TOOL_CALL_START:
-      case EventType.TOOL_CALL_ARGS:
-      case EventType.TOOL_CALL_CHUNK:
-      case EventType.TOOL_CALL_END:
-      case EventType.TOOL_CALL_RESULT:
-        return null;
-      default:
-        return event;
-    }
-  };
 }
 
 function isRuntimeLifecycleEvent(event: ThreadViewEventForAgUi): boolean {

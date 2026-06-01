@@ -1,21 +1,5 @@
 import type { ThreadInfoFull, ThreadChatInfoFull } from "../db/types";
-
-const activeThreadStatuses: ReadonlySet<ThreadChatInfoFull["status"]> = new Set(
-  [
-    "queued",
-    "queued-blocked",
-    "queued-sandbox-creation-rate-limit",
-    "queued-tasks-concurrency",
-    "queued-agent-rate-limit",
-    "booting",
-    "working",
-    "stopping",
-    "working-stopped",
-    "working-error",
-    "working-done",
-    "checkpointing",
-  ],
-);
+import { isPrimaryChatLiveThreadStatus } from "../model/thread-lifecycle-policy";
 
 function getThreadChatTimestampValue(chat: ThreadChatInfoFull): number {
   const updatedAtTime = chat.updatedAt.getTime();
@@ -33,10 +17,10 @@ export function getPrimaryThreadChat(
   thread: ThreadInfoFull,
 ): ThreadChatInfoFull {
   const threadChats = [...thread.threadChats];
-  const activeChats = threadChats.filter((chat) =>
-    activeThreadStatuses.has(chat.status),
+  const liveChats = threadChats.filter((chat) =>
+    isPrimaryChatLiveThreadStatus(chat.status),
   );
-  const candidateChats = activeChats.length > 0 ? activeChats : threadChats;
+  const candidateChats = liveChats.length > 0 ? liveChats : threadChats;
   const threadChat = candidateChats.sort(
     (left, right) =>
       getThreadChatTimestampValue(right) - getThreadChatTimestampValue(left),

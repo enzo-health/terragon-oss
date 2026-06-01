@@ -49,6 +49,8 @@ export function SystemMessage({
         return "Retrying after error";
       case "follow-up-retry-failed":
         return "Follow-up failed";
+      case "snapshot-refresh-degraded":
+        return "Snapshot refresh degraded";
       case "auto-fix-ci-failure":
         return "Auto-fixing CI failures";
       case "auto-respond-changes-requested":
@@ -70,6 +72,7 @@ export function SystemMessage({
       case "invalid-token-retry":
       case "agent-error-retry":
       case "follow-up-retry-failed":
+      case "snapshot-refresh-degraded":
       case "auto-fix-ci-failure":
       case "auto-respond-changes-requested":
         // Semantic destructive — uses theme token, dark-mode safe

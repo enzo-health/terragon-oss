@@ -24,8 +24,7 @@ import {
   getPRAuthorGitHubUsername,
   parseRepoFullName,
 } from "@/lib/github";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { newThreadInternal } from "@/server-lib/new-thread-internal";
+import { routeExternalTaskIntake } from "@/server-lib/external-task-intake/route-external-task-intake";
 import {
   addEyesReactionToComment,
   extractModelFromComment,
@@ -155,6 +154,7 @@ export async function handleAppMention({
         commentId,
         commentBody,
         commentGitHubUsername,
+        commentGitHubAccountId,
         branchName,
         baseBranchName,
         diffContext,
@@ -298,6 +298,7 @@ async function triggerTasksForUser({
   commentId,
   commentBody,
   commentGitHubUsername,
+  commentGitHubAccountId,
   branchName,
   baseBranchName,
   diffContext,
@@ -312,6 +313,7 @@ async function triggerTasksForUser({
   commentId: number | undefined;
   commentBody: string;
   commentGitHubUsername: string;
+  commentGitHubAccountId: number | undefined;
   branchName: string;
   baseBranchName: string;
   diffContext?: string;
@@ -388,6 +390,20 @@ async function triggerTasksForUser({
         timestamp: new Date().toISOString(),
       };
     };
+    const externalActor =
+      commentGitHubAccountId === undefined
+        ? undefined
+        : ({
+            type: "github-user",
+            accountId: commentGitHubAccountId.toString(),
+          } as const);
+    const targetKey = {
+      type: "github-mention",
+      repoFullName,
+      issueOrPrNumber,
+      issueOrPrType,
+      commentId,
+    } as const;
 
     const queueOrCreateThreadForGitHubMention = async ({
       threadIdOrNull,
@@ -407,12 +423,16 @@ async function triggerTasksForUser({
           repoFullName,
           userId,
         });
-        await queueFollowUpInternal({
-          userId,
+        await routeExternalTaskIntake({
+          intent: "follow-up",
+          source: "github",
+          ownerUserId: userId,
+          ownerReason: "github-mention-existing-thread",
+          externalActor,
+          targetKey,
+          message: getUserMessageToSend({ forcedAgent, isFollowUp: true }),
           threadId: threadIdOrNull,
           threadChatId: threadChatIdOrNull,
-          messages: [getUserMessageToSend({ forcedAgent, isFollowUp: true })],
-          source: "github",
           appendOrReplace: "append",
         });
         return { threadId: threadIdOrNull, threadChatId: threadChatIdOrNull };
@@ -429,11 +449,16 @@ async function triggerTasksForUser({
         issueOrPrNumber,
         commentId,
       };
-      const { threadId, threadChatId } = await newThreadInternal({
-        userId,
+      const { threadId, threadChatId } = await routeExternalTaskIntake({
+        intent: "create-thread",
+        source: "github",
+        ownerUserId: userId,
+        ownerReason: automation
+          ? "github-mention-automation"
+          : "github-mention-account-link",
+        externalActor,
+        targetKey,
         message: getUserMessageToSend({ forcedAgent: null, isFollowUp: false }),
-        parentThreadId: undefined,
-        parentToolId: undefined,
         automation: automation ?? undefined,
         githubRepoFullName: repoFullName,
         baseBranchName,

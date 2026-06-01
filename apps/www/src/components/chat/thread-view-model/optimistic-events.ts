@@ -1,7 +1,6 @@
-import type { DBUserMessage, ThreadStatus, UIMessage } from "@terragon/shared";
+import type { DBUserMessage, ThreadStatus } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { RepoFileLineRange } from "@terragon/shared/utils/repo-file-link";
-import { stableSerialize } from "./renderable-part-shape";
 import type { ThreadViewEvent, ThreadViewModelState } from "./types";
 
 export function createOptimisticUserSubmittedEvent({
@@ -68,23 +67,8 @@ export function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
 ): ThreadViewModelState {
-  const uiMessage = dbUserMessageToUiMessage({
-    message: event.message,
-    id: `user-optimistic-${state.threadChatId}-${state.dbMessages.length}`,
-  });
-  const duplicate = state.transcript.messages.some((message) =>
-    isSameUserMessage(message, uiMessage),
-  );
-  const transcript = duplicate
-    ? state.transcript
-    : {
-        ...state.transcript,
-        messages: [...state.transcript.messages, uiMessage],
-      };
-
   return {
     ...state,
-    transcript,
     dbMessages: [...state.dbMessages, event.message],
     sidePanel: {
       ...state.sidePanel,
@@ -96,32 +80,6 @@ export function applyOptimisticUserSubmit(
       threadStatus: event.optimisticStatus,
       runStarted: event.optimisticStatus !== "complete",
     },
-    hasOptimisticTranscriptEvents: true,
+    hasOptimisticUserSubmit: true,
   };
-}
-
-function dbUserMessageToUiMessage({
-  message,
-  id,
-}: {
-  message: DBUserMessage;
-  id: string;
-}): Extract<UIMessage, { role: "user" }> {
-  return {
-    id,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
-}
-
-function isSameUserMessage(left: UIMessage, right: UIMessage): boolean {
-  if (left.role !== "user" || right.role !== "user") {
-    return false;
-  }
-  if (left.timestamp && right.timestamp && left.timestamp === right.timestamp) {
-    return true;
-  }
-  return stableSerialize(left.parts) === stableSerialize(right.parts);
 }

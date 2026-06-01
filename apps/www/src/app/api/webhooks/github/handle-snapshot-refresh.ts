@@ -1,9 +1,7 @@
 import { waitUntil } from "@vercel/functions";
 import type { EmitterWebhookEvent } from "@octokit/webhooks";
-import type { SandboxSize } from "@terragon/types/sandbox";
-import { getEnvironmentsByRepoFullName } from "@terragon/shared/model/environments";
 import { db } from "@/lib/db";
-import { triggerEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-trigger";
+import { scheduleRepositorySnapshotRefresh } from "@/server-lib/environment-snapshot-scheduler";
 
 type PushEvent = EmitterWebhookEvent<"push">["payload"];
 
@@ -30,28 +28,14 @@ export async function handlePushSnapshotRefresh(
     return;
   }
 
-  const environments = await getEnvironmentsByRepoFullName({
-    db,
-    repoFullName,
-  });
-
-  for (const environment of environments) {
-    const sizes = new Set<SandboxSize>();
-    for (const snapshot of environment.snapshots ?? []) {
-      if (snapshot.provider === "daytona") {
-        sizes.add(snapshot.size);
-      }
-    }
-    for (const size of sizes) {
-      waitUntil(
-        triggerEnvironmentSnapshotBuild({
-          db,
-          userId: environment.userId,
-          environmentId: environment.id,
-          size,
-          force: true,
-        }),
-      );
-    }
-  }
+  waitUntil(
+    scheduleRepositorySnapshotRefresh({
+      db,
+      verifiedRepository: {
+        fullName: repoFullName,
+        defaultBranch,
+      },
+      reason: "github-base-push",
+    }),
+  );
 }

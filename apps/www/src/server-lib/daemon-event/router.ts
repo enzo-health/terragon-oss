@@ -21,7 +21,6 @@ import {
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
 import { isQueuedStatus } from "@/agent/thread-status";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { db } from "@/lib/db";
 import {
   hasInvalidTokenRetrySideEffectMarker,
@@ -41,6 +40,7 @@ import {
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 import { trackUsageEvents } from "@/server-lib/usage-events";
 import {
   buildInterruptedToolResultMessages,
@@ -73,7 +73,7 @@ export function createDefaultDependencies(): RouterDependencies {
     getThreadMinimal,
     touchThreadChatUpdatedAt,
     updateThreadChat,
-    updateThreadChatWithTransition,
+    updateThreadChatWithTransition: transitionThreadChatLifecycle,
     updateThread,
     getFeatureFlagForUser,
     extendSandboxLife,

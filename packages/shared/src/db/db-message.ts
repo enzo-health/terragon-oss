@@ -51,6 +51,7 @@ export type DBSystemMessage = {
     | "compact-result"
     | "agent-error-retry"
     | "follow-up-retry-failed"
+    | "snapshot-refresh-degraded"
     | "auto-fix-ci-failure"
     | "auto-respond-changes-requested";
   parts: DBTextPart[];

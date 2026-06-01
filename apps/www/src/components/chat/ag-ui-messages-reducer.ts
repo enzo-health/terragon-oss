@@ -203,13 +203,19 @@ export function agUiMessagesReducer(
       const delta = getField<string>(event, "delta");
       if (!toolCallId || !delta) return state;
       const prev = state.toolArgsBuffers[toolCallId] ?? "";
-      return {
+      const raw = prev + delta;
+      const nextState = {
         ...state,
         toolArgsBuffers: {
           ...state.toolArgsBuffers,
-          [toolCallId]: prev + delta,
+          [toolCallId]: raw,
         },
       };
+      const parsed = safeParseJson(raw);
+      if (Object.keys(parsed).length === 0) {
+        return nextState;
+      }
+      return updateToolPartParameters(nextState, toolCallId, parsed);
     }
 
     case EventType.TOOL_CALL_CHUNK: {
@@ -225,11 +231,10 @@ export function agUiMessagesReducer(
       const raw = state.toolArgsBuffers[toolCallId];
       if (raw === undefined) return state;
       const parsed = safeParseJson(raw);
-      const withParameters = updateToolPartParameters(
-        state,
-        toolCallId,
-        parsed,
-      );
+      const withParameters =
+        Object.keys(parsed).length > 0
+          ? updateToolPartParameters(state, toolCallId, parsed)
+          : state;
       const toolArgsBuffers = removeToolArgsBuffer(
         withParameters.toolArgsBuffers,
         toolCallId,

@@ -9,7 +9,7 @@ import { getPrimaryThreadChat } from "@terragon/shared/utils/thread-utils";
 import { decryptValue } from "@terragon/utils/encryption";
 import { db } from "@/lib/db";
 import { getDefaultModel } from "@/server-lib/default-ai-model";
-import { queueFollowUpInternal } from "@/server-lib/follow-up";
+import { routeExternalTaskIntake } from "@/server-lib/external-task-intake/route-external-task-intake";
 import {
   emitAgentActivity,
   type LinearClientFactory,
@@ -593,20 +593,28 @@ async function handleAgentSessionPrompted(
     threadId: thread.id,
   });
 
-  await queueFollowUpInternal({
-    userId: thread.userId,
+  await routeExternalTaskIntake({
+    intent: "follow-up",
+    source: "linear",
+    ownerUserId: thread.userId,
+    ownerReason: "linear-thread-owner",
+    targetKey: {
+      type: "linear-agent-session",
+      organizationId,
+      agentSessionId,
+      issueId: meta.issueId,
+      ...(deliveryId ? { deliveryId } : {}),
+    },
+    ...(deliveryId ? { idempotencyKey: deliveryId } : {}),
     threadId: thread.id,
     threadChatId,
-    messages: [
-      {
-        type: "user",
-        model: defaultModel,
-        parts: [{ type: "text", text: promptBody }],
-        timestamp: new Date().toISOString(),
-      },
-    ],
+    message: {
+      type: "user",
+      model: defaultModel,
+      parts: [{ type: "text", text: promptBody }],
+      timestamp: new Date().toISOString(),
+    },
     appendOrReplace: "append",
-    source: "www",
   });
 }
 

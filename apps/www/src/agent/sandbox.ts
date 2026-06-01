@@ -23,6 +23,7 @@ import {
 import {
   getSetupScriptHash,
   getSnapshotBaseTemplateId,
+  isRepoSnapshotBuildSafe,
 } from "@terragon/sandbox/snapshot-builder";
 import { env } from "@terragon/env/apps-www";
 import type {
@@ -42,6 +43,8 @@ import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
 import { maybeTriggerSnapshotBuildForBoot } from "@/server-lib/environment-snapshot-build";
+import { scheduleEnvironmentSnapshotBuild } from "@/server-lib/environment-snapshot-scheduler";
+import { sendSystemMessage } from "@/server-lib/send-system-message";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
@@ -869,10 +872,16 @@ async function getOrCreateSandboxForThread({
     ];
     const setupScriptHash = getSetupScriptHash(context.resolvedSetupScript);
     const baseDockerfileHash = getSnapshotBaseTemplateId(sandboxSize);
+    const canUseRepoSnapshot = isRepoSnapshotBuildSafe({
+      setupScript: context.resolvedSetupScript,
+      environmentVariables: context.finalEnvironmentVariables,
+      mcpConfig: context.mcpConfig,
+    });
     const snapshot =
       !thread.codesandboxId &&
       thread.sandboxProvider === "daytona" &&
-      context.repositoryEnvironment
+      context.repositoryEnvironment &&
+      canUseRepoSnapshot
         ? getReadySnapshot(
             context.repositoryEnvironment,
             "daytona",
@@ -948,13 +957,56 @@ async function getOrCreateSandboxForThread({
         }
       },
       onStatusUpdate: async ({ sandboxId, sandboxStatus, bootingStatus }) => {
-        if (sandboxId && bootingStatus === "provisioning-done") {
-        }
         await onStatusUpdate({
           sandboxId,
           sandboxStatus,
           bootingStatus,
         });
+      },
+      onSnapshotRefreshFailed: async ({ repoBaseBranchName }) => {
+        if (!context.repositoryEnvironment) {
+          return;
+        }
+        try {
+          await scheduleEnvironmentSnapshotBuild({
+            db,
+            userId,
+            environmentId: context.repositoryEnvironment.id,
+            reason: "snapshot-refresh-failed",
+            bootSize: sandboxSize,
+          });
+        } catch (error) {
+          console.warn("[sandbox] failed to schedule snapshot rebuild", {
+            threadId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        if (!threadChatIdOrNull) {
+          return;
+        }
+        try {
+          await sendSystemMessage({
+            userId,
+            threadId,
+            threadChatId: threadChatIdOrNull,
+            message: {
+              type: "system",
+              message_type: "snapshot-refresh-degraded",
+              parts: [
+                {
+                  type: "text",
+                  text: `Terragon could not refresh the Daytona snapshot from ${repoBaseBranchName}. The task is continuing from the baked snapshot commit, and Terragon is rebuilding the snapshot for the next run.`,
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          console.warn("[sandbox] failed to persist snapshot warning", {
+            threadId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       },
       onInstallProgress: (snapshot, elapsedMs) => {
         const metaEvent: ThreadMetaEvent = {

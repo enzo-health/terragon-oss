@@ -11,19 +11,7 @@ import { db } from "@/lib/db";
 import { ThreadError } from "./error";
 import { handleTransition, ThreadEvent } from "./machine";
 
-export async function updateThreadChatWithTransition({
-  userId,
-  threadId,
-  threadChatId,
-  eventType,
-  markAsUnread,
-  rateLimitResetTime,
-  updates,
-  chatUpdates,
-  requireStatusTransitionForChatUpdates = false,
-  skipAppendMessagesInBroadcast = false,
-  skipBroadcast = false,
-}: {
+export type UpdateThreadChatWithTransitionParams = {
   threadId: string;
   userId: string;
   threadChatId: string;
@@ -38,12 +26,28 @@ export async function updateThreadChatWithTransition({
   requireStatusTransitionForChatUpdates?: boolean;
   skipAppendMessagesInBroadcast?: boolean;
   skipBroadcast?: boolean;
-}): Promise<{
+};
+
+export type UpdateThreadChatWithTransitionResult = {
   didUpdateStatus: boolean;
   updatedStatus: ThreadStatus | undefined;
   chatSequence?: number;
   broadcastData?: Parameters<typeof publishBroadcastUserMessage>[0];
-}> {
+};
+
+export async function updateThreadChatWithTransition({
+  userId,
+  threadId,
+  threadChatId,
+  eventType,
+  markAsUnread,
+  rateLimitResetTime,
+  updates,
+  chatUpdates,
+  requireStatusTransitionForChatUpdates = false,
+  skipAppendMessagesInBroadcast = false,
+  skipBroadcast = false,
+}: UpdateThreadChatWithTransitionParams): Promise<UpdateThreadChatWithTransitionResult> {
   const threadChat = await getThreadChat({
     db,
     threadId,

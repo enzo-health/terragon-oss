@@ -327,7 +327,12 @@ describe("useThreadViewModel sidecar projection", () => {
       id: "agent-durable-1",
       role: "agent",
       agent: "claudeCode",
-      parts: [{ type: "text", text: "durable text" }],
+      parts: [
+        {
+          type: "text",
+          text: "<proposed_plan>\ndurable text\n</proposed_plan>",
+        },
+      ],
     };
     state = threadViewModelReducer(state, {
       type: "snapshot.hydrated",
@@ -337,7 +342,16 @@ describe("useThreadViewModel sidecar projection", () => {
       }),
     });
 
-    expect(projectThreadViewModel(state).messages).toEqual([hydratedMessage]);
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.messages).toEqual([]);
+    expect(viewModel.artifacts.descriptors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "plan",
+          title: "Implementation Plan",
+        }),
+      ]),
+    );
   });
 
   it("drops tool events because assistant-ui owns transcript projection", () => {

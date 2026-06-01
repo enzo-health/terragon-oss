@@ -3504,6 +3504,22 @@ describe("ag-ui SSE route", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
+  it("POST with malformed non-empty AG-UI body returns 400 without dispatching", async () => {
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        { not: "run-agent-input" },
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(adapterMock.dispatchFollowUpFromAppend).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid AG-UI request body",
+    });
+  });
+
   it("POST with X-Terragon-Test-Replay header skips adapter and opens SSE stream", async () => {
     const validBody = {
       threadId: "thread-1",
@@ -3684,5 +3700,42 @@ describe("ag-ui SSE route", () => {
     );
 
     expect(response.status).toBe(403);
+  });
+
+  it("POST with draft or schedule state rejected by the adapter returns 400", async () => {
+    adapterMock.dispatchFollowUpFromAppend.mockResolvedValue({
+      error: {
+        kind: "invalid-input",
+        reason:
+          "AG-UI runtime append does not support saveAsDraft; use the draft/schedule fallback",
+      },
+    });
+
+    const validBody = {
+      threadId: "thread-1",
+      runId: "run-draft",
+      messages: [{ id: "msg-1", role: "user", content: "save this" }],
+      tools: [],
+      context: [],
+      state: {
+        terragon: {
+          saveAsDraft: true,
+        },
+      },
+    };
+
+    const response = await POST(
+      makePostRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1",
+        validBody,
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "AG-UI runtime append does not support saveAsDraft; use the draft/schedule fallback",
+    });
   });
 });

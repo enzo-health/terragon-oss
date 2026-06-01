@@ -8,7 +8,7 @@ import {
 import { getUserSettings, getUser } from "@terragon/shared/model/user";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
 import { ThreadError, wrapError } from "@/agent/error";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { transitionThreadChatLifecycle } from "@/server-lib/thread-lifecycle-command";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { getAutomation } from "@terragon/shared/model/automations";
 import { PullRequestTriggerConfig } from "@terragon/shared/automations";
@@ -33,7 +33,7 @@ export async function checkpointThread({
     userId,
     threadChatId,
     onBeforeExec: async () => {
-      const { didUpdateStatus } = await updateThreadChatWithTransition({
+      const { didUpdateStatus } = await transitionThreadChatLifecycle({
         userId,
         threadId,
         threadChatId,
@@ -58,7 +58,7 @@ export async function checkpointThread({
       } catch (e) {
         throw wrapError("git-checkpoint-push-failed", e);
       }
-      await updateThreadChatWithTransition({
+      await transitionThreadChatLifecycle({
         userId,
         threadId,
         threadChatId,
