@@ -289,6 +289,86 @@ describe("DaytonaProvider lifecycle policy", () => {
     expect(sandbox.process.executeCommand).not.toHaveBeenCalled();
   });
 
+  it("reads text files through process commands instead of the Daytona file download helper", async () => {
+    const sandbox = createMockSandbox();
+    sandbox.process.executeCommand.mockResolvedValue({
+      exitCode: 0,
+      result: "checkpoint diff",
+    });
+    daytonaGetMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    const session = await provider.getOrCreateSandbox(
+      "sandbox-123",
+      defaultOptions,
+    );
+
+    await expect(session.readTextFile("/tmp/O'Brien.patch")).resolves.toBe(
+      "checkpoint diff",
+    );
+    expect(sandbox.fs.downloadFile).not.toHaveBeenCalled();
+    expect(sandbox.process.executeCommand).toHaveBeenCalledWith(
+      "cat -- '/tmp/O'\"'\"'Brien.patch'",
+      "/",
+      undefined,
+      300,
+    );
+  });
+
+  it("writes text files through process commands instead of the Daytona file upload helper", async () => {
+    const sandbox = createMockSandbox();
+    daytonaGetMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    const session = await provider.getOrCreateSandbox(
+      "sandbox-123",
+      defaultOptions,
+    );
+
+    await session.writeTextFile("/tmp/O'Brien.txt", "hello");
+
+    expect(sandbox.fs.uploadFile).not.toHaveBeenCalled();
+    expect(
+      sandbox.process.executeCommand.mock.calls.some(([command]) =>
+        String(command).includes(
+          "mkdir -p -- \"$(dirname -- '/tmp/O'\"'\"'Brien.txt')\" && : > '/tmp/terragon-upload-",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      sandbox.process.executeCommand.mock.calls.some(([command]) =>
+        String(command).includes(
+          "printf %s 'aGVsbG8=' >> '/tmp/terragon-upload-",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      sandbox.process.executeCommand.mock.calls.some(([command]) =>
+        String(command).includes("base64 -d '/tmp/terragon-upload-"),
+      ),
+    ).toBe(true);
+  });
+
+  it("writes binary files through process commands instead of the Daytona file upload helper", async () => {
+    const sandbox = createMockSandbox();
+    daytonaGetMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    const session = await provider.getOrCreateSandbox(
+      "sandbox-123",
+      defaultOptions,
+    );
+
+    await session.writeFile("/tmp/blob.bin", new Uint8Array([0, 255, 1]));
+
+    expect(sandbox.fs.uploadFile).not.toHaveBeenCalled();
+    expect(
+      sandbox.process.executeCommand.mock.calls.some(([command]) =>
+        String(command).includes("printf %s 'AP8B'"),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps resume non-blocking when lifecycle reconciliation fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const sandbox = createMockSandbox({

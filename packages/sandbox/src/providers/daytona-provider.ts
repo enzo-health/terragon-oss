@@ -21,6 +21,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
+const DAYTONA_WRITE_BASE64_CHUNK_CHARS = 64 * 1024;
 
 async function reconcileLifecyclePolicy(
   sandbox: DaytonaSandbox,
@@ -378,18 +379,81 @@ class DaytonaSession implements ISandboxSession {
   }
 
   async readTextFile(path: string): Promise<string> {
-    const file = await this.sandbox.fs.downloadFile(path);
-    return file.toString();
+    return await this.runFileCommand(`cat -- ${bashQuote(path)}`);
   }
 
   async writeTextFile(path: string, content: string): Promise<void> {
-    const fileContent = Buffer.from(content);
-    await this.sandbox.fs.uploadFile(fileContent, path);
+    await this.writeContent(path, Buffer.from(content));
   }
 
   async writeFile(path: string, content: Uint8Array): Promise<void> {
-    const fileContent = Buffer.from(content);
-    await this.sandbox.fs.uploadFile(fileContent, path);
+    await this.writeContent(path, Buffer.from(content));
+  }
+
+  private async writeContent(path: string, content: Buffer): Promise<void> {
+    const uploadId = nanoid();
+    const encodedPath = `/tmp/terragon-upload-${uploadId}.b64`;
+    const decodedPath = `/tmp/terragon-upload-${uploadId}.out`;
+    const quotedPath = bashQuote(path);
+    const quotedEncodedPath = bashQuote(encodedPath);
+    const quotedDecodedPath = bashQuote(decodedPath);
+    const encodedContent = content.toString("base64");
+
+    try {
+      await this.runFileCommand(
+        `mkdir -p -- "$(dirname -- ${quotedPath})" && : > ${quotedEncodedPath}`,
+      );
+      for (
+        let offset = 0;
+        offset < encodedContent.length;
+        offset += DAYTONA_WRITE_BASE64_CHUNK_CHARS
+      ) {
+        const chunk = encodedContent.slice(
+          offset,
+          offset + DAYTONA_WRITE_BASE64_CHUNK_CHARS,
+        );
+        await this.runFileCommand(
+          `printf %s ${bashQuote(chunk)} >> ${quotedEncodedPath}`,
+        );
+      }
+      await this.runFileCommand(
+        `base64 -d ${quotedEncodedPath} > ${quotedDecodedPath} && mv ${quotedDecodedPath} ${quotedPath}`,
+      );
+    } finally {
+      await this.runFileCommand(
+        `rm -f ${quotedEncodedPath} ${quotedDecodedPath}`,
+      ).catch((error) => {
+        console.warn(
+          `[daytona] Failed to clean up upload temp files for ${path}: ${formatError(error)}`,
+        );
+      });
+    }
+  }
+
+  private async runFileCommand(command: string): Promise<string> {
+    try {
+      const commandResult = await this.sandbox.process.executeCommand(
+        command,
+        "/",
+        undefined,
+        Math.ceil(DEFAULT_TIMEOUT_MS / 1000),
+      );
+      if (commandResult.exitCode !== 0) {
+        throw new Error(
+          `File command failed with exit code ${commandResult.exitCode}\n\noutput:\n ${commandResult.result || "(empty)"}`,
+        );
+      }
+      return commandResult.result || "";
+    } catch (error) {
+      console.error("Error running Daytona file command:", formatError(error));
+      if (
+        error instanceof Error &&
+        error.message.includes("command execution timeout")
+      ) {
+        throw new Error(`Command timed out after ${DEFAULT_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    }
   }
 }
 
