@@ -9,12 +9,11 @@ import { getUserSettings } from "@terragon/shared/model/user";
 import { getGitHubUserAccessToken } from "@/lib/github";
 import { getFeatureFlagsForUser } from "@terragon/shared/model/feature-flags";
 import { env } from "@terragon/env/apps-www";
+import { getOrCreateSandbox, getSandboxProvider } from "@/agent/sandbox";
 import {
   getDaytonaVolumeEnvironmentEntries,
-  getOrCreateSandbox,
-  getSandboxProvider,
-  resolveDaytonaVolumeConfig,
-} from "@/agent/sandbox";
+  resolveDaytonaVolumeLayout,
+} from "@terragon/sandbox/daytona-volume";
 import { CreateSandboxOptions } from "@terragon/sandbox/types";
 import { runSetupScript } from "@terragon/sandbox";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
@@ -119,11 +118,13 @@ export async function POST(request: NextRequest) {
       });
       const daytonaVolume =
         sandboxProvider === "daytona"
-          ? resolveDaytonaVolumeConfig({
+          ? resolveDaytonaVolumeLayout({
               userId,
               environmentId,
               threadId: `setup-script-${environmentId}`,
               repoFullName: environment.repoFullName,
+              volumeEnabled: env.DAYTONA_VOLUME_ENABLED,
+              volumeName: env.DAYTONA_VOLUME_NAME,
             })
           : undefined;
       const daytonaVolumeEnvironmentVariables =

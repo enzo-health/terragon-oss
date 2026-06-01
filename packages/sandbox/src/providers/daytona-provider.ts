@@ -1,11 +1,5 @@
-declare module "node:module" {
-  export function _initPaths(): void;
-}
-
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
 import type { VolumeMount } from "@daytonaio/sdk";
-import { existsSync, readdirSync } from "node:fs";
-import { createRequire, _initPaths } from "node:module";
 import path from "node:path";
 import {
   BackgroundCommandOptions,
@@ -27,31 +21,6 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
-const runtimeRequire = createRequire(import.meta.url);
-const DAYTONA_SDK_RUNTIME_MODULES = [
-  "busboy",
-  "tar",
-  "form-data",
-  "fast-glob",
-  "expand-tilde",
-  "@iarna/toml",
-] as const;
-const DAYTONA_SDK_RUNTIME_PNPM_PACKAGES = [
-  { pnpmPrefix: "busboy@", packagePath: "busboy" },
-  { pnpmPrefix: "streamsearch@", packagePath: "streamsearch" },
-  { pnpmPrefix: "tar@", packagePath: "tar" },
-  { pnpmPrefix: "form-data@", packagePath: "form-data" },
-  { pnpmPrefix: "fast-glob@", packagePath: "fast-glob" },
-  { pnpmPrefix: "expand-tilde@", packagePath: "expand-tilde" },
-  {
-    pnpmPrefix: "@iarna+toml@",
-    packagePath: path.join("@iarna", "toml"),
-  },
-] as const;
-
-type DaytonaVolumeMount = VolumeMount & {
-  subpath?: string;
-};
 
 async function reconcileLifecyclePolicy(
   sandbox: DaytonaSandbox,
@@ -129,43 +98,52 @@ async function createWithRetry(
   envs: Record<string, string>,
   daytonaVolume?: DaytonaVolumeConfig,
 ): Promise<DaytonaSandbox> {
-  const daytona = getDaytonaOrThrow();
-  return await retryAsync(
-    async () => {
-      console.log(
-        `[daytona] Creating sandbox with templateId: ${templateId}...`,
-      );
-      const startTime = Date.now();
-      const volumes = daytonaVolume
-        ? await getDaytonaVolumeMounts(daytona, daytonaVolume)
-        : undefined;
-      const sandbox = await daytona.create({
-        user: "root",
-        snapshot: templateId,
-        envVars: envs,
-        ...(volumes ? { volumes } : {}),
-        autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
-        autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
-        autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
-      });
-      console.log(
-        `[daytona] Created sandbox in ${Date.now() - startTime}ms`,
-        sandbox.id,
-      );
-      return sandbox;
-    },
-    {
-      label: `create sandbox with templateId ${templateId}`,
-      maxAttempts: 3,
-      delayMs: 1000,
-    },
-  );
+  try {
+    return await retryAsync(
+      async () => {
+        console.log(
+          `[daytona] Creating sandbox with templateId: ${templateId}...`,
+        );
+        const startTime = Date.now();
+        const daytona = getDaytonaOrThrow();
+        const volumes = daytonaVolume
+          ? await getDaytonaVolumeMounts(daytona, daytonaVolume)
+          : undefined;
+        const sandbox = await daytona.create({
+          user: "root",
+          snapshot: templateId,
+          envVars: envs,
+          ...(volumes ? { volumes } : {}),
+          autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
+          autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+          autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
+        });
+        console.log(
+          `[daytona] Created sandbox in ${Date.now() - startTime}ms`,
+          sandbox.id,
+        );
+        return sandbox;
+      },
+      {
+        label: `create sandbox with templateId ${templateId}`,
+        maxAttempts: 3,
+        delayMs: 1000,
+      },
+    );
+  } catch (error) {
+    const volumeContext = daytonaVolume
+      ? ` with Daytona volume "${daytonaVolume.volumeName}" mounted at "${daytonaVolume.volumeMountPath}"`
+      : "";
+    throw new Error(
+      `[daytona] Failed to create sandbox${volumeContext}: ${formatError(error)}`,
+    );
+  }
 }
 
 async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
-): Promise<DaytonaVolumeMount[]> {
+): Promise<VolumeMount[]> {
   const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
   return [
     {
@@ -177,116 +155,12 @@ async function getDaytonaVolumeMounts(
 }
 
 function getDaytonaOrThrow(): Daytona {
-  const apiKey = process.env.DAYTONA_API_KEY;
+  const apiKey = process.env.DAYTONA_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("DAYTONA_API_KEY is not set");
   }
-  assertDaytonaSdkRuntimeModulesAvailable();
   const daytona = new Daytona({ apiKey });
   return daytona;
-}
-
-function assertDaytonaSdkRuntimeModulesAvailable(): void {
-  let sdkEntryPoint: string;
-  try {
-    sdkEntryPoint = runtimeRequire.resolve("@daytonaio/sdk");
-  } catch (error) {
-    throw new Error(
-      `[daytona] @daytonaio/sdk is not resolvable in this runtime: ${formatError(error)}`,
-    );
-  }
-
-  installDaytonaSdkNodePathFallback(sdkEntryPoint);
-  const sdkRequire = createRequire(sdkEntryPoint);
-  const missingModules = DAYTONA_SDK_RUNTIME_MODULES.flatMap((moduleName) => {
-    try {
-      sdkRequire(moduleName);
-      return [];
-    } catch (error) {
-      return [`${moduleName}: ${formatError(error)}`];
-    }
-  });
-
-  if (missingModules.length > 0) {
-    throw new Error(
-      [
-        "[daytona] Daytona SDK runtime dependencies are missing.",
-        "Refusing to allocate a sandbox because SDK file transfer calls would fail after creation.",
-        "Missing modules:",
-        ...missingModules.map((moduleName) => `- ${moduleName}`),
-      ].join("\n"),
-    );
-  }
-}
-
-function installDaytonaSdkNodePathFallback(sdkEntryPoint: string): void {
-  const pnpmStoreDir = findPnpmStoreDir(sdkEntryPoint);
-  if (!pnpmStoreDir) {
-    return;
-  }
-
-  const nodePathEntries = findDaytonaRuntimeNodePathEntries(pnpmStoreDir);
-  if (nodePathEntries.length === 0) {
-    return;
-  }
-
-  const existingEntries = new Set(
-    (process.env.NODE_PATH ?? "").split(path.delimiter).filter(Boolean),
-  );
-  let changed = false;
-
-  for (const entry of nodePathEntries) {
-    if (!existingEntries.has(entry)) {
-      existingEntries.add(entry);
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return;
-  }
-
-  process.env.NODE_PATH = Array.from(existingEntries).join(path.delimiter);
-  _initPaths();
-}
-
-function findPnpmStoreDir(modulePath: string): string | null {
-  const pathParts = modulePath.split(path.sep);
-  const pnpmIndex = pathParts.lastIndexOf(".pnpm");
-  if (pnpmIndex === -1) {
-    return null;
-  }
-  return pathParts.slice(0, pnpmIndex + 1).join(path.sep);
-}
-
-function findDaytonaRuntimeNodePathEntries(pnpmStoreDir: string): string[] {
-  let packageDirs: string[];
-  try {
-    packageDirs = readdirSync(pnpmStoreDir);
-  } catch {
-    return [];
-  }
-
-  return DAYTONA_SDK_RUNTIME_PNPM_PACKAGES.flatMap(
-    ({ pnpmPrefix, packagePath }) => {
-      return packageDirs.flatMap((packageDir) => {
-        if (!packageDir.startsWith(pnpmPrefix)) {
-          return [];
-        }
-
-        const nodePathEntry = path.join(
-          pnpmStoreDir,
-          packageDir,
-          "node_modules",
-        );
-        if (!existsSync(path.join(nodePathEntry, packagePath))) {
-          return [];
-        }
-
-        return [nodePathEntry];
-      });
-    },
-  );
 }
 
 class DaytonaSession implements ISandboxSession {

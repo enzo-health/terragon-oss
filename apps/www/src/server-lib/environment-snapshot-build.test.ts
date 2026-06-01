@@ -52,8 +52,8 @@ vi.mock("@vercel/functions", () => ({
 
 import {
   buildAndStoreEnvironmentSnapshot,
-  maybeTriggerSnapshotBuildForBoot,
-} from "./environment-snapshot-build";
+  maybeWarmEnvironmentSnapshot as maybeTriggerSnapshotBuildForBoot,
+} from "./environment-snapshot-lifecycle";
 import { waitUntil } from "@vercel/functions";
 
 const TEST_DB = {} as DB;

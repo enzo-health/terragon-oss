@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreateSandboxOptions } from "../types";
 
 const daytonaCreateMock = vi.fn();
+const daytonaConstructorOptionsMock = vi.fn();
 const daytonaGetMock = vi.fn();
 const daytonaVolumeGetMock = vi.fn();
 
 vi.mock("@daytonaio/sdk", () => {
   class MockDaytona {
-    constructor(_options: { apiKey: string }) {}
+    constructor(options: { apiKey: string }) {
+      daytonaConstructorOptionsMock(options);
+    }
 
     create = daytonaCreateMock;
     get = daytonaGetMock;
@@ -151,6 +154,22 @@ describe("DaytonaProvider lifecycle policy", () => {
     });
   });
 
+  it("normalizes the Daytona API key before creating the SDK client", async () => {
+    vi.stubEnv("DAYTONA_API_KEY", "  test-api-key  ");
+    const sandbox = createMockSandbox();
+    daytonaCreateMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    await provider.getOrCreateSandbox(null, {
+      ...defaultOptions,
+      snapshotTemplateId: "snapshot-template",
+    });
+
+    expect(daytonaConstructorOptionsMock).toHaveBeenCalledWith({
+      apiKey: "test-api-key",
+    });
+  });
+
   it("mounts configured Daytona volume once with a user-scoped subpath", async () => {
     const sandbox = createMockSandbox();
     daytonaCreateMock.mockResolvedValue(sandbox);
@@ -166,6 +185,8 @@ describe("DaytonaProvider lifecycle policy", () => {
         cacheMountPath: "/mnt/terragon/cache",
         workspaceMountPath:
           "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
+        artifactsPath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
       },
     });
 
@@ -188,6 +209,40 @@ describe("DaytonaProvider lifecycle policy", () => {
       autoArchiveInterval: 360,
       autoDeleteInterval: 60 * 24 * 30,
     });
+  });
+
+  it("wraps create failures with Daytona volume context", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    daytonaCreateMock.mockRejectedValue(
+      new TypeError("a.split is not a function"),
+    );
+
+    const provider = new DaytonaProvider();
+    try {
+      await expect(
+        provider.getOrCreateSandbox(null, {
+          ...defaultOptions,
+          snapshotTemplateId: "snapshot-template",
+          daytonaVolume: {
+            volumeName: "terragon-workspaces",
+            volumeMountPath: "/mnt/terragon",
+            volumeSubpath: "users/user-123",
+            cacheMountPath: "/mnt/terragon/cache",
+            workspaceMountPath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
+            artifactsPath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
+          },
+        }),
+      ).rejects.toThrow(
+        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*a\.split is not a function/,
+      );
+      expect(daytonaCreateMock).toHaveBeenCalledTimes(3);
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
   it("reconciles stale lifecycle settings when resuming an existing sandbox", async () => {

@@ -25,7 +25,7 @@ vi.mock("@terragon/sandbox/snapshot-builder", () => ({
 }));
 
 const triggerEnvironmentSnapshotBuild = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/server-lib/environment-snapshot-trigger", () => ({
+vi.mock("@/server-lib/environment-snapshot-lifecycle", () => ({
   triggerEnvironmentSnapshotBuild: (args: unknown) =>
     triggerEnvironmentSnapshotBuild(args),
 }));

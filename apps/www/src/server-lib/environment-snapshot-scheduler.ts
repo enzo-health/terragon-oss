@@ -10,7 +10,7 @@ import {
   deleteRepoSnapshot,
   listRepoSnapshotNames,
 } from "@terragon/sandbox/snapshot-builder";
-import { triggerEnvironmentSnapshotBuild } from "./environment-snapshot-trigger";
+import { triggerEnvironmentSnapshotBuild } from "./environment-snapshot-lifecycle";
 
 export const SNAPSHOT_REFRESH_AGE_MS = 24 * 60 * 60 * 1000;
 export const ORPHAN_MIN_AGE_MS = 60 * 60 * 1000;

@@ -102,6 +102,7 @@ export const env = envsafe(
     // Sandbox providers
     E2B_API_KEY: str({ allowEmpty: true, default: "" }),
     DAYTONA_API_KEY: str({ default: "", allowEmpty: true }),
+    DAYTONA_VOLUME_ENABLED: bool({ default: false }),
     DAYTONA_VOLUME_NAME: str({ default: "", allowEmpty: true }),
 
     // GitHub App

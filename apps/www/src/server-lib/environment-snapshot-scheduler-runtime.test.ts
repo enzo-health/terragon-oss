@@ -28,7 +28,7 @@ vi.mock("@terragon/sandbox/snapshot-builder", () => ({
   listRepoSnapshotNames: snapshotBuilderMocks.listRepoSnapshotNames,
 }));
 
-vi.mock("./environment-snapshot-trigger", () => ({
+vi.mock("./environment-snapshot-lifecycle", () => ({
   triggerEnvironmentSnapshotBuild: triggerMocks.triggerEnvironmentSnapshotBuild,
 }));
 

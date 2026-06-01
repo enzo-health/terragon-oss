@@ -14,7 +14,7 @@ const RESOURCE_MAP: Record<SandboxSize, Resources> = {
 };
 
 function getDaytonaClient(): Daytona {
-  const apiKey = process.env.DAYTONA_API_KEY;
+  const apiKey = process.env.DAYTONA_API_KEY?.trim();
   if (!apiKey) throw new Error("DAYTONA_API_KEY is not set");
   return new Daytona({ apiKey });
 }

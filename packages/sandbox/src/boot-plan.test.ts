@@ -164,6 +164,7 @@ describe("buildSandboxBootRecipe", () => {
             volumeSubpath: "subpath",
             cacheMountPath: "/mnt/vol/cache",
             workspaceMountPath: "/mnt/vol/workspace",
+            artifactsPath: "/mnt/vol/workspace/artifacts",
           },
         },
         isCreatingSandbox: true,
