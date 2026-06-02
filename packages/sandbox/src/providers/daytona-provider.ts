@@ -193,6 +193,12 @@ function normalizeDaytonaVolumeMountId(
   return volumeId;
 }
 
+function isDaytonaVolumeMountableId(value: unknown): boolean {
+  return DAYTONA_VOLUME_UUID_PATTERN.test(
+    normalizeOptionalDaytonaString(value) ?? "",
+  );
+}
+
 async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
@@ -226,7 +232,7 @@ async function getDaytonaVolumeForMount(
   );
   try {
     const volumes = await daytona.volume.list();
-    const listedVolume = findDaytonaVolumeByName(volumes, volumeName);
+    const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
     if (listedVolume) {
       return listedVolume;
     }
@@ -234,16 +240,12 @@ async function getDaytonaVolumeForMount(
     // Fall through to get-or-create so a list outage does not disable volume use.
   }
   const volume = await daytona.volume.get(volumeName, true);
-  if (
-    DAYTONA_VOLUME_UUID_PATTERN.test(
-      normalizeOptionalDaytonaString(volume.id) ?? "",
-    )
-  ) {
+  if (isDaytonaVolumeMountableId(volume.id)) {
     return volume;
   }
   try {
     const volumes = await daytona.volume.list();
-    const listedVolume = findDaytonaVolumeByName(volumes, volumeName);
+    const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
     if (listedVolume) {
       return listedVolume;
     }
@@ -253,12 +255,14 @@ async function getDaytonaVolumeForMount(
   return volume;
 }
 
-function findDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
+function findMountableDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
   volumes: T[],
   volumeName: string,
 ): T | undefined {
   return volumes.find(
-    (volume) => normalizeOptionalDaytonaString(volume.name) === volumeName,
+    (volume) =>
+      normalizeOptionalDaytonaString(volume.name) === volumeName &&
+      isDaytonaVolumeMountableId(volume.id),
   );
 }
 

@@ -342,12 +342,19 @@ describe("DaytonaProvider lifecycle policy", () => {
 
   it("re-lists after get-or-create when Daytona get returns an unmountable numeric id", async () => {
     const sandbox = createMockSandbox();
-    daytonaVolumeListMock.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      {
-        id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
-        name: "terragon-workspaces",
-      },
-    ]);
+    daytonaVolumeListMock
+      .mockResolvedValueOnce([
+        {
+          id: 889967,
+          name: "terragon-workspaces",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+          name: "terragon-workspaces",
+        },
+      ]);
     daytonaVolumeGetMock.mockResolvedValue({
       id: 889967,
       name: "terragon-workspaces",
