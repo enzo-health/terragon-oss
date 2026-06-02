@@ -172,6 +172,10 @@ describe("DaytonaProvider lifecycle policy", () => {
 
   it("mounts configured Daytona volume once with a user-scoped subpath", async () => {
     const sandbox = createMockSandbox();
+    daytonaVolumeGetMock.mockResolvedValue({
+      id: 889967,
+      name: "terragon-workspaces",
+    });
     daytonaCreateMock.mockResolvedValue(sandbox);
 
     const provider = new DaytonaProvider();
@@ -207,7 +211,7 @@ describe("DaytonaProvider lifecycle policy", () => {
       envVars: {},
       volumes: [
         {
-          volumeId: "volume-123",
+          volumeId: "889967",
           mountPath: "/mnt/terragon",
           subpath: "users/user-123",
         },
@@ -216,6 +220,49 @@ describe("DaytonaProvider lifecycle policy", () => {
       autoArchiveInterval: 360,
       autoDeleteInterval: 60 * 24 * 30,
     });
+  });
+
+  it("fails before create when the configured Daytona volume has no id", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    daytonaVolumeGetMock.mockResolvedValue({
+      id: "",
+      name: "terragon-workspaces",
+    });
+
+    const provider = new DaytonaProvider();
+    try {
+      await expect(
+        provider.getOrCreateSandbox(null, {
+          ...defaultOptions,
+          snapshotTemplateId: "snapshot-template",
+          daytonaVolume: {
+            volumeName: "terragon-workspaces",
+            volumeMountPath: "/mnt/terragon",
+            volumeSubpath: "users/user-123",
+            cacheMountPath: "/mnt/terragon/cache",
+            repoCacheMountPath:
+              "/mnt/terragon/cache/environments/env-123/repos/owner_repo",
+            workspaceMountPath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
+            artifactsPath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
+            pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+            pnpmVirtualStorePath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1/node_modules/.pnpm",
+            nextCachePath:
+              "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
+          },
+        }),
+      ).rejects.toThrow(
+        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*did not include an id/,
+      );
+      expect(daytonaVolumeGetMock).toHaveBeenCalledTimes(3);
+      expect(daytonaCreateMock).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
   it("wraps create failures with Daytona volume context", async () => {
