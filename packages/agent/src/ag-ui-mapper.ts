@@ -329,8 +329,12 @@ export type DaemonDeltaInput = {
   messageId: string;
   partIndex: number;
   deltaSeq: number;
-  kind?: "text" | "thinking";
+  kind?: "text" | "thinking" | "tool-output";
   text: string;
+  /** Owning tool-call id; required for `kind: "tool-output"`. */
+  toolCallId?: string;
+  /** Output stream the chunk came from; informs `progressKind`. */
+  stream?: "stdout" | "stderr" | "progress";
 };
 
 export function mapDaemonDeltaToAgui(
@@ -342,6 +346,21 @@ export function mapDaemonDeltaToAgui(
       type: EventType.REASONING_MESSAGE_CONTENT,
       timestamp,
       messageId: delta.messageId,
+      delta: delta.text,
+    };
+    return event;
+  }
+  // Tool-output deltas (live command stdout / MCP progress) stream INTO the
+  // owning tool card as TOOL_CALL_CHUNK events. The client reducer appends each
+  // chunk to that tool part's `progressChunks` (see `appendToolProgressChunk`),
+  // so the output renders inside the tool card live rather than as a standalone
+  // assistant-text blob. `toolCallId` defaults to `messageId` for safety, but
+  // the daemon always sets it explicitly for this kind.
+  if (delta.kind === "tool-output") {
+    const event: ToolCallChunkEvent = {
+      type: EventType.TOOL_CALL_CHUNK,
+      timestamp,
+      toolCallId: delta.toolCallId ?? delta.messageId,
       delta: delta.text,
     };
     return event;

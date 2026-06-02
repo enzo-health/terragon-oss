@@ -434,6 +434,41 @@ describe("mapDaemonDeltaToAgui", () => {
       delta: "let me consider...",
     });
   });
+
+  it("maps tool-output delta to TOOL_CALL_CHUNK keyed on the owning tool id", () => {
+    const result = mapDaemonDeltaToAgui(
+      {
+        messageId: "cmd-1",
+        partIndex: 0,
+        deltaSeq: 3,
+        kind: "tool-output",
+        text: "$ npm test\nPASS\n",
+        toolCallId: "cmd-1",
+        stream: "stdout",
+      },
+      1_700_000_000_000,
+    );
+
+    expect(result).toMatchObject({
+      type: EventType.TOOL_CALL_CHUNK,
+      toolCallId: "cmd-1",
+      delta: "$ npm test\nPASS\n",
+      timestamp: 1_700_000_000_000,
+    });
+  });
+
+  it("falls back toolCallId to messageId when omitted on a tool-output delta", () => {
+    const result = mapDaemonDeltaToAgui({
+      messageId: "mcp-9",
+      partIndex: 0,
+      deltaSeq: 1,
+      kind: "tool-output",
+      text: "Analyzing... (step 2/5)",
+    });
+
+    expect(result.type).toBe(EventType.TOOL_CALL_CHUNK);
+    expect(result).toMatchObject({ toolCallId: "mcp-9" });
+  });
 });
 
 describe("mapMetaEventToAgui", () => {

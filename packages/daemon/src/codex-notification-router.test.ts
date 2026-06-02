@@ -209,20 +209,124 @@ describe("routeCodexNotification", () => {
     });
   });
 
-  describe("skip cases", () => {
-    test("commandExecution/outputDelta skips", () => {
+  describe("commandExecution/outputDelta item.updated", () => {
+    test("streams aggregated_output as a tool-output delta keyed on the item id", () => {
       const decision = routeCodexNotification({
-        threadEvent: itemUpdated({ id: "c1", _delta: "out" }),
+        threadEvent: itemUpdated({
+          id: "cmd1",
+          type: "command_execution",
+          aggregated_output: "$ npm test\nPASS\n",
+          status: "in_progress",
+        }),
+        method: "item/commandExecution/outputDelta",
+        context: makeContext(),
+      });
+
+      expect(decision).toEqual({
+        kind: "enqueue-delta",
+        delta: {
+          messageId: "cmd1",
+          partIndex: 0,
+          kind: "tool-output",
+          text: "$ npm test\nPASS\n",
+          toolCallId: "cmd1",
+          stream: "stdout",
+        },
+      });
+    });
+
+    test("falls back to _delta when aggregated_output is absent", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemUpdated({ id: "cmd2", _delta: "partial line" }),
+        method: "item/commandExecution/outputDelta",
+        context: makeContext(),
+      });
+
+      expect(decision).toEqual({
+        kind: "enqueue-delta",
+        delta: {
+          messageId: "cmd2",
+          partIndex: 0,
+          kind: "tool-output",
+          text: "partial line",
+          toolCallId: "cmd2",
+          stream: "stdout",
+        },
+      });
+    });
+
+    test("missing id or output skips", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemUpdated({ type: "command_execution" }),
         method: "item/commandExecution/outputDelta",
         context: makeContext(),
       });
 
       expect(decision).toEqual({ kind: "skip" });
     });
+  });
 
-    test("mcpToolCall/progress skips regardless of event type", () => {
+  describe("mcpToolCall/progress item.updated", () => {
+    test("streams the progress message with a step suffix as a tool-output delta", () => {
       const decision = routeCodexNotification({
-        threadEvent: itemUpdated({ id: "t1", type: "mcp_tool_call" }),
+        threadEvent: itemUpdated({
+          id: "mcp1",
+          type: "mcp_tool_call",
+          status: "in_progress",
+          _progress: {
+            currentStep: 2,
+            totalSteps: 5,
+            message: "Analyzing file structure...",
+          },
+        }),
+        method: "item/mcpToolCall/progress",
+        context: makeContext(),
+      });
+
+      expect(decision).toEqual({
+        kind: "enqueue-delta",
+        delta: {
+          messageId: "mcp1",
+          partIndex: 0,
+          kind: "tool-output",
+          text: "Analyzing file structure... (step 2/5)",
+          toolCallId: "mcp1",
+          stream: "progress",
+        },
+      });
+    });
+
+    test("uses the step suffix alone when no message is present", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemUpdated({
+          id: "mcp2",
+          type: "mcp_tool_call",
+          _progress: { currentStep: 1, totalSteps: 3 },
+        }),
+        method: "item/mcpToolCall/progress",
+        context: makeContext(),
+      });
+
+      expect(decision).toEqual({
+        kind: "enqueue-delta",
+        delta: {
+          messageId: "mcp2",
+          partIndex: 0,
+          kind: "tool-output",
+          text: "(step 1/3)",
+          toolCallId: "mcp2",
+          stream: "progress",
+        },
+      });
+    });
+
+    test("skips when there is no meaningful progress to stream", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemUpdated({
+          id: "mcp3",
+          type: "mcp_tool_call",
+          _progress: {},
+        }),
         method: "item/mcpToolCall/progress",
         context: makeContext(),
       });

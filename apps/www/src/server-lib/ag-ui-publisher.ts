@@ -559,6 +559,27 @@ export function daemonDeltasToAgUiRows(params: {
   // lifecycles distinct even when the daemon re-uses the same messageId.
   const startedPairs = new Set<string>();
   for (const delta of deltas) {
+    // Tool-output deltas stream INTO an already-open tool card via
+    // TOOL_CALL_CHUNK — they have no TEXT/REASONING lifecycle to bracket, so we
+    // emit the chunk directly without synthesizing a START (and the terminal
+    // delta-END pass below ignores them, since `findOpenAgUiMessagesForRun`
+    // only tracks text/reasoning message ids).
+    if (delta.kind === "tool-output") {
+      const agUi = mapDaemonDeltaToAgui({
+        messageId: delta.messageId,
+        partIndex: delta.partIndex,
+        deltaSeq: delta.deltaSeq,
+        kind: "tool-output",
+        text: delta.text,
+        ...(delta.toolCallId !== undefined
+          ? { toolCallId: delta.toolCallId }
+          : {}),
+        ...(delta.stream !== undefined ? { stream: delta.stream } : {}),
+      });
+      const eventId = `delta:${runId}:${delta.messageId}:${delta.partIndex}:tool-output:${delta.deltaSeq}`;
+      rows.push({ event: agUi, eventId, timestamp: now });
+      continue;
+    }
     const kind = delta.kind === "thinking" ? "thinking" : "text";
     const pairKey = `${kind}:${delta.messageId}`;
     if (!startedPairs.has(pairKey)) {

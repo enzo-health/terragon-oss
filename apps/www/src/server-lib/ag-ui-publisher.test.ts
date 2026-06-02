@@ -736,6 +736,48 @@ describe("ag-ui-publisher", () => {
     ]);
   });
 
+  it("daemonDeltasToAgUiRows: tool-output deltas become bare TOOL_CALL_CHUNK rows with no synthetic START", () => {
+    const runId = "run-tool-output";
+    const rows = daemonDeltasToAgUiRows({
+      runId,
+      deltas: [
+        {
+          messageId: "cmd-1",
+          partIndex: 0,
+          deltaSeq: 0,
+          kind: "tool-output",
+          text: "$ npm test\n",
+          toolCallId: "cmd-1",
+          stream: "stdout",
+        },
+        {
+          messageId: "cmd-1",
+          partIndex: 0,
+          deltaSeq: 1,
+          kind: "tool-output",
+          text: "PASS\n",
+          toolCallId: "cmd-1",
+          stream: "stdout",
+        },
+      ],
+    });
+
+    // No TEXT/REASONING START is synthesized — the chunk streams into the
+    // already-open tool card. Both chunks map to TOOL_CALL_CHUNK rows.
+    expect(rows.map((r) => r.event.type)).toEqual([
+      EventType.TOOL_CALL_CHUNK,
+      EventType.TOOL_CALL_CHUNK,
+    ]);
+    expect(rows.map((r) => r.eventId)).toEqual([
+      `delta:${runId}:cmd-1:0:tool-output:0`,
+      `delta:${runId}:cmd-1:0:tool-output:1`,
+    ]);
+    expect(rows[0]?.event).toMatchObject({
+      toolCallId: "cmd-1",
+      delta: "$ npm test\n",
+    });
+  });
+
   it("daemonDeltasToAgUiRows: persisting two batches deduplicates the synthetic START via (runId, eventId)", async () => {
     const fixture = await createRunFixture();
     const firstBatch = daemonDeltasToAgUiRows({
