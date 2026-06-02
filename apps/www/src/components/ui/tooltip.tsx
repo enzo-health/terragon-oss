@@ -1,22 +1,19 @@
 "use client";
 
 import * as React from "react";
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
+import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "@/lib/utils";
 import { useTouchDevice } from "@/hooks/useTouchDevice";
+import { asChildToRender } from "./base-ui-as-child";
 
 function TooltipProvider({
   delayDuration = 500,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
-  return (
-    <TooltipPrimitive.Provider
-      data-slot="tooltip-provider"
-      delayDuration={delayDuration}
-      {...props}
-    />
-  );
+}: Omit<React.ComponentProps<typeof TooltipPrimitive.Provider>, "delay"> & {
+  delayDuration?: number;
+}) {
+  return <TooltipPrimitive.Provider delay={delayDuration} {...props} />;
 }
 
 function Tooltip({
@@ -28,44 +25,62 @@ function Tooltip({
   if (isTouchDevice) {
     return (
       <TooltipProvider>
-        <TooltipPrimitive.Root data-slot="tooltip" {...props} open={false} />
+        <TooltipPrimitive.Root {...props} open={false} />
       </TooltipProvider>
     );
   }
 
   return (
     <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+      <TooltipPrimitive.Root {...props} />
     </TooltipProvider>
   );
 }
 
 function TooltipTrigger({
+  asChild,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+}: React.ComponentProps<typeof TooltipPrimitive.Trigger> & {
+  asChild?: boolean;
+}) {
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      {...asChildToRender({ asChild, ...props })}
+    />
+  );
 }
 
 function TooltipContent({
   className,
+  side,
+  align,
   sideOffset = 2,
   children,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+}: React.ComponentProps<typeof TooltipPrimitive.Popup> & {
+  side?: React.ComponentProps<typeof TooltipPrimitive.Positioner>["side"];
+  align?: React.ComponentProps<typeof TooltipPrimitive.Positioner>["align"];
+  sideOffset?: number;
+}) {
   return (
     <TooltipPrimitive.Portal>
-      <TooltipPrimitive.Content
-        data-slot="tooltip-content"
+      <TooltipPrimitive.Positioner
+        side={side}
+        align={align}
         sideOffset={sideOffset}
-        className={cn(
-          "bg-raised text-strong border border-hairline shadow-card animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-xl px-3 py-1.5 text-xs text-balance font-medium",
-          className,
-        )}
-        {...props}
       >
-        {children}
-        {/* <TooltipPrimitive.Arrow className="bg-primary fill-primary z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" /> */}
-      </TooltipPrimitive.Content>
+        <TooltipPrimitive.Popup
+          data-slot="tooltip-content"
+          className={cn(
+            "bg-raised text-strong border border-hairline shadow-card transition-[opacity,transform,scale] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 z-50 w-fit origin-[var(--transform-origin)] rounded-xl px-3 py-1.5 text-xs text-balance font-medium",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+        </TooltipPrimitive.Popup>
+      </TooltipPrimitive.Positioner>
     </TooltipPrimitive.Portal>
   );
 }
