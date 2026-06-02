@@ -43,13 +43,20 @@ describe("handlePushSnapshotRefresh", () => {
     expect(refreshEnvironmentSnapshotsForRepo).toHaveBeenCalledWith({
       db: {},
       repoFullName: "owner/repo",
+      baseBranch: "main",
+      includeLegacyBranchless: true,
     });
   });
 
-  it("ignores pushes to non-default branches", async () => {
+  it("ignores non-default branch pushes", async () => {
     await handlePushSnapshotRefresh(
-      pushPayload({ ref: "refs/heads/feature-x" }),
+      pushPayload({ ref: "refs/heads/feature/foo" }),
     );
+    expect(refreshEnvironmentSnapshotsForRepo).not.toHaveBeenCalled();
+  });
+
+  it("ignores non-branch refs", async () => {
+    await handlePushSnapshotRefresh(pushPayload({ ref: "refs/tags/v1.0.0" }));
     expect(refreshEnvironmentSnapshotsForRepo).not.toHaveBeenCalled();
   });
 

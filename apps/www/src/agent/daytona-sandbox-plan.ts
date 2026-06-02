@@ -8,6 +8,7 @@ import {
 import {
   buildSnapshotRecipeFingerprint,
   selectReadyEnvironmentSnapshot,
+  shouldUseLegacyBranchlessSnapshotFallback,
   type SnapshotRecipeFingerprint,
 } from "@/server-lib/environment-snapshot-lifecycle";
 
@@ -28,6 +29,7 @@ export function resolveDaytonaSandboxBootPlan({
   volumeEnabled,
   volumeName,
   sandboxSize,
+  baseBranch,
   setupScript,
   snapshots,
   environmentVariablesHash,
@@ -42,6 +44,7 @@ export function resolveDaytonaSandboxBootPlan({
   volumeEnabled: boolean;
   volumeName: string;
   sandboxSize: SandboxSize;
+  baseBranch: string;
   setupScript: string | null;
   snapshots: EnvironmentSnapshot[] | null;
   environmentVariablesHash: string;
@@ -76,6 +79,9 @@ export function resolveDaytonaSandboxBootPlan({
       ? selectReadyEnvironmentSnapshot({
           snapshots,
           size: sandboxSize,
+          baseBranch,
+          includeLegacyBranchless:
+            shouldUseLegacyBranchlessSnapshotFallback(baseBranch),
           fingerprint: snapshotFingerprint,
         })
       : null;

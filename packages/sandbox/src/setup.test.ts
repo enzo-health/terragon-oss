@@ -94,24 +94,31 @@ describe("sandbox-setup", () => {
           volumeMountPath: "/mnt/terragon",
           volumeSubpath: "users/user-123",
           cacheMountPath: "/mnt/terragon/cache",
+          repoCacheMountPath:
+            "/mnt/terragon/cache/environments/env-123/repos/owner_repo",
           workspaceMountPath:
             "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1",
           artifactsPath:
             "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1/artifacts",
+          pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+          pnpmVirtualStorePath:
+            "/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1/node_modules/.pnpm",
+          nextCachePath:
+            "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
         },
       });
 
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
-        "PNPM_STORE_DIR",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "PNPM_STORE_DIR=/mnt/terragon/cache/pnpm/store",
       );
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
-        "pnpm_config_store_dir",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "pnpm_config_store_dir=/mnt/terragon/cache/pnpm/store",
       );
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
-        "pnpm_config_virtual_store_dir",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "pnpm_config_virtual_store_dir=/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1/node_modules/.pnpm",
       );
-      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).not.toContain(
-        "TERRAGON_PNPM_VIRTUAL_STORE_DIR",
+      expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
+        "TERRAGON_PNPM_VIRTUAL_STORE_DIR=/mnt/terragon/workspace/environments/env-123/repos/owner_repo/threads/thread-1/node_modules/.pnpm",
       );
       expect(writes.get("/etc/profile.d/00-terragon-volume.sh")).toContain(
         "XDG_CACHE_HOME=/mnt/terragon/cache/xdg",
@@ -130,6 +137,39 @@ describe("sandbox-setup", () => {
         "git clone --filter=blob:none --no-recurse-submodules --branch 'main' https://github.com/owner/repo.git repo",
         { cwd: "/root" },
       );
+      expect(
+        runCommandSpy.mock.calls.some((call) =>
+          call[0].includes(
+            "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        runCommandSpy.mock.calls.some(
+          (call) =>
+            call[0].includes("git -C '/root/repo' ls-files -z") &&
+            call[0].includes("'next.config.ts'") &&
+            call[0].includes("'*/*/next.config.ts'"),
+        ),
+      ).toBe(true);
+      expect(
+        runCommandSpy.mock.calls.some(
+          (call) =>
+            call[0].includes(
+              `target='/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache'/"$rel_dir/cache"`,
+            ) && call[0].includes('ln -s "$target" "$link"'),
+        ),
+      ).toBe(true);
+      expect(
+        runCommandSpy.mock.calls.some(
+          (call) =>
+            call[0].includes("find '/root/repo' -maxdepth 3") &&
+            call[0].includes("next.config"),
+        ),
+      ).toBe(false);
+      expect(
+        runCommandSpy.mock.calls.some((call) => call[0].includes("cp -a")),
+      ).toBe(false);
       expect(
         runCommandSpy.mock.calls.some((call) =>
           call[0].includes("/mnt/terragon/workspace/repo"),
@@ -213,10 +253,104 @@ describe("sandbox-setup", () => {
       expect(remoteIdx).toBeGreaterThanOrEqual(0);
       const fetchResetIdx = calls.findIndex(
         (cmd) =>
-          cmd.includes("git fetch --filter=blob:none origin 'main'") &&
-          cmd.includes("git reset --hard 'origin/main'"),
+          cmd.includes(
+            "git fetch --no-tags --filter=blob:none origin 'main:refs/remotes/origin/main'",
+          ) && cmd.includes("git reset --hard 'origin/main'"),
       );
       expect(fetchResetIdx).toBeGreaterThan(remoteIdx);
+    });
+
+    it("preserves baked dependencies when cleaning a snapshot boot", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        createNewBranch: false,
+        snapshotTemplateId: "repo-owner-repo-small-123",
+      });
+
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        "git clean -fxd -e 'node_modules' -e '**/node_modules' -e '.turbo' -e '**/.turbo'",
+      );
+    });
+
+    it("fully cleans fresh clones because dependencies are not baked yet", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+
+      await setupSandboxOneTime(session, defaultOptions);
+
+      expect(runCommandSpy).toHaveBeenCalledWith("git clean -fxd");
+    });
+
+    it("emits an outer one-time startup timing span", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async () => "");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        createNewBranch: false,
+        snapshotTemplateId: "repo-owner-repo-small-123",
+      });
+
+      expect(logSpy).toHaveBeenCalledWith("[sandbox-startup] stage.start", {
+        stage: "sandbox.setup.one_time",
+        provider: "docker",
+        repo: "owner/repo",
+        branch: "main",
+        hasSnapshotTemplate: true,
+        hasDaytonaVolume: false,
+        agent: null,
+      });
+      expect(logSpy).toHaveBeenCalledWith(
+        "[sandbox-startup] stage.done",
+        expect.objectContaining({
+          stage: "sandbox.setup.one_time",
+          hasSnapshotTemplate: true,
+          durationMs: expect.any(Number),
+        }),
+      );
+
+      logSpy.mockRestore();
+    });
+
+    it("does not recursively chown baked dependency trees for claudeCode", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async () => "");
+
+      await setupSandboxOneTime(session, {
+        ...defaultOptions,
+        agent: "claudeCode" as const,
+        snapshotTemplateId: "repo-owner-repo-small-123",
+      });
+
+      const commands = runCommandSpy.mock.calls.map((call) => call[0]);
+      expect(
+        commands.some((command) =>
+          command.includes(
+            "chown -R terragon-agent:terragon-agent /root/.claude /root/repo",
+          ),
+        ),
+      ).toBe(false);
+      expect(
+        commands.some(
+          (command) =>
+            command.includes("find /root/repo") &&
+            command.includes("-name 'node_modules'") &&
+            command.includes("-name '.next'") &&
+            command.includes("-name '.turbo'") &&
+            command.includes("-prune") &&
+            command.includes("-exec chown terragon-agent:terragon-agent"),
+        ),
+      ).toBe(true);
     });
   });
 
@@ -252,6 +386,43 @@ describe("sandbox-setup", () => {
   });
 
   describe("setupSandboxEveryTime", () => {
+    it("emits an outer every-time startup timing span", async () => {
+      const session = new MockSession("mock-sandbox");
+      vi.spyOn(session, "runCommand").mockImplementation(async () => "");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          fastResume: true,
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(logSpy).toHaveBeenCalledWith("[sandbox-startup] stage.start", {
+        stage: "sandbox.setup.every_time",
+        provider: "docker",
+        repo: "owner/repo",
+        branch: "main",
+        hasSnapshotTemplate: false,
+        hasDaytonaVolume: false,
+        agent: null,
+        isCreatingSandbox: false,
+        fastResume: true,
+      });
+      expect(logSpy).toHaveBeenCalledWith(
+        "[sandbox-startup] stage.done",
+        expect.objectContaining({
+          stage: "sandbox.setup.every_time",
+          fastResume: true,
+          durationMs: expect.any(Number),
+        }),
+      );
+
+      logSpy.mockRestore();
+    });
+
     it("should create AGENTS.md for codex agent with customSystemPrompt", async () => {
       const session = new MockSession("mock-sandbox");
       const runCommandSpy = vi
@@ -400,6 +571,51 @@ describe("sandbox-setup", () => {
       expect(writeTextFileSpy).toHaveBeenCalledWith(
         "/home/user/.claude/CLAUDE.md",
         customPrompt,
+      );
+    });
+
+    it("repairs claudeCode when the template binary has the wrong format", async () => {
+      const session = new MockSession("mock-sandbox");
+      const runCommandSpy = vi
+        .spyOn(session, "runCommand")
+        .mockImplementation(async (cmd) => {
+          if (cmd === "cd && pwd") return "/home/user";
+          return "";
+        });
+      vi.spyOn(session, "writeTextFile").mockImplementation(async () => {});
+
+      await setupSandboxEveryTime({
+        session,
+        options: {
+          ...defaultOptions,
+          agent: "claudeCode" as const,
+        },
+        isCreatingSandbox: false,
+      });
+
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'npm install -g @anthropic-ai/claude-code@2.1.126 "$claude_platform_package@2.1.126"',
+        ),
+        { cwd: "/" },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'ln -sf "$claude_platform_bin" /usr/bin/claude',
+        ),
+        { cwd: "/" },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining("exec format|cannot execute binary file"),
+        { cwd: "/" },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining("terragon-claude-wrapper"),
+        { cwd: "/" },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[ -x /usr/local/bin/claude-real ]"),
+        { cwd: "/" },
       );
     });
 

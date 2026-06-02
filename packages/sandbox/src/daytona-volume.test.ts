@@ -48,10 +48,17 @@ describe("resolveDaytonaVolumeLayout", () => {
       volumeMountPath: "/mnt/terragon",
       volumeSubpath: "users/user_1",
       cacheMountPath: "/mnt/terragon/cache",
+      repoCacheMountPath:
+        "/mnt/terragon/cache/environments/env_1/repos/owner_repo",
       workspaceMountPath:
         "/mnt/terragon/workspace/environments/env_1/repos/owner_repo/threads/thread_1",
       artifactsPath:
         "/mnt/terragon/workspace/environments/env_1/repos/owner_repo/threads/thread_1/artifacts",
+      pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+      pnpmVirtualStorePath:
+        "/mnt/terragon/workspace/environments/env_1/repos/owner_repo/threads/thread_1/node_modules/.pnpm",
+      nextCachePath:
+        "/mnt/terragon/cache/environments/env_1/repos/owner_repo/next-cache",
     });
   });
 

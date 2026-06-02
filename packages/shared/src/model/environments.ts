@@ -391,38 +391,77 @@ export function getReadySnapshot(
   provider: "daytona",
   size: SandboxSize,
   filters?: {
+    baseBranch?: string;
     setupScriptHash?: string;
     baseDockerfileHash?: string;
     environmentVariablesHash?: string;
     mcpConfigHash?: string;
+    includeLegacyBranchless?: boolean;
   },
 ): EnvironmentSnapshot | null {
   const {
+    baseBranch,
     setupScriptHash,
     baseDockerfileHash,
     environmentVariablesHash,
     mcpConfigHash,
+    includeLegacyBranchless,
   } = filters ?? {};
+  const matchesRecipe = (snapshot: EnvironmentSnapshot): boolean =>
+    snapshot.provider === provider &&
+    snapshot.size === size &&
+    snapshot.status === "ready" &&
+    (setupScriptHash !== undefined
+      ? snapshot.setupScriptHash === setupScriptHash
+      : true) &&
+    (baseDockerfileHash !== undefined
+      ? snapshot.baseDockerfileHash === baseDockerfileHash
+      : true) &&
+    (environmentVariablesHash !== undefined
+      ? snapshot.environmentVariablesHash === environmentVariablesHash
+      : true) &&
+    (mcpConfigHash !== undefined
+      ? snapshot.mcpConfigHash === mcpConfigHash
+      : true);
+
+  const snapshots = environment.snapshots ?? [];
+  const exactMatch = snapshots.find(
+    (snapshot) =>
+      matchesRecipe(snapshot) &&
+      (baseBranch !== undefined ? snapshot.baseBranch === baseBranch : true),
+  );
+  if (exactMatch) {
+    return exactMatch;
+  }
+  if (baseBranch === undefined || !includeLegacyBranchless) {
+    return null;
+  }
   return (
-    environment.snapshots?.find(
-      (s) =>
-        s.provider === provider &&
-        s.size === size &&
-        s.status === "ready" &&
-        (setupScriptHash !== undefined
-          ? s.setupScriptHash === setupScriptHash
-          : true) &&
-        (baseDockerfileHash !== undefined
-          ? s.baseDockerfileHash === baseDockerfileHash
-          : true) &&
-        (environmentVariablesHash !== undefined
-          ? s.environmentVariablesHash === environmentVariablesHash
-          : true) &&
-        (mcpConfigHash !== undefined
-          ? s.mcpConfigHash === mcpConfigHash
-          : true),
+    snapshots.find(
+      (snapshot) =>
+        matchesRecipe(snapshot) && snapshot.baseBranch === undefined,
     ) ?? null
   );
+}
+
+export function applyEnvironmentSnapshotUpdate(
+  snapshots: EnvironmentSnapshot[] | null,
+  snapshot: EnvironmentSnapshot,
+): EnvironmentSnapshot[] {
+  const existing = snapshots ?? [];
+  const idx = existing.findIndex(
+    (s) =>
+      s.provider === snapshot.provider &&
+      s.size === snapshot.size &&
+      s.baseBranch === snapshot.baseBranch,
+  );
+  const updated = [...existing];
+  if (idx >= 0) {
+    updated[idx] = snapshot;
+  } else {
+    updated.push(snapshot);
+  }
+  return updated;
 }
 
 export async function updateEnvironmentSnapshot({
@@ -440,16 +479,10 @@ export async function updateEnvironmentSnapshot({
   if (!environment) {
     throw new Error("Environment not found");
   }
-  const existing = environment.snapshots ?? [];
-  const idx = existing.findIndex(
-    (s) => s.provider === snapshot.provider && s.size === snapshot.size,
+  const updated = applyEnvironmentSnapshotUpdate(
+    environment.snapshots ?? null,
+    snapshot,
   );
-  const updated = [...existing];
-  if (idx >= 0) {
-    updated[idx] = snapshot;
-  } else {
-    updated.push(snapshot);
-  }
   await updateEnvironment({
     db,
     userId,

@@ -11,6 +11,7 @@ const RESOURCE_MAP: Record<SandboxSize, Resources> = {
   small: { cpu: 2, memory: 4, disk: 10 },
   large: { cpu: 4, memory: 8, disk: 10 },
 };
+const GENERATED_REPO_ARTIFACT_NAMES = [".next", ".turbo"] as const;
 
 function getDaytonaClient(): Daytona {
   const apiKey = process.env.DAYTONA_API_KEY?.trim();
@@ -132,6 +133,8 @@ export async function buildRepoSnapshot({
         );
     }
 
+    image = image.runCommands(getPruneGeneratedRepoArtifactsCommand());
+
     image = image.runCommands(
       "rm -f /root/.git-credentials",
       `git -C /root/repo remote set-url origin https://github.com/${repoFullName}.git`,
@@ -157,12 +160,20 @@ export async function buildRepoSnapshot({
   }
 }
 
+function getPruneGeneratedRepoArtifactsCommand(): string {
+  const nameExpression = GENERATED_REPO_ARTIFACT_NAMES.map(
+    (name) => `-name '${name}'`,
+  ).join(" -o ");
+  return `find /root/repo \\( ${nameExpression} \\) -type d -prune -exec rm -rf {} +`;
+}
+
 // Identifies the base image definition so `baseDockerfileHash` invalidates
 // snapshots when the toolchain Dockerfile changes.
 export function getSnapshotBaseTemplateId(_size: SandboxSize): string {
   return crypto
     .createHash("sha256")
     .update(renderDockerfile("daytona"))
+    .update(getPruneGeneratedRepoArtifactsCommand())
     .digest("hex");
 }
 

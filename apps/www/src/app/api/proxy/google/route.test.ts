@@ -7,7 +7,6 @@ import {
   hasDaemonProviderScope,
   type DaemonRunTokenClaims,
 } from "@/lib/auth-server";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 vi.mock("@/lib/auth-server", () => ({
@@ -15,16 +14,8 @@ vi.mock("@/lib/auth-server", () => ({
   hasDaemonProviderScope: vi.fn(),
 }));
 
-vi.mock("@terragon/shared/model/credits", () => ({
-  getUserCreditBalance: vi.fn(),
-}));
-
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
-}));
-
-vi.mock("@/server-lib/credit-auto-reload", () => ({
-  maybeTriggerCreditAutoReload: vi.fn(),
 }));
 
 vi.mock("@terragon/env/apps-www", () => ({
@@ -80,7 +71,6 @@ describe("Google AI Studio proxy route", () => {
     getDaemonTokenAuthContextOrNull,
   );
   const hasDaemonProviderScopeMock = vi.mocked(hasDaemonProviderScope);
-  const getUserCreditBalanceMock = vi.mocked(getUserCreditBalance);
   const getAgentRunContextByRunIdMock = vi.mocked(getAgentRunContextByRunId);
   const logUsageMock = vi.mocked(logGoogleUsage);
   const { POST } = googleAIStudioRoute;
@@ -123,11 +113,6 @@ describe("Google AI Studio proxy route", () => {
       daemonTokenKeyId: "daemon-key-google-123",
       status: "dispatched",
     } as any);
-    getUserCreditBalanceMock.mockResolvedValue({
-      totalCreditsCents: 1_000,
-      totalUsageCents: 0,
-      balanceCents: 1_000,
-    });
     logUsageMock.mockReset();
     logUsageMock.mockImplementation(async () => {});
   });
@@ -245,26 +230,6 @@ describe("Google AI Studio proxy route", () => {
 
     const fetchUrl = fetchMock.mock.calls[0]![0] as URL;
     expect(fetchUrl.searchParams.get("key")).toBe("test-google-ai-studio-key");
-  });
-
-  it("rejects requests when user has no remaining credits", async () => {
-    getUserCreditBalanceMock.mockResolvedValueOnce({
-      totalCreditsCents: 0,
-      totalUsageCents: 0,
-      balanceCents: 0,
-    });
-
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const request = createRequest();
-    const response = await POST(request, {
-      params: Promise.resolve({}),
-    });
-
-    expect(response.status).toBe(402);
-    expect(await response.text()).toBe("Insufficient credits");
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs usage for streaming responses", async () => {

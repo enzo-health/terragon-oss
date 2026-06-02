@@ -748,6 +748,7 @@ async function getOrCreateSandboxForThread({
       volumeEnabled: env.DAYTONA_VOLUME_ENABLED,
       volumeName: env.DAYTONA_VOLUME_NAME,
       sandboxSize,
+      baseBranch: thread.repoBaseBranchName,
       setupScript: context.resolvedSetupScript,
       snapshots: context.repositoryEnvironment?.snapshots ?? null,
       environmentVariablesHash: context.environmentVariablesHash,
