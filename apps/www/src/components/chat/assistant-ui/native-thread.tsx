@@ -11,12 +11,18 @@ import {
 import { Check, ChevronDown, Copy, Link, Loader2, Wrench } from "lucide-react";
 import { type PropsWithChildren, type SyntheticEvent, useState } from "react";
 import { toast } from "sonner";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai/reasoning";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { TextPart } from "../text-part";
 import {
   decodeToolGroupFlags,
   getToolGroupFlags,
+  reasoningViewProps,
   toolArgPreview,
   toolArgsDisplayText,
   toolCallResultText,
@@ -36,14 +42,19 @@ const NativeText: TextMessagePartComponent = ({ text, status }) => (
   <TextPart text={text} streaming={status.type === "running"} />
 );
 
-const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => (
-  <details className="my-2 text-sm text-muted-foreground">
-    <summary className="cursor-pointer select-none">Thinking</summary>
-    <div className="mt-1 text-muted-foreground">
-      <TextPart text={text} streaming={status.type === "running"} />
-    </div>
-  </details>
-);
+const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => {
+  const { body, streaming, label } = reasoningViewProps(text, status);
+  const [open, setOpen] = useState(streaming);
+
+  return (
+    <Reasoning className="my-2" open={open} onOpenChange={setOpen}>
+      <ReasoningTrigger>{label}</ReasoningTrigger>
+      <ReasoningContent keepMounted>
+        <TextPart text={body} streaming={streaming} />
+      </ReasoningContent>
+    </Reasoning>
+  );
+};
 
 const NativeToolGroup = ({
   startIndex,
