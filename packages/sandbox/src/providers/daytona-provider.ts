@@ -26,6 +26,11 @@ const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
 const DAYTONA_WRITE_BASE64_CHUNK_CHARS = 64 * 1024;
 const runtimeRequire = createRequire(import.meta.url);
 
+type DaytonaVolumeForMount = {
+  id: unknown;
+  name?: unknown;
+};
+
 async function reconcileLifecyclePolicy(
   sandbox: DaytonaSandbox,
 ): Promise<void> {
@@ -174,7 +179,7 @@ async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
 ): Promise<VolumeMount[]> {
-  const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
+  const volume = await getDaytonaVolumeForMount(daytona, daytonaVolume);
   const volumeId = normalizeRequiredDaytonaString(
     volume.id,
     `Volume "${daytonaVolume.volumeName}" id`,
@@ -191,6 +196,24 @@ async function getDaytonaVolumeMounts(
       ...(subpath ? { subpath } : {}),
     },
   ];
+}
+
+async function getDaytonaVolumeForMount(
+  daytona: Daytona,
+  daytonaVolume: DaytonaVolumeConfig,
+): Promise<DaytonaVolumeForMount> {
+  try {
+    const volumes = await daytona.volume.list();
+    const listedVolume = volumes.find(
+      (volume) => volume.name === daytonaVolume.volumeName,
+    );
+    if (listedVolume) {
+      return listedVolume;
+    }
+  } catch {
+    // Fall through to get-or-create so a list outage does not disable volume use.
+  }
+  return await daytona.volume.get(daytonaVolume.volumeName, true);
 }
 
 function getDaytonaOrThrow(): Daytona {
