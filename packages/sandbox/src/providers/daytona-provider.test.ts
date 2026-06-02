@@ -30,6 +30,7 @@ vi.mock("@terragon/sandbox-image", () => ({
 }));
 
 import { DaytonaProvider } from "./daytona-provider";
+import { normalizeCreateSandboxOptions } from "../create-sandbox-options";
 
 type MockDaytonaSandbox = {
   id: string;
@@ -120,6 +121,34 @@ function createMockSandbox(
   };
 }
 
+describe("normalizeCreateSandboxOptions", () => {
+  it("normalizes blank snapshot template ids before create and setup share options", () => {
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "   ",
+    };
+
+    const normalized = normalizeCreateSandboxOptions(options);
+
+    expect(normalized).not.toBe(options);
+    expect(normalized.snapshotTemplateId).toBeUndefined();
+    expect(options.snapshotTemplateId).toBe("   ");
+  });
+
+  it("coerces runtime numeric snapshot template ids before create and setup share options", () => {
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "placeholder-snapshot",
+    };
+    Reflect.set(options, "snapshotTemplateId", 889967);
+
+    const normalized = normalizeCreateSandboxOptions(options);
+
+    expect(normalized).not.toBe(options);
+    expect(normalized.snapshotTemplateId).toBe("889967");
+  });
+});
+
 describe("DaytonaProvider lifecycle policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -167,6 +196,50 @@ describe("DaytonaProvider lifecycle policy", () => {
 
     expect(daytonaConstructorOptionsMock).toHaveBeenCalledWith({
       apiKey: "test-api-key",
+    });
+  });
+
+  it("coerces persisted numeric snapshot template ids before create", async () => {
+    const sandbox = createMockSandbox();
+    daytonaCreateMock.mockResolvedValue(sandbox);
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "placeholder-snapshot",
+    };
+    Reflect.set(options, "snapshotTemplateId", 889967);
+
+    const provider = new DaytonaProvider();
+    await provider.getOrCreateSandbox(null, options);
+
+    expect(daytonaCreateMock).toHaveBeenCalledWith({
+      user: "root",
+      snapshot: "889967",
+      envVars: {},
+      autoStopInterval: 15,
+      autoArchiveInterval: 360,
+      autoDeleteInterval: 60 * 24 * 30,
+    });
+    const createPayload = daytonaCreateMock.mock.calls[0]?.[0];
+    expect(createPayload?.snapshot).toBeTypeOf("string");
+  });
+
+  it("falls back to the default template when a persisted snapshot id is blank", async () => {
+    const sandbox = createMockSandbox();
+    daytonaCreateMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    await provider.getOrCreateSandbox(null, {
+      ...defaultOptions,
+      snapshotTemplateId: "   ",
+    });
+
+    expect(daytonaCreateMock).toHaveBeenCalledWith({
+      user: "root",
+      snapshot: "unused-template",
+      envVars: {},
+      autoStopInterval: 15,
+      autoArchiveInterval: 360,
+      autoDeleteInterval: 60 * 24 * 30,
     });
   });
 
@@ -257,7 +330,7 @@ describe("DaytonaProvider lifecycle policy", () => {
           },
         }),
       ).rejects.toThrow(
-        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*did not include an id/,
+        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*id must be a non-empty string/,
       );
       expect(daytonaVolumeGetMock).toHaveBeenCalledTimes(3);
       expect(daytonaCreateMock).not.toHaveBeenCalled();
