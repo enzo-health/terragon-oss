@@ -154,22 +154,41 @@ async function createWithRetry(
   }
 }
 
+function normalizeRequiredDaytonaString(value: unknown, label: string): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error(`[daytona] ${label} must be a non-empty string`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalDaytonaString(value: unknown): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized || undefined;
+}
+
 async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
 ): Promise<VolumeMount[]> {
   const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
-  const volumeId = String(volume.id ?? "").trim();
-  if (!volumeId) {
-    throw new Error(
-      `[daytona] Volume "${daytonaVolume.volumeName}" did not include an id`,
-    );
-  }
+  const volumeId = normalizeRequiredDaytonaString(
+    volume.id,
+    `Volume "${daytonaVolume.volumeName}" id`,
+  );
+  const mountPath = normalizeRequiredDaytonaString(
+    daytonaVolume.volumeMountPath,
+    `Volume "${daytonaVolume.volumeName}" mount path`,
+  );
+  const subpath = normalizeOptionalDaytonaString(daytonaVolume.volumeSubpath);
   return [
     {
       volumeId,
-      mountPath: daytonaVolume.volumeMountPath,
-      subpath: daytonaVolume.volumeSubpath,
+      mountPath,
+      ...(subpath ? { subpath } : {}),
     },
   ];
 }
@@ -583,12 +602,17 @@ export class DaytonaProvider implements ISandboxProvider {
         envs[key] = value;
       }
     }
-    const templateId =
-      options.snapshotTemplateId ||
-      getTemplateIdForSize({
-        provider: "daytona",
-        size: options.sandboxSize,
-      });
+    const configuredTemplateId = normalizeOptionalDaytonaString(
+      options.snapshotTemplateId,
+    );
+    const templateId = normalizeRequiredDaytonaString(
+      configuredTemplateId ??
+        getTemplateIdForSize({
+          provider: "daytona",
+          size: options.sandboxSize,
+        }),
+      "snapshot template id",
+    );
     const sandbox = await createWithRetry(
       templateId,
       envs,
