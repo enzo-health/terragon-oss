@@ -5,6 +5,7 @@ const daytonaCreateMock = vi.fn();
 const daytonaConstructorOptionsMock = vi.fn();
 const daytonaGetMock = vi.fn();
 const daytonaVolumeGetMock = vi.fn();
+const daytonaVolumeListMock = vi.fn();
 
 vi.mock("@daytonaio/sdk", () => {
   class MockDaytona {
@@ -16,6 +17,7 @@ vi.mock("@daytonaio/sdk", () => {
     get = daytonaGetMock;
     volume = {
       get: daytonaVolumeGetMock,
+      list: daytonaVolumeListMock,
     };
   }
 
@@ -157,6 +159,7 @@ describe("DaytonaProvider lifecycle policy", () => {
       id: 889967,
       name: "terragon-workspaces",
     });
+    daytonaVolumeListMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -245,8 +248,67 @@ describe("DaytonaProvider lifecycle policy", () => {
 
   it("mounts configured Daytona volume once with a user-scoped subpath", async () => {
     const sandbox = createMockSandbox();
+    daytonaVolumeListMock.mockResolvedValue([
+      {
+        id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+        name: "terragon-workspaces",
+      },
+    ]);
     daytonaVolumeGetMock.mockResolvedValue({
       id: 889967,
+      name: "terragon-workspaces",
+    });
+    daytonaCreateMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    await provider.getOrCreateSandbox(null, {
+      ...defaultOptions,
+      snapshotTemplateId: "snapshot-template",
+      daytonaVolume: {
+        volumeName: "terragon-workspaces",
+        volumeMountPath: "/mnt/terragon",
+        volumeSubpath: "users/user-123",
+        cacheMountPath: "/mnt/terragon/cache",
+        repoCacheMountPath:
+          "/mnt/terragon/cache/environments/env-123/repos/owner_repo",
+        workspaceMountPath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
+        artifactsPath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
+        pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+        pnpmVirtualStorePath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1/node_modules/.pnpm",
+        nextCachePath:
+          "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
+      },
+    });
+
+    expect(daytonaVolumeListMock).toHaveBeenCalled();
+    expect(daytonaVolumeGetMock).not.toHaveBeenCalled();
+    expect(daytonaCreateMock).toHaveBeenCalledWith({
+      user: "root",
+      snapshot: "snapshot-template",
+      envVars: {},
+      volumes: [
+        {
+          volumeId: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+          mountPath: "/mnt/terragon",
+          subpath: "users/user-123",
+        },
+      ],
+      autoStopInterval: 15,
+      autoArchiveInterval: 360,
+      autoDeleteInterval: 60 * 24 * 30,
+    });
+    const createPayload = daytonaCreateMock.mock.calls[0]?.[0];
+    expect(createPayload?.volumes?.[0]?.volumeId).toBeTypeOf("string");
+  });
+
+  it("falls back to get-or-create when the configured Daytona volume is missing from list", async () => {
+    const sandbox = createMockSandbox();
+    daytonaVolumeListMock.mockResolvedValue([]);
+    daytonaVolumeGetMock.mockResolvedValue({
+      id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
       name: "terragon-workspaces",
     });
     daytonaCreateMock.mockResolvedValue(sandbox);
@@ -278,23 +340,17 @@ describe("DaytonaProvider lifecycle policy", () => {
       "terragon-workspaces",
       true,
     );
-    expect(daytonaCreateMock).toHaveBeenCalledWith({
-      user: "root",
-      snapshot: "snapshot-template",
-      envVars: {},
-      volumes: [
-        {
-          volumeId: "889967",
-          mountPath: "/mnt/terragon",
-          subpath: "users/user-123",
-        },
-      ],
-      autoStopInterval: 15,
-      autoArchiveInterval: 360,
-      autoDeleteInterval: 60 * 24 * 30,
-    });
-    const createPayload = daytonaCreateMock.mock.calls[0]?.[0];
-    expect(createPayload?.volumes?.[0]?.volumeId).toBeTypeOf("string");
+    expect(daytonaCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        volumes: [
+          {
+            volumeId: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+            mountPath: "/mnt/terragon",
+            subpath: "users/user-123",
+          },
+        ],
+      }),
+    );
   });
 
   it("fails before create when the configured Daytona volume has no id", async () => {
