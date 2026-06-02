@@ -1,21 +1,37 @@
 "use client";
 
 import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { asChildToRender } from "./base-ui-as-child";
 
+// AGENT-PROTECTION INVARIANT: Base UI traps the Escape key inside the topmost
+// open dialog by default and does NOT propagate it to global keydown listeners.
+// Our app has a global Escape handler that stops the running agent, so this
+// default is load-bearing — it keeps Escape from killing the agent while a
+// dialog is open. Do NOT call `eventDetails.allowPropagation()` for the
+// "escape-key" reason in any Dialog `onOpenChange` handler, and do not add a
+// global keydown listener inside dialogs that re-dispatches Escape.
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+  return <DialogPrimitive.Root {...props} />;
 }
 
 function DialogTrigger({
+  asChild,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
+}: React.ComponentProps<typeof DialogPrimitive.Trigger> & {
+  asChild?: boolean;
+}) {
+  return (
+    <DialogPrimitive.Trigger
+      data-slot="dialog-trigger"
+      {...asChildToRender({ asChild, ...props })}
+    />
+  );
 }
 
 function DialogPortal({
@@ -25,20 +41,28 @@ function DialogPortal({
 }
 
 function DialogClose({
+  asChild,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Close>) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
+}: React.ComponentProps<typeof DialogPrimitive.Close> & {
+  asChild?: boolean;
+}) {
+  return (
+    <DialogPrimitive.Close
+      data-slot="dialog-close"
+      {...asChildToRender({ asChild, ...props })}
+    />
+  );
 }
 
 function DialogOverlay({
   className,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+}: React.ComponentProps<typeof DialogPrimitive.Backdrop>) {
   return (
-    <DialogPrimitive.Overlay
+    <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-canvas/40 backdrop-blur-[2px]",
+        "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity duration-200 fixed inset-0 z-50 bg-canvas/40 backdrop-blur-[2px]",
         className,
       )}
       {...props}
@@ -50,38 +74,29 @@ function DialogContent({
   className,
   children,
   hideCloseButton = false,
-  onEscapeKeyDown,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+}: React.ComponentProps<typeof DialogPrimitive.Popup> & {
   hideCloseButton?: boolean;
 }) {
   return (
-    <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay>
-        <DialogPrimitive.Content
-          data-slot="dialog-content"
-          className={cn(
-            "bg-raised text-strong data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-6 rounded-2xl shadow-card duration-200 sm:max-w-lg overflow-hidden p-8",
-            className,
-          )}
-          onEscapeKeyDown={(e) => {
-            // Prevent ESC from propagating to global keydown listeners
-            // which would stop the running agent
-            e.stopPropagation();
-            // Still call the custom handler if provided
-            onEscapeKeyDown?.(e);
-          }}
-          {...props}
-        >
-          {children}
-          {!hideCloseButton && (
-            <DialogPrimitive.Close className="text-mid hover:text-strong focus-visible:ring-coral/50 absolute top-5 right-5 rounded-full p-1 opacity-40 transition-[opacity,background-color,box-shadow,transform] duration-150 active:scale-[0.96] hover:opacity-100 hover:bg-sunken/60 focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none before:absolute before:-inset-3 before:content-[''] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </DialogPrimitive.Close>
-          )}
-        </DialogPrimitive.Content>
-      </DialogOverlay>
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Popup
+        data-slot="dialog-content"
+        className={cn(
+          "bg-raised text-strong data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:scale-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-6 rounded-2xl shadow-card transition-[opacity,scale,transform] duration-200 sm:max-w-lg overflow-hidden p-8",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+        {!hideCloseButton && (
+          <DialogPrimitive.Close className="text-mid hover:text-strong focus-visible:ring-coral/50 absolute top-5 right-5 rounded-full p-1 opacity-40 transition-[opacity,background-color,box-shadow,transform] duration-150 active:scale-[0.96] hover:opacity-100 hover:bg-sunken/60 focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none before:absolute before:-inset-3 before:content-[''] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
     </DialogPortal>
   );
 }

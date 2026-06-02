@@ -19,7 +19,7 @@ import { AutomationItem } from "./item";
 import { EditAutomationDialog } from "./edit-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { usePageHeader } from "@/contexts/page-header";
-import { Portal } from "@radix-ui/react-portal";
+import { createPortal } from "react-dom";
 import { RecommendedAutomations } from "./recommended-automations";
 import { type RecommendedAutomation } from "./recommended-automation-templates";
 import { AutomationTrigger } from "@terragon/shared/automations";
@@ -41,14 +41,16 @@ export function Automations() {
   const selectedBranch = useAtomValue(selectedBranchAtom);
   return (
     <>
-      <Portal container={headerActionContainer}>
-        <CreateAutomationButton
-          isOpen={isOpen}
-          setIsOpen={setIsOpen}
-          initialValues={initialValues}
-          setInitialValues={setInitialValues}
-        />
-      </Portal>
+      {headerActionContainer &&
+        createPortal(
+          <CreateAutomationButton
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            initialValues={initialValues}
+            setInitialValues={setInitialValues}
+          />,
+          headerActionContainer,
+        )}
       <AutomationsList
         onRecommendedAutomationSelected={(recommendedAutomation) => {
           const initialValues: CreateAutomationInitialValues = {
