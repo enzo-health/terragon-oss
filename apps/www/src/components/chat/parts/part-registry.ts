@@ -42,6 +42,7 @@ import { ToolPart, type ToolPartProps } from "../tool-part";
 import type {
   UIDelegationPart,
   UIDelegationStubPart,
+  UIErrorPart,
   UIPartExtended,
   UIStructuredPlanPart,
 } from "../ui-parts-extended";
@@ -176,6 +177,23 @@ const DelegationStubCard: ComponentType<{ part: UIDelegationStubPart }> = ({
     ),
   );
 
+/**
+ * Inline error card for `UIErrorPart` — an in-transcript error surfaced where
+ * it occurred (e.g. a Codex item-level error). Kept inline here, mirroring
+ * `DelegationStubCard`, so the registry stays the single dispatch source.
+ * WS-B may later replace this with the nauval `Callout`.
+ */
+const InlineErrorCard: ComponentType<{ part: UIErrorPart }> = ({ part }) =>
+  createElement(
+    "div",
+    {
+      className:
+        "rounded-lg border border-error/40 bg-error/10 p-3 text-sm text-error",
+      role: "alert",
+    },
+    part.message,
+  );
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry type
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +246,8 @@ export interface PartRegistry {
     DBAutoApprovalReviewPart,
     React.ComponentProps<typeof AutoApprovalReviewCard>
   >;
+  /** Inline in-transcript error (e.g. a Codex item-level error). */
+  error: PartRegistryEntry<UIErrorPart, { part: UIErrorPart }>;
   "plan-structured": PartRegistryEntry<
     UIStructuredPlanPart,
     React.ComponentProps<typeof PlanPartView>
@@ -367,6 +387,8 @@ export const PART_REGISTRY: PartRegistry = {
     AutoApprovalReviewCard,
     (_ctx, part) => ({ part }),
   ),
+
+  error: definePartEntry(InlineErrorCard, (_ctx, part) => ({ part })),
 
   // The structured-plan UI part already carries an `entries` array with
   // the same shape as `DBPlanPart`. `PlanPartView` accepts a

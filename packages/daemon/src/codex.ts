@@ -1547,14 +1547,15 @@ export function parseCodexItem({
       }
 
       runtime.logger.warn("Codex item error", { message });
+      // Item-level errors are a single failing step, not a terminal turn
+      // failure: emit an INLINE codex-error (→ DBErrorPart) so it renders in
+      // the transcript where it occurred. The turn keeps running. Terminal
+      // failures still flow through the top-level `error` / `turn.failed`
+      // paths as `type: "result"` lifecycle footers.
       messages.push({
-        type: "result",
-        subtype: "error_during_execution",
-        is_error: true,
-        session_id: "",
-        error: message,
-        num_turns: 0,
-        duration_ms: 0,
+        type: "codex-error",
+        session_id: state.threadId,
+        message,
       });
       return messages;
     }

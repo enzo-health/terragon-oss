@@ -47,6 +47,8 @@ function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPartExtended | null {
       return part; // UIServerToolUsePart = DBServerToolUsePart passthrough
     case "web-search-result":
       return part; // UIWebSearchResultPart = DBWebSearchResultPart passthrough
+    case "error":
+      return part; // UIErrorPart = DBErrorPart passthrough (renderer: WS-B)
     default: {
       const _exhaustive: never = part;
       void _exhaustive;

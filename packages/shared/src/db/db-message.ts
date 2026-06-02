@@ -254,6 +254,19 @@ export type DBAutoApprovalReviewPart = {
   status: "pending" | "approved" | "denied";
 };
 
+/**
+ * An inline, in-transcript error surfaced by the agent runtime (e.g. a Codex
+ * item-level `error` event). Distinct from the top-level `DBErrorMessage` /
+ * `result` lifecycle footer: this renders where it occurred in the message
+ * stream so the failing step has visible context, rather than only appearing
+ * as a terminal status. `source` records which runtime emitted it.
+ */
+export type DBErrorPart = {
+  type: "error";
+  message: string;
+  source?: "codex" | "claude" | "acp" | "gemini" | "amp" | "opencode";
+};
+
 /** Union of all part types that can appear in a DBAgentMessage. */
 export type DBAgentMessagePart =
   | DBTextPart
@@ -265,6 +278,7 @@ export type DBAgentMessagePart =
   | DBAutoApprovalReviewPart
   | DBImagePart
   | DBPlanPart
+  | DBErrorPart
   | DBServerToolUsePart
   | DBWebSearchResultPart;
 

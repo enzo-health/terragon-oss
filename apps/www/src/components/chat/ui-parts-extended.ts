@@ -13,6 +13,7 @@ import type {
   DBResourceLinkPart,
   DBTerminalPart,
   DBDiffPart,
+  DBErrorPart,
   DBAutoApprovalReviewPart,
   DBServerToolUsePart,
   DBWebSearchResultPart,
@@ -34,6 +35,9 @@ export type UITerminalPart = DBTerminalPart;
 
 /** Diff part passthrough */
 export type UIDiffPart = DBDiffPart;
+
+/** Inline error part passthrough — shape mirrors DBErrorPart */
+export type UIErrorPart = DBErrorPart;
 
 /** Auto-approval review part passthrough */
 export type UIAutoApprovalReviewPart = DBAutoApprovalReviewPart;
@@ -78,6 +82,7 @@ export type UIPartExtended =
   | UIResourceLinkPart
   | UITerminalPart
   | UIDiffPart
+  | UIErrorPart
   | UIAutoApprovalReviewPart
   | UIStructuredPlanPart
   | UIServerToolUsePart

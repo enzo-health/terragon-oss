@@ -46,6 +46,7 @@ const EXPECTED_PART_TYPES: readonly PartType[] = [
   "terminal",
   "diff",
   "auto-approval-review",
+  "error",
   "plan-structured",
   "server-tool-use",
   "web-search-result",
@@ -129,6 +130,7 @@ const PART_FIXTURES: { [K in PartType]: Extract<UIPartExtended, { type: K }> } =
       action: "x",
       status: "pending",
     },
+    error: { type: "error", message: "boom", source: "codex" },
     "plan-structured": { type: "plan-structured", entries: [] },
     "server-tool-use": {
       type: "server-tool-use",
@@ -165,8 +167,8 @@ describe("PART_REGISTRY", () => {
     );
   });
 
-  it("has 18 entries (one per UIPartExtended variant)", () => {
-    expect(Object.keys(PART_REGISTRY)).toHaveLength(18);
+  it("has 19 entries (one per UIPartExtended variant)", () => {
+    expect(Object.keys(PART_REGISTRY)).toHaveLength(19);
   });
 
   it("dispatches each variant through renderPartFromRegistry without throwing", () => {

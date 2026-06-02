@@ -5,6 +5,7 @@ import {
   DBAudioPart,
   DBAutoApprovalReviewPart,
   DBDiffPart,
+  DBErrorPart,
   DBImagePart,
   DBMessage,
   DBPlanPart,
@@ -109,6 +110,8 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
       return convertCodexAutoApprovalReview(claudeMessage);
     case "codex-diff":
       return convertCodexDiff(claudeMessage);
+    case "codex-error":
+      return convertCodexError(claudeMessage);
     case "acp-image":
       return convertAcpImage(claudeMessage);
     case "acp-audio":
@@ -287,6 +290,17 @@ function convertCodexDiff(
     status: "pending",
   };
   return [{ type: "agent", parent_tool_use_id: null, parts: [diff] }];
+}
+
+function convertCodexError(
+  msg: Extract<ClaudeMessage, { type: "codex-error" }>,
+): DBMessage[] {
+  const error: DBErrorPart = {
+    type: "error",
+    message: msg.message,
+    source: "codex",
+  };
+  return [{ type: "agent", parent_tool_use_id: null, parts: [error] }];
 }
 
 function convertAcpDiff(
