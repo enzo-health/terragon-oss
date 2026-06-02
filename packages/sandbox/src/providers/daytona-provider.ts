@@ -24,6 +24,8 @@ const DAYTONA_AUTO_STOP_INTERVAL_MINUTES = 15;
 const DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES = 6 * 60;
 const DAYTONA_AUTO_DELETE_INTERVAL_MINUTES = 60 * 24 * 30;
 const DAYTONA_WRITE_BASE64_CHUNK_CHARS = 64 * 1024;
+const DAYTONA_VOLUME_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const runtimeRequire = createRequire(import.meta.url);
 
 type DaytonaVolumeForMount = {
@@ -175,14 +177,30 @@ function normalizeOptionalDaytonaString(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
+function normalizeDaytonaVolumeMountId(
+  value: unknown,
+  volumeName: string,
+): string {
+  const volumeId = normalizeRequiredDaytonaString(
+    value,
+    `Volume "${volumeName}" id`,
+  );
+  if (!DAYTONA_VOLUME_UUID_PATTERN.test(volumeId)) {
+    throw new Error(
+      `[daytona] Volume "${volumeName}" id "${volumeId}" is not a mountable UUID`,
+    );
+  }
+  return volumeId;
+}
+
 async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
 ): Promise<VolumeMount[]> {
   const volume = await getDaytonaVolumeForMount(daytona, daytonaVolume);
-  const volumeId = normalizeRequiredDaytonaString(
+  const volumeId = normalizeDaytonaVolumeMountId(
     volume.id,
-    `Volume "${daytonaVolume.volumeName}" id`,
+    daytonaVolume.volumeName,
   );
   const mountPath = normalizeRequiredDaytonaString(
     daytonaVolume.volumeMountPath,
@@ -202,18 +220,46 @@ async function getDaytonaVolumeForMount(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
 ): Promise<DaytonaVolumeForMount> {
+  const volumeName = normalizeRequiredDaytonaString(
+    daytonaVolume.volumeName,
+    "Daytona volume name",
+  );
   try {
     const volumes = await daytona.volume.list();
-    const listedVolume = volumes.find(
-      (volume) => volume.name === daytonaVolume.volumeName,
-    );
+    const listedVolume = findDaytonaVolumeByName(volumes, volumeName);
     if (listedVolume) {
       return listedVolume;
     }
   } catch {
     // Fall through to get-or-create so a list outage does not disable volume use.
   }
-  return await daytona.volume.get(daytonaVolume.volumeName, true);
+  const volume = await daytona.volume.get(volumeName, true);
+  if (
+    DAYTONA_VOLUME_UUID_PATTERN.test(
+      normalizeOptionalDaytonaString(volume.id) ?? "",
+    )
+  ) {
+    return volume;
+  }
+  try {
+    const volumes = await daytona.volume.list();
+    const listedVolume = findDaytonaVolumeByName(volumes, volumeName);
+    if (listedVolume) {
+      return listedVolume;
+    }
+  } catch {
+    // The final volume id validation reports the unmountable id from get-or-create.
+  }
+  return volume;
+}
+
+function findDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
+  volumes: T[],
+  volumeName: string,
+): T | undefined {
+  return volumes.find(
+    (volume) => normalizeOptionalDaytonaString(volume.name) === volumeName,
+  );
 }
 
 function getDaytonaOrThrow(): Daytona {
