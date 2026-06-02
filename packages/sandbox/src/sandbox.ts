@@ -2,35 +2,37 @@ import type { SandboxProvider } from "@terragon/types/sandbox";
 import type { CreateSandboxOptions } from "./types";
 import { getSandboxProvider } from "./provider";
 import { setupSandboxEveryTime, setupSandboxOneTime } from "./setup";
+import { normalizeCreateSandboxOptions } from "./create-sandbox-options";
 
 export async function getOrCreateSandbox(
   sandboxId: string | null,
   options: CreateSandboxOptions,
 ) {
-  const provider = getSandboxProvider(options.sandboxProvider);
+  const sandboxOptions = normalizeCreateSandboxOptions(options);
+  const provider = getSandboxProvider(sandboxOptions.sandboxProvider);
   const log = (msg: string) => {
-    console.log(`[${options.sandboxProvider}] ${msg}`);
+    console.log(`[${sandboxOptions.sandboxProvider}] ${msg}`);
   };
   const startTime = Date.now();
   if (sandboxId) {
     log(`Resuming sandbox ${sandboxId}...`);
-    await options.onStatusUpdate({
+    await sandboxOptions.onStatusUpdate({
       sandboxId,
       sandboxStatus: "booting",
       bootingStatus: "provisioning",
     });
   } else {
-    log(`Creating new sandbox for ${options.githubRepoFullName}...`);
-    await options.onStatusUpdate({
+    log(`Creating new sandbox for ${sandboxOptions.githubRepoFullName}...`);
+    await sandboxOptions.onStatusUpdate({
       sandboxId: null,
       sandboxStatus: "provisioning",
       bootingStatus: "provisioning",
     });
   }
-  const sandbox = await provider.getOrCreateSandbox(sandboxId, options);
-  if (options.onSandboxAllocated) {
+  const sandbox = await provider.getOrCreateSandbox(sandboxId, sandboxOptions);
+  if (sandboxOptions.onSandboxAllocated) {
     try {
-      await options.onSandboxAllocated({
+      await sandboxOptions.onSandboxAllocated({
         sandboxId: sandbox.sandboxId,
         isCreatingSandbox: !sandboxId,
       });
@@ -40,19 +42,19 @@ export async function getOrCreateSandbox(
           await sandbox.shutdown();
         } catch (shutdownError) {
           console.warn(
-            `[${options.sandboxProvider}] failed to clean up sandbox ${sandbox.sandboxId} after allocation persistence failed`,
+            `[${sandboxOptions.sandboxProvider}] failed to clean up sandbox ${sandbox.sandboxId} after allocation persistence failed`,
             shutdownError,
           );
         }
       }
       console.error(
-        `[${options.sandboxProvider}] failed to persist allocated sandbox id ${sandbox.sandboxId}`,
+        `[${sandboxOptions.sandboxProvider}] failed to persist allocated sandbox id ${sandbox.sandboxId}`,
         error,
       );
       throw error;
     }
   }
-  await options.onStatusUpdate({
+  await sandboxOptions.onStatusUpdate({
     sandboxId: sandbox.sandboxId,
     sandboxStatus: "booting",
     bootingStatus: "provisioning-done",
@@ -60,12 +62,12 @@ export async function getOrCreateSandbox(
   log(`setupSandboxEveryTime ${sandbox.sandboxId}...`);
   await setupSandboxEveryTime({
     session: sandbox,
-    options,
+    options: sandboxOptions,
     isCreatingSandbox: !sandboxId,
   });
   if (!sandboxId) {
     log(`setupSandboxOneTime ${sandbox.sandboxId}...`);
-    await setupSandboxOneTime(sandbox, options);
+    await setupSandboxOneTime(sandbox, sandboxOptions);
   }
   const duration = Date.now() - startTime;
   if (sandboxId) {
@@ -73,7 +75,7 @@ export async function getOrCreateSandbox(
   } else {
     log(`Created sandbox ${sandbox.sandboxId} in ${duration}ms`);
   }
-  await options.onStatusUpdate({
+  await sandboxOptions.onStatusUpdate({
     sandboxId: sandbox.sandboxId,
     sandboxStatus: "running",
     bootingStatus: null,

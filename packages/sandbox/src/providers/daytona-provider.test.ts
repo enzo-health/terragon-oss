@@ -30,6 +30,7 @@ vi.mock("@terragon/sandbox-image", () => ({
 }));
 
 import { DaytonaProvider } from "./daytona-provider";
+import { normalizeCreateSandboxOptions } from "../create-sandbox-options";
 
 type MockDaytonaSandbox = {
   id: string;
@@ -119,6 +120,34 @@ function createMockSandbox(
     ...overrides,
   };
 }
+
+describe("normalizeCreateSandboxOptions", () => {
+  it("normalizes blank snapshot template ids before create and setup share options", () => {
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "   ",
+    };
+
+    const normalized = normalizeCreateSandboxOptions(options);
+
+    expect(normalized).not.toBe(options);
+    expect(normalized.snapshotTemplateId).toBeUndefined();
+    expect(options.snapshotTemplateId).toBe("   ");
+  });
+
+  it("coerces runtime numeric snapshot template ids before create and setup share options", () => {
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "placeholder-snapshot",
+    };
+    Reflect.set(options, "snapshotTemplateId", 889967);
+
+    const normalized = normalizeCreateSandboxOptions(options);
+
+    expect(normalized).not.toBe(options);
+    expect(normalized.snapshotTemplateId).toBe("889967");
+  });
+});
 
 describe("DaytonaProvider lifecycle policy", () => {
   beforeEach(() => {
