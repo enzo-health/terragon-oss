@@ -8,8 +8,8 @@ import {
   type ToolCallMessagePartComponent,
   useAuiState,
 } from "@assistant-ui/react";
-import { Check, ChevronDown, Copy, Link, Loader2, Wrench } from "lucide-react";
-import { type PropsWithChildren, type SyntheticEvent, useState } from "react";
+import { Check, Copy, Link, Wrench } from "lucide-react";
+import { type PropsWithChildren, useState } from "react";
 import { toast } from "sonner";
 import {
   Reasoning,
@@ -31,9 +31,9 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { TextPart } from "../text-part";
 import {
-  decodeToolGroupFlags,
   getToolGroupFlags,
   reasoningViewProps,
+  toolGroupViewPropsFromFlags,
   toolViewProps,
 } from "./native-thread-utils";
 
@@ -70,46 +70,26 @@ const NativeToolGroup = ({
   endIndex,
   children,
 }: PropsWithChildren<{ startIndex: number; endIndex: number }>) => {
-  const toolGroupFlags = useAuiState((state) =>
-    getToolGroupFlags(state.message.parts, startIndex, endIndex),
+  const flags = useAuiState((s) =>
+    getToolGroupFlags(s.message.parts, startIndex, endIndex),
   );
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const { count, hasActive, hasError } = decodeToolGroupFlags(toolGroupFlags);
-  const open = hasActive || manualOpen === true;
-  const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
-    setManualOpen(event.currentTarget.open);
-  };
+  const { count, state, statusLabel, defaultOpen } =
+    toolGroupViewPropsFromFlags(flags);
+  const [open, setOpen] = useState(defaultOpen);
 
   if (count <= 1) return <>{children}</>;
 
   return (
-    <details
-      className={cn(
-        "group/tool-group my-2 rounded-md border border-border bg-surface-soft text-sm",
-        hasError && "border-error/40 bg-error/5",
-      )}
-      open={open}
-      onToggle={handleToggle}
-    >
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-muted-foreground marker:content-['']">
-        {hasActive ? (
-          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-        ) : (
-          <Wrench className="size-3.5" aria-hidden="true" />
-        )}
-        <span className="font-medium text-foreground">
-          Tool calls ({count})
-        </span>
-        <span className="ml-auto text-xs">
-          {hasActive ? "Running" : hasError ? "Needs attention" : "Completed"}
-        </span>
-        <ChevronDown
-          className="size-3.5 transition-transform group-open/tool-group:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="border-t border-border/70 p-2">{children}</div>
-    </details>
+    <Tool className="my-2" state={state} open={open} onOpenChange={setOpen}>
+      <ToolTrigger>
+        <ToolIcon>
+          <Wrench />
+        </ToolIcon>
+        <ToolName>Tool calls ({count})</ToolName>
+        <ToolLabel>{statusLabel}</ToolLabel>
+      </ToolTrigger>
+      <ToolContent>{children}</ToolContent>
+    </Tool>
   );
 };
 

@@ -92,15 +92,19 @@ describe("native-thread stories", () => {
 
   it("GroupedRunWithFailure collapses into a tool group flagged for attention", () => {
     const root = mount(GroupedRunWithFailure);
-    const group = Array.from(root.querySelectorAll("details")).find((details) =>
-      details.textContent?.includes("Tool calls (3)"),
+    const group = Array.from(root.querySelectorAll("[data-slot=tool]")).find(
+      (tool) =>
+        tool
+          .querySelector("[data-slot=tool-name]")
+          ?.textContent?.includes("Tool calls (3)"),
     );
     if (!group) {
       throw new Error(
         "expected a grouped tool-call disclosure for three calls",
       );
     }
+    expect(group.getAttribute("data-state")).toBe("error");
     expect(group.textContent).toContain("Needs attention");
-    expect(group.open).toBe(false);
+    expect(group.hasAttribute("data-open")).toBe(false);
   });
 });

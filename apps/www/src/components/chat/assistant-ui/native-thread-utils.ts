@@ -231,14 +231,16 @@ export type ToolGroupViewProps = {
  * `getToolGroupFlags`/`decodeToolGroupFlags` so the reactive selector over
  * sibling parts stays inside the leaf and only the decoded view crosses out.
  */
-export const toolGroupViewProps = (
-  parts: readonly ToolGroupPart[],
-  startIndex: number,
-  endIndex: number,
+/**
+ * Decode + map the bit-packed group flags into view props. Split from the
+ * parts-reading entry point so the `useAuiState` selector can return the stable
+ * primitive `flags` number; mapping to a fresh object happens outside the
+ * selector (a new object per render would loop the equality check).
+ */
+export const toolGroupViewPropsFromFlags = (
+  flags: number,
 ): ToolGroupViewProps => {
-  const { count, hasActive, hasError } = decodeToolGroupFlags(
-    getToolGroupFlags(parts, startIndex, endIndex),
-  );
+  const { count, hasActive, hasError } = decodeToolGroupFlags(flags);
   const state = hasActive ? "running" : hasError ? "error" : "success";
   const statusLabel = hasActive
     ? "Running"
@@ -247,3 +249,10 @@ export const toolGroupViewProps = (
       : "Completed";
   return { count, state, statusLabel, defaultOpen: hasActive };
 };
+
+export const toolGroupViewProps = (
+  parts: readonly ToolGroupPart[],
+  startIndex: number,
+  endIndex: number,
+): ToolGroupViewProps =>
+  toolGroupViewPropsFromFlags(getToolGroupFlags(parts, startIndex, endIndex));
