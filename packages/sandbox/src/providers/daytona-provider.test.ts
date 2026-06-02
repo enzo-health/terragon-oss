@@ -125,7 +125,7 @@ describe("DaytonaProvider lifecycle policy", () => {
     vi.clearAllMocks();
     vi.stubEnv("DAYTONA_API_KEY", "test-api-key");
     daytonaVolumeGetMock.mockResolvedValue({
-      id: "volume-123",
+      id: 889967,
       name: "terragon-workspaces",
     });
   });
@@ -220,6 +220,8 @@ describe("DaytonaProvider lifecycle policy", () => {
       autoArchiveInterval: 360,
       autoDeleteInterval: 60 * 24 * 30,
     });
+    const createPayload = daytonaCreateMock.mock.calls[0]?.[0];
+    expect(createPayload?.volumes?.[0]?.volumeId).toBeTypeOf("string");
   });
 
   it("fails before create when the configured Daytona volume has no id", async () => {
@@ -269,7 +271,9 @@ describe("DaytonaProvider lifecycle policy", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     daytonaCreateMock.mockRejectedValue(
-      new TypeError("a.split is not a function"),
+      new TypeError(
+        'The "path" argument must be of type string. Received type number (889967)',
+      ),
     );
 
     const provider = new DaytonaProvider();
@@ -297,7 +301,7 @@ describe("DaytonaProvider lifecycle policy", () => {
           },
         }),
       ).rejects.toThrow(
-        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*a\.split is not a function/,
+        /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*Received type number \(889967\)/,
       );
       expect(daytonaCreateMock).toHaveBeenCalledTimes(3);
     } finally {
