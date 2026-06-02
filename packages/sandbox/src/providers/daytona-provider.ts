@@ -161,7 +161,7 @@ async function getDaytonaVolumeMounts(
   const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
   return [
     {
-      volumeId: volume.id,
+      volumeId: String(volume.id),
       mountPath: daytonaVolume.volumeMountPath,
       subpath: daytonaVolume.volumeSubpath,
     },
