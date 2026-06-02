@@ -1,3 +1,10 @@
+/**
+ * View-props adapter for the native transcript leaves. Every value a nauval
+ * leaf needs is computed here as a plain string/boolean/number; leaves receive
+ * only these, never a runtime part. Keep these functions stateless — stateful
+ * streaming detection (refs, append fast-path) stays in `TextPart`, not here.
+ */
+
 type ToolGroupPart = {
   readonly type: string;
   readonly status?: { readonly type: string };
@@ -119,3 +126,25 @@ export const toolCallResultText = (result: unknown): string => {
   if (result === undefined) return "";
   return JSON.stringify(result, null, 2);
 };
+
+type ReasoningStatus = { readonly type: string };
+
+export type ReasoningViewProps = {
+  readonly body: string;
+  readonly streaming: boolean;
+  readonly label: string;
+};
+
+/**
+ * Plain view props for the reasoning leaf. `streaming` mirrors the runtime
+ * "running" status so the nauval `Reasoning` shell stays a pure renderer; the
+ * leaf passes these down and never sees the runtime part itself.
+ */
+export const reasoningViewProps = (
+  text: string,
+  status: ReasoningStatus,
+): ReasoningViewProps => ({
+  body: text,
+  streaming: status.type === "running",
+  label: "Thinking",
+});
