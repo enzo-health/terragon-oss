@@ -22,7 +22,9 @@ import type {
   UITextFilePart,
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
+import { AlertCircle } from "lucide-react";
 import { type ComponentType, createElement, type ReactElement } from "react";
+import { Callout, CalloutContent, CalloutIcon } from "@/components/ai/callout";
 import { AudioPartView } from "../audio-part-view";
 import { AutoApprovalReviewCard } from "../auto-approval-review-card";
 import { DelegationItemCard } from "../delegation-item-card";
@@ -181,17 +183,15 @@ const DelegationStubCard: ComponentType<{ part: UIDelegationStubPart }> = ({
  * Inline error card for `UIErrorPart` — an in-transcript error surfaced where
  * it occurred (e.g. a Codex item-level error). Kept inline here, mirroring
  * `DelegationStubCard`, so the registry stays the single dispatch source.
- * WS-B may later replace this with the nauval `Callout`.
+ * Renders the nauval `Callout` (tone `danger`) to match the re-skinned
+ * transcript surface.
  */
 const InlineErrorCard: ComponentType<{ part: UIErrorPart }> = ({ part }) =>
   createElement(
-    "div",
-    {
-      className:
-        "rounded-lg border border-error/40 bg-error/10 p-3 text-sm text-error",
-      role: "alert",
-    },
-    part.message,
+    Callout,
+    { tone: "danger", role: "alert" },
+    createElement(CalloutIcon, null, createElement(AlertCircle)),
+    createElement(CalloutContent, null, part.message),
   );
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type DataMessagePartComponent,
   MessagePrimitive,
   type ReasoningMessagePartComponent,
   type TextMessagePartComponent,
@@ -8,9 +9,10 @@ import {
   type ToolCallMessagePartComponent,
   useAuiState,
 } from "@assistant-ui/react";
-import { Check, Copy, Link, Wrench } from "lucide-react";
+import { AlertCircle, Check, Copy, Link, Wrench } from "lucide-react";
 import { type PropsWithChildren, useState } from "react";
 import { toast } from "sonner";
+import { Callout, CalloutContent, CalloutIcon } from "@/components/ai/callout";
 import {
   Reasoning,
   ReasoningContent,
@@ -129,11 +131,39 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
   );
 };
 
+/**
+ * Inline item-level error (e.g. a Codex `error` item → `DBErrorPart`). On the
+ * live AG-UI path this arrives as a `terragon.error` data part, so it renders
+ * through `MessagePrimitive.Parts`'s `data.by_name` slot rather than the
+ * legacy part registry. Falls back to the data part's raw `message`/value when
+ * the typed payload is missing.
+ */
+const NativeError: DataMessagePartComponent = ({ data }) => {
+  const message =
+    data &&
+    typeof data === "object" &&
+    typeof Reflect.get(data, "message") === "string"
+      ? (Reflect.get(data, "message") as string)
+      : typeof data === "string"
+        ? data
+        : "An error occurred.";
+
+  return (
+    <Callout className="my-2" tone="danger" role="alert">
+      <CalloutIcon>
+        <AlertCircle />
+      </CalloutIcon>
+      <CalloutContent>{message}</CalloutContent>
+    </Callout>
+  );
+};
+
 const ASSISTANT_PART_COMPONENTS = {
   Text: NativeText,
   Reasoning: NativeReasoning,
   tools: { Override: NativeToolCall },
   ToolGroup: NativeToolGroup,
+  data: { by_name: { "terragon.error": NativeError } },
 } as const;
 
 type MessageContentPart = {
