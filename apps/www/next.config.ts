@@ -42,7 +42,7 @@ loadLocalEnvFiles();
 // on disk. Do not include the SDK's dependency symlink paths here: tracing
 // files through those links makes Vercel reject the serverless package.
 const daytonaTracingIncludes: Record<string, string[]> = {
-  "**/*": [
+  "/*": [
     "../../node_modules/.pnpm/busboy@*/node_modules/busboy/**/*",
     "../../node_modules/.pnpm/streamsearch@*/node_modules/streamsearch/**/*",
     "../../node_modules/.pnpm/tar@*/node_modules/tar/**/*",
