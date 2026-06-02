@@ -148,3 +148,102 @@ export const reasoningViewProps = (
   streaming: status.type === "running",
   label: "Thinking",
 });
+
+/**
+ * One streaming shape for every nauval leaf: the text to render plus whether
+ * the runtime is still pushing tokens into it. `streaming` is the pulse only;
+ * lifecycle state (`toolCallState`) is tracked separately and never merged in.
+ */
+export type StreamingView = {
+  readonly text: string;
+  readonly streaming: boolean;
+};
+
+export const streamingView = (
+  text: string,
+  status: { readonly type: string },
+): StreamingView => ({ text, streaming: status.type === "running" });
+
+/**
+ * Tool lifecycle state, separate from the streaming pulse. `pending`/`approval`
+ * are reserved for future use by the nauval `Tool` shell; the adapter only ever
+ * derives the three states a runtime tool part can actually be in.
+ */
+export type ToolCallState =
+  | "pending"
+  | "approval"
+  | "running"
+  | "success"
+  | "error";
+
+export const toolCallState = (
+  active: boolean,
+  failed: boolean,
+): ToolCallState => (failed ? "error" : active ? "running" : "success");
+
+export type ToolViewInput = {
+  readonly toolName: string;
+  readonly argsText: string;
+  readonly result: unknown;
+  readonly active: boolean;
+  readonly failed: boolean;
+};
+
+export type ToolViewProps = {
+  readonly name: string;
+  readonly preview: string | null;
+  readonly state: ToolCallState;
+  readonly stream: StreamingView;
+  readonly resultText: string;
+  readonly errorText: string;
+  readonly defaultOpen: boolean;
+};
+
+/**
+ * Plain view props for one tool-call leaf. Composes the existing arg/result
+ * adapters so the nauval `Tool` shell never sees the runtime part. `errorText`
+ * falls back to the raw args when a failed call produced no result body.
+ */
+export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
+  const { toolName, argsText, result, active, failed } = input;
+  const resultText = toolCallResultText(result);
+  const state = toolCallState(active, failed);
+  return {
+    name: toolName,
+    preview: toolArgPreview(argsText),
+    state,
+    stream: { text: toolArgsDisplayText(argsText, active), streaming: active },
+    resultText,
+    errorText: state === "error" ? resultText || argsText : "",
+    defaultOpen: active,
+  };
+};
+
+export type ToolGroupViewProps = {
+  readonly count: number;
+  readonly state: "running" | "error" | "success";
+  readonly statusLabel: string;
+  readonly defaultOpen: boolean;
+};
+
+/**
+ * Plain view props for a grouped tool-call header. Reuses the bit-packed
+ * `getToolGroupFlags`/`decodeToolGroupFlags` so the reactive selector over
+ * sibling parts stays inside the leaf and only the decoded view crosses out.
+ */
+export const toolGroupViewProps = (
+  parts: readonly ToolGroupPart[],
+  startIndex: number,
+  endIndex: number,
+): ToolGroupViewProps => {
+  const { count, hasActive, hasError } = decodeToolGroupFlags(
+    getToolGroupFlags(parts, startIndex, endIndex),
+  );
+  const state = hasActive ? "running" : hasError ? "error" : "success";
+  const statusLabel = hasActive
+    ? "Running"
+    : hasError
+      ? "Needs attention"
+      : "Completed";
+  return { count, state, statusLabel, defaultOpen: hasActive };
+};
