@@ -14,6 +14,12 @@ import { type PropsWithChildren, useState } from "react";
 import { toast } from "sonner";
 import { Callout, CalloutContent, CalloutIcon } from "@/components/ai/callout";
 import {
+  Message,
+  MessageAction,
+  MessageContent,
+  MessageText,
+} from "@/components/ai/message";
+import {
   Reasoning,
   ReasoningContent,
   ReasoningTrigger,
@@ -50,7 +56,9 @@ import {
  */
 
 const NativeText: TextMessagePartComponent = ({ text, status }) => (
-  <TextPart text={text} streaming={status.type === "running"} />
+  <MessageText variant="plain">
+    <TextPart text={text} streaming={status.type === "running"} />
+  </MessageText>
 );
 
 const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => {
@@ -225,9 +233,9 @@ const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
   if (!hasText) return null;
 
   return (
-    <div
+    <MessageAction
       className={cn(
-        "mt-1 flex min-h-[32px] gap-1.5 opacity-0 transition-opacity group-hover/native-msg:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
+        "mt-1 min-h-[32px] gap-1.5 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
         align === "end" ? "justify-end" : "justify-start",
       )}
     >
@@ -257,25 +265,34 @@ const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
           <Link className="size-3.5" />
         )}
       </button>
-    </div>
+    </MessageAction>
   );
 };
 
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col items-end py-2 [content-visibility:auto] [contain-intrinsic-size:auto_96px] animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
-    <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
-      <MessagePrimitive.Parts />
-    </div>
-    <NativeMessageActions align="end" />
+  <MessagePrimitive.Root className="py-2 [content-visibility:auto] [contain-intrinsic-size:auto_96px] animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
+    <Message type="outgoing">
+      <MessageContent>
+        <MessageText
+          variant="bubble"
+          className="max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] ring-0 sm:max-w-[85%]"
+        >
+          <MessagePrimitive.Parts />
+        </MessageText>
+        <NativeMessageActions align="end" />
+      </MessageContent>
+    </Message>
   </MessagePrimitive.Root>
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col py-2 [content-visibility:auto] [contain-intrinsic-size:auto_160px] animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
-    <div className="mr-auto w-full break-words text-sm leading-relaxed">
-      <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
-    </div>
-    <NativeMessageActions align="start" />
+  <MessagePrimitive.Root className="py-2 [content-visibility:auto] [contain-intrinsic-size:auto_160px] animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+    <Message type="incoming">
+      <MessageContent className="break-words text-sm leading-relaxed">
+        <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
+        <NativeMessageActions align="start" />
+      </MessageContent>
+    </Message>
   </MessagePrimitive.Root>
 );
 
