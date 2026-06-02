@@ -159,9 +159,15 @@ async function getDaytonaVolumeMounts(
   daytonaVolume: DaytonaVolumeConfig,
 ): Promise<VolumeMount[]> {
   const volume = await daytona.volume.get(daytonaVolume.volumeName, true);
+  const volumeId = String(volume.id ?? "").trim();
+  if (!volumeId) {
+    throw new Error(
+      `[daytona] Volume "${daytonaVolume.volumeName}" did not include an id`,
+    );
+  }
   return [
     {
-      volumeId: String(volume.id),
+      volumeId,
       mountPath: daytonaVolume.volumeMountPath,
       subpath: daytonaVolume.volumeSubpath,
     },
