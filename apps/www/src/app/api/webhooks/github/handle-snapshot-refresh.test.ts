@@ -48,16 +48,11 @@ describe("handlePushSnapshotRefresh", () => {
     });
   });
 
-  it("delegates non-default branch pushes to refresh matching branch snapshots", async () => {
+  it("ignores non-default branch pushes", async () => {
     await handlePushSnapshotRefresh(
       pushPayload({ ref: "refs/heads/feature/foo" }),
     );
-    expect(refreshEnvironmentSnapshotsForRepo).toHaveBeenCalledWith({
-      db: {},
-      repoFullName: "owner/repo",
-      baseBranch: "feature/foo",
-      includeLegacyBranchless: false,
-    });
+    expect(refreshEnvironmentSnapshotsForRepo).not.toHaveBeenCalled();
   });
 
   it("ignores non-branch refs", async () => {

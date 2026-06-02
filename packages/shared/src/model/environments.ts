@@ -396,6 +396,7 @@ export function getReadySnapshot(
     baseDockerfileHash?: string;
     environmentVariablesHash?: string;
     mcpConfigHash?: string;
+    includeLegacyBranchless?: boolean;
   },
 ): EnvironmentSnapshot | null {
   const {
@@ -404,26 +405,41 @@ export function getReadySnapshot(
     baseDockerfileHash,
     environmentVariablesHash,
     mcpConfigHash,
+    includeLegacyBranchless,
   } = filters ?? {};
+  const matchesRecipe = (snapshot: EnvironmentSnapshot): boolean =>
+    snapshot.provider === provider &&
+    snapshot.size === size &&
+    snapshot.status === "ready" &&
+    (setupScriptHash !== undefined
+      ? snapshot.setupScriptHash === setupScriptHash
+      : true) &&
+    (baseDockerfileHash !== undefined
+      ? snapshot.baseDockerfileHash === baseDockerfileHash
+      : true) &&
+    (environmentVariablesHash !== undefined
+      ? snapshot.environmentVariablesHash === environmentVariablesHash
+      : true) &&
+    (mcpConfigHash !== undefined
+      ? snapshot.mcpConfigHash === mcpConfigHash
+      : true);
+
+  const snapshots = environment.snapshots ?? [];
+  const exactMatch = snapshots.find(
+    (snapshot) =>
+      matchesRecipe(snapshot) &&
+      (baseBranch !== undefined ? snapshot.baseBranch === baseBranch : true),
+  );
+  if (exactMatch) {
+    return exactMatch;
+  }
+  if (baseBranch === undefined || !includeLegacyBranchless) {
+    return null;
+  }
   return (
-    environment.snapshots?.find(
-      (s) =>
-        s.provider === provider &&
-        s.size === size &&
-        s.status === "ready" &&
-        (baseBranch !== undefined ? s.baseBranch === baseBranch : true) &&
-        (setupScriptHash !== undefined
-          ? s.setupScriptHash === setupScriptHash
-          : true) &&
-        (baseDockerfileHash !== undefined
-          ? s.baseDockerfileHash === baseDockerfileHash
-          : true) &&
-        (environmentVariablesHash !== undefined
-          ? s.environmentVariablesHash === environmentVariablesHash
-          : true) &&
-        (mcpConfigHash !== undefined
-          ? s.mcpConfigHash === mcpConfigHash
-          : true),
+    snapshots.find(
+      (snapshot) =>
+        matchesRecipe(snapshot) && snapshot.baseBranch === undefined,
     ) ?? null
   );
 }

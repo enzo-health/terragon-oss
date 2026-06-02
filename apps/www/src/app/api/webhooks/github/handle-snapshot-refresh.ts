@@ -12,7 +12,8 @@ export async function handlePushSnapshotRefresh(
     return;
   }
   const repoFullName = payload.repository?.full_name;
-  if (!repoFullName) {
+  const defaultBranch = payload.repository?.default_branch;
+  if (!repoFullName || !defaultBranch) {
     return;
   }
   const branchPrefix = "refs/heads/";
@@ -20,15 +21,16 @@ export async function handlePushSnapshotRefresh(
     return;
   }
   const baseBranch = payload.ref.slice(branchPrefix.length);
-  const includeLegacyBranchless =
-    baseBranch === payload.repository.default_branch;
+  if (baseBranch !== defaultBranch) {
+    return;
+  }
 
   waitUntil(
     refreshEnvironmentSnapshotsForRepo({
       db,
       repoFullName,
       baseBranch,
-      includeLegacyBranchless,
+      includeLegacyBranchless: true,
     }),
   );
 }

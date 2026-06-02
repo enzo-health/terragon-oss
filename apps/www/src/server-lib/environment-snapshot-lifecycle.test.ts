@@ -237,6 +237,30 @@ describe("buildAndStoreEnvironmentSnapshot", () => {
     await Promise.all(waitUntilPromises);
     expect(deleteRepoSnapshot).toHaveBeenCalledWith("old-snapshot");
   });
+
+  it("deletes a superseded legacy branchless snapshot for default-branch builds", async () => {
+    getEnvironment.mockResolvedValue({
+      snapshots: [
+        snapshot({ baseBranch: undefined, snapshotName: "legacy-snapshot" }),
+      ],
+    });
+
+    await buildAndStoreEnvironmentSnapshot({
+      db: {} as never,
+      userId: "user-1",
+      environmentId: "env-1",
+      repoFullName: "owner/repo",
+      baseBranch: "main",
+      githubAccessToken: "gh-token",
+      setupScript: "pnpm install",
+      size: "small",
+      environmentVariables: [{ key: "API_KEY", value: "repo-value" }],
+      mcpConfig: { servers: {} },
+    });
+
+    await Promise.all(waitUntilPromises);
+    expect(deleteRepoSnapshot).toHaveBeenCalledWith("legacy-snapshot");
+  });
 });
 
 describe("refreshEnvironmentSnapshotsForRepo", () => {

@@ -143,6 +143,33 @@ describe("resolveDaytonaSandboxBootPlan", () => {
     expect(plan.snapshotTemplateId).toBeUndefined();
   });
 
+  it("uses a legacy branchless snapshot as a default-branch migration fallback", () => {
+    const plan = resolveDaytonaSandboxBootPlan({
+      sandboxProvider: "daytona",
+      existingSandboxId: null,
+      userId: "user-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      volumeEnabled: false,
+      volumeName: "",
+      sandboxSize: "small",
+      baseBranch: "main",
+      setupScript: "pnpm install",
+      snapshots: [
+        snapshot({
+          ...fingerprint,
+          snapshotName: "legacy-snapshot",
+          baseBranch: undefined,
+        }),
+      ],
+      environmentVariablesHash: "repo-env-hash",
+      mcpConfigHash: "mcp-hash",
+    });
+
+    expect(plan.snapshotTemplateId).toBe("legacy-snapshot");
+  });
+
   it("keeps volume defaults ahead of user env so user env can override", () => {
     const plan = resolveDaytonaSandboxBootPlan({
       sandboxProvider: "daytona",

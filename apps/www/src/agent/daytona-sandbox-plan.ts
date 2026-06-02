@@ -8,6 +8,7 @@ import {
 import {
   buildSnapshotRecipeFingerprint,
   selectReadyEnvironmentSnapshot,
+  shouldUseLegacyBranchlessSnapshotFallback,
   type SnapshotRecipeFingerprint,
 } from "@/server-lib/environment-snapshot-lifecycle";
 
@@ -79,6 +80,8 @@ export function resolveDaytonaSandboxBootPlan({
           snapshots,
           size: sandboxSize,
           baseBranch,
+          includeLegacyBranchless:
+            shouldUseLegacyBranchlessSnapshotFallback(baseBranch),
           fingerprint: snapshotFingerprint,
         })
       : null;

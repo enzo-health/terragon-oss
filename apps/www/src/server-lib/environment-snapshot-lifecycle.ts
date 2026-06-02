@@ -102,17 +102,26 @@ export function selectReadyEnvironmentSnapshot({
   snapshots,
   size,
   baseBranch,
+  includeLegacyBranchless = false,
   fingerprint,
 }: {
   snapshots: EnvironmentSnapshot[] | null;
   size: SandboxSize;
   baseBranch: string;
+  includeLegacyBranchless?: boolean;
   fingerprint: SnapshotRecipeFingerprint;
 }): EnvironmentSnapshot | null {
   return getReadySnapshot({ snapshots }, "daytona", size, {
     baseBranch,
+    includeLegacyBranchless,
     ...fingerprint,
   });
+}
+
+export function shouldUseLegacyBranchlessSnapshotFallback(
+  baseBranch: string,
+): boolean {
+  return baseBranch === "main" || baseBranch === "master";
 }
 
 export async function loadSnapshotBuildInputs({
@@ -208,7 +217,15 @@ export async function buildAndStoreEnvironmentSnapshot({
         s.provider === "daytona" &&
         s.size === size &&
         s.baseBranch === baseBranch,
-    )?.snapshotName || null;
+    )?.snapshotName ??
+    existing?.snapshots?.find(
+      (s) =>
+        shouldUseLegacyBranchlessSnapshotFallback(baseBranch) &&
+        s.provider === "daytona" &&
+        s.size === size &&
+        s.baseBranch === undefined,
+    )?.snapshotName ??
+    null;
 
   await updateEnvironmentSnapshot({
     db,
@@ -351,6 +368,8 @@ export async function maybeWarmEnvironmentSnapshot({
         snapshots,
         size,
         baseBranch,
+        includeLegacyBranchless:
+          shouldUseLegacyBranchlessSnapshotFallback(baseBranch),
         fingerprint,
       })
     ) {

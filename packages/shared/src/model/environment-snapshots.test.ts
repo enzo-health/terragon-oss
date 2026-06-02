@@ -56,6 +56,37 @@ describe("environment snapshot selection", () => {
     ).toBeNull();
   });
 
+  it("prefers exact branch snapshots before legacy branchless fallback", () => {
+    const exactSnapshot = buildSnapshot({
+      snapshotName: "repo-main",
+      baseBranch: "main",
+    });
+    const legacySnapshot = buildSnapshot({
+      snapshotName: "repo-legacy",
+      baseBranch: undefined,
+    });
+
+    expect(
+      getReadySnapshot(
+        { snapshots: [legacySnapshot, exactSnapshot] },
+        "daytona",
+        "large",
+        { baseBranch: "main", includeLegacyBranchless: true },
+      )?.snapshotName,
+    ).toBe("repo-main");
+    expect(
+      getReadySnapshot({ snapshots: [legacySnapshot] }, "daytona", "large", {
+        baseBranch: "main",
+        includeLegacyBranchless: true,
+      })?.snapshotName,
+    ).toBe("repo-legacy");
+    expect(
+      getReadySnapshot({ snapshots: [legacySnapshot] }, "daytona", "large", {
+        baseBranch: "feature/foo",
+      }),
+    ).toBeNull();
+  });
+
   it("stores same-size snapshots independently per base branch", () => {
     const withMainV1 = applyEnvironmentSnapshotUpdate(
       null,
