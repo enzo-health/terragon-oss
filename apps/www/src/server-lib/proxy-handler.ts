@@ -1,13 +1,10 @@
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
-import { waitUntil } from "@vercel/functions";
 import { NextRequest } from "next/server";
 import {
   getDaemonTokenAuthContextOrNull,
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
 import { db } from "@/lib/db";
-import { maybeTriggerCreditAutoReload } from "@/server-lib/credit-auto-reload";
 import { validateProxyRequestModel } from "@/server-lib/proxy-model-validation";
 
 export type HandlerArgs = { params: Promise<{ path?: string[] }> };
@@ -472,26 +469,6 @@ export function createProxyHandler(config: ProxyProviderConfig) {
         return { response: new Response("Unauthorized", { status: 401 }) };
       }
 
-      const { balanceCents } = await getUserCreditBalance({
-        db,
-        userId,
-        skipAggCache: false,
-      });
-      waitUntil(maybeTriggerCreditAutoReload({ userId, balanceCents }));
-      if (balanceCents <= 0) {
-        if (process.env.NODE_ENV !== "production") {
-          console.log(
-            `${config.providerName} proxy access denied: insufficient credits`,
-            {
-              userId,
-              balanceCents,
-            },
-          );
-        }
-        return {
-          response: new Response("Insufficient credits", { status: 402 }),
-        };
-      }
       return { response: null, userId, bodyBuffer, model };
     } catch (err) {
       console.error(

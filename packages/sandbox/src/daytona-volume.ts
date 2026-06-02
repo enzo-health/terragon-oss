@@ -6,11 +6,14 @@ const DAYTONA_VOLUME_WORKSPACE_DIR = "workspace";
 export const DAYTONA_VOLUME_PROFILE_PATH =
   "/etc/profile.d/00-terragon-volume.sh";
 export const DAYTONA_VOLUME_ARTIFACTS_DIR = "artifacts";
+const DAYTONA_VOLUME_PNPM_STORE_DIR = "pnpm/store";
+const DAYTONA_VOLUME_NEXT_CACHE_DIR = "next-cache";
 
 const DAYTONA_VOLUME_CACHE_DIRS = [
   "npm",
   "yarn",
   "bun",
+  DAYTONA_VOLUME_PNPM_STORE_DIR,
   "pip",
   "uv",
   "cargo",
@@ -34,8 +37,12 @@ export type DaytonaVolumeLayout = {
   volumeMountPath: string;
   volumeSubpath: string;
   cacheMountPath: string;
+  repoCacheMountPath: string;
   workspaceMountPath: string;
   artifactsPath: string;
+  pnpmStorePath: string;
+  pnpmVirtualStorePath: string;
+  nextCachePath: string;
 };
 
 export type DaytonaVolumeConfig = DaytonaVolumeLayout;
@@ -83,6 +90,14 @@ export function resolveDaytonaVolumeLayout({
     DAYTONA_VOLUME_MOUNT_PATH,
     ...workspaceSegments,
   ].join("/");
+  const repoCacheMountPath = [
+    DAYTONA_VOLUME_MOUNT_PATH,
+    DAYTONA_VOLUME_CACHE_DIR,
+    "environments",
+    sanitizeVolumeSubpathSegment(environmentId),
+    "repos",
+    repoSegment,
+  ].join("/");
 
   return {
     volumeName: trimmedVolumeName,
@@ -91,10 +106,24 @@ export function resolveDaytonaVolumeLayout({
     cacheMountPath: [DAYTONA_VOLUME_MOUNT_PATH, DAYTONA_VOLUME_CACHE_DIR].join(
       "/",
     ),
+    repoCacheMountPath,
     workspaceMountPath,
     artifactsPath: path.posix.join(
       workspaceMountPath,
       DAYTONA_VOLUME_ARTIFACTS_DIR,
+    ),
+    pnpmStorePath: path.posix.join(
+      DAYTONA_VOLUME_MOUNT_PATH,
+      DAYTONA_VOLUME_CACHE_DIR,
+      DAYTONA_VOLUME_PNPM_STORE_DIR,
+    ),
+    pnpmVirtualStorePath: path.posix.join(
+      workspaceMountPath,
+      "node_modules/.pnpm",
+    ),
+    nextCachePath: path.posix.join(
+      repoCacheMountPath,
+      DAYTONA_VOLUME_NEXT_CACHE_DIR,
     ),
   };
 }
@@ -109,6 +138,12 @@ export function getDaytonaVolumeEnvironmentEntries(
     { key: "npm_config_cache", value: `${volume.cacheMountPath}/npm` },
     { key: "YARN_CACHE_FOLDER", value: `${volume.cacheMountPath}/yarn` },
     { key: "BUN_INSTALL_CACHE_DIR", value: `${volume.cacheMountPath}/bun` },
+    { key: "PNPM_STORE_DIR", value: volume.pnpmStorePath },
+    { key: "pnpm_config_store_dir", value: volume.pnpmStorePath },
+    {
+      key: "pnpm_config_virtual_store_dir",
+      value: volume.pnpmVirtualStorePath,
+    },
     { key: "PIP_CACHE_DIR", value: `${volume.cacheMountPath}/pip` },
     { key: "UV_CACHE_DIR", value: `${volume.cacheMountPath}/uv` },
     { key: "CARGO_HOME", value: `${volume.cacheMountPath}/cargo` },
@@ -139,6 +174,13 @@ export function getDaytonaVolumeEnvironmentEntries(
       key: "ESLINT_CACHE_LOCATION",
       value: `${volume.cacheMountPath}/eslint/.eslintcache`,
     },
+    { key: "TERRAGON_VOLUME_CACHE_DIR", value: volume.cacheMountPath },
+    { key: "TERRAGON_VOLUME_WORKSPACE_DIR", value: volume.workspaceMountPath },
+    { key: "TERRAGON_PNPM_STORE_DIR", value: volume.pnpmStorePath },
+    {
+      key: "TERRAGON_PNPM_VIRTUAL_STORE_DIR",
+      value: volume.pnpmVirtualStorePath,
+    },
     { key: "TERRAGON_ARTIFACTS_DIR", value: volume.artifactsPath },
   ];
 }
@@ -153,6 +195,9 @@ export function getDaytonaVolumeSetupDirs(
       path.posix.join(volume.cacheMountPath, dir),
     ),
     volume.artifactsPath,
+    volume.pnpmStorePath,
+    volume.pnpmVirtualStorePath,
+    volume.nextCachePath,
   ];
 }
 

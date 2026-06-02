@@ -33,6 +33,31 @@ import {
   getDaytonaVolumeSetupDirs,
 } from "./daytona-volume";
 import path from "path";
+import { timeSandboxStartupStage } from "./startup-timing";
+
+const CLAUDE_CODE_VERSION = "2.1.126";
+const SNAPSHOT_BOOT_GIT_CLEAN_EXCLUDES = [
+  "node_modules",
+  "**/node_modules",
+  ".turbo",
+  "**/.turbo",
+] as const;
+const CLAUDE_WORKSPACE_CHOWN_PRUNES = [
+  "node_modules",
+  ".next",
+  ".turbo",
+] as const;
+const NEXT_CONFIG_PATHSPECS = [
+  "next.config.js",
+  "next.config.mjs",
+  "next.config.ts",
+  "*/next.config.js",
+  "*/next.config.mjs",
+  "*/next.config.ts",
+  "*/*/next.config.js",
+  "*/*/next.config.mjs",
+  "*/*/next.config.ts",
+] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,29 +172,38 @@ async function probeSandboxAgentEndpoint({
   session: ISandboxSession;
   options: CreateSandboxOptions;
 }) {
-  const baseUrl = getSandboxAgentBaseUrl(options);
-  if (!baseUrl) {
-    return;
-  }
-  const healthMaxRetries = options.sandboxProvider === "docker" ? 30 : 12;
-  const healthRetryDelayMs = options.sandboxProvider === "docker" ? 750 : 500;
-  await ensureSandboxAgentRunning({ session, baseUrl });
-  await waitForSandboxAgentHealth({
-    session,
-    baseUrl,
-    maxRetries: healthMaxRetries,
-    retryDelayMs: healthRetryDelayMs,
-  });
-  try {
-    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`, {
-      cwd: "/",
-    });
-    return;
-  } catch {
-    await session.runCommand(`curl -fsS ${bashQuote(`${baseUrl}/v1/rpc`)}`, {
-      cwd: "/",
-    });
-  }
+  await timeSandboxStartupStage(
+    "sandbox_agent.probe",
+    { provider: options.sandboxProvider },
+    async () => {
+      const baseUrl = getSandboxAgentBaseUrl(options);
+      if (!baseUrl) {
+        return;
+      }
+      const healthMaxRetries = options.sandboxProvider === "docker" ? 30 : 12;
+      const healthRetryDelayMs =
+        options.sandboxProvider === "docker" ? 750 : 500;
+      await ensureSandboxAgentRunning({ session, baseUrl });
+      await waitForSandboxAgentHealth({
+        session,
+        baseUrl,
+        maxRetries: healthMaxRetries,
+        retryDelayMs: healthRetryDelayMs,
+      });
+      try {
+        await session.runCommand(
+          `curl -fsS ${bashQuote(`${baseUrl}/v1/acp`)}`,
+          { cwd: "/" },
+        );
+        return;
+      } catch {
+        await session.runCommand(
+          `curl -fsS ${bashQuote(`${baseUrl}/v1/rpc`)}`,
+          { cwd: "/" },
+        );
+      }
+    },
+  );
 }
 
 async function createNewBranch({
@@ -224,125 +258,226 @@ export async function setupSandboxOneTime(
   session: ISandboxSession,
   options: CreateSandboxOptions,
 ) {
-  const dotProfileContents = [
-    "ulimit -c 0",
-    "if [ -f ~/.bashrc ]; then . ~/.bashrc; fi",
-  ].join("\n");
-  await session.runCommand(
-    `echo ${bashQuote(dotProfileContents)} >> ~/.profile`,
-    { cwd: "/" },
-  );
+  return await timeSandboxStartupStage(
+    "sandbox.setup.one_time",
+    getSandboxSetupTimingAttrs(options),
+    async () => {
+      const dotProfileContents = [
+        "ulimit -c 0",
+        "if [ -f ~/.bashrc ]; then . ~/.bashrc; fi",
+      ].join("\n");
+      await session.runCommand(
+        `echo ${bashQuote(dotProfileContents)} >> ~/.profile`,
+        { cwd: "/" },
+      );
 
-  await setupDaytonaVolumePaths(session, options);
+      await timeSandboxStartupStage(
+        "daytona.volume.paths",
+        getSandboxSetupTimingAttrs(options),
+        () => setupDaytonaVolumePaths(session, options),
+      );
 
-  if (!options.snapshotTemplateId) {
-    await gitCloneRepo(session, options);
-  } else {
-    // Repo already cloned in snapshot — update git remote with a fresh token,
-    // then fast-forward to the live base branch.
-    await options.onStatusUpdate({
-      sandboxId: session.sandboxId,
-      sandboxStatus: "booting",
-      bootingStatus: "cloning-repo",
-    });
-    await session.runCommand(
-      `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
-      { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
-    );
-    // The snapshot froze the working tree at the commit baked in at build time,
-    // which may now be behind. Fetch + hard-reset to the live base branch so the
-    // task's new branch forks from the current tip, not the stale commit. The
-    // fetch is incremental — the snapshot already holds nearly every object.
-    // Best-effort: a deleted/renamed base branch must not fail the boot.
-    try {
+      if (!options.snapshotTemplateId) {
+        await gitCloneRepo(session, options);
+      } else {
+        // Repo already cloned in snapshot — update git remote with a fresh token,
+        // then fast-forward to the live base branch.
+        await options.onStatusUpdate({
+          sandboxId: session.sandboxId,
+          sandboxStatus: "booting",
+          bootingStatus: "cloning-repo",
+        });
+        await session.runCommand(
+          `git remote set-url origin "https://\${GITHUB_ACCESS_TOKEN}@github.com/${options.githubRepoFullName}.git"`,
+          { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
+        );
+        // The snapshot froze the working tree at the commit baked in at build time,
+        // which may now be behind. Fetch + hard-reset to the live base branch so the
+        // task's new branch forks from the current tip, not the stale commit. The
+        // fetch is incremental — the snapshot already holds nearly every object.
+        // Best-effort: a deleted/renamed base branch must not fail the boot.
+        await timeSandboxStartupStage(
+          "git.snapshot.refresh",
+          getSandboxSetupTimingAttrs(options),
+          async () => {
+            try {
+              await session.runCommand(
+                [
+                  `git fetch --no-tags --filter=blob:none origin ${bashQuote(`${options.repoBaseBranchName}:refs/remotes/origin/${options.repoBaseBranchName}`)}`,
+                  `git reset --hard ${bashQuote(`origin/${options.repoBaseBranchName}`)}`,
+                ].join(" && "),
+                { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
+              );
+            } catch (error) {
+              console.warn(
+                `[snapshot-boot] Failed to refresh ${options.repoBaseBranchName} from origin; using baked commit:`,
+                error,
+              );
+            }
+          },
+        );
+      }
       await session.runCommand(
         [
-          `git fetch --filter=blob:none origin ${bashQuote(options.repoBaseBranchName)}`,
-          `git reset --hard ${bashQuote(`origin/${options.repoBaseBranchName}`)}`,
+          `git config user.name ${bashQuote(options.userName)}`,
+          `git config user.email ${bashQuote(options.userEmail)}`,
+          `git config core.pager cat`,
         ].join(" && "),
-        { env: { GITHUB_ACCESS_TOKEN: options.githubAccessToken } },
       );
-    } catch (error) {
-      console.warn(
-        `[snapshot-boot] Failed to refresh ${options.repoBaseBranchName} from origin; using baked commit:`,
-        error,
+      if (options.createNewBranch) {
+        await createNewBranch({
+          session,
+          threadName: options.threadName,
+          generateBranchName: options.generateBranchName,
+        });
+      } else if (options.branchName) {
+        // Checkout specific branch when createNewBranch is false but branchName is provided
+        await session.runCommand(
+          `git checkout ${bashQuote(options.branchName)}`,
+        );
+      }
+      await timeSandboxStartupStage(
+        "git.clean",
+        getSandboxSetupTimingAttrs(options),
+        () =>
+          session.runCommand(getGitCleanCommand(options)).then(() => undefined),
       );
-    }
+      await timeSandboxStartupStage(
+        "daytona.volume.workspace_links",
+        getSandboxSetupTimingAttrs(options),
+        () => setupDaytonaVolumeWorkspaceLinks(session, options),
+      );
+
+      await options.onStatusUpdate({
+        sandboxId: session.sandboxId,
+        sandboxStatus: "booting",
+        bootingStatus: "installing-agent",
+      });
+
+      const daemonInstallAndProbe = timeSandboxStartupStage(
+        "daemon.install",
+        getSandboxSetupTimingAttrs(options),
+        () =>
+          installDaemon({
+            session,
+            environmentVariables: options.environmentVariables || [],
+            githubAccessToken: options.githubAccessToken,
+            agentCredentials: options.agentCredentials,
+            userMcpConfig: options.mcpConfig,
+            publicUrl: options.publicUrl,
+            featureFlags: options.featureFlags,
+          }),
+      ).then(() => probeSandboxAgentEndpoint({ session, options }));
+
+      // Only run terragon-setup.sh if not explicitly skipped and no snapshot
+      if (options.skipSetupScript || options.snapshotTemplateId) {
+        console.log("Skipping setup script (snapshot or explicit skip)");
+        await daemonInstallAndProbe;
+      } else if (options.backgroundSetupScript) {
+        // Background mode: install the dependency barrier, then launch the setup
+        // script detached so the agent can dispatch immediately. Boot reaches
+        // `booting-done` once the daemon probe resolves — setup keeps running.
+        await options.onStatusUpdate({
+          sandboxId: session.sandboxId,
+          sandboxStatus: "booting",
+          bootingStatus: "running-setup-script",
+        });
+        await Promise.all([
+          daemonInstallAndProbe,
+          timeSandboxStartupStage(
+            "setup_script.background_launch",
+            getSandboxSetupTimingAttrs(options),
+            () => launchSetupScriptInBackground({ session, options }),
+          ),
+        ]);
+      } else {
+        // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
+        // are fully independent — run them in parallel to hide the spawn latency.
+        await options.onStatusUpdate({
+          sandboxId: session.sandboxId,
+          sandboxStatus: "booting",
+          bootingStatus: "running-setup-script",
+        });
+        await Promise.all([
+          daemonInstallAndProbe,
+          timeSandboxStartupStage(
+            "setup_script.run",
+            getSandboxSetupTimingAttrs(options),
+            () =>
+              runSetupScript({
+                session,
+                options: {
+                  environmentVariables: options.environmentVariables,
+                  githubAccessToken: options.githubAccessToken,
+                  agentCredentials: options.agentCredentials,
+                  setupScript: options.setupScript,
+                  onInstallProgress: options.onInstallProgress,
+                },
+              }),
+          ),
+        ]);
+      }
+
+      await timeSandboxStartupStage(
+        "claude.workspace_prep",
+        getSandboxSetupTimingAttrs(options),
+        () => prepareClaudeCodeRunUserWorkspace(session, options),
+      );
+    },
+  );
+}
+
+function getSandboxSetupTimingAttrs(options: CreateSandboxOptions) {
+  return {
+    provider: options.sandboxProvider,
+    repo: options.githubRepoFullName,
+    branch: options.repoBaseBranchName,
+    hasSnapshotTemplate: Boolean(options.snapshotTemplateId),
+    hasDaytonaVolume: Boolean(options.daytonaVolume),
+    agent: options.agent ?? null,
+  };
+}
+
+function getGitCleanCommand(options: CreateSandboxOptions): string {
+  if (!options.snapshotTemplateId) {
+    return "git clean -fxd";
   }
+
+  const excludes = SNAPSHOT_BOOT_GIT_CLEAN_EXCLUDES.map(
+    (exclude) => `-e ${bashQuote(exclude)}`,
+  ).join(" ");
+  return `git clean -fxd ${excludes}`;
+}
+
+async function setupDaytonaVolumeWorkspaceLinks(
+  session: ISandboxSession,
+  options: CreateSandboxOptions,
+): Promise<void> {
+  const volume = options.daytonaVolume;
+  if (!volume) {
+    return;
+  }
+
+  const repoPath = path.posix.join("/", session.homeDir, session.repoDir);
+  const nextConfigPathspecs = NEXT_CONFIG_PATHSPECS.map(bashQuote).join(" ");
   await session.runCommand(
     [
-      `git config user.name ${bashQuote(options.userName)}`,
-      `git config user.email ${bashQuote(options.userEmail)}`,
-      `git config core.pager cat`,
-    ].join(" && "),
+      `mkdir -p ${bashQuote(volume.nextCachePath)}`,
+      `git -C ${bashQuote(repoPath)} ls-files -z -- ${nextConfigPathspecs} | while IFS= read -r -d '' config; do`,
+      '  rel_dir="$(dirname "$config")"',
+      "  app_dir=" + bashQuote(repoPath) + '/"$rel_dir"',
+      `  target=${bashQuote(volume.nextCachePath)}/"$rel_dir/cache"`,
+      '  next_dir="$app_dir/.next"',
+      '  link="$next_dir/cache"',
+      '  mkdir -p "$next_dir"',
+      '  mkdir -p "$target"',
+      '  if [ -L "$link" ]; then continue; fi',
+      '  if [ -d "$link" ]; then rm -rf "$link"; fi',
+      '  ln -s "$target" "$link"',
+      "done",
+    ].join("\n"),
+    { cwd: "/" },
   );
-  if (options.createNewBranch) {
-    await createNewBranch({
-      session,
-      threadName: options.threadName,
-      generateBranchName: options.generateBranchName,
-    });
-  } else if (options.branchName) {
-    // Checkout specific branch when createNewBranch is false but branchName is provided
-    await session.runCommand(`git checkout ${bashQuote(options.branchName)}`);
-  }
-  await session.runCommand(`git clean -fxd`);
-
-  await options.onStatusUpdate({
-    sandboxId: session.sandboxId,
-    sandboxStatus: "booting",
-    bootingStatus: "installing-agent",
-  });
-
-  const daemonInstallAndProbe = installDaemon({
-    session,
-    environmentVariables: options.environmentVariables || [],
-    githubAccessToken: options.githubAccessToken,
-    agentCredentials: options.agentCredentials,
-    userMcpConfig: options.mcpConfig,
-    publicUrl: options.publicUrl,
-    featureFlags: options.featureFlags,
-  }).then(() => probeSandboxAgentEndpoint({ session, options }));
-
-  // Only run terragon-setup.sh if not explicitly skipped and no snapshot
-  if (options.skipSetupScript || options.snapshotTemplateId) {
-    console.log("Skipping setup script (snapshot or explicit skip)");
-    await daemonInstallAndProbe;
-  } else if (options.backgroundSetupScript) {
-    // Background mode: install the dependency barrier, then launch the setup
-    // script detached so the agent can dispatch immediately. Boot reaches
-    // `booting-done` once the daemon probe resolves — setup keeps running.
-    await options.onStatusUpdate({
-      sandboxId: session.sandboxId,
-      sandboxStatus: "booting",
-      bootingStatus: "running-setup-script",
-    });
-    await Promise.all([
-      daemonInstallAndProbe,
-      launchSetupScriptInBackground({ session, options }),
-    ]);
-  } else {
-    // Daemon startup (~15s for Node.js spawn on Daytona) and the setup script
-    // are fully independent — run them in parallel to hide the spawn latency.
-    await options.onStatusUpdate({
-      sandboxId: session.sandboxId,
-      sandboxStatus: "booting",
-      bootingStatus: "running-setup-script",
-    });
-    await Promise.all([
-      daemonInstallAndProbe,
-      runSetupScript({
-        session,
-        options: {
-          environmentVariables: options.environmentVariables,
-          githubAccessToken: options.githubAccessToken,
-          agentCredentials: options.agentCredentials,
-          setupScript: options.setupScript,
-          onInstallProgress: options.onInstallProgress,
-        },
-      }),
-    ]);
-  }
 }
 
 async function setupDaytonaVolumePaths(
@@ -545,42 +680,59 @@ export async function setupSandboxEveryTime({
   options: CreateSandboxOptions;
   isCreatingSandbox: boolean;
 }) {
-  const shouldProbeSandboxAgent = !options.fastResume || isCreatingSandbox;
+  return await timeSandboxStartupStage(
+    "sandbox.setup.every_time",
+    {
+      ...getSandboxSetupTimingAttrs(options),
+      isCreatingSandbox,
+      fastResume: Boolean(options.fastResume),
+    },
+    async () => {
+      const shouldProbeSandboxAgent = !options.fastResume || isCreatingSandbox;
 
-  // All setup operations that don't depend on each other run in parallel.
-  const parallelOps: Promise<void>[] = [setupGitCredentials(session, options)];
-  if (shouldProbeSandboxAgent) {
-    parallelOps.push(probeSandboxAgentEndpoint({ session, options }));
-  }
-  const agent = options.agent;
-  if (agent && (!options.fastResume || agent === "codex")) {
-    parallelOps.push(
-      updateAgentFiles({
-        session,
-        customSystemPrompt: options.customSystemPrompt,
-        agent,
-        agentCredentials: options.agentCredentials,
-        skipLocalQualityChecks: options.skipLocalQualityChecks ?? false,
-        isCreatingSandbox,
-        mcpConfig: options.mcpConfig,
-        publicUrl: options.publicUrl,
-      }),
-    );
-  }
-  if (!isCreatingSandbox) {
-    if (options.autoUpdateDaemon && !options.fastResume) {
-      parallelOps.push(
-        (async () => {
-          await updateDaemonIfOutdated({ session, options });
-          await restartDaemonIfNotRunning({ session, options });
-        })(),
-      );
-    } else {
-      parallelOps.push(restartDaemonIfNotRunning({ session, options }));
-    }
-  }
+      // All setup operations that don't depend on each other run in parallel.
+      const parallelOps: Promise<void>[] = [
+        setupGitCredentials(session, options),
+      ];
+      if (shouldProbeSandboxAgent) {
+        parallelOps.push(probeSandboxAgentEndpoint({ session, options }));
+      }
+      const agent = options.agent;
+      if (agent && (!options.fastResume || agent === "codex")) {
+        parallelOps.push(
+          timeSandboxStartupStage(
+            "agent.config",
+            getSandboxSetupTimingAttrs(options),
+            () =>
+              updateAgentFiles({
+                session,
+                customSystemPrompt: options.customSystemPrompt,
+                agent,
+                agentCredentials: options.agentCredentials,
+                skipLocalQualityChecks: options.skipLocalQualityChecks ?? false,
+                isCreatingSandbox,
+                mcpConfig: options.mcpConfig,
+                publicUrl: options.publicUrl,
+              }),
+          ),
+        );
+      }
+      if (!isCreatingSandbox) {
+        if (options.autoUpdateDaemon && !options.fastResume) {
+          parallelOps.push(
+            (async () => {
+              await updateDaemonIfOutdated({ session, options });
+              await restartDaemonIfNotRunning({ session, options });
+            })(),
+          );
+        } else {
+          parallelOps.push(restartDaemonIfNotRunning({ session, options }));
+        }
+      }
 
-  await Promise.all(parallelOps);
+      await Promise.all(parallelOps);
+    },
+  );
 }
 
 async function updateAgentFilesShared({
@@ -684,6 +836,7 @@ async function updateAgentFiles({
   const homeDir = (await session.runCommand("cd && pwd", { cwd: "/" })).trim();
   switch (agent) {
     case "claudeCode": {
+      await ensureClaudeCodeExecutable(session);
       await updateAgentFilesShared({
         session,
         homeDir,
@@ -827,6 +980,82 @@ async function updateAgentFiles({
       break;
     }
   }
+}
+
+async function ensureClaudeCodeExecutable(session: ISandboxSession) {
+  const command = [
+    "set -e",
+    'if [ -x /usr/local/bin/claude-real ] && [ -f /usr/bin/claude ] && grep -qs "terragon-claude-wrapper" /usr/bin/claude; then',
+    "  claude --version >/tmp/terragon-claude-version.out",
+    "  exit 0",
+    "fi",
+    "if ! claude --version >/tmp/terragon-claude-version.out 2>/tmp/terragon-claude-version.err; then",
+    "  if ! grep -Eqi 'exec format|cannot execute binary file' /tmp/terragon-claude-version.err; then cat /tmp/terragon-claude-version.err >&2; exit 1; fi",
+    'case "$(node -p process.arch)" in',
+    '  x64) claude_platform_package="@anthropic-ai/claude-code-linux-x64" ;;',
+    '  arm64) claude_platform_package="@anthropic-ai/claude-code-linux-arm64" ;;',
+    '  *) echo "unsupported Claude Code sandbox architecture: $(node -p process.arch)" >&2; exit 1 ;;',
+    "esac",
+    `npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} "$claude_platform_package@${CLAUDE_CODE_VERSION}"`,
+    'claude_platform_bin="/usr/lib/node_modules/${claude_platform_package}/claude"',
+    'if [ ! -x "$claude_platform_bin" ]; then echo "missing Claude Code platform binary: $claude_platform_bin" >&2; exit 1; fi',
+    'ln -sf "$claude_platform_bin" /usr/bin/claude',
+    "fi",
+    'claude_path=$(readlink -f "$(command -v claude)")',
+    'if head -c 2 "$claude_path" | grep -q "^#!"; then',
+    `sed -i.bak -e '1a\\
+Object.defineProperty(process, "getuid", {\\
+  value: function() { return 1000; },\\
+  writable: false,\\
+  enumerable: true,\\
+  configurable: true\\
+});' -e 's/![a-zA-Z_$][a-zA-Z0-9_$]*()[.]bypassPermissionsModeAccepted/false/g' "$claude_path"`,
+    '  rm -f "$claude_path".bak',
+    "fi",
+    "id terragon-agent >/dev/null 2>&1 || useradd --create-home --shell /bin/bash terragon-agent",
+    "chmod 755 /root",
+    'ln -sf "$claude_path" /usr/local/bin/claude-real',
+    "rm -f /usr/bin/claude",
+    "cat > /usr/bin/claude <<'EOF'",
+    "#!/usr/bin/env bash",
+    "# terragon-claude-wrapper",
+    "set -e",
+    'real="/usr/local/bin/claude-real"',
+    'if [ "$(id -u)" = "0" ] && id terragon-agent >/dev/null 2>&1; then',
+    '  exec env HOME=/root USER=terragon-agent LOGNAME=terragon-agent runuser -u terragon-agent --preserve-environment -- "$real" "$@"',
+    "fi",
+    'exec "$real" "$@"',
+    "EOF",
+    "chmod 755 /usr/bin/claude",
+    "claude --version >/tmp/terragon-claude-version.out",
+  ].join("\n");
+
+  await session.runCommand(command, { cwd: "/" });
+}
+
+async function prepareClaudeCodeRunUserWorkspace(
+  session: ISandboxSession,
+  options: CreateSandboxOptions,
+) {
+  if (options.agent !== "claudeCode") {
+    return;
+  }
+
+  const pruneArgs = CLAUDE_WORKSPACE_CHOWN_PRUNES.map(
+    (name) => `-name ${bashQuote(name)}`,
+  ).join(" -o ");
+  await session.runCommand(
+    [
+      "id terragon-agent >/dev/null 2>&1 || exit 0",
+      "chmod 755 /root",
+      "chown -R terragon-agent:terragon-agent /root/.claude 2>/dev/null || true",
+      `find /root/repo \\( ${pruneArgs} \\) -prune -o -exec chown terragon-agent:terragon-agent {} + 2>/dev/null || true`,
+      `find /root/repo -maxdepth 3 \\( ${pruneArgs} \\) -type d -prune -exec chown terragon-agent:terragon-agent {} + 2>/dev/null || true`,
+      "git config --global --add safe.directory /root/repo || true",
+      "git config --system --add safe.directory /root/repo || true",
+    ].join("\n"),
+    { cwd: "/" },
+  );
 }
 
 type OnUpdateCallback = (

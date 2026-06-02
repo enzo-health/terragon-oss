@@ -150,6 +150,8 @@ vi.mock("@terragon/shared/github-app", () => ({
 }));
 vi.mock("@terragon/sandbox-image", () => ({
   getTemplateIdForSize: vi.fn(() => "mock-template-id"),
+  renderDockerfile: vi.fn(() => "mock-dockerfile"),
+  SUPERVISORD_CONF: "mock-supervisord-conf",
 }));
 vi.mock("@terragon/bundled", () => ({
   daemonAsStr: "mock-daemon-content",

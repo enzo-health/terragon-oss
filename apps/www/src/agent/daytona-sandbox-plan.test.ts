@@ -21,6 +21,7 @@ function snapshot(
     size: "small",
     snapshotName: "repo-owner-repo-small",
     status: "ready",
+    baseBranch: "main",
     builtAt: "2026-05-30T00:00:00.000Z",
     ...overrides,
   };
@@ -46,6 +47,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
         volumeEnabled: true,
         volumeName: "terragon-workspaces",
         sandboxSize: "small",
+        baseBranch: "main",
         setupScript: "pnpm install",
         snapshots: [snapshot(fingerprint)],
         environmentVariablesHash: "repo-env-hash",
@@ -70,6 +72,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
       volumeEnabled: false,
       volumeName: "",
       sandboxSize: "small",
+      baseBranch: "main",
       setupScript: "pnpm install",
       snapshots: [snapshot(fingerprint)],
       environmentVariablesHash: "repo-env-hash",
@@ -91,6 +94,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
       volumeEnabled: false,
       volumeName: "",
       sandboxSize: "small",
+      baseBranch: "main",
       setupScript: "pnpm install",
       snapshots: [
         snapshot({ ...fingerprint, snapshotName: "matching-snapshot" }),
@@ -107,6 +111,65 @@ describe("resolveDaytonaSandboxBootPlan", () => {
     expect(plan.snapshotTemplateId).toBe("matching-snapshot");
   });
 
+  it("does not select a snapshot baked from a different base branch", () => {
+    const plan = resolveDaytonaSandboxBootPlan({
+      sandboxProvider: "daytona",
+      existingSandboxId: null,
+      userId: "user-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      volumeEnabled: false,
+      volumeName: "",
+      sandboxSize: "small",
+      baseBranch: "feature/foo",
+      setupScript: "pnpm install",
+      snapshots: [
+        snapshot({
+          ...fingerprint,
+          snapshotName: "main-snapshot",
+          baseBranch: "main",
+        }),
+        snapshot({
+          ...fingerprint,
+          snapshotName: "legacy-snapshot",
+          baseBranch: undefined,
+        }),
+      ],
+      environmentVariablesHash: "repo-env-hash",
+      mcpConfigHash: "mcp-hash",
+    });
+
+    expect(plan.snapshotTemplateId).toBeUndefined();
+  });
+
+  it("uses a legacy branchless snapshot as a default-branch migration fallback", () => {
+    const plan = resolveDaytonaSandboxBootPlan({
+      sandboxProvider: "daytona",
+      existingSandboxId: null,
+      userId: "user-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      repoFullName: "owner/repo",
+      volumeEnabled: false,
+      volumeName: "",
+      sandboxSize: "small",
+      baseBranch: "main",
+      setupScript: "pnpm install",
+      snapshots: [
+        snapshot({
+          ...fingerprint,
+          snapshotName: "legacy-snapshot",
+          baseBranch: undefined,
+        }),
+      ],
+      environmentVariablesHash: "repo-env-hash",
+      mcpConfigHash: "mcp-hash",
+    });
+
+    expect(plan.snapshotTemplateId).toBe("legacy-snapshot");
+  });
+
   it("keeps volume defaults ahead of user env so user env can override", () => {
     const plan = resolveDaytonaSandboxBootPlan({
       sandboxProvider: "daytona",
@@ -118,6 +181,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
       volumeEnabled: true,
       volumeName: "terragon-workspaces",
       sandboxSize: "small",
+      baseBranch: "main",
       setupScript: "pnpm install",
       snapshots: [],
       environmentVariablesHash: "repo-env-hash",

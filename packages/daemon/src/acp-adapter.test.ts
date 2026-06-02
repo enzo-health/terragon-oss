@@ -231,6 +231,75 @@ describe("parseAcpLineToClaudeMessages", () => {
     expect(result[0]!.type).toBe("assistant");
   });
 
+  it("parses nested Claude Code agent_message_chunk text", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            content: {
+              text: "running setup",
+            },
+          },
+        },
+      },
+    });
+
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("assistant");
+    if (result[0]!.type === "assistant") {
+      expect(result[0]!.message.content).toEqual([
+        { type: "text", text: "running setup" },
+      ]);
+    }
+  });
+
+  it("parses Claude Code metadata tool chunks as tool_use messages", () => {
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            id: "toolu_123",
+            type: "tool_use",
+            input: {
+              command: "rg scheduling",
+            },
+            _meta: {
+              claudeCode: {
+                toolName: "Bash",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const result = parseAcpLineToClaudeMessages(line, "fallback");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.type).toBe("assistant");
+    if (result[0]!.type === "assistant") {
+      expect(result[0]!.message.content).toEqual([
+        {
+          type: "tool_use",
+          id: "toolu_123",
+          name: "Bash",
+          input: { command: "rg scheduling" },
+        },
+      ]);
+    }
+  });
+
   it("surfaces unknown sessionUpdate types with content as assistant text", () => {
     const line = JSON.stringify({
       jsonrpc: "2.0",
