@@ -4,6 +4,7 @@ import type { CreateSandboxOptions } from "../types";
 const daytonaCreateMock = vi.fn();
 const daytonaConstructorOptionsMock = vi.fn();
 const daytonaGetMock = vi.fn();
+const daytonaVolumeCreateMock = vi.fn();
 const daytonaVolumeGetMock = vi.fn();
 const daytonaVolumeListMock = vi.fn();
 
@@ -16,6 +17,7 @@ vi.mock("@daytonaio/sdk", () => {
     create = daytonaCreateMock;
     get = daytonaGetMock;
     volume = {
+      create: daytonaVolumeCreateMock,
       get: daytonaVolumeGetMock,
       list: daytonaVolumeListMock,
     };
@@ -307,10 +309,15 @@ describe("DaytonaProvider lifecycle policy", () => {
     expect(createPayload?.volumes?.[0]?.volumeId).toBeTypeOf("string");
   });
 
-  it("falls back to get-or-create when the configured Daytona volume is missing from list", async () => {
+  it("creates and re-lists when the configured Daytona volume is missing from list", async () => {
     const sandbox = createMockSandbox();
-    daytonaVolumeListMock.mockResolvedValue([]);
-    daytonaVolumeGetMock.mockResolvedValue({
+    daytonaVolumeListMock.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+        name: "terragon-workspaces",
+      },
+    ]);
+    daytonaVolumeCreateMock.mockResolvedValue({
       id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
       name: "terragon-workspaces",
     });
@@ -323,10 +330,9 @@ describe("DaytonaProvider lifecycle policy", () => {
       daytonaVolume: defaultDaytonaVolume,
     });
 
-    expect(daytonaVolumeGetMock).toHaveBeenCalledWith(
-      "terragon-workspaces",
-      true,
-    );
+    expect(daytonaVolumeCreateMock).toHaveBeenCalledWith("terragon-workspaces");
+    expect(daytonaVolumeGetMock).not.toHaveBeenCalled();
+    expect(daytonaVolumeListMock).toHaveBeenCalledTimes(2);
     expect(daytonaCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         volumes: [
@@ -340,7 +346,7 @@ describe("DaytonaProvider lifecycle policy", () => {
     );
   });
 
-  it("re-lists after get-or-create when Daytona get returns an unmountable numeric id", async () => {
+  it("re-lists instead of using unmountable numeric listed ids", async () => {
     const sandbox = createMockSandbox();
     daytonaVolumeListMock
       .mockResolvedValueOnce([
@@ -355,10 +361,6 @@ describe("DaytonaProvider lifecycle policy", () => {
           name: "terragon-workspaces",
         },
       ]);
-    daytonaVolumeGetMock.mockResolvedValue({
-      id: 889967,
-      name: "terragon-workspaces",
-    });
     daytonaCreateMock.mockResolvedValue(sandbox);
 
     const provider = new DaytonaProvider();
@@ -368,10 +370,8 @@ describe("DaytonaProvider lifecycle policy", () => {
       daytonaVolume: defaultDaytonaVolume,
     });
 
-    expect(daytonaVolumeGetMock).toHaveBeenCalledWith(
-      "terragon-workspaces",
-      true,
-    );
+    expect(daytonaVolumeCreateMock).not.toHaveBeenCalled();
+    expect(daytonaVolumeGetMock).not.toHaveBeenCalled();
     expect(daytonaVolumeListMock).toHaveBeenCalledTimes(2);
     expect(daytonaCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -389,11 +389,12 @@ describe("DaytonaProvider lifecycle policy", () => {
   it("fails before create when Daytona only returns a numeric volume id", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    daytonaVolumeListMock.mockResolvedValue([]);
-    daytonaVolumeGetMock.mockResolvedValue({
-      id: 889967,
-      name: "terragon-workspaces",
-    });
+    daytonaVolumeListMock.mockResolvedValue([
+      {
+        id: 889967,
+        name: "terragon-workspaces",
+      },
+    ]);
 
     const provider = new DaytonaProvider();
     try {
@@ -404,6 +405,8 @@ describe("DaytonaProvider lifecycle policy", () => {
           daytonaVolume: defaultDaytonaVolume,
         }),
       ).rejects.toThrow(/889967[\s\S]*not a mountable UUID/);
+      expect(daytonaVolumeCreateMock).not.toHaveBeenCalled();
+      expect(daytonaVolumeGetMock).not.toHaveBeenCalled();
       expect(daytonaCreateMock).not.toHaveBeenCalled();
     } finally {
       logSpy.mockRestore();
@@ -414,10 +417,12 @@ describe("DaytonaProvider lifecycle policy", () => {
   it("fails before create when the configured Daytona volume has no id", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    daytonaVolumeGetMock.mockResolvedValue({
-      id: "",
-      name: "terragon-workspaces",
-    });
+    daytonaVolumeListMock.mockResolvedValue([
+      {
+        id: "",
+        name: "terragon-workspaces",
+      },
+    ]);
 
     const provider = new DaytonaProvider();
     try {
@@ -430,7 +435,8 @@ describe("DaytonaProvider lifecycle policy", () => {
       ).rejects.toThrow(
         /\[daytona\] Failed to create sandbox with Daytona volume "terragon-workspaces" mounted at "\/mnt\/terragon":[\s\S]*id must be a non-empty string/,
       );
-      expect(daytonaVolumeGetMock).toHaveBeenCalledTimes(3);
+      expect(daytonaVolumeCreateMock).not.toHaveBeenCalled();
+      expect(daytonaVolumeGetMock).not.toHaveBeenCalled();
       expect(daytonaCreateMock).not.toHaveBeenCalled();
     } finally {
       logSpy.mockRestore();

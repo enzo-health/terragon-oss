@@ -230,29 +230,31 @@ async function getDaytonaVolumeForMount(
     daytonaVolume.volumeName,
     "Daytona volume name",
   );
-  try {
-    const volumes = await daytona.volume.list();
-    const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
-    if (listedVolume) {
-      return listedVolume;
-    }
-  } catch {
-    // Fall through to get-or-create so a list outage does not disable volume use.
+
+  const volumes = await daytona.volume.list();
+  const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
+  if (listedVolume) {
+    return listedVolume;
   }
-  const volume = await daytona.volume.get(volumeName, true);
-  if (isDaytonaVolumeMountableId(volume.id)) {
-    return volume;
+
+  const existingVolume = findDaytonaVolumeByName(volumes, volumeName);
+  const createdVolume = existingVolume
+    ? undefined
+    : await daytona.volume.create(volumeName);
+  const refreshedVolumes = await daytona.volume.list();
+  const refreshedVolume = findMountableDaytonaVolumeByName(
+    refreshedVolumes,
+    volumeName,
+  );
+  if (refreshedVolume) {
+    return refreshedVolume;
   }
-  try {
-    const volumes = await daytona.volume.list();
-    const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
-    if (listedVolume) {
-      return listedVolume;
-    }
-  } catch {
-    // The final volume id validation reports the unmountable id from get-or-create.
-  }
-  return volume;
+
+  return (
+    findDaytonaVolumeByName(refreshedVolumes, volumeName) ??
+    createdVolume ??
+    existingVolume ?? { id: "", name: volumeName }
+  );
 }
 
 function findMountableDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
@@ -263,6 +265,15 @@ function findMountableDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
     (volume) =>
       normalizeOptionalDaytonaString(volume.name) === volumeName &&
       isDaytonaVolumeMountableId(volume.id),
+  );
+}
+
+function findDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
+  volumes: T[],
+  volumeName: string,
+): T | undefined {
+  return volumes.find(
+    (volume) => normalizeOptionalDaytonaString(volume.name) === volumeName,
   );
 }
 
