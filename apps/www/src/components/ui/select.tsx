@@ -6,10 +6,32 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-function Select({
-  ...props
-}: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root {...props} />;
+// The Radix Select wrapper exposed a string-based value API
+// (`value?: string`, `onValueChange?(value: string): void`). Base UI's Select
+// is generic and its `onValueChange` also passes an `eventDetails` arg and can
+// emit `null`. We re-expose the original string-shaped surface — using a
+// method-style `onValueChange` so it stays bivariant, matching Radix and
+// letting call sites pass narrowed-union callbacks — and adapt internally.
+type SelectRootProps = Omit<
+  React.ComponentProps<typeof SelectPrimitive.Root<string, false>>,
+  "onValueChange" | "value" | "defaultValue"
+> & {
+  value?: string;
+  defaultValue?: string;
+  onValueChange?(value: string): void;
+};
+
+function Select({ onValueChange, ...props }: SelectRootProps) {
+  return (
+    <SelectPrimitive.Root
+      onValueChange={
+        onValueChange
+          ? (value) => onValueChange((value ?? "") as string)
+          : undefined
+      }
+      {...(props as React.ComponentProps<typeof SelectPrimitive.Root>)}
+    />
+  );
 }
 
 function SelectGroup({
@@ -70,18 +92,26 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
+  align = "start",
+  side,
+  sideOffset = 4,
   // Accepted for backwards compatibility with the Radix wrapper; Base UI
   // positions via the Positioner so this prop is intentionally ignored.
   position: _position = "popper",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Popup> & {
+  align?: React.ComponentProps<typeof SelectPrimitive.Positioner>["align"];
+  side?: React.ComponentProps<typeof SelectPrimitive.Positioner>["side"];
+  sideOffset?: number;
   position?: "popper" | "item-aligned";
 }) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
         className="z-50 max-h-[var(--available-height)]"
-        sideOffset={4}
+        align={align}
+        side={side}
+        sideOffset={sideOffset}
       >
         <SelectPrimitive.ScrollUpArrow className="flex cursor-default items-center justify-center py-1">
           <ChevronUpIcon className="size-4" />

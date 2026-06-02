@@ -76,16 +76,23 @@ function DropdownMenuItem({
   inset,
   variant = "default",
   onSelect,
+  onClick,
+  asChild,
   ...props
-}: Omit<React.ComponentProps<typeof MenuPrimitive.Item>, "onClick"> & {
+}: Omit<
+  React.ComponentProps<typeof MenuPrimitive.Item>,
+  "onClick" | "onSelect"
+> & {
   inset?: boolean;
   variant?: "default" | "destructive";
+  asChild?: boolean;
   // Radix used `onSelect`; Base UI uses `onClick`. Accept both so call sites
-  // that still pass `onSelect` keep working.
-  onSelect?: (event: Event) => void;
+  // that still pass `onSelect` keep working. The loose signature mirrors
+  // Radix's original `onSelect` so existing call sites typecheck unchanged.
+  // biome-ignore lint/suspicious/noExplicitAny: matches Radix's permissive onSelect
+  onSelect?: (event: any) => void;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
 }) {
-  const { onClick, ...rest } = props;
   return (
     <MenuPrimitive.Item
       data-slot="dropdown-menu-item"
@@ -99,7 +106,7 @@ function DropdownMenuItem({
         "text-strong data-[highlighted]:bg-sunken/60 data-[highlighted]:text-strong data-[variant=destructive]:text-error data-[variant=destructive]:data-[highlighted]:bg-error/10 dark:data-[variant=destructive]:data-[highlighted]:bg-error/20 data-[variant=destructive]:data-[highlighted]:text-error data-[variant=destructive]:*:[svg]:!text-error [&_svg:not([class*='text-'])]:text-mid relative flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
-      {...rest}
+      {...asChildToRender({ asChild, ...props })}
     />
   );
 }
