@@ -183,10 +183,17 @@ describe("DaytonaProvider lifecycle policy", () => {
         volumeMountPath: "/mnt/terragon",
         volumeSubpath: "users/user-123",
         cacheMountPath: "/mnt/terragon/cache",
+        repoCacheMountPath:
+          "/mnt/terragon/cache/environments/env-123/repos/owner_repo",
         workspaceMountPath:
           "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
         artifactsPath:
           "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
+        pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+        pnpmVirtualStorePath:
+          "/mnt/terragon/workspace/environments/env-123/threads/thread-1/node_modules/.pnpm",
+        nextCachePath:
+          "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
       },
     });
 
@@ -229,10 +236,17 @@ describe("DaytonaProvider lifecycle policy", () => {
             volumeMountPath: "/mnt/terragon",
             volumeSubpath: "users/user-123",
             cacheMountPath: "/mnt/terragon/cache",
+            repoCacheMountPath:
+              "/mnt/terragon/cache/environments/env-123/repos/owner_repo",
             workspaceMountPath:
               "/mnt/terragon/workspace/environments/env-123/threads/thread-1",
             artifactsPath:
               "/mnt/terragon/workspace/environments/env-123/threads/thread-1/artifacts",
+            pnpmStorePath: "/mnt/terragon/cache/pnpm/store",
+            pnpmVirtualStorePath:
+              "/mnt/terragon/workspace/environments/env-123/threads/thread-1/node_modules/.pnpm",
+            nextCachePath:
+              "/mnt/terragon/cache/environments/env-123/repos/owner_repo/next-cache",
           },
         }),
       ).rejects.toThrow(

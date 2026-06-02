@@ -3,6 +3,8 @@ import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
 
 const waitUntilPromises: Promise<unknown>[] = [];
 const getEnvironment = vi.fn();
+const getEnvironmentsByRepoFullName = vi.fn();
+const getEnvironmentsWithSnapshots = vi.fn();
 const getReadySnapshot = vi.fn();
 const hashEnvironmentVariables = vi.fn();
 const hashSnapshotValue = vi.fn();
@@ -14,6 +16,11 @@ const buildRepoSnapshot = vi.fn();
 const deleteRepoSnapshot = vi.fn();
 const getSetupScriptHash = vi.fn();
 const getSnapshotBaseTemplateId = vi.fn();
+const getDefaultBranchForRepo = vi.fn();
+const getGitHubUserAccessToken = vi.fn();
+const getSetupScriptFromRepo = vi.fn();
+const getDecryptedEnvironmentVariables = vi.fn();
+const getDecryptedMcpConfig = vi.fn();
 
 vi.mock("@vercel/functions", () => ({
   waitUntil: (promise: Promise<unknown>) => {
@@ -27,10 +34,13 @@ vi.mock("@terragon/env/apps-www", () => ({
 
 vi.mock("@terragon/shared/model/environments", () => ({
   getEnvironment: (args: unknown) => getEnvironment(args),
-  getEnvironmentsByRepoFullName: vi.fn(),
-  getEnvironmentsWithSnapshots: vi.fn(),
-  getDecryptedEnvironmentVariables: vi.fn(),
-  getDecryptedMcpConfig: vi.fn(),
+  getEnvironmentsByRepoFullName: (args: unknown) =>
+    getEnvironmentsByRepoFullName(args),
+  getEnvironmentsWithSnapshots: (args: unknown) =>
+    getEnvironmentsWithSnapshots(args),
+  getDecryptedEnvironmentVariables: (args: unknown) =>
+    getDecryptedEnvironmentVariables(args),
+  getDecryptedMcpConfig: (args: unknown) => getDecryptedMcpConfig(args),
   getReadySnapshot: (...args: unknown[]) => getReadySnapshot(...args),
   hashEnvironmentVariables: (args: unknown) => hashEnvironmentVariables(args),
   hashSnapshotValue: (args: unknown) => hashSnapshotValue(args),
@@ -50,18 +60,20 @@ vi.mock("@terragon/sandbox/snapshot-builder", () => ({
 }));
 
 vi.mock("@/lib/github", () => ({
-  getDefaultBranchForRepo: vi.fn(),
-  getGitHubUserAccessToken: vi.fn(),
+  getDefaultBranchForRepo: (args: unknown) => getDefaultBranchForRepo(args),
+  getGitHubUserAccessToken: (args: unknown) => getGitHubUserAccessToken(args),
 }));
 
 vi.mock("@/server-lib/environment", () => ({
-  getSetupScriptFromRepo: vi.fn(),
+  getSetupScriptFromRepo: (args: unknown) => getSetupScriptFromRepo(args),
 }));
 
 import {
   buildAndStoreEnvironmentSnapshot,
   computeSnapshotRecipeFingerprint,
   maybeWarmEnvironmentSnapshot,
+  refreshEnvironmentSnapshotsForRepo,
+  refreshStaleEnvironmentSnapshots,
 } from "./environment-snapshot-lifecycle";
 
 function snapshot(
@@ -94,6 +106,14 @@ beforeEach(() => {
   hashSnapshotValue.mockReturnValue("mcp-hash");
   deleteRepoSnapshot.mockResolvedValue(undefined);
   updateEnvironmentSnapshot.mockResolvedValue(undefined);
+  getGitHubUserAccessToken.mockResolvedValue("gh-token");
+  getDefaultBranchForRepo.mockResolvedValue("main");
+  getSetupScriptFromRepo.mockResolvedValue("pnpm install");
+  getDecryptedEnvironmentVariables.mockResolvedValue([
+    { key: "API_KEY", value: "repo-value" },
+  ]);
+  getDecryptedMcpConfig.mockResolvedValue({ servers: {} });
+  buildRepoSnapshot.mockResolvedValue({ snapshotName: "new-snapshot" });
 });
 
 describe("computeSnapshotRecipeFingerprint", () => {
@@ -145,6 +165,7 @@ describe("maybeWarmEnvironmentSnapshot", () => {
     getReadySnapshot.mockReturnValue(null);
     reapStaleBuildingSnapshots.mockResolvedValue([
       snapshot({
+        baseBranch: "main",
         status: "building",
         snapshotName: "",
         setupScriptHash: "setup:pnpm install",
@@ -193,7 +214,9 @@ describe("maybeWarmEnvironmentSnapshot", () => {
 describe("buildAndStoreEnvironmentSnapshot", () => {
   it("deletes the superseded snapshot only after the new snapshot is ready", async () => {
     getEnvironment.mockResolvedValue({
-      snapshots: [snapshot({ snapshotName: "old-snapshot" })],
+      snapshots: [
+        snapshot({ baseBranch: "main", snapshotName: "old-snapshot" }),
+      ],
     });
     buildRepoSnapshot.mockResolvedValue({ snapshotName: "new-snapshot" });
 
@@ -213,5 +236,125 @@ describe("buildAndStoreEnvironmentSnapshot", () => {
     expect(deleteRepoSnapshot).not.toHaveBeenCalled();
     await Promise.all(waitUntilPromises);
     expect(deleteRepoSnapshot).toHaveBeenCalledWith("old-snapshot");
+  });
+});
+
+describe("refreshEnvironmentSnapshotsForRepo", () => {
+  it("refreshes only snapshots for the pushed branch unless legacy snapshots are explicitly included", async () => {
+    getEnvironment.mockResolvedValue({
+      isGlobal: false,
+      repoFullName: "owner/repo",
+      setupScript: "pnpm install",
+      snapshots: [],
+    });
+    getEnvironmentsByRepoFullName.mockResolvedValue([
+      {
+        id: "env-1",
+        userId: "user-1",
+        snapshots: [
+          snapshot({ baseBranch: "feature/foo", size: "small" }),
+          snapshot({ baseBranch: "main", size: "large" }),
+          snapshot({ baseBranch: undefined, size: "small" }),
+        ],
+      },
+    ]);
+
+    const refreshed = await refreshEnvironmentSnapshotsForRepo({
+      db: {} as never,
+      repoFullName: "owner/repo",
+      baseBranch: "feature/foo",
+    });
+
+    expect(refreshed).toBe(1);
+    await Promise.all(waitUntilPromises);
+    expect(buildRepoSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "feature/foo",
+        size: "small",
+      }),
+    );
+  });
+
+  it("includes legacy branchless snapshots for default branch refreshes", async () => {
+    getEnvironment.mockResolvedValue({
+      isGlobal: false,
+      repoFullName: "owner/repo",
+      setupScript: "pnpm install",
+      snapshots: [],
+    });
+    getEnvironmentsByRepoFullName.mockResolvedValue([
+      {
+        id: "env-1",
+        userId: "user-1",
+        snapshots: [
+          snapshot({ baseBranch: undefined, size: "small" }),
+          snapshot({ baseBranch: "main", size: "large" }),
+        ],
+      },
+    ]);
+
+    const refreshed = await refreshEnvironmentSnapshotsForRepo({
+      db: {} as never,
+      repoFullName: "owner/repo",
+      baseBranch: "main",
+      includeLegacyBranchless: true,
+    });
+
+    expect(refreshed).toBe(2);
+    await Promise.all(waitUntilPromises);
+    expect(buildRepoSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBranch: "main", size: "small" }),
+    );
+    expect(buildRepoSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBranch: "main", size: "large" }),
+    );
+  });
+});
+
+describe("refreshStaleEnvironmentSnapshots", () => {
+  it("preserves base branch when refreshing stale snapshots", async () => {
+    const now = Date.parse("2026-06-02T00:00:00.000Z");
+    getEnvironment.mockResolvedValue({
+      isGlobal: false,
+      repoFullName: "owner/repo",
+      setupScript: "pnpm install",
+      snapshots: [],
+    });
+    getEnvironmentsWithSnapshots.mockResolvedValue([
+      {
+        id: "env-1",
+        userId: "user-1",
+        snapshots: [
+          snapshot({
+            baseBranch: "feature/foo",
+            builtAt: "2026-05-30T00:00:00.000Z",
+          }),
+          snapshot({
+            baseBranch: "main",
+            size: "large",
+            builtAt: "2026-05-30T00:00:00.000Z",
+          }),
+        ],
+      },
+    ]);
+
+    const refreshed = await refreshStaleEnvironmentSnapshots({
+      db: {} as never,
+      now,
+    });
+
+    expect(refreshed).toBe(2);
+    expect(buildRepoSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "feature/foo",
+        size: "small",
+      }),
+    );
+    expect(buildRepoSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "main",
+        size: "large",
+      }),
+    );
   });
 });

@@ -256,6 +256,8 @@ function toTextContent(content: unknown): string {
         for (const field of ["text", "diff", "patch", "data", "content"]) {
           const val = itemObject[field];
           if (typeof val === "string") return val;
+          const nestedText = toTextContent(val);
+          if (nestedText) return nestedText;
         }
         return "";
       })
@@ -266,7 +268,52 @@ function toTextContent(content: unknown): string {
     return "";
   }
   const text = contentObject.text;
-  return typeof text === "string" ? text : "";
+  if (typeof text === "string") {
+    return text;
+  }
+  return toTextContent(contentObject.content);
+}
+
+function readClaudeCodeMetaToolName(contentObj: JsonObject): string | null {
+  const meta = asObject(contentObj._meta);
+  const claudeCode = meta ? asObject(meta.claudeCode) : null;
+  const toolName = claudeCode ? readString(claudeCode, "toolName") : null;
+  return toolName;
+}
+
+function createAcpToolUseMessage({
+  contentObj,
+  sessionId,
+  toolName,
+}: {
+  contentObj: JsonObject;
+  sessionId: string;
+  toolName: string;
+}): ClaudeMessage | null {
+  const toolUseId =
+    readString(contentObj, "toolUseId") ??
+    readString(contentObj, "toolCallId") ??
+    readString(contentObj, "id");
+  if (!toolUseId) {
+    return null;
+  }
+  const input = asObject(contentObj.input) ?? asObject(contentObj.params) ?? {};
+  return {
+    type: "assistant",
+    session_id: sessionId,
+    parent_tool_use_id: null,
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: toolUseId,
+          name: toolName,
+          input,
+        },
+      ],
+    },
+  };
 }
 
 function getSessionId(_params: JsonObject, fallbackSessionId: string): string {
@@ -391,6 +438,17 @@ function handleAgentMessageContent(
   }
 
   const blockType = contentObj.type;
+  const metaToolName = readClaudeCodeMetaToolName(contentObj);
+  if (metaToolName) {
+    const toolMessage = createAcpToolUseMessage({
+      contentObj,
+      sessionId,
+      toolName: metaToolName,
+    });
+    if (toolMessage) {
+      return [toolMessage];
+    }
+  }
 
   // image
   if (blockType === "image") {

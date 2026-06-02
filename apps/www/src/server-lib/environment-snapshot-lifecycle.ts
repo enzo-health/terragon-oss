@@ -28,6 +28,7 @@ import {
   getDefaultBranchForRepo,
   getGitHubUserAccessToken,
 } from "@/lib/github";
+import { DEFAULT_SANDBOX_SIZE } from "@/lib/subscription-tiers";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
 
 const SNAPSHOT_REFRESH_AGE_MS = 24 * 60 * 60 * 1000;
@@ -100,13 +101,18 @@ export function buildSnapshotRecipeFingerprint({
 export function selectReadyEnvironmentSnapshot({
   snapshots,
   size,
+  baseBranch,
   fingerprint,
 }: {
   snapshots: EnvironmentSnapshot[] | null;
   size: SandboxSize;
+  baseBranch: string;
   fingerprint: SnapshotRecipeFingerprint;
 }): EnvironmentSnapshot | null {
-  return getReadySnapshot({ snapshots }, "daytona", size, fingerprint);
+  return getReadySnapshot({ snapshots }, "daytona", size, {
+    baseBranch,
+    ...fingerprint,
+  });
 }
 
 export async function loadSnapshotBuildInputs({
@@ -198,7 +204,10 @@ export async function buildAndStoreEnvironmentSnapshot({
   const existing = await getEnvironment({ db, environmentId, userId });
   const previousSnapshotName =
     existing?.snapshots?.find(
-      (s) => s.provider === "daytona" && s.size === size,
+      (s) =>
+        s.provider === "daytona" &&
+        s.size === size &&
+        s.baseBranch === baseBranch,
     )?.snapshotName || null;
 
   await updateEnvironmentSnapshot({
@@ -208,6 +217,7 @@ export async function buildAndStoreEnvironmentSnapshot({
     snapshot: {
       provider: "daytona",
       size,
+      baseBranch,
       snapshotName: "",
       status: "building",
       ...fingerprint,
@@ -233,6 +243,7 @@ export async function buildAndStoreEnvironmentSnapshot({
           snapshot: {
             provider: "daytona",
             size,
+            baseBranch,
             snapshotName,
             status: "ready",
             ...fingerprint,
@@ -260,6 +271,7 @@ export async function buildAndStoreEnvironmentSnapshot({
           snapshot: {
             provider: "daytona",
             size,
+            baseBranch,
             snapshotName: "",
             status: "failed",
             ...fingerprint,
@@ -335,7 +347,12 @@ export async function maybeWarmEnvironmentSnapshot({
 
     if (
       !force &&
-      selectReadyEnvironmentSnapshot({ snapshots, size, fingerprint })
+      selectReadyEnvironmentSnapshot({
+        snapshots,
+        size,
+        baseBranch,
+        fingerprint,
+      })
     ) {
       return;
     }
@@ -351,6 +368,7 @@ export async function maybeWarmEnvironmentSnapshot({
       (s) =>
         s.provider === "daytona" &&
         s.size === size &&
+        s.baseBranch === baseBranch &&
         s.status === "building" &&
         s.setupScriptHash === fingerprint.setupScriptHash &&
         s.baseDockerfileHash === fingerprint.baseDockerfileHash &&
@@ -383,12 +401,14 @@ export async function triggerEnvironmentSnapshotBuild({
   db,
   userId,
   environmentId,
-  size = "small",
+  baseBranch,
+  size = DEFAULT_SANDBOX_SIZE,
   force = false,
 }: {
   db: DB;
   userId: string;
   environmentId: string;
+  baseBranch?: string;
   size?: SandboxSize;
   force?: boolean;
 }): Promise<void> {
@@ -403,7 +423,7 @@ export async function triggerEnvironmentSnapshotBuild({
       environmentId,
       snapshots: result.inputs.snapshots,
       repoFullName: result.inputs.repoFullName,
-      baseBranch: result.inputs.baseBranch,
+      baseBranch: baseBranch ?? result.inputs.baseBranch,
       githubAccessToken: result.inputs.githubAccessToken,
       setupScript: result.inputs.setupScript,
       size,
@@ -460,9 +480,13 @@ export async function deleteEnvironmentSnapshotForSize({
 export async function refreshEnvironmentSnapshotsForRepo({
   db,
   repoFullName,
+  baseBranch,
+  includeLegacyBranchless = false,
 }: {
   db: DB;
   repoFullName: string;
+  baseBranch: string;
+  includeLegacyBranchless?: boolean;
 }): Promise<number> {
   const environments = await getEnvironmentsByRepoFullName({
     db,
@@ -473,7 +497,11 @@ export async function refreshEnvironmentSnapshotsForRepo({
   for (const environment of environments) {
     const sizes = new Set<SandboxSize>();
     for (const snapshot of environment.snapshots ?? []) {
-      if (snapshot.provider === "daytona") {
+      if (
+        snapshot.provider === "daytona" &&
+        (snapshot.baseBranch === baseBranch ||
+          (includeLegacyBranchless && !snapshot.baseBranch))
+      ) {
         sizes.add(snapshot.size);
       }
     }
@@ -483,6 +511,7 @@ export async function refreshEnvironmentSnapshotsForRepo({
           db,
           userId: environment.userId,
           environmentId: environment.id,
+          baseBranch,
           size,
           force: true,
         }),
@@ -504,7 +533,7 @@ export async function refreshStaleEnvironmentSnapshots({
   const environments = await getEnvironmentsWithSnapshots({ db });
   let refreshed = 0;
   for (const environment of environments) {
-    const sizes = new Set<SandboxSize>();
+    const snapshotsToRefresh = new Map<string, EnvironmentSnapshot>();
     for (const snapshot of environment.snapshots ?? []) {
       if (
         snapshot.provider !== "daytona" ||
@@ -515,15 +544,17 @@ export async function refreshStaleEnvironmentSnapshots({
       }
       const builtAt = Date.parse(snapshot.builtAt);
       if (Number.isNaN(builtAt) || now - builtAt > SNAPSHOT_REFRESH_AGE_MS) {
-        sizes.add(snapshot.size);
+        const key = `${snapshot.size}:${snapshot.baseBranch ?? ""}`;
+        snapshotsToRefresh.set(key, snapshot);
       }
     }
-    for (const size of sizes) {
+    for (const snapshot of snapshotsToRefresh.values()) {
       await triggerEnvironmentSnapshotBuild({
         db,
         userId: environment.userId,
         environmentId: environment.id,
-        size,
+        baseBranch: snapshot.baseBranch,
+        size: snapshot.size,
         force: true,
       });
       refreshed++;

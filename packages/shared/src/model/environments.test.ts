@@ -23,6 +23,7 @@ function buildSnapshot(
     size: "large",
     snapshotName: "",
     status: "building",
+    baseBranch: "main",
     setupScriptHash: "setup-hash",
     baseDockerfileHash: "base-hash",
     builtAt: new Date().toISOString(),

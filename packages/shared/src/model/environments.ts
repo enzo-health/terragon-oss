@@ -391,6 +391,7 @@ export function getReadySnapshot(
   provider: "daytona",
   size: SandboxSize,
   filters?: {
+    baseBranch?: string;
     setupScriptHash?: string;
     baseDockerfileHash?: string;
     environmentVariablesHash?: string;
@@ -398,6 +399,7 @@ export function getReadySnapshot(
   },
 ): EnvironmentSnapshot | null {
   const {
+    baseBranch,
     setupScriptHash,
     baseDockerfileHash,
     environmentVariablesHash,
@@ -409,6 +411,7 @@ export function getReadySnapshot(
         s.provider === provider &&
         s.size === size &&
         s.status === "ready" &&
+        (baseBranch !== undefined ? s.baseBranch === baseBranch : true) &&
         (setupScriptHash !== undefined
           ? s.setupScriptHash === setupScriptHash
           : true) &&
@@ -423,6 +426,26 @@ export function getReadySnapshot(
           : true),
     ) ?? null
   );
+}
+
+export function applyEnvironmentSnapshotUpdate(
+  snapshots: EnvironmentSnapshot[] | null,
+  snapshot: EnvironmentSnapshot,
+): EnvironmentSnapshot[] {
+  const existing = snapshots ?? [];
+  const idx = existing.findIndex(
+    (s) =>
+      s.provider === snapshot.provider &&
+      s.size === snapshot.size &&
+      s.baseBranch === snapshot.baseBranch,
+  );
+  const updated = [...existing];
+  if (idx >= 0) {
+    updated[idx] = snapshot;
+  } else {
+    updated.push(snapshot);
+  }
+  return updated;
 }
 
 export async function updateEnvironmentSnapshot({
@@ -440,16 +463,10 @@ export async function updateEnvironmentSnapshot({
   if (!environment) {
     throw new Error("Environment not found");
   }
-  const existing = environment.snapshots ?? [];
-  const idx = existing.findIndex(
-    (s) => s.provider === snapshot.provider && s.size === snapshot.size,
+  const updated = applyEnvironmentSnapshotUpdate(
+    environment.snapshots ?? null,
+    snapshot,
   );
-  const updated = [...existing];
-  if (idx >= 0) {
-    updated[idx] = snapshot;
-  } else {
-    updated.push(snapshot);
-  }
   await updateEnvironment({
     db,
     userId,

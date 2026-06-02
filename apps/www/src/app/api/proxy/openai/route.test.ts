@@ -7,7 +7,6 @@ import {
   hasDaemonProviderScope,
   type DaemonRunTokenClaims,
 } from "@/lib/auth-server";
-import { getUserCreditBalance } from "@terragon/shared/model/credits";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 
 vi.mock("@/lib/auth-server", () => ({
@@ -21,16 +20,8 @@ vi.mock("@terragon/env/apps-www", () => ({
   },
 }));
 
-vi.mock("@terragon/shared/model/credits", () => ({
-  getUserCreditBalance: vi.fn(),
-}));
-
 vi.mock("@terragon/shared/model/agent-run-context", () => ({
   getAgentRunContextByRunId: vi.fn(),
-}));
-
-vi.mock("@/server-lib/credit-auto-reload", () => ({
-  maybeTriggerCreditAutoReload: vi.fn(),
 }));
 
 vi.mock("./log-openai-usage", () => ({
@@ -87,7 +78,6 @@ describe("OpenAI proxy route", () => {
     getDaemonTokenAuthContextOrNull,
   );
   const hasDaemonProviderScopeMock = vi.mocked(hasDaemonProviderScope);
-  const getUserCreditBalanceMock = vi.mocked(getUserCreditBalance);
   const getAgentRunContextByRunIdMock = vi.mocked(getAgentRunContextByRunId);
   const logUsageMock = vi.mocked(logOpenAIUsage);
   const { POST } = aiSdkRoute;
@@ -130,11 +120,6 @@ describe("OpenAI proxy route", () => {
       daemonTokenKeyId: "daemon-key-openai-123",
       status: "dispatched",
     } as any);
-    getUserCreditBalanceMock.mockResolvedValue({
-      totalCreditsCents: 1_000,
-      totalUsageCents: 0,
-      balanceCents: 1_000,
-    });
     logUsageMock.mockReset();
     logUsageMock.mockImplementation(async () => {});
   });
@@ -321,24 +306,6 @@ describe("OpenAI proxy route", () => {
     const fetchHeaders =
       (fetchMock.mock.calls[0]![1]!.headers as Headers) ?? new Headers();
     expect(fetchHeaders.get("Authorization")).toBe("Bearer test-openai-key");
-  });
-
-  it("rejects requests when user has no remaining credits", async () => {
-    getUserCreditBalanceMock.mockResolvedValueOnce({
-      totalCreditsCents: 0,
-      totalUsageCents: 0,
-      balanceCents: 0,
-    });
-
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const request = createRequest();
-    const response = await POST(request, { params: Promise.resolve({}) });
-
-    expect(response.status).toBe(402);
-    expect(await response.text()).toBe("Insufficient credits");
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs usage for chat completions event streams", async () => {

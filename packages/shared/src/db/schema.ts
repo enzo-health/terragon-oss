@@ -815,6 +815,7 @@ export const userSettings = pgTable(
 export type EnvironmentSnapshot = {
   provider: "daytona";
   size: SandboxSize;
+  baseBranch?: string;
   snapshotName: string;
   status: "building" | "ready" | "failed" | "stale";
   setupScriptHash: string;
