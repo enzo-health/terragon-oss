@@ -94,73 +94,53 @@ describe("AG-UI replayer integration", () => {
     });
   });
 
-  it("restores native AG UI runtime state and activity after replay", async () => {
-    const { messages, quarantine, runtimeState, runtimeActivities } =
-      await replayAgUi([
-        {
-          type: EventType.STATE_SNAPSHOT,
-          snapshot: { plan: { status: "running" }, bootStep: "install" },
-        } as BaseEvent,
-        {
-          type: EventType.STATE_DELTA,
-          delta: [
-            { op: "replace", path: "/plan/status", value: "complete" },
-            { op: "add", path: "/currentTool", value: "pnpm test" },
-          ],
-        } as BaseEvent,
-        {
-          type: EventType.ACTIVITY_SNAPSHOT,
-          messageId: "msg-activity",
-          activityType: "boot",
-          content: { text: "Installing dependencies", status: "running" },
-        } as BaseEvent,
-        {
-          type: EventType.ACTIVITY_DELTA,
-          messageId: "msg-activity",
-          activityType: "boot",
-          patch: [
-            { op: "replace", path: "/status", value: "complete" },
-            { op: "add", path: "/exitCode", value: 0 },
-          ],
-        } as BaseEvent,
-      ]);
+  it("keeps well-formed native runtime events out of the transcript", async () => {
+    const { messages, quarantine } = await replayAgUi([
+      {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: { plan: { status: "running" }, bootStep: "install" },
+      } as BaseEvent,
+      {
+        type: EventType.STATE_DELTA,
+        delta: [
+          { op: "replace", path: "/plan/status", value: "complete" },
+          { op: "add", path: "/currentTool", value: "pnpm test" },
+        ],
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "msg-activity",
+        activityType: "boot",
+        content: { text: "Installing dependencies", status: "running" },
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "msg-activity",
+        activityType: "boot",
+        patch: [
+          { op: "replace", path: "/status", value: "complete" },
+          { op: "add", path: "/exitCode", value: 0 },
+        ],
+      } as BaseEvent,
+    ]);
 
     expect(messages).toEqual([]);
     expect(quarantine).toEqual([]);
-    expect(runtimeState).toEqual({
-      plan: { status: "complete" },
-      bootStep: "install",
-      currentTool: "pnpm test",
-    });
-    expect(runtimeActivities).toEqual({
-      "msg-activity:boot": {
-        messageId: "msg-activity",
-        activityType: "boot",
-        content: {
-          text: "Installing dependencies",
-          status: "complete",
-          exitCode: 0,
-        },
-      },
-    });
   });
 
   it("keeps unsupported native families quarantined explicitly", async () => {
-    const { messages, quarantine, runtimeState, runtimeActivities } =
-      await replayAgUi([
-        {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: [],
-        } as BaseEvent,
-        {
-          type: EventType.RAW,
-          event: { type: "provider.internal" },
-        } as BaseEvent,
-      ]);
+    const { messages, quarantine } = await replayAgUi([
+      {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [],
+      } as BaseEvent,
+      {
+        type: EventType.RAW,
+        event: { type: "provider.internal" },
+      } as BaseEvent,
+    ]);
 
     expect(messages).toEqual([]);
-    expect(runtimeState).toEqual({});
-    expect(runtimeActivities).toEqual({});
     expect(quarantine).toEqual([
       {
         reason: "unsupported-ag-ui-event",
@@ -170,23 +150,20 @@ describe("AG-UI replayer integration", () => {
   });
 
   it("quarantines malformed native runtime events", async () => {
-    const { messages, quarantine, runtimeState, runtimeActivities } =
-      await replayAgUi([
-        {
-          type: EventType.STATE_SNAPSHOT,
-          snapshot: null,
-        } as BaseEvent,
-        {
-          type: EventType.ACTIVITY_DELTA,
-          messageId: "msg-activity",
-          activityType: "boot",
-          patch: [{ op: "replace", path: "/missing/value", value: "nope" }],
-        } as BaseEvent,
-      ]);
+    const { messages, quarantine } = await replayAgUi([
+      {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: null,
+      } as BaseEvent,
+      {
+        type: EventType.ACTIVITY_DELTA,
+        messageId: "msg-activity",
+        activityType: "boot",
+        patch: [{ path: "/status", value: "nope" }],
+      } as BaseEvent,
+    ]);
 
     expect(messages).toEqual([]);
-    expect(runtimeState).toEqual({});
-    expect(runtimeActivities).toEqual({});
     expect(quarantine).toEqual([
       {
         reason: "malformed-native-runtime-event",
@@ -200,7 +177,7 @@ describe("AG-UI replayer integration", () => {
   });
 
   it("quarantines state/activity patches that target prototype fields", async () => {
-    const { quarantine, runtimeState, runtimeActivities } = await replayAgUi([
+    const { quarantine } = await replayAgUi([
       {
         type: EventType.STATE_SNAPSHOT,
         snapshot: { plan: { status: "running" } },
@@ -223,14 +200,6 @@ describe("AG-UI replayer integration", () => {
       } as BaseEvent,
     ]);
 
-    expect(runtimeState).toEqual({ plan: { status: "running" } });
-    expect(runtimeActivities).toEqual({
-      "msg-activity:boot": {
-        messageId: "msg-activity",
-        activityType: "boot",
-        content: { status: "running" },
-      },
-    });
     expect(quarantine).toEqual([
       {
         reason: "malformed-native-runtime-event",

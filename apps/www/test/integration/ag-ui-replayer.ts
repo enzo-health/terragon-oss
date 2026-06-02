@@ -27,8 +27,6 @@ import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-
 import type {
   ThreadViewLifecycle,
   ThreadViewQuarantineEntry,
-  ThreadViewRuntimeActivities,
-  ThreadViewRuntimeState,
   ThreadViewSnapshot,
 } from "../../src/components/chat/thread-view-model/types";
 import {
@@ -93,10 +91,6 @@ export type ReplayAgUiResult = {
   artifactDescriptors: ArtifactDescriptor[];
   /** Final lifecycle state projected by ThreadViewModel. */
   lifecycle: ThreadViewLifecycle;
-  /** Native AG UI runtime state restored from STATE_* events. */
-  runtimeState: ThreadViewRuntimeState;
-  /** Native AG UI activity records restored from ACTIVITY_* events. */
-  runtimeActivities: ThreadViewRuntimeActivities;
   /** Explicit diagnostics for AG UI events the active renderer cannot handle yet. */
   quarantine: ThreadViewQuarantineEntry[];
   /** Snapshots of UIMessage[] after each event, for step-by-step assertions. */
@@ -137,28 +131,16 @@ export async function replayAgUi(
   });
   let currentSidecarArtifacts: ArtifactDescriptor[] = [];
   let currentQuarantine: ThreadViewQuarantineEntry[] = [];
-  let currentRuntimeState: ThreadViewRuntimeState = {};
-  let currentRuntimeActivities: ThreadViewRuntimeActivities = {};
   let currentLifecycle: ThreadViewLifecycle = initialSnapshot.lifecycle;
 
   function onProjection(params: {
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
-    runtimeState: ThreadViewRuntimeState;
-    runtimeActivities: ThreadViewRuntimeActivities;
     quarantine: ThreadViewQuarantineEntry[];
   }): void {
-    const {
-      artifactDescriptors,
-      lifecycle,
-      runtimeState,
-      runtimeActivities,
-      quarantine,
-    } = params;
+    const { artifactDescriptors, lifecycle, quarantine } = params;
     currentSidecarArtifacts = artifactDescriptors;
     currentLifecycle = lifecycle;
-    currentRuntimeState = runtimeState;
-    currentRuntimeActivities = runtimeActivities;
     currentQuarantine = quarantine;
   }
 
@@ -192,8 +174,6 @@ export async function replayAgUi(
         ...currentSidecarArtifacts,
       ],
       lifecycle: currentLifecycle,
-      runtimeState: currentRuntimeState,
-      runtimeActivities: currentRuntimeActivities,
       quarantine: currentQuarantine,
       snapshots: transcript.snapshots,
       artifactSnapshots,
@@ -220,8 +200,6 @@ function Harness({
   onProjection: (params: {
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
-    runtimeState: ThreadViewRuntimeState;
-    runtimeActivities: ThreadViewRuntimeActivities;
     quarantine: ThreadViewQuarantineEntry[];
   }) => void;
 }): null {
@@ -233,8 +211,6 @@ function Harness({
   onProjection({
     artifactDescriptors: viewModel.artifacts.descriptors,
     lifecycle: viewModel.lifecycle,
-    runtimeState: viewModel.runtimeState,
-    runtimeActivities: viewModel.runtimeActivities,
     quarantine: viewModel.quarantine,
   });
   return null;

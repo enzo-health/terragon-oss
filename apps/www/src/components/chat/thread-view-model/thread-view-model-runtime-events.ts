@@ -1,18 +1,11 @@
 import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
-import { applyJsonPatchOperations } from "./json-patch";
 import {
   getArrayField,
-  getBooleanField,
   getObjectField,
   getStringField,
 } from "./renderable-part-shape";
-import type {
-  ThreadViewModelState,
-  ThreadViewQuarantineEntry,
-  ThreadViewRuntimeActivities,
-  ThreadViewRuntimeState,
-} from "./types";
+import type { ThreadViewQuarantineEntry } from "./types";
 
 export function isUnsupportedNativeRuntimeEvent(event: BaseEvent): boolean {
   switch (event.type) {
@@ -23,109 +16,89 @@ export function isUnsupportedNativeRuntimeEvent(event: BaseEvent): boolean {
   }
 }
 
-export function applyNativeRuntimeEvent(
-  state: ThreadViewModelState,
+/**
+ * Validates native AG-UI STATE and ACTIVITY runtime events and quarantines
+ * malformed ones. The projected runtime state was never read by live code, so
+ * only the quarantine side-effect survives; returns `null` for well-formed or
+ * non-runtime events. Patch operations are checked structurally (parseable op,
+ * non-prototype-polluting path) rather than against accumulated state, which no
+ * longer exists.
+ */
+export function quarantineNativeRuntimeEvent(
   event: BaseEvent,
-):
-  | {
-      runtimeState: ThreadViewRuntimeState;
-      runtimeActivities: ThreadViewRuntimeActivities;
-      quarantineEntry?: undefined;
-    }
-  | {
-      quarantineEntry: ThreadViewQuarantineEntry;
-    }
-  | null {
+): ThreadViewQuarantineEntry | null {
   switch (event.type) {
     case EventType.STATE_SNAPSHOT: {
-      const snapshot = getObjectField(event, "snapshot");
-      if (!snapshot) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState: { ...snapshot },
-        runtimeActivities: state.runtimeActivities,
-      };
+      return getObjectField(event, "snapshot")
+        ? null
+        : malformedNativeRuntimeEvent(event);
     }
     case EventType.STATE_DELTA: {
       const delta = getArrayField(event, "delta");
-      if (!delta) {
+      if (!delta || !isWellFormedPatch(delta)) {
         return malformedNativeRuntimeEvent(event);
       }
-      const runtimeState = applyJsonPatchOperations(state.runtimeState, delta);
-      if (!runtimeState) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState,
-        runtimeActivities: state.runtimeActivities,
-      };
+      return null;
     }
     case EventType.ACTIVITY_SNAPSHOT: {
       const messageId = getStringField(event, "messageId");
       const activityType = getStringField(event, "activityType");
       const content = getObjectField(event, "content");
-      if (!messageId || !activityType || !content) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      const key = getRuntimeActivityKey(messageId, activityType);
-      const replace = getBooleanField(event, "replace") ?? true;
-      const previousContent = state.runtimeActivities[key]?.content;
-      return {
-        runtimeState: state.runtimeState,
-        runtimeActivities: {
-          ...state.runtimeActivities,
-          [key]: {
-            messageId,
-            activityType,
-            content:
-              replace || !previousContent
-                ? { ...content }
-                : { ...previousContent, ...content },
-          },
-        },
-      };
+      return messageId && activityType && content
+        ? null
+        : malformedNativeRuntimeEvent(event);
     }
     case EventType.ACTIVITY_DELTA: {
       const messageId = getStringField(event, "messageId");
       const activityType = getStringField(event, "activityType");
       const patch = getArrayField(event, "patch");
-      if (!messageId || !activityType || !patch) {
+      if (!messageId || !activityType || !patch || !isWellFormedPatch(patch)) {
         return malformedNativeRuntimeEvent(event);
       }
-      const key = getRuntimeActivityKey(messageId, activityType);
-      const previous = state.runtimeActivities[key];
-      const content = applyJsonPatchOperations(previous?.content ?? {}, patch);
-      if (!content) {
-        return malformedNativeRuntimeEvent(event);
-      }
-      return {
-        runtimeState: state.runtimeState,
-        runtimeActivities: {
-          ...state.runtimeActivities,
-          [key]: { messageId, activityType, content },
-        },
-      };
+      return null;
     }
     default:
       return null;
   }
 }
 
-function malformedNativeRuntimeEvent(event: BaseEvent): {
-  quarantineEntry: ThreadViewQuarantineEntry;
-} {
-  return {
-    quarantineEntry: {
-      reason: "malformed-native-runtime-event",
-      eventType: String(event.type),
-    },
-  };
+function isWellFormedPatch(operations: unknown[]): boolean {
+  return operations.every(isWellFormedPatchOperation);
 }
 
-function getRuntimeActivityKey(
-  messageId: string,
-  activityType: string,
-): string {
-  return `${encodeURIComponent(messageId)}:${encodeURIComponent(activityType)}`;
+function isWellFormedPatchOperation(value: unknown): boolean {
+  const op = getStringField(value, "op");
+  const path = getStringField(value, "path");
+  if (!op || path === null) {
+    return false;
+  }
+  if (op !== "add" && op !== "replace" && op !== "remove") {
+    return false;
+  }
+  return path === "" || isSafeJsonPointer(path);
+}
+
+function isSafeJsonPointer(path: string): boolean {
+  if (!path.startsWith("/")) {
+    return false;
+  }
+  return path
+    .slice(1)
+    .split("/")
+    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"))
+    .every(
+      (token) =>
+        token !== "__proto__" &&
+        token !== "constructor" &&
+        token !== "prototype",
+    );
+}
+
+function malformedNativeRuntimeEvent(
+  event: BaseEvent,
+): ThreadViewQuarantineEntry {
+  return {
+    reason: "malformed-native-runtime-event",
+    eventType: String(event.type),
+  };
 }

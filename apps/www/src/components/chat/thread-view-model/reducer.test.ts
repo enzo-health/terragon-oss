@@ -1172,7 +1172,6 @@ describe("ThreadViewModel reducer", () => {
       state = threadViewModelReducer(state, event);
     }
     expect(state.lifecycle.runId).toBe("run-1");
-    expect(state.runtimeState).toEqual({ sandbox: "ready" });
     expect(state.artifacts.descriptors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
