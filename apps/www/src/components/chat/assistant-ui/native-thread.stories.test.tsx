@@ -63,22 +63,31 @@ describe("native-thread stories", () => {
     expect(text).toContain("inspect the directory");
   });
 
-  it("ToolRunning renders the tool name and a Running state", () => {
-    const text = mount(ToolRunning).textContent ?? "";
-    expect(text).toContain("Bash");
-    expect(text).toContain("Running");
+  it("ToolRunning renders the tool name and a running state", () => {
+    const root = mount(ToolRunning);
+    const tool = root.querySelector("[data-slot=tool]");
+    expect(tool?.getAttribute("data-state")).toBe("running");
+    expect(root.querySelector("[data-slot=tool-name]")?.textContent).toContain(
+      "Bash",
+    );
   });
 
-  it("ToolFailed renders the tool name and a Failed state", () => {
-    const text = mount(ToolFailed).textContent ?? "";
-    expect(text).toContain("Read");
-    expect(text).toContain("Failed");
+  it("ToolFailed renders the tool name and an error state", () => {
+    const root = mount(ToolFailed);
+    const tool = root.querySelector("[data-slot=tool]");
+    expect(tool?.getAttribute("data-state")).toBe("error");
+    expect(root.querySelector("[data-slot=tool-name]")?.textContent).toContain(
+      "Read",
+    );
   });
 
-  it("ToolDone renders the tool name and a Done state", () => {
-    const text = mount(ToolDone).textContent ?? "";
-    expect(text).toContain("Read");
-    expect(text).toContain("Done");
+  it("ToolDone renders the tool name and a success state", () => {
+    const root = mount(ToolDone);
+    const tool = root.querySelector("[data-slot=tool]");
+    expect(tool?.getAttribute("data-state")).toBe("success");
+    expect(root.querySelector("[data-slot=tool-name]")?.textContent).toContain(
+      "Read",
+    );
   });
 
   it("GroupedRunWithFailure collapses into a tool group flagged for attention", () => {

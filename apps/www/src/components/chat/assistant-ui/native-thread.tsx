@@ -16,6 +16,17 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from "@/components/ai/reasoning";
+import {
+  Tool,
+  ToolArgument,
+  ToolBlock,
+  ToolContent,
+  ToolError,
+  ToolIcon,
+  ToolLabel,
+  ToolName,
+  ToolTrigger,
+} from "@/components/ai/tool";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { TextPart } from "../text-part";
@@ -23,9 +34,7 @@ import {
   decodeToolGroupFlags,
   getToolGroupFlags,
   reasoningViewProps,
-  toolArgPreview,
-  toolArgsDisplayText,
-  toolCallResultText,
+  toolViewProps,
 } from "./native-thread-utils";
 
 /**
@@ -104,9 +113,6 @@ const NativeToolGroup = ({
   );
 };
 
-const truncatePreview = (value: string, maxLength: number): string =>
-  value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
-
 const NativeToolCall: ToolCallMessagePartComponent = ({
   toolName,
   argsText,
@@ -116,70 +122,30 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
 }) => {
   const active = status.type === "running" || result === undefined;
   const failed = isError === true || status.type === "incomplete";
-  const resultText = toolCallResultText(result);
-  const preview = toolArgPreview(argsText);
-  const displayArgsText = toolArgsDisplayText(argsText, active);
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const open = active || manualOpen === true;
-  const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
-    setManualOpen(event.currentTarget.open);
-  };
+  const { name, preview, state, stream, resultText, errorText, defaultOpen } =
+    toolViewProps({ toolName, argsText, result, active, failed });
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <details
-      className={cn(
-        "group/tool-call my-1 rounded-md border border-border bg-background text-sm",
-        failed && "border-error/40 bg-error/5",
-      )}
-      open={open}
-      onToggle={handleToggle}
-    >
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 marker:content-['']">
-        {active ? (
-          <Loader2
-            className="size-3.5 animate-spin text-muted-foreground"
-            aria-hidden="true"
+    <Tool className="my-1" state={state} open={open} onOpenChange={setOpen}>
+      <ToolTrigger>
+        <ToolIcon>
+          <Wrench />
+        </ToolIcon>
+        <ToolName>{name}</ToolName>
+        {preview ? <ToolLabel>{preview}</ToolLabel> : null}
+      </ToolTrigger>
+      <ToolContent>
+        {stream.text ? (
+          <ToolArgument
+            value={stream.text}
+            state={stream.streaming ? "streaming" : "complete"}
           />
-        ) : (
-          <Wrench
-            className="size-3.5 text-muted-foreground"
-            aria-hidden="true"
-          />
-        )}
-        <span className="font-mono text-xs text-muted-foreground">
-          {toolName}
-        </span>
-        {preview ? (
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {truncatePreview(preview, 120)}
-          </span>
         ) : null}
-        <span
-          className={cn(
-            "ml-auto text-xs",
-            failed ? "text-error" : "text-muted-foreground",
-          )}
-        >
-          {active ? "Running" : failed ? "Failed" : "Done"}
-        </span>
-        <ChevronDown
-          className="size-3.5 text-muted-foreground transition-transform group-open/tool-call:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="border-t border-border/70 px-3 py-2">
-        {displayArgsText ? (
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
-            {displayArgsText}
-          </pre>
-        ) : null}
-        {resultText ? (
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-            {resultText}
-          </pre>
-        ) : null}
-      </div>
-    </details>
+        {resultText ? <ToolBlock>{resultText}</ToolBlock> : null}
+        {errorText ? <ToolError>{errorText}</ToolError> : null}
+      </ToolContent>
+    </Tool>
   );
 };
 
