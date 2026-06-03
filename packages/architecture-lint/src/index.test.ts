@@ -326,10 +326,6 @@ describe("architecture-lint", () => {
       "export function map(value: 'a' | 'b'): number {\n  switch (value) {\n    case 'a':\n      return 1;\n    case 'b':\n      return 2;\n  }\n}\n",
     );
     writeFile(
-      "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-      "export function reduce(value: 'a' | 'b'): number {\n  switch (value) {\n    case 'a':\n      return 1;\n    case 'b':\n      return 2;\n  }\n}\n",
-    );
-    writeFile(
       "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
       "export function hydrate(value: 'a' | 'b'): number {\n  switch (value) {\n    case 'a':\n      return 1;\n    case 'b':\n      return 2;\n  }\n}\n",
     );
@@ -339,10 +335,6 @@ describe("architecture-lint", () => {
     );
 
     expect(findings).toEqual([
-      expect.objectContaining({
-        rule: "require-exhaustive-switch",
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-      }),
       expect.objectContaining({
         rule: "require-exhaustive-switch",
         file: "apps/www/src/components/chat/db-messages-to-ag-ui.ts",

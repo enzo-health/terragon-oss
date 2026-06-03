@@ -69,7 +69,6 @@ export const defaultConfig: ArchitectureLintConfig = {
     "apps/www/src/agent/runtime",
     "apps/www/src/app/api/daemon-event/route.ts",
     "apps/www/src/app/api/webhooks",
-    "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
     "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
     "apps/www/src/components/chat/toUIMessages.ts",
     "apps/cli/src",
@@ -80,7 +79,6 @@ export const defaultConfig: ArchitectureLintConfig = {
     "packages/agent/src/canonical-events.ts",
   ],
   exhaustiveSwitchFiles: [
-    "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
     "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
     "apps/www/src/components/chat/thread-view-model/reducer.ts",
     "packages/agent/src/ag-ui-mapper.ts",
@@ -88,36 +86,6 @@ export const defaultConfig: ArchitectureLintConfig = {
   ],
   allowlist: [
     ...baselineRuleLineDebtAllowlist("require-exhaustive-switch", []),
-    {
-      rule: "no-unsafe-runtime-boundary-casts",
-      file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-      line: 440,
-      owner: "smooth-runtime-rewrite",
-      reason:
-        "AG-UI reducer still bridges extended Terragon tool parts into assistant-ui UIPart",
-      deletionCriterion:
-        "remove after assistant-ui part types include Terragon tool parts directly",
-    },
-    {
-      rule: "no-unsafe-runtime-boundary-casts",
-      file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-      line: 522,
-      owner: "smooth-runtime-rewrite",
-      reason:
-        "AG-UI reducer still dedupes id-like extended parts through structural inspection",
-      deletionCriterion:
-        "remove after rich parts share a typed id-bearing base",
-    },
-    {
-      rule: "no-unsafe-runtime-boundary-casts",
-      file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-      line: 525,
-      owner: "smooth-runtime-rewrite",
-      reason:
-        "AG-UI reducer still dedupes existing assistant-ui parts through structural inspection",
-      deletionCriterion:
-        "remove after rich parts share a typed id-bearing base",
-    },
     {
       rule: "no-unsafe-runtime-boundary-casts",
       file: "apps/www/src/components/chat/toUIMessages.ts",
@@ -362,46 +330,6 @@ export const defaultConfig: ArchitectureLintConfig = {
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 671 },
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 682 },
       {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 388,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 414,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 442,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 447,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 472,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 495,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 538,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 550,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 583,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 619,
-      },
-      {
         file: "apps/www/src/components/chat/thread-view-model/snapshot-adapter.ts",
         line: 78,
       },
@@ -482,42 +410,6 @@ export const defaultConfig: ArchitectureLintConfig = {
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 226 },
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 672 },
       { file: "apps/www/src/app/api/webhooks/linear/handlers.ts", line: 683 },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 272,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 386,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 412,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 445,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 470,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 493,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 533,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 545,
-      },
-      {
-        file: "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
-        line: 578,
-      },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 160 },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 176 },
       { file: "apps/www/src/components/chat/toUIMessages.ts", line: 292 },

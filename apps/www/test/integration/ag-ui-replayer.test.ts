@@ -3,99 +3,24 @@
 /**
  * AG-UI replayer integration test — Phase 7.
  *
- * Feeds a representative AG-UI BaseEvent sequence through
- * AG-UI thread view model (via `useThreadViewModel`) and asserts that the
- * resulting `UIMessage[]` has the expected shape. This is the
- * end-to-end event→UIMessage verification at the integration layer,
- * complementing the pure-reducer unit tests in
- * `apps/www/src/components/chat/ag-ui-messages-reducer.test.ts`.
+ * Feeds a representative AG-UI BaseEvent sequence through the live
+ * ThreadViewModel sidecar (via `useThreadViewModel` / `useAgUiSidecarRouter`)
+ * and asserts the lifecycle, artifact, and quarantine projection that the
+ * production chat page consumes beside the assistant-ui runtime.
+ *
+ * Transcript message projection (text/tool/rich parts) is rendered by the
+ * assistant-ui runtime in production and is covered by
+ * `apps/www/src/components/chat/assistant-ui/native-thread.test.tsx`; this
+ * harness intentionally does not re-assert it.
  */
 
 import { describe, expect, it } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/core";
-import {
-  customRichPart,
-  replayAgUi,
-  textContent,
-  textEnd,
-  textStart,
-  toolCallArgs,
-  toolCallChunk,
-  toolCallEnd,
-  toolCallResult,
-  toolCallStart,
-} from "./ag-ui-replayer";
+import { replayAgUi, textContent, textStart } from "./ag-ui-replayer";
 
 describe("AG-UI replayer integration", () => {
-  it("projects a streamed text message into a single UIAgentMessage with a text part", async () => {
-    const events = [
-      textStart("msg-1"),
-      textContent("msg-1", "Hello"),
-      textContent("msg-1", ", "),
-      textContent("msg-1", "world."),
-      textEnd("msg-1"),
-    ];
-
-    const { messages } = await replayAgUi(events);
-
-    expect(messages).toHaveLength(1);
-    const m = messages[0]!;
-    expect(m.role).toBe("agent");
-    if (m.role !== "agent") throw new Error("type narrow");
-    expect(m.id).toBe("msg-1");
-    expect(m.parts).toHaveLength(1);
-    expect(m.parts[0]).toMatchObject({ type: "text", text: "Hello, world." });
-  });
-
-  it("projects a tool-call lifecycle into a tool UIPart on the active assistant message", async () => {
-    const events = [
-      textStart("msg-1"),
-      textContent("msg-1", "Listing files…"),
-      textEnd("msg-1"),
-      toolCallStart("tool-1", "bash"),
-      toolCallArgs("tool-1", JSON.stringify({ command: "ls -la" })),
-      toolCallChunk("tool-1", "starting shell"),
-      toolCallEnd("tool-1"),
-      toolCallResult("tool-1", "total 0\n"),
-    ];
-
-    const { messages } = await replayAgUi(events);
-
-    expect(messages).toHaveLength(1);
-    const m = messages[0]!;
-    if (m.role !== "agent") throw new Error("type narrow");
-    expect(m.parts).toHaveLength(2);
-    expect(m.parts[0]).toMatchObject({ type: "text", text: "Listing files…" });
-    expect(m.parts[1]).toMatchObject({
-      type: "tool",
-      id: "tool-1",
-      name: "bash",
-      status: "completed",
-      result: "total 0\n",
-      parameters: { command: "ls -la" },
-      progressChunks: [{ seq: 0, text: "starting shell" }],
-    });
-  });
-
-  it("does not double-append tool progress when reconnect replays the same event id", async () => {
-    const repeatedChunk = toolCallChunk("tool-1", "reading files", 0, "evt-1");
-    const { messages } = await replayAgUi([
-      textStart("msg-1"),
-      toolCallStart("tool-1", "Read"),
-      repeatedChunk,
-      repeatedChunk,
-    ]);
-
-    const m = messages[0]!;
-    if (m.role !== "agent") throw new Error("type narrow");
-    expect(m.parts[0]).toMatchObject({
-      type: "tool",
-      progressChunks: [{ seq: 0, text: "reading files" }],
-    });
-  });
-
-  it("keeps well-formed native runtime events out of the transcript", async () => {
-    const { messages, quarantine } = await replayAgUi([
+  it("keeps well-formed native runtime events out of quarantine", async () => {
+    const { quarantine } = await replayAgUi([
       {
         type: EventType.STATE_SNAPSHOT,
         snapshot: { plan: { status: "running" }, bootStep: "install" },
@@ -124,12 +49,11 @@ describe("AG-UI replayer integration", () => {
       } as BaseEvent,
     ]);
 
-    expect(messages).toEqual([]);
     expect(quarantine).toEqual([]);
   });
 
   it("keeps unsupported native families quarantined explicitly", async () => {
-    const { messages, quarantine } = await replayAgUi([
+    const { quarantine } = await replayAgUi([
       {
         type: EventType.MESSAGES_SNAPSHOT,
         messages: [],
@@ -140,7 +64,6 @@ describe("AG-UI replayer integration", () => {
       } as BaseEvent,
     ]);
 
-    expect(messages).toEqual([]);
     expect(quarantine).toEqual([
       {
         reason: "unsupported-ag-ui-event",
@@ -150,7 +73,7 @@ describe("AG-UI replayer integration", () => {
   });
 
   it("quarantines malformed native runtime events", async () => {
-    const { messages, quarantine } = await replayAgUi([
+    const { quarantine } = await replayAgUi([
       {
         type: EventType.STATE_SNAPSHOT,
         snapshot: null,
@@ -163,7 +86,6 @@ describe("AG-UI replayer integration", () => {
       } as BaseEvent,
     ]);
 
-    expect(messages).toEqual([]);
     expect(quarantine).toEqual([
       {
         reason: "malformed-native-runtime-event",
@@ -213,196 +135,8 @@ describe("AG-UI replayer integration", () => {
     expect(Reflect.get(Object.prototype, "polluted")).toBeUndefined();
   });
 
-  it("marks tool-call as error when TOOL_CALL_RESULT signals failure", async () => {
-    const events = [
-      textStart("msg-1"),
-      toolCallStart("tool-fail", "bash"),
-      toolCallArgs("tool-fail", JSON.stringify({ command: "false" })),
-      toolCallEnd("tool-fail"),
-      toolCallResult("tool-fail", "exit 1", /* isError */ true),
-    ];
-
-    const { messages } = await replayAgUi(events);
-    const m = messages[0]!;
-    if (m.role !== "agent") throw new Error("type narrow");
-    const toolPart = m.parts.find((p) => p.type === "tool");
-    expect(toolPart).toBeDefined();
-    expect(toolPart).toMatchObject({ status: "error", result: "exit 1" });
-  });
-
-  it("drops orphan tool results instead of synthesizing a transcript row", async () => {
-    const { messages } = await replayAgUi([
-      toolCallResult("tool-orphan", "late result"),
-    ]);
-
-    expect(messages).toEqual([]);
-  });
-
-  it("inserts a CUSTOM rich-part (terminal) onto the referenced assistant message", async () => {
-    const terminalPart = {
-      type: "terminal",
-      sandboxId: "sandbox-1",
-      terminalId: "term-1",
-      chunks: [
-        { streamSeq: 0, kind: "stdout" as const, text: "hello\n" },
-        { streamSeq: 1, kind: "stderr" as const, text: "warn\n" },
-      ],
-    };
-    const events = [
-      textStart("msg-rich"),
-      textContent("msg-rich", "Running…"),
-      textEnd("msg-rich"),
-      customRichPart("terminal", "msg-rich", terminalPart),
-    ];
-
-    const { messages } = await replayAgUi(events);
-    expect(messages).toHaveLength(1);
-    const m = messages[0]!;
-    if (m.role !== "agent") throw new Error("type narrow");
-    expect(m.parts).toHaveLength(2);
-    expect(m.parts[1]).toMatchObject({
-      type: "terminal",
-      terminalId: "term-1",
-    });
-  });
-
-  it("creates a placeholder assistant message for an orphan CUSTOM event (post-reconnect replay)", async () => {
-    // Simulates SSE replay after reconnect: a CUSTOM rich-part arrives
-    // for a messageId we've never seen a TEXT_MESSAGE_START for.
-    const events = [
-      customRichPart(
-        "terminal",
-        "msg-orphan",
-        {
-          type: "terminal",
-          sandboxId: "sandbox-1",
-          terminalId: "term-2",
-          chunks: [],
-        },
-        0,
-      ),
-    ];
-
-    const { messages } = await replayAgUi(events);
-    expect(messages).toHaveLength(1);
-    const m = messages[0]!;
-    if (m.role !== "agent") throw new Error("type narrow");
-    expect(m.id).toBe("msg-orphan");
-    expect(m.parts[0]).toMatchObject({ type: "terminal" });
-  });
-
-  it("folds a full mixed event stream into the expected message shape", async () => {
-    // One assistant turn: text → tool call → tool result → more text →
-    // FileChange diff tool result. Mirrors the shape of a typical
-    // claude-code-standard-turn JSONL recording after mapper expansion.
-    const events = [
-      textStart("m1"),
-      textContent("m1", "Refactoring the auth middleware."),
-      textEnd("m1"),
-      toolCallStart("t-ls", "bash"),
-      toolCallArgs("t-ls", JSON.stringify({ command: "ls src/middleware" })),
-      toolCallEnd("t-ls"),
-      toolCallResult("t-ls", "auth.ts\nlogger.ts\n"),
-      textStart("m2"),
-      textContent("m2", "Done."),
-      textEnd("m2"),
-      toolCallStart("m2:diff:0", "FileChange", 0, "m2"),
-      toolCallArgs(
-        "m2:diff:0",
-        JSON.stringify({
-          files: [{ path: "src/middleware/auth.ts", action: "modified" }],
-        }),
-      ),
-      toolCallEnd("m2:diff:0"),
-      toolCallResult(
-        "m2:diff:0",
-        JSON.stringify({
-          type: "terragon.diff",
-          part: {
-            type: "diff",
-            filePath: "src/middleware/auth.ts",
-            oldContent: "old",
-            newContent: "new",
-            status: "applied",
-          },
-        }),
-      ),
-    ];
-
-    const { messages, snapshots } = await replayAgUi(events);
-
-    // 2 assistant messages
-    expect(messages).toHaveLength(2);
-    const [first, second] = messages;
-    if (!first || first.role !== "agent") throw new Error("type narrow");
-    if (!second || second.role !== "agent") throw new Error("type narrow");
-
-    // m1 has text + tool
-    expect(first.id).toBe("m1");
-    expect(first.parts.map((p) => p.type)).toEqual(["text", "tool"]);
-    expect(first.parts[1]).toMatchObject({ status: "completed" });
-
-    // m2 has text + FileChange tool part
-    expect(second.id).toBe("m2");
-    expect(second.parts.map((p) => p.type)).toEqual(["text", "tool"]);
-    expect(second.parts[1]).toMatchObject({
-      type: "tool",
-      name: "FileChange",
-      status: "completed",
-    });
-
-    // Snapshots grow monotonically — after the 2nd event we already have
-    // some text on m1; we should never see a shrink or lost message id.
-    const idSets = snapshots.map(
-      (s) => new Set(s.map((m) => (m.role === "agent" ? m.id : null))),
-    );
-    for (let i = 1; i < idSets.length; i++) {
-      const prev = idSets[i - 1]!;
-      const cur = idSets[i]!;
-      for (const id of prev) {
-        if (id) expect(cur.has(id)).toBe(true);
-      }
-    }
-  });
-
-  it("converges to the same transcript when replayed in slices", async () => {
-    const events = [
-      textStart("slice-1"),
-      textContent("slice-1", "Inspecting the repo."),
-      textEnd("slice-1"),
-      toolCallStart("slice-tool", "bash"),
-      toolCallArgs("slice-tool", JSON.stringify({ command: "pnpm test" })),
-      toolCallEnd("slice-tool"),
-      toolCallResult("slice-tool", "all green\n"),
-      textStart("slice-2"),
-      textContent("slice-2", "Finished."),
-      textEnd("slice-2"),
-      customRichPart("plan", "slice-2", {
-        type: "plan",
-        entries: [
-          {
-            content: "Ship the U0 guardrails",
-            priority: "high",
-            status: "completed",
-          },
-        ],
-      }),
-    ];
-
-    const fullReplay = await replayAgUi(events);
-    const firstSlice = await replayAgUi(events.slice(0, 5));
-    const secondSlice = await replayAgUi(events.slice(5), {
-      initialMessages: firstSlice.messages,
-    });
-
-    expect(secondSlice.messages).toEqual(fullReplay.messages);
-    expect(secondSlice.artifactDescriptors).toEqual(
-      fullReplay.artifactDescriptors,
-    );
-  });
-
   it("reconstructs lifecycle from canonical run events without refetch state", async () => {
-    const { lifecycle, snapshots } = await replayAgUi([
+    const { lifecycle, quarantine } = await replayAgUi([
       {
         type: EventType.RUN_STARTED,
         runId: "run-1",
@@ -415,81 +149,11 @@ describe("AG-UI replayer integration", () => {
       } as BaseEvent,
     ]);
 
-    expect(snapshots.at(-1)?.[0]).toMatchObject({
-      role: "agent",
-      parts: [{ type: "text", text: "Working" }],
-    });
+    expect(quarantine).toEqual([]);
     expect(lifecycle).toMatchObject({
       runId: "run-1",
       runStarted: false,
       threadStatus: "complete",
-    });
-  });
-
-  it("keeps artifact descriptor references stable while unrelated text tokens stream", async () => {
-    const plan = "<proposed_plan>\nShip the plan artifact.\n</proposed_plan>";
-    const { artifactDescriptors, artifactSnapshots } = await replayAgUi([
-      textStart("msg-plan"),
-      textContent("msg-plan", plan),
-      textContent("msg-plan", "\nContinuing with implementation."),
-      textContent("msg-plan", "\nStill streaming unrelated tokens."),
-    ]);
-
-    expect(artifactDescriptors.map((artifact) => artifact.kind)).toEqual([
-      "plan",
-    ]);
-    const afterPlan = artifactSnapshots[2];
-    const afterFirstTail = artifactSnapshots[3];
-    const afterSecondTail = artifactSnapshots[4];
-    expect(afterPlan).toBe(afterFirstTail);
-    expect(afterFirstTail).toBe(afterSecondTail);
-  });
-
-  it("replays plan rich parts deterministically after reconnect without a text start", async () => {
-    const { artifactDescriptors, messages } = await replayAgUi([
-      customRichPart("plan", "msg-reconnect-plan", {
-        type: "plan",
-        entries: [
-          {
-            content: "Restore plan state",
-            priority: "high",
-            status: "completed",
-          },
-        ],
-      }),
-    ]);
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({
-      id: "msg-reconnect-plan",
-      role: "agent",
-      parts: [
-        {
-          type: "plan-structured",
-          entries: [
-            {
-              content: "Restore plan state",
-              priority: "high",
-              status: "completed",
-            },
-          ],
-        },
-      ],
-    });
-    expect(artifactDescriptors).toHaveLength(1);
-    expect(artifactDescriptors[0]).toMatchObject({
-      kind: "plan",
-      title: "Plan",
-      part: {
-        type: "plan-structured",
-        entries: [
-          {
-            content: "Restore plan state",
-            priority: "high",
-            status: "completed",
-          },
-        ],
-      },
     });
   });
 
