@@ -69,7 +69,6 @@ export function TerragonTranscriptSurface({
               key={`lifecycle-${message.id}`}
               message={message}
               messageIndex={index}
-              isLatestMessage={index === lifecycleMessages.length - 1}
             />
           ))}
         </div>

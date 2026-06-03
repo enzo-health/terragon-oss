@@ -2,29 +2,21 @@
 
 import { useTerragonThread } from "./thread-context";
 import { SystemMessage } from "../chat-message-system";
-import type { UIMessage, UISystemMessage } from "@terragon/shared";
+import type { UISystemMessage } from "@terragon/shared";
 
 /**
  * Renders a system message (git-diff, stop, etc.) within the assistant-ui
- * thread. `message` is narrowed to `UISystemMessage` before rendering — the
- * caller only routes system-role messages here.
- *
- * `isLatestMessage` is passed by the parent `TerragonThread.messages.map()`
- * loop so this component doesn't re-read `ctx.messages` on every token
- * delta.
+ * thread. The caller (`TerragonTranscriptSurface`) only routes
+ * `UISystemMessage` lifecycle entries here.
  */
 export function TerragonSystemMessage({
   message,
   messageIndex,
-  isLatestMessage: _isLatestMessage,
 }: {
-  message: UIMessage;
+  message: UISystemMessage;
   messageIndex: number;
-  isLatestMessage: boolean;
 }) {
   const ctx = useTerragonThread();
-  if (message.role !== "system") return null;
-  const systemMessage: UISystemMessage = message;
 
   return (
     <div
@@ -32,7 +24,7 @@ export function TerragonSystemMessage({
       data-message-index={messageIndex}
     >
       <SystemMessage
-        message={systemMessage}
+        message={message}
         thread={ctx.thread}
         latestGitDiffTimestamp={ctx.latestGitDiffTimestamp}
         artifactDescriptors={ctx.artifactDescriptors}
