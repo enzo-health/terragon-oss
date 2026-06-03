@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { DBUserMessage } from "@terragon/shared";
-import { UIMessage } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
 import { cn } from "@/lib/utils";
-import { ChatMessage } from "../chat/chat-message";
 import { Button } from "../ui/button";
 import { ChevronRight, X } from "lucide-react";
+import { QueuedUserPart } from "./queued-user-parts";
 
 interface QueuedMessagesProps {
   messages: DBUserMessage[];
@@ -22,11 +21,6 @@ export function QueuedMessages({
   onRemove,
   className,
 }: QueuedMessagesProps) {
-  const uiMessages = useMemo(() => {
-    return messages.map((message, index) =>
-      queuedUserMessageToUiMessage(message, index),
-    );
-  }, [messages]);
   const [collapsed, setCollapsed] = useState(false);
   if (messages.length === 0) {
     return null;
@@ -58,10 +52,14 @@ export function QueuedMessages({
           </div>
           {!collapsed && (
             <div className="max-h-[20vh] overflow-y-auto space-y-2 pb-2">
-              {uiMessages.map((message, index) => {
+              {messages.map((message, index) => {
                 return (
                   <div key={index} className="flex relative items-start gap-1">
-                    <ChatMessage message={message} className="ml-0 pr-10" />
+                    <div className="ml-0 pr-10 flex flex-col gap-1 text-[length:var(--text-fluid-base)] leading-relaxed">
+                      {message.parts.map((part, partIndex) => (
+                        <QueuedUserPart key={partIndex} part={part} />
+                      ))}
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -80,17 +78,4 @@ export function QueuedMessages({
       </div>
     </div>
   );
-}
-
-function queuedUserMessageToUiMessage(
-  message: DBUserMessage,
-  index: number,
-): UIMessage {
-  return {
-    id: `queued-${index}-${message.timestamp ?? "pending"}`,
-    role: "user",
-    parts: message.parts,
-    timestamp: message.timestamp,
-    model: message.model,
-  };
 }
