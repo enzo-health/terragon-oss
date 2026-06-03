@@ -596,6 +596,37 @@ describe("ThreadViewModel reducer", () => {
     ]);
   });
 
+  it("quarantines STATE_DELTA add ops missing a value field", () => {
+    const state = applyAgUiEvent(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "add", path: "/sandbox" }],
+      } as BaseEvent,
+    );
+
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.quarantine).toEqual([
+      {
+        reason: "malformed-native-runtime-event",
+        eventType: EventType.STATE_DELTA,
+      },
+    ]);
+  });
+
+  it("accepts STATE_DELTA add ops with a falsy value field", () => {
+    const state = applyAgUiEvent(
+      createInitialThreadViewModelState(snapshotWithMessages([])),
+      {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "add", path: "/sandbox", value: false }],
+      } as BaseEvent,
+    );
+
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.quarantine).toEqual([]);
+  });
+
   it("accepts live structured plan parts without sidecar transcript projection", () => {
     const state = applyAgUiEvent(
       createInitialThreadViewModelState(snapshotWithMessages([])),

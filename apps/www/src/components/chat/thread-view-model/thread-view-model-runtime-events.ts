@@ -75,7 +75,16 @@ function isWellFormedPatchOperation(value: unknown): boolean {
   if (op !== "add" && op !== "replace" && op !== "remove") {
     return false;
   }
+  if ((op === "add" || op === "replace") && !hasValueField(value)) {
+    return false;
+  }
   return path === "" || isSafeJsonPointer(path);
+}
+
+function hasValueField(value: unknown): boolean {
+  return (
+    typeof value === "object" && value !== null && Reflect.has(value, "value")
+  );
 }
 
 function isSafeJsonPointer(path: string): boolean {
