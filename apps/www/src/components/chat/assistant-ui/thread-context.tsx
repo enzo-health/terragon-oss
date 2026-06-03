@@ -5,11 +5,7 @@ import type { ThreadInfoFull, UIPart } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import type { ArtifactDescriptorLookup } from "../secondary-panel-helpers";
 import type { PromptBoxRef } from "../thread-context";
-import type {
-  RedoDialogData,
-  ForkDialogData,
-  MessagePartRenderProps,
-} from "../chat-message.types";
+import type { RedoDialogData, ForkDialogData } from "../dialog-data";
 
 /**
  * Thread-level context. Values here are intentionally stable across
@@ -44,53 +40,17 @@ export type TerragonThreadContext = {
     branchName: string | null;
     onOptimisticPermissionModeUpdate?: (mode: "allowAll" | "plan") => void;
   };
-  /**
-   * Pre-assembled `messagePartProps` bag. Kept stable across renders via
-   * `useMemo` in `TerragonThread`. Per-message components pass this
-   * through to `ChatMessage` without reallocation, so `ChatMessage`'s
-   * memo-compare on `messagePartProps` succeeds during streaming.
-   */
-  messagePartProps: MessagePartRenderProps;
 };
 
 const Context = createContext<TerragonThreadContext | null>(null);
 
 export const TerragonThreadProvider = Context.Provider;
 
-export type TerragonMessageRenderContext = {
-  isAgentWorking: boolean;
-  artifactDescriptors: ArtifactDescriptor[];
-  artifactDescriptorLookup?: ArtifactDescriptorLookup;
-  onOpenArtifact: (artifactId: string) => void;
-  /** Opens an in-repo file link (from markdown text) in the artifacts panel. */
-  onOpenRepoFile?: (href: string) => void;
-  planOccurrences: Map<UIPart, number>;
-  redoDialogData?: RedoDialogData;
-  forkDialogData?: ForkDialogData;
-  messagePartProps: MessagePartRenderProps;
-};
-
-const MessageRenderContext = createContext<TerragonMessageRenderContext | null>(
-  null,
-);
-
-export const TerragonMessageRenderProvider = MessageRenderContext.Provider;
-
 export function useTerragonThread(): TerragonThreadContext {
   const ctx = use(Context);
   if (!ctx) {
     throw new Error(
       "useTerragonThread must be used within a TerragonThreadProvider",
-    );
-  }
-  return ctx;
-}
-
-export function useTerragonMessageRender(): TerragonMessageRenderContext {
-  const ctx = use(MessageRenderContext);
-  if (!ctx) {
-    throw new Error(
-      "useTerragonMessageRender must be used within a TerragonMessageRenderProvider",
     );
   }
   return ctx;

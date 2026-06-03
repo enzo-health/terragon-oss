@@ -1,11 +1,7 @@
-import {
-  DBUserMessage,
-  GitDiffStats,
-  UIAgentMessage,
-  UIUserMessage,
-} from "@terragon/shared";
-import { AIAgent, AIModel } from "@terragon/agent/types";
+import { UIAgentMessage, UIUserMessage } from "@terragon/shared";
 import { MessagePartProps } from "./message-part";
+
+export type { RedoDialogData, ForkDialogData } from "./dialog-data";
 
 export type UIUserOrAgentPart =
   | UIAgentMessage["parts"][number]
@@ -24,29 +20,6 @@ export type MessagePartRenderProps = Pick<
   | "hasCheckpoint"
   | "toolProps"
 >;
-
-export type RedoDialogData = {
-  threadId: string;
-  repoFullName: string;
-  repoBaseBranchName: string;
-  disableGitCheckpointing: boolean;
-  skipSetup: boolean;
-  permissionMode: "allowAll" | "plan";
-  initialUserMessage: DBUserMessage;
-};
-
-export type ForkDialogData = {
-  threadId: string;
-  threadChatId: string;
-  repoFullName: string;
-  repoBaseBranchName: string;
-  branchName: string | null;
-  gitDiffStats: GitDiffStats | null;
-  disableGitCheckpointing: boolean;
-  skipSetup: boolean;
-  agent: AIAgent;
-  lastSelectedModel: AIModel | null;
-};
 
 export const DEFAULT_MESSAGE_PART_PROPS: MessagePartRenderProps = {
   githubRepoFullName: "",
