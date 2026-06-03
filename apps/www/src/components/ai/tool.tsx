@@ -2,6 +2,7 @@
 
 import { Collapsible } from "@base-ui/react/collapsible";
 import { parse } from "partial-json";
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 
 type ToolState = "pending" | "approval" | "running" | "success" | "error";
@@ -243,12 +244,19 @@ export function ToolArgument({
   className,
   ...props
 }: ToolArgumentProps) {
-  const parsed = safeParse(value);
-  const isObject =
-    parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
-  const entries = isObject
-    ? Object.entries(parsed as Record<string, unknown>)
-    : [];
+  // Memoize the partial-json parse so re-renders that don't change `value`
+  // (sibling state updates) skip re-parsing the whole buffer. During streaming
+  // `value` grows every chunk, so that case still re-parses by design.
+  const { parsed, isObject, entries } = useMemo(() => {
+    const value_ = safeParse(value);
+    const obj =
+      value_ !== null && typeof value_ === "object" && !Array.isArray(value_);
+    return {
+      parsed: value_,
+      isObject: obj,
+      entries: obj ? Object.entries(value_ as Record<string, unknown>) : [],
+    };
+  }, [value]);
   const isStreaming = state === "streaming";
 
   return (
