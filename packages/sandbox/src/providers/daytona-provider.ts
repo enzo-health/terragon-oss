@@ -1,5 +1,8 @@
 import { Daytona, Sandbox as DaytonaSandbox } from "@daytonaio/sdk";
-import type { VolumeMount } from "@daytonaio/sdk";
+import type {
+  CreateSandboxFromSnapshotParams,
+  VolumeMount,
+} from "@daytonaio/sdk";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -31,6 +34,22 @@ const runtimeRequire = createRequire(import.meta.url);
 type DaytonaVolumeForMount = {
   id: unknown;
   name?: unknown;
+};
+
+type DaytonaVolumeMount = VolumeMount & {
+  subpath?: string;
+};
+
+type DaytonaCreateFromSnapshotParams = Omit<
+  CreateSandboxFromSnapshotParams,
+  "volumes"
+> & {
+  volumes?: DaytonaVolumeMount[];
+};
+
+type DaytonaCreatePreflightScalar = {
+  value: unknown;
+  type: string;
 };
 
 async function reconcileLifecyclePolicy(
@@ -125,19 +144,20 @@ async function createWithRetry(
               () => getDaytonaVolumeMounts(daytona, daytonaVolume),
             )
           : undefined;
+        const createParams: DaytonaCreateFromSnapshotParams = {
+          user: "root",
+          snapshot: templateId,
+          envVars: envs,
+          ...(volumes ? { volumes } : {}),
+          autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
+          autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
+          autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
+        };
+        preflightDaytonaCreatePayload(createParams);
         const sandbox = await timeSandboxStartupStage(
           "daytona.provider.create",
           timingAttrs,
-          () =>
-            daytona.create({
-              user: "root",
-              snapshot: templateId,
-              envVars: envs,
-              ...(volumes ? { volumes } : {}),
-              autoStopInterval: DAYTONA_AUTO_STOP_INTERVAL_MINUTES,
-              autoArchiveInterval: DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES,
-              autoDeleteInterval: DAYTONA_AUTO_DELETE_INTERVAL_MINUTES,
-            }),
+          () => daytona.create(createParams),
         );
         console.log(
           `[daytona] Created sandbox in ${Date.now() - startTime}ms`,
@@ -159,6 +179,151 @@ async function createWithRetry(
       `[daytona] Failed to create sandbox${volumeContext}: ${formatError(error)}`,
     );
   }
+}
+
+function preflightDaytonaCreatePayload(
+  payload: DaytonaCreateFromSnapshotParams,
+): void {
+  console.log(
+    "[daytona] create payload preflight",
+    describeDaytonaCreatePayloadForLog(payload),
+  );
+  validateDaytonaCreatePayload(payload);
+}
+
+function describeDaytonaCreatePayloadForLog(
+  payload: DaytonaCreateFromSnapshotParams,
+): Record<string, unknown> {
+  return {
+    name: describeDaytonaCreateScalar(payload.name),
+    user: describeDaytonaCreateScalar(payload.user),
+    snapshot: describeDaytonaCreateScalar(payload.snapshot),
+    language: describeDaytonaCreateScalar(payload.language),
+    envVars: payload.envVars
+      ? {
+          count: Object.keys(payload.envVars).length,
+          keys: Object.keys(payload.envVars),
+          valueTypesByKey: Object.fromEntries(
+            Object.entries(payload.envVars).map(([key, value]) => [
+              key,
+              getDaytonaCreateValueType(value),
+            ]),
+          ),
+        }
+      : undefined,
+    labels: payload.labels
+      ? {
+          count: Object.keys(payload.labels).length,
+          keys: Object.keys(payload.labels),
+          valueTypesByKey: Object.fromEntries(
+            Object.entries(payload.labels).map(([key, value]) => [
+              key,
+              getDaytonaCreateValueType(value),
+            ]),
+          ),
+        }
+      : undefined,
+    volumes: payload.volumes?.map((volume) => ({
+      volumeId: describeDaytonaCreateScalar(volume.volumeId),
+      mountPath: describeDaytonaCreateScalar(volume.mountPath),
+      subpath: describeDaytonaCreateScalar(volume.subpath),
+    })),
+    public: describeDaytonaCreateScalar(payload.public),
+    autoStopInterval: describeDaytonaCreateScalar(payload.autoStopInterval),
+    autoArchiveInterval: describeDaytonaCreateScalar(
+      payload.autoArchiveInterval,
+    ),
+    autoDeleteInterval: describeDaytonaCreateScalar(payload.autoDeleteInterval),
+    networkBlockAll: describeDaytonaCreateScalar(payload.networkBlockAll),
+    networkAllowList: describeDaytonaCreateScalar(payload.networkAllowList),
+    ephemeral: describeDaytonaCreateScalar(payload.ephemeral),
+    linkedSandbox: describeDaytonaCreateScalar(payload.linkedSandbox),
+  };
+}
+
+function describeDaytonaCreateScalar(
+  value: unknown,
+): DaytonaCreatePreflightScalar {
+  return {
+    value,
+    type: getDaytonaCreateValueType(value),
+  };
+}
+
+function getDaytonaCreateValueType(value: unknown): string {
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (value === null) {
+    return "null";
+  }
+  return typeof value;
+}
+
+function validateDaytonaCreatePayload(
+  payload: DaytonaCreateFromSnapshotParams,
+): void {
+  assertOptionalDaytonaCreateString(payload.name, "name");
+  assertOptionalDaytonaCreateString(payload.user, "user");
+  assertOptionalDaytonaCreateString(payload.snapshot, "snapshot");
+  assertOptionalDaytonaCreateString(payload.language, "language");
+  assertDaytonaCreateRecordValuesAreStrings(payload.envVars, "envVars");
+  assertDaytonaCreateRecordValuesAreStrings(payload.labels, "labels");
+  payload.volumes?.forEach((volume, index) => {
+    assertRequiredDaytonaCreateString(
+      volume.volumeId,
+      `volumes[${index}].volumeId`,
+    );
+    assertRequiredDaytonaCreateString(
+      volume.mountPath,
+      `volumes[${index}].mountPath`,
+    );
+    assertOptionalDaytonaCreateString(
+      volume.subpath,
+      `volumes[${index}].subpath`,
+    );
+  });
+  assertOptionalDaytonaCreateString(
+    payload.networkAllowList,
+    "networkAllowList",
+  );
+  assertOptionalDaytonaCreateString(payload.linkedSandbox, "linkedSandbox");
+}
+
+function assertDaytonaCreateRecordValuesAreStrings(
+  record: Record<string, string> | undefined,
+  pathPrefix: string,
+): void {
+  if (!record) {
+    return;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    assertRequiredDaytonaCreateString(value, `${pathPrefix}.${key}`, {
+      includeValue: false,
+    });
+  }
+}
+
+function assertOptionalDaytonaCreateString(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+  assertRequiredDaytonaCreateString(value, path);
+}
+
+function assertRequiredDaytonaCreateString(
+  value: unknown,
+  path: string,
+  options: { includeValue?: boolean } = {},
+): void {
+  if (typeof value === "string") {
+    return;
+  }
+  const valueContext =
+    options.includeValue === false ? "" : ` (${String(value)})`;
+  throw new TypeError(
+    `[daytona] create payload ${path} must be a string; received ${getDaytonaCreateValueType(value)}${valueContext}`,
+  );
 }
 
 function normalizeRequiredDaytonaString(value: unknown, label: string): string {
@@ -202,7 +367,7 @@ function isDaytonaVolumeMountableId(value: unknown): boolean {
 async function getDaytonaVolumeMounts(
   daytona: Daytona,
   daytonaVolume: DaytonaVolumeConfig,
-): Promise<VolumeMount[]> {
+): Promise<DaytonaVolumeMount[]> {
   const volume = await getDaytonaVolumeForMount(daytona, daytonaVolume);
   const volumeId = normalizeDaytonaVolumeMountId(
     volume.id,
@@ -685,8 +850,20 @@ export class DaytonaProvider implements ISandboxProvider {
     }
     // Convert environment variables array to object
     const envs: Record<string, string> = {};
-    if (options.environmentVariables) {
-      for (const { key, value } of options.environmentVariables) {
+    for (const [
+      index,
+      { key, value },
+    ] of options.environmentVariables.entries()) {
+      assertRequiredDaytonaCreateString(
+        key,
+        `environmentVariables[${index}].key`,
+      );
+      assertRequiredDaytonaCreateString(
+        value,
+        `environmentVariables[${index}].value`,
+        { includeValue: false },
+      );
+      if (key) {
         envs[key] = value;
       }
     }

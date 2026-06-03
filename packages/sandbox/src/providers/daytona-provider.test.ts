@@ -245,6 +245,86 @@ describe("DaytonaProvider lifecycle policy", () => {
     expect(createPayload?.snapshot).toBeTypeOf("string");
   });
 
+  it("logs redacted Daytona create preflight without env values", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const sandbox = createMockSandbox();
+    daytonaVolumeListMock.mockResolvedValue([
+      {
+        id: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+        name: "terragon-workspaces",
+      },
+    ]);
+    daytonaCreateMock.mockResolvedValue(sandbox);
+
+    const provider = new DaytonaProvider();
+    try {
+      await provider.getOrCreateSandbox(null, {
+        ...defaultOptions,
+        snapshotTemplateId: "snapshot-template",
+        daytonaVolume: defaultDaytonaVolume,
+        environmentVariables: [
+          {
+            key: "SECRET_TOKEN",
+            value: "super-secret",
+          },
+        ],
+      });
+
+      const preflightCall = logSpy.mock.calls.find(
+        ([message]) => message === "[daytona] create payload preflight",
+      );
+      expect(preflightCall).toBeDefined();
+      const preflightPayload = preflightCall?.[1];
+      expect(preflightPayload).toMatchObject({
+        user: { type: "string", value: "root" },
+        snapshot: { type: "string", value: "snapshot-template" },
+        envVars: {
+          count: 1,
+          keys: ["SECRET_TOKEN"],
+          valueTypesByKey: {
+            SECRET_TOKEN: "string",
+          },
+        },
+        volumes: [
+          {
+            volumeId: {
+              type: "string",
+              value: "37c2c377-39c7-4167-a040-9a5f5b167d8a",
+            },
+            mountPath: { type: "string", value: "/mnt/terragon" },
+            subpath: { type: "string", value: "users/user-123" },
+          },
+        ],
+      });
+      const serializedLog = JSON.stringify(preflightPayload);
+      expect(serializedLog).not.toContain("super-secret");
+      expect(serializedLog).not.toContain("test-api-key");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("fails before create when an environment variable value is non-string at runtime", async () => {
+    const options = {
+      ...defaultOptions,
+      snapshotTemplateId: "snapshot-template",
+      environmentVariables: [
+        {
+          key: "BAD_PATH",
+          value: "placeholder",
+        },
+      ],
+    };
+    Reflect.set(options.environmentVariables[0]!, "value", 889967);
+
+    const provider = new DaytonaProvider();
+
+    await expect(provider.getOrCreateSandbox(null, options)).rejects.toThrow(
+      /\[daytona\] create payload environmentVariables\[0\]\.value must be a string; received number/,
+    );
+    expect(daytonaCreateMock).not.toHaveBeenCalled();
+  });
+
   it("falls back to the default template when a persisted snapshot id is blank", async () => {
     const sandbox = createMockSandbox();
     daytonaCreateMock.mockResolvedValue(sandbox);
