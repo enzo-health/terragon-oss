@@ -36,8 +36,10 @@ function ThreadFixture({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className="mx-auto max-w-chat px-4 py-6">
-        <NativeThread />
+      <div className="nauval-chat-surface min-h-[60vh] w-full">
+        <div className="mx-auto max-w-chat px-4 py-8">
+          <NativeThread />
+        </div>
       </div>
     </AssistantRuntimeProvider>
   );

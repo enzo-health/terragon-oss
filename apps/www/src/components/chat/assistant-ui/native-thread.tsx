@@ -33,6 +33,7 @@ import {
   ToolIcon,
   ToolLabel,
   ToolName,
+  ToolSubtitle,
   ToolTrigger,
 } from "@/components/ai/tool";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -143,13 +144,19 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
       </ToolTrigger>
       <ToolContent keepMounted>
         {stream.text ? (
-          <ToolArgument
-            value={stream.text}
-            state={stream.streaming ? "streaming" : "complete"}
-          />
+          <>
+            <ToolSubtitle>Input</ToolSubtitle>
+            <ToolArgument
+              value={stream.text}
+              state={stream.streaming ? "streaming" : "complete"}
+            />
+          </>
         ) : null}
         {state !== "error" && resultText ? (
-          <ToolBlock>{resultText}</ToolBlock>
+          <>
+            <ToolSubtitle>Output</ToolSubtitle>
+            <ToolBlock>{resultText}</ToolBlock>
+          </>
         ) : null}
         {errorText ? <ToolError>{errorText}</ToolError> : null}
       </ToolContent>
