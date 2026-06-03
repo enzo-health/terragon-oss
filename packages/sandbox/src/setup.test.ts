@@ -595,7 +595,7 @@ describe("sandbox-setup", () => {
 
       expect(runCommandSpy).toHaveBeenCalledWith(
         expect.stringContaining(
-          'npm install -g @anthropic-ai/claude-code@2.1.126 "$claude_platform_package@2.1.126"',
+          'npm install -g @anthropic-ai/claude-code@2.1.161 "$claude_platform_package@2.1.161"',
         ),
         { cwd: "/" },
       );

@@ -302,7 +302,7 @@ async function main() {
   // Default to 2vCPU/4GB if not specified
   const cpuCount = size === "large" ? 4 : 2;
   const memoryGB = size === "large" ? 8 : 4;
-  const diskGB = size === "large" ? 16 : 10;
+  const diskGB = 10;
   const dockerfileHash = getDockerfileHash();
   console.log(`Creating ${provider} template for ${size} size...`);
   console.log(` * CPU: ${cpuCount} vCPU`);

@@ -1,8 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Updates packages/sandbox-image/Dockerfile to the latest npm versions of:
+ * Updates sandbox image Dockerfile templates to the latest npm versions of:
  * - @anthropic-ai/claude-code
  * - @openai/codex
+ * - @sandbox-agent/cli
+ * - @agentclientprotocol/claude-agent-acp
+ * - @agentclientprotocol/codex-acp
  *
  * Fetches versions using `npm view <pkg> version --json`.
  * Run with: bun packages/sandbox-image/scripts/update-dockerfile-versions.ts [--dry-run]
@@ -20,7 +23,19 @@ const DRY_RUN = process.argv.includes("--dry-run");
 
 type Pkg = {
   name: string;
-  regex: RegExp; // pattern to replace in Dockerfile
+  regex: RegExp;
+};
+
+type PackagePinUpdate = {
+  updated: boolean;
+  before: string;
+  after: string;
+  changes: Array<{
+    name: string;
+    from?: string;
+    to: string;
+    occurrences: number;
+  }>;
 };
 
 const PACKAGES: Pkg[] = [
@@ -33,6 +48,21 @@ const PACKAGES: Pkg[] = [
     name: "@openai/codex",
     // Matches @openai/codex@<semver>
     regex: /@openai\/codex@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
+  {
+    name: "@sandbox-agent/cli",
+    // Matches @sandbox-agent/cli@<semver>
+    regex: /@sandbox-agent\/cli@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
+  {
+    name: "@agentclientprotocol/claude-agent-acp",
+    // Matches @agentclientprotocol/claude-agent-acp@<semver>
+    regex: /@agentclientprotocol\/claude-agent-acp@([0-9]+\.[0-9]+\.[0-9]+)/g,
+  },
+  {
+    name: "@agentclientprotocol/codex-acp",
+    // Matches @agentclientprotocol/codex-acp@<semver>
+    regex: /@agentclientprotocol\/codex-acp@([0-9]+\.[0-9]+\.[0-9]+)/g,
   },
 ];
 
@@ -64,20 +94,10 @@ function getLatestVersionViaNpm(pkgName: string): string {
   throw new Error(`Could not parse version from npm for ${pkgName}: ${raw}`);
 }
 
-function updateDockerfile(
+function updatePackagePins(
   dockerfilePath: string,
   versions: Record<string, string>,
-): {
-  updated: boolean;
-  before: string;
-  after: string;
-  changes: Array<{
-    name: string;
-    from?: string;
-    to: string;
-    occurrences: number;
-  }>;
-} {
+): PackagePinUpdate {
   const before = readFileSync(dockerfilePath, "utf8");
   let after = before;
   const changes: Array<{
@@ -109,6 +129,20 @@ function updateDockerfile(
   return { updated: before !== after, before, after, changes };
 }
 
+function printChangedLines(before: string, after: string) {
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const max = Math.max(beforeLines.length, afterLines.length);
+  for (let i = 0; i < max; i++) {
+    const a = beforeLines[i];
+    const b = afterLines[i];
+    if (a !== b) {
+      console.log(`- ${a ?? ""}`);
+      console.log(`+ ${b ?? ""}`);
+    }
+  }
+}
+
 async function main() {
   const pkgVersions: Record<string, string> = {};
 
@@ -117,28 +151,31 @@ async function main() {
     pkgVersions[name] = version;
   }
 
-  const dockerfileHbsPath = join(__dirname, "..", "Dockerfile.hbs");
-  const {
-    updated: dockerUpdated,
-    before,
-    after,
-    changes,
-  } = updateDockerfile(dockerfileHbsPath, pkgVersions);
+  const updateTargets = [
+    join(__dirname, "..", "Dockerfile.hbs"),
+    join(__dirname, "..", "src", "dockerfile-template.ts"),
+  ];
+  const targetUpdates = updateTargets.map((path) => ({
+    path,
+    ...updatePackagePins(path, pkgVersions),
+  }));
 
-  // Log Dockerfile summary
-  for (const c of changes) {
-    if (c.occurrences === 0) {
-      console.warn(
-        `Warning: No occurrences found for ${c.name} in Dockerfile.`,
-      );
-    } else if (c.from === c.to) {
-      console.log(
-        `${c.name} already up-to-date at ${c.to} (found ${c.occurrences}).`,
-      );
-    } else {
-      console.log(
-        `${c.name}: ${c.from ?? "unknown"} -> ${c.to} (updated ${c.occurrences}).`,
-      );
+  for (const targetUpdate of targetUpdates) {
+    console.log(`Version summary for ${targetUpdate.path}`);
+    for (const c of targetUpdate.changes) {
+      if (c.occurrences === 0) {
+        console.warn(
+          `Warning: No occurrences found for ${c.name} in ${targetUpdate.path}.`,
+        );
+      } else if (c.from === c.to) {
+        console.log(
+          `${c.name} already up-to-date at ${c.to} (found ${c.occurrences}).`,
+        );
+      } else {
+        console.log(
+          `${c.name}: ${c.from ?? "unknown"} -> ${c.to} (updated ${c.occurrences}).`,
+        );
+      }
     }
   }
 
@@ -168,36 +205,18 @@ async function main() {
   }
 
   if (DRY_RUN) {
-    if (dockerUpdated) {
-      console.log("--dry-run: Dockerfile.hbs changes\n");
-      const beforeLines = before.split(/\r?\n/);
-      const afterLines = after.split(/\r?\n/);
-      const max = Math.max(beforeLines.length, afterLines.length);
-      for (let i = 0; i < max; i++) {
-        const a = beforeLines[i];
-        const b = afterLines[i];
-        if (a !== b) {
-          console.log(`- ${a ?? ""}`);
-          console.log(`+ ${b ?? ""}`);
-        }
+    for (const targetUpdate of targetUpdates) {
+      if (targetUpdate.updated) {
+        console.log(`--dry-run: ${targetUpdate.path} changes\n`);
+        printChangedLines(targetUpdate.before, targetUpdate.after);
+      } else {
+        console.log(`${targetUpdate.path} already up-to-date. No changes.`);
       }
-    } else {
-      console.log("Dockerfile.hbs already up-to-date. No changes.");
     }
     if (testExists) {
       if (testUpdated) {
         console.log("\n--dry-run: template.test.ts changes\n");
-        const beforeLines = beforeTest.split(/\r?\n/);
-        const afterLines = afterTest.split(/\r?\n/);
-        const max = Math.max(beforeLines.length, afterLines.length);
-        for (let i = 0; i < max; i++) {
-          const a = beforeLines[i];
-          const b = afterLines[i];
-          if (a !== b) {
-            console.log(`- ${a ?? ""}`);
-            console.log(`+ ${b ?? ""}`);
-          }
-        }
+        printChangedLines(beforeTest, afterTest);
       } else {
         console.log("No test updates needed in template.test.ts");
       }
@@ -205,11 +224,13 @@ async function main() {
     return;
   }
 
-  if (dockerUpdated) {
-    writeFileSync(dockerfileHbsPath, after, "utf8");
-    console.log(`Updated ${dockerfileHbsPath}`);
-  } else {
-    console.log("Dockerfile.hbs already up-to-date.");
+  for (const targetUpdate of targetUpdates) {
+    if (targetUpdate.updated) {
+      writeFileSync(targetUpdate.path, targetUpdate.after, "utf8");
+      console.log(`Updated ${targetUpdate.path}`);
+    } else {
+      console.log(`${targetUpdate.path} already up-to-date.`);
+    }
   }
 
   if (testExists) {
