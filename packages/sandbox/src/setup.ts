@@ -35,7 +35,7 @@ import {
 import path from "path";
 import { timeSandboxStartupStage } from "./startup-timing";
 
-const CLAUDE_CODE_VERSION = "2.1.126";
+const CLAUDE_CODE_VERSION = "2.1.161";
 const SNAPSHOT_BOOT_GIT_CLEAN_EXCLUDES = [
   "node_modules",
   "**/node_modules",

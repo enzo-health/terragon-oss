@@ -62,12 +62,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN curl -fsSL https://bun.sh/install | bash \\
     && ln -s /root/.bun/bin/bun /usr/local/bin/bun
 
-# Install pnpm, sandbox-agent, claude code, and codex
+# Install pnpm, sandbox-agent, agent CLIs, and ACP adapters
 # Clean npm cache and strip dev-only files in the SAME RUN to keep the layer small.
 RUN npm install -g pnpm \\
-    @anthropic-ai/claude-code@2.1.126 \\
-    @openai/codex@0.128.0 \\
-    @sandbox-agent/cli@0.2.1 \\
+    @anthropic-ai/claude-code@2.1.161 \\
+    @openai/codex@0.136.0 \\
+    @sandbox-agent/cli@0.4.2 \\
+    @agentclientprotocol/claude-agent-acp@0.40.0 \\
+    @agentclientprotocol/codex-acp@0.0.45 \\
     && npm cache clean --force \\
     && find /usr/lib/node_modules -type d \\( -name 'docs' -o -name 'test' -o -name 'tests' -o -name '__tests__' -o -name 'examples' -o -name '.github' \\) -exec rm -rf {} + 2>/dev/null || true \\
     && find /usr/lib/node_modules -name '*.map' -delete 2>/dev/null || true \\
