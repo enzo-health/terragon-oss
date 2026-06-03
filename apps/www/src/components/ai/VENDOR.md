@@ -86,13 +86,14 @@ mappings below are registered in `globals.css` alongside `--color-surface-soft`.
 
 **Registered in `@theme inline` for the vendored leaves:**
 
-| nauval token                                               | alias                                     | rationale                                                                                              |
-| ---------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `bg/border-surface`                                        | `--color-surface: var(--card)`            | nauval's base card surface = Terragon cream card                                                       |
-| `bg-surface-elevated`                                      | `--color-surface-elevated: var(--raised)` | raised ladder stop (matches `--color-surface-soft: var(--raised)` already present)                     |
-| `*-inflight` (nauval's in-progress accent, refs in `tool`) | `--color-inflight: var(--info)`           | maps the streaming/in-flight accent onto the existing info hue; revisit if a distinct accent is wanted |
+| nauval token                                               | alias                                              | rationale                                                                                              |
+| ---------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `bg/border-surface`                                        | `--color-surface: var(--muted)`                    | the card/panel tone — must differ from `--background`/`--card` (both pure white) or the panel vanishes |
+| `bg-surface-elevated`                                      | `--color-surface-elevated: var(--card)`            | white inset blocks/bubbles that sit above the gray surface                                             |
+| `*-inflight` (nauval's in-progress accent, refs in `tool`) | `--color-inflight: var(--info)`                    | maps the streaming/in-flight accent onto the existing info hue; revisit if a distinct accent is wanted |
+| `rounded-outer` (cards/bubbles, refs in `tool`/`message`)  | `--radius-outer: calc(var(--radius) + 8px)` (16px) | nauval wraps cards in `rounded-outer`; undefined → square corners                                      |
 
-That is 3 aliases, matching the plan's "~3–6 `@theme inline` aliases, not a token
+That is 4 aliases, matching the plan's "~3–6 `@theme inline` aliases, not a token
 system" estimate. No `:root`/`.dark` duplication is needed — each target token
 (`--card`, `--raised`, `--info`) already carries light + dark values.
 

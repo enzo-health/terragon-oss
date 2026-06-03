@@ -371,6 +371,9 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* nauval's vendored ai/* leaves wrap cards/bubbles in `rounded-outer`.
+     Undefined here, Tailwind v4 emits no radius (square corners). */
+  --radius-outer: calc(var(--radius) + 8px);
 
   --shadow-inset-edge: var(--shadow-inset-edge);
   --shadow-outline-ring: var(--shadow-outline-ring);
@@ -424,8 +427,8 @@
      ring/border-inflight. Tailwind v4 silently emits nothing for unregistered
      tokens, so without these the leaves fall back to a transparent surface and
      a currentColor in-flight border. Mappings per components/ai/VENDOR.md. */
-  --color-surface: var(--card);
-  --color-surface-elevated: var(--raised);
+  --color-surface: var(--muted);
+  --color-surface-elevated: var(--card);
   --color-inflight: var(--info);
   /* Disabled fill for buttons / inputs / chips. The button base class
      references `disabled:bg-disabled` — without this registration that
