@@ -351,8 +351,9 @@ export function mapDaemonDeltaToAgui(
     return event;
   }
   // Tool-output deltas (live command stdout / MCP progress) stream INTO the
-  // owning tool card as TOOL_CALL_CHUNK events. The client reducer appends each
-  // chunk to that tool part's `progressChunks` (see `appendToolProgressChunk`),
+  // owning tool card as TOOL_CALL_CHUNK events keyed on `toolCallId`. The AG-UI
+  // run aggregator folds each chunk into that tool part's `argsText` via
+  // `appendToolArgs` (patched in patches/@assistant-ui__react-ag-ui@0.0.26.patch),
   // so the output renders inside the tool card live rather than as a standalone
   // assistant-text blob. `toolCallId` defaults to `messageId` for safety, but
   // the daemon always sets it explicitly for this kind.
