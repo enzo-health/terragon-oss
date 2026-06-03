@@ -128,6 +128,30 @@ class AcpSseHttpError extends Error {
   }
 }
 
+class RecoverableAcpPromptPostError extends Error {
+  constructor(cause: Error) {
+    super(`Recoverable ACP session/prompt POST failed: ${cause.message}`, {
+      cause,
+    });
+    this.name = "RecoverableAcpPromptPostError";
+  }
+}
+
+export function isRecoverableAcpPromptPostFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  if (!message.includes("acp post failed (502")) {
+    return false;
+  }
+  return (
+    message.includes("broken pipe") ||
+    message.includes("stream_error") ||
+    message.includes("failed writing to agent stdin")
+  );
+}
+
 function formatError(error: unknown): object {
   if (error instanceof Error) {
     return {
@@ -2109,6 +2133,7 @@ export class TerragonDaemon {
 
   private async runAcpTransportCommand(
     input: DaemonMessageClaude,
+    promptPostRecoveryAttempt = 0,
   ): Promise<void> {
     if (!this.activeProcesses.has(input.threadChatId)) {
       throw new Error("Missing active process state for ACP transport");
@@ -2165,6 +2190,14 @@ export class TerragonDaemon {
     const sseTerminalPromise = new Promise<void>((resolve) => {
       resolveSseTerminal = resolve;
     });
+    let recoverablePromptPostError: Error | null = null;
+    let resolveRecoverablePromptPostFailure: ((error: Error) => void) | null =
+      null;
+    const recoverablePromptPostFailurePromise = new Promise<Error>(
+      (resolve) => {
+        resolveRecoverablePromptPostFailure = resolve;
+      },
+    );
     let lastAcpMessageAtMs = Date.now();
     let lastEventId: string | null = null;
     const promptPostAbortController = new AbortController();
@@ -2879,6 +2912,15 @@ export class TerragonDaemon {
       }).catch((err: unknown) => {
         // POST failures are non-fatal: SSE terminal event is sole completion signal
         if (!promptPostAbortController.signal.aborted) {
+          if (
+            !sawAssistantOrUserMessage &&
+            isRecoverableAcpPromptPostFailure(err)
+          ) {
+            recoverablePromptPostError =
+              err instanceof Error ? err : new Error(getErrorMessage(err));
+            resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
+            return;
+          }
           this.runtime.logger.warn(
             "ACP session/prompt POST failed (non-fatal)",
             {
@@ -2893,6 +2935,9 @@ export class TerragonDaemon {
       let inactivityTimer: ReturnType<typeof setInterval> | undefined;
       const completionReason = await Promise.race([
         sseTerminalPromise.then(() => "sse_terminal" as const),
+        recoverablePromptPostFailurePromise.then(
+          () => "prompt_post_recoverable_failure" as const,
+        ),
         new Promise<"timeout">((resolve) => {
           inactivityTimer = setInterval(() => {
             const inactiveMs = Date.now() - lastAcpMessageAtMs;
@@ -2909,6 +2954,13 @@ export class TerragonDaemon {
 
       if (!this.activeProcesses.has(input.threadChatId)) {
         return;
+      }
+
+      if (completionReason === "prompt_post_recoverable_failure") {
+        throw new RecoverableAcpPromptPostError(
+          recoverablePromptPostError ??
+            new Error("Recoverable ACP session/prompt POST failed"),
+        );
       }
 
       // Polling fallback: if SSE failed but agent may have completed, check status.
@@ -3004,6 +3056,29 @@ export class TerragonDaemon {
       });
     } catch (error) {
       await closeSse();
+      if (
+        error instanceof RecoverableAcpPromptPostError &&
+        promptPostRecoveryAttempt < 1 &&
+        this.activeProcesses.has(input.threadChatId)
+      ) {
+        this.runtime.logger.warn(
+          "ACP session/prompt POST failed with dead subprocess; restarting sandbox-agent and retrying once",
+          {
+            threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
+            serverId,
+            error: formatError(error),
+          },
+        );
+        await this.runAcpTransportCommand(
+          {
+            ...input,
+            acpSessionId: null,
+          },
+          promptPostRecoveryAttempt + 1,
+        );
+        return;
+      }
       this.runtime.logger.error("ACP transport command failed", {
         threadChatId: input.threadChatId,
         runId: input.runId ?? null,
