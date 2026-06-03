@@ -125,7 +125,7 @@ describe("toolViewProps", () => {
     expect(props.errorText).toBe("boom");
   });
 
-  it("falls back to args text as error text when a failed call has no result", () => {
+  it("leaves error text empty (no args mislabeled as the error) when a failed call has no result", () => {
     const props = toolViewProps({
       toolName: "Bash",
       argsText: '{"command":"bad"}',
@@ -134,7 +134,7 @@ describe("toolViewProps", () => {
       failed: true,
     });
     expect(props.state).toBe("error");
-    expect(props.errorText).toBe('{"command":"bad"}');
+    expect(props.errorText).toBe("");
   });
 
   it("returns only plain values (no runtime part leaks through)", () => {

@@ -202,7 +202,9 @@ export type ToolViewProps = {
 /**
  * Plain view props for one tool-call leaf. Composes the existing arg/result
  * adapters so the nauval `Tool` shell never sees the runtime part. `errorText`
- * falls back to the raw args when a failed call produced no result body.
+ * `errorText` carries the failure result only; the `error` state already styles
+ * the card, so a failed call with no result body shows no body rather than
+ * mislabeling its input args as the error.
  */
 export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
   const { toolName, argsText, result, active, failed } = input;
@@ -214,7 +216,7 @@ export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
     state,
     stream: { text: toolArgsDisplayText(argsText, active), streaming: active },
     resultText,
-    errorText: state === "error" ? resultText || argsText : "",
+    errorText: state === "error" ? resultText : "",
     defaultOpen: active,
   };
 };

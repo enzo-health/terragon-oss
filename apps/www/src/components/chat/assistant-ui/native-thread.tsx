@@ -85,12 +85,21 @@ const NativeToolGroup = ({
   );
   const { count, state, statusLabel, defaultOpen } =
     toolGroupViewPropsFromFlags(flags);
-  const [open, setOpen] = useState(defaultOpen);
+  // Follow live group state every render; a manual toggle only adds open intent.
+  // Restores the pre-reskin `open={hasActive || manualOpen}` behavior so a group
+  // that mounted closed still opens when a late tool starts running.
+  const [manualOpen, setManualOpen] = useState(false);
+  const open = defaultOpen || manualOpen;
 
   if (count <= 1) return <>{children}</>;
 
   return (
-    <Tool className="my-2" state={state} open={open} onOpenChange={setOpen}>
+    <Tool
+      className="my-2"
+      state={state}
+      open={open}
+      onOpenChange={setManualOpen}
+    >
       <ToolTrigger>
         <ToolIcon>
           <Wrench />
@@ -114,10 +123,17 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
   const failed = isError === true || status.type === "incomplete";
   const { name, preview, state, stream, resultText, errorText, defaultOpen } =
     toolViewProps({ toolName, argsText, result, active, failed });
-  const [open, setOpen] = useState(defaultOpen);
+  // See NativeToolGroup: open follows live tool state, manual toggle adds intent.
+  const [manualOpen, setManualOpen] = useState(false);
+  const open = defaultOpen || manualOpen;
 
   return (
-    <Tool className="my-1" state={state} open={open} onOpenChange={setOpen}>
+    <Tool
+      className="my-1"
+      state={state}
+      open={open}
+      onOpenChange={setManualOpen}
+    >
       <ToolTrigger>
         <ToolIcon>
           <Wrench />
@@ -132,7 +148,9 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
             state={stream.streaming ? "streaming" : "complete"}
           />
         ) : null}
-        {resultText ? <ToolBlock>{resultText}</ToolBlock> : null}
+        {state !== "error" && resultText ? (
+          <ToolBlock>{resultText}</ToolBlock>
+        ) : null}
         {errorText ? <ToolError>{errorText}</ToolError> : null}
       </ToolContent>
     </Tool>
@@ -143,18 +161,22 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
  * Inline item-level error (e.g. a Codex `error` item → `DBErrorPart`). On the
  * live AG-UI path this arrives as a `terragon.error` data part, so it renders
  * through `MessagePrimitive.Parts`'s `data.by_name` slot rather than the
- * legacy part registry. Falls back to the data part's raw `message`/value when
- * the typed payload is missing.
+ * legacy part registry. Falls back to the data part's `message` or `value`
+ * string (then a generic message) when the typed payload is missing.
  */
+const errorMessageFromData = (data: unknown): string => {
+  if (typeof data === "string" && data.trim()) return data;
+  if (data && typeof data === "object") {
+    for (const key of ["message", "value"]) {
+      const field = Reflect.get(data, key);
+      if (typeof field === "string" && field.trim()) return field;
+    }
+  }
+  return "An error occurred.";
+};
+
 const NativeError: DataMessagePartComponent = ({ data }) => {
-  const message =
-    data &&
-    typeof data === "object" &&
-    typeof Reflect.get(data, "message") === "string"
-      ? (Reflect.get(data, "message") as string)
-      : typeof data === "string"
-        ? data
-        : "An error occurred.";
+  const message = errorMessageFromData(data);
 
   return (
     <Callout className="my-2" tone="danger" role="alert">

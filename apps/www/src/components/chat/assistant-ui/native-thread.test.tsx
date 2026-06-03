@@ -223,6 +223,42 @@ describe("NativeThread", () => {
     expect(text).not.toContain("terragon.terminal");
   });
 
+  it("renders terragon.error data parts through the NativeError callout", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(Harness, {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "data",
+                  name: "terragon.error",
+                  data: { message: "Sandbox failed to start" },
+                },
+                // Fallback shape: no `message`, only `value`.
+                {
+                  type: "data",
+                  name: "terragon.error",
+                  data: { value: "Run aborted before completion" },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+
+    const alerts = container?.querySelectorAll("[role=alert]") ?? [];
+    expect(alerts.length).toBe(2);
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Sandbox failed to start");
+    expect(text).toContain("Run aborted before completion");
+  });
+
   it("applies paint containment to native message roots", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
