@@ -223,6 +223,42 @@ describe("NativeThread", () => {
     expect(text).not.toContain("terragon.terminal");
   });
 
+  it("renders terragon.error data parts through the NativeError callout", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(Harness, {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "data",
+                  name: "terragon.error",
+                  data: { message: "Sandbox failed to start" },
+                },
+                // Fallback shape: no `message`, only `value`.
+                {
+                  type: "data",
+                  name: "terragon.error",
+                  data: { value: "Run aborted before completion" },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+
+    const alerts = container?.querySelectorAll("[role=alert]") ?? [];
+    expect(alerts.length).toBe(2);
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Sandbox failed to start");
+    expect(text).toContain("Run aborted before completion");
+  });
+
   it("applies paint containment to native message roots", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -231,12 +267,20 @@ describe("NativeThread", () => {
       root!.render(createElement(Harness));
     });
 
-    const userRoot = Array.from(container.querySelectorAll(".items-end")).find(
-      (element) => element.textContent?.includes("show me the files"),
-    );
-    const assistantRoot = Array.from(
-      container.querySelectorAll(".leading-relaxed"),
-    )[0]?.parentElement;
+    const userBubble = Array.from(
+      container.querySelectorAll(
+        "[data-slot=message-text][data-variant=bubble]",
+      ),
+    ).find((element) => element.textContent?.includes("show me the files"));
+    const userRoot = userBubble?.closest(
+      "[class*='content-visibility']",
+    ) as HTMLElement | null;
+    const assistantContent = Array.from(
+      container.querySelectorAll("[data-slot=message-content]"),
+    ).find((element) => element.textContent?.includes("Here are the files."));
+    const assistantRoot = assistantContent?.closest(
+      "[class*='content-visibility']",
+    ) as HTMLElement | null;
 
     expect(userRoot?.className).toContain("[content-visibility:auto]");
     expect(userRoot?.className).toContain("[contain-intrinsic-size:auto_96px]");
@@ -278,25 +322,29 @@ describe("NativeThread", () => {
       root!.render(createElement(Harness, { messages }));
     });
 
-    const toolGroup = Array.from(container.querySelectorAll("details")).find(
-      (details) => details.textContent?.includes("Tool calls (2)"),
+    const toolGroup = Array.from(
+      container.querySelectorAll("[data-slot=tool]"),
+    ).find((tool) =>
+      tool
+        .querySelector("[data-slot=tool-name]")
+        ?.textContent?.includes("Tool calls (2)"),
     );
     if (!toolGroup) {
       throw new Error("expected grouped tool-call disclosure");
     }
 
-    expect(toolGroup.open).toBe(false);
+    expect(toolGroup.hasAttribute("data-open")).toBe(false);
 
-    const summary = toolGroup.querySelector("summary");
-    if (!summary) {
-      throw new Error("expected grouped tool-call summary");
+    const trigger = toolGroup.querySelector("[data-slot=tool-trigger]");
+    if (!trigger) {
+      throw new Error("expected grouped tool-call trigger");
     }
 
     await act(async () => {
-      summary.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(toolGroup.open).toBe(true);
+    expect(toolGroup.hasAttribute("data-open")).toBe(true);
   });
 
   it("keeps historical failed tool groups collapsed by default", async () => {
@@ -332,15 +380,20 @@ describe("NativeThread", () => {
       root!.render(createElement(Harness, { messages }));
     });
 
-    const toolGroup = Array.from(container.querySelectorAll("details")).find(
-      (details) => details.textContent?.includes("Tool calls (2)"),
+    const toolGroup = Array.from(
+      container.querySelectorAll("[data-slot=tool]"),
+    ).find((tool) =>
+      tool
+        .querySelector("[data-slot=tool-name]")
+        ?.textContent?.includes("Tool calls (2)"),
     );
     if (!toolGroup) {
       throw new Error("expected grouped tool-call disclosure");
     }
 
     expect(toolGroup.textContent).toContain("Needs attention");
-    expect(toolGroup.open).toBe(false);
+    expect(toolGroup.getAttribute("data-state")).toBe("error");
+    expect(toolGroup.hasAttribute("data-open")).toBe(false);
   });
 
   it("keeps a single historical failed tool call collapsed by default", async () => {
@@ -368,15 +421,19 @@ describe("NativeThread", () => {
       root!.render(createElement(Harness, { messages }));
     });
 
-    const toolCall = Array.from(container.querySelectorAll("details")).find(
-      (details) => details.textContent?.includes("Bash"),
+    const toolCall = Array.from(
+      container.querySelectorAll("[data-slot=tool]"),
+    ).find((tool) =>
+      tool
+        .querySelector("[data-slot=tool-name]")
+        ?.textContent?.includes("Bash"),
     );
     if (!toolCall) {
       throw new Error("expected tool-call disclosure");
     }
 
-    expect(toolCall.textContent).toContain("Failed");
-    expect(toolCall.open).toBe(false);
+    expect(toolCall.getAttribute("data-state")).toBe("error");
+    expect(toolCall.hasAttribute("data-open")).toBe(false);
   });
 
   it("extracts streamed tool arg previews without requiring valid JSON", () => {

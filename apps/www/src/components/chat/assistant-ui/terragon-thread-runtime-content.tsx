@@ -18,17 +18,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useStableRef } from "@/hooks/use-stable-ref";
 import { isSandboxErrorType } from "../chat-error";
 import { useScrollToHashMessageOnce } from "../use-chat-effects";
-import type {
-  ForkDialogData,
-  MessagePartRenderProps,
-  RedoDialogData,
-} from "../chat-message.types";
+import type { ForkDialogData, RedoDialogData } from "../dialog-data";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { isEqualArtifactList, isEqualPlanMap } from "./ctx-stability";
 import { TerragonTranscriptSurface } from "./terragon-transcript-surface";
 import {
-  type TerragonMessageRenderContext,
-  TerragonMessageRenderProvider,
   type TerragonThreadContext,
   TerragonThreadProvider,
 } from "./thread-context";
@@ -218,23 +212,6 @@ export function TerragonThreadRuntimeContent({
       ? { message: footerFreshness.message, reason: null }
       : null;
 
-  const messagePartProps = useMemo<MessagePartRenderProps>(
-    () => ({
-      githubRepoFullName: thread.githubRepoFullName,
-      branchName: thread.branchName,
-      baseBranchName: thread.repoBaseBranchName,
-      hasCheckpoint,
-      toolProps,
-    }),
-    [
-      thread.githubRepoFullName,
-      thread.branchName,
-      thread.repoBaseBranchName,
-      hasCheckpoint,
-      toolProps,
-    ],
-  );
-
   const ctx = useMemo<TerragonThreadContext>(
     () => ({
       thread,
@@ -252,7 +229,6 @@ export function TerragonThreadRuntimeContent({
       branchName: thread.branchName,
       baseBranchName: thread.repoBaseBranchName,
       hasCheckpoint,
-      messagePartProps,
     }),
     [
       thread,
@@ -267,61 +243,33 @@ export function TerragonThreadRuntimeContent({
       forkDialogData,
       toolProps,
       hasCheckpoint,
-      messagePartProps,
-    ],
-  );
-
-  const messageRenderCtx = useMemo<TerragonMessageRenderContext>(
-    () => ({
-      isAgentWorking,
-      artifactDescriptors: stableArtifactDescriptors,
-      artifactDescriptorLookup,
-      onOpenArtifact,
-      onOpenRepoFile,
-      planOccurrences,
-      redoDialogData,
-      forkDialogData,
-      messagePartProps,
-    }),
-    [
-      isAgentWorking,
-      stableArtifactDescriptors,
-      artifactDescriptorLookup,
-      onOpenArtifact,
-      onOpenRepoFile,
-      planOccurrences,
-      redoDialogData,
-      forkDialogData,
-      messagePartProps,
     ],
   );
 
   return (
     <TerragonThreadProvider value={ctx}>
-      <TerragonMessageRenderProvider value={messageRenderCtx}>
-        <TerragonTranscriptSurface
-          lifecycleMessages={lifecycleMessages}
-          isRuntimeHydrating={isRuntimeHydrating}
-          chatAgent={chatAgent}
-          error={error}
-          errorType={errorType}
-          errorInfo={errorInfo}
-          handleRetry={handleRetry}
-          isRetrying={isRetrying}
-          isReadOnly={isReadOnly}
-          reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
-          showWorkingMessage={baseShowWorking}
-          threadStatus={threadStatus}
-          bootingSubstatus={bootingSubstatus}
-          reattemptQueueAt={reattemptQueueAt}
-          metaSnapshot={metaSnapshot}
-          passiveWait={passiveWaitProp}
-          threadId={thread.id}
-          threadChatId={threadChatId}
-          scheduleAt={scheduleAt}
-          threadChatStatus={threadChatStatus}
-        />
-      </TerragonMessageRenderProvider>
+      <TerragonTranscriptSurface
+        lifecycleMessages={lifecycleMessages}
+        isRuntimeHydrating={isRuntimeHydrating}
+        chatAgent={chatAgent}
+        error={error}
+        errorType={errorType}
+        errorInfo={errorInfo}
+        handleRetry={handleRetry}
+        isRetrying={isRetrying}
+        isReadOnly={isReadOnly}
+        reserveWorkingMessageSlot={isAgentWorking && !hasSandboxError}
+        showWorkingMessage={baseShowWorking}
+        threadStatus={threadStatus}
+        bootingSubstatus={bootingSubstatus}
+        reattemptQueueAt={reattemptQueueAt}
+        metaSnapshot={metaSnapshot}
+        passiveWait={passiveWaitProp}
+        threadId={thread.id}
+        threadChatId={threadChatId}
+        scheduleAt={scheduleAt}
+        threadChatStatus={threadChatStatus}
+      />
       {children}
     </TerragonThreadProvider>
   );

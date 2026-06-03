@@ -15,8 +15,12 @@ export type CodexNotificationContext = {
 export type CodexStreamedDelta = {
   messageId: string;
   partIndex: number;
-  kind: "text" | "thinking";
+  kind: "text" | "thinking" | "tool-output";
   text: string;
+  /** Owning tool-call id; set only for `kind: "tool-output"`. */
+  toolCallId?: string;
+  /** Output stream the chunk came from; set only for `kind: "tool-output"`. */
+  stream?: "stdout" | "stderr" | "progress";
 };
 
 /**
@@ -64,6 +68,26 @@ function codexStreamedTextChannel(
 function unstreamedDeltaTail(streamed: string, final: string): string {
   if (streamed.length === 0) return final;
   return final.startsWith(streamed) ? final.slice(streamed.length) : "";
+}
+
+/**
+ * Render an MCP `_progress` payload (`{ currentStep, totalSteps, message }`)
+ * into a single live-stream line. Prefers the human-readable `message`; appends
+ * a `(step N/M)` suffix when the step counters are present. Returns `undefined`
+ * when there is nothing meaningful to stream (so the router skips the chunk).
+ */
+function mcpProgressText(progress: unknown): string | undefined {
+  const record = toRecord(progress);
+  if (!record) return undefined;
+  const message = readString(record, "message") ?? undefined;
+  const current = record["currentStep"];
+  const total = record["totalSteps"];
+  const hasSteps = typeof current === "number" && typeof total === "number";
+  const stepSuffix = hasSteps ? `(step ${current}/${total})` : "";
+  if (message && stepSuffix) return `${message} ${stepSuffix}`;
+  if (message) return message;
+  if (stepSuffix) return stepSuffix;
+  return undefined;
 }
 
 /**
@@ -136,19 +160,37 @@ export function routeCodexNotification({
     }
   }
 
-  // commandExecution/outputDelta carries live command output. We do NOT stream
-  // it as a "text" delta: the delta channel only renders as assistant text, so
-  // the command's stdout would surface as a raw standalone text blob next to
-  // the Bash tool card instead of inside it (the delta's messageId is the
-  // command item id, but a TEXT message under that id is a separate thing from
-  // the TOOL_CALL under the same id). The command's full output still lands in
-  // the Bash card via the `command_execution` completed -> tool_result path.
-  // Streaming it live INTO the card needs a tool-progress delta kind
-  // (TOOL_CALL_CHUNK), which the delta channel does not yet carry.
+  // commandExecution/outputDelta carries live command output. Stream it as a
+  // "tool-output" delta keyed on the command item id so the client renders the
+  // output INSIDE the owning Bash tool card's result channel (via AG-UI
+  // TOOL_CALL_RESULT) rather than as a standalone assistant-text blob beside the
+  // card. The command's full output also lands via the `command_execution`
+  // completed -> tool_result path; the live deltas (cumulative aggregated_output)
+  // just arrive first and are superseded by the terminal result.
   if (
     threadEvent.type === "item.updated" &&
     method === "item/commandExecution/outputDelta"
   ) {
+    const item = toRecord(threadEvent.item);
+    const itemId = item ? (readString(item, "id") ?? undefined) : undefined;
+    const output = item
+      ? (readString(item, "aggregated_output") ??
+        readString(item, "_delta") ??
+        undefined)
+      : undefined;
+    if (itemId && output) {
+      return {
+        kind: "enqueue-delta",
+        delta: {
+          messageId: itemId,
+          partIndex: 0,
+          kind: "tool-output",
+          text: output,
+          toolCallId: itemId,
+          stream: "stdout",
+        },
+      };
+    }
     return { kind: "skip" };
   }
 
@@ -203,9 +245,31 @@ export function routeCodexNotification({
     return { kind: "skip" };
   }
 
-  // mcpToolCall/progress updates are delta-only — don't persist them as
-  // messages; future sprints will surface progress via the UI layer.
-  if (method === "item/mcpToolCall/progress") {
+  // mcpToolCall/progress updates carry partial progress on an in-flight MCP
+  // tool call. Stream them as a "tool-output" delta (stream: "progress") keyed
+  // on the MCP item id so the client shows live progress inside the owning tool
+  // card. We surface the human-readable progress message; if absent, fall back
+  // to a compact "step N/M" summary so the chunk is never empty-but-meaningful.
+  if (
+    threadEvent.type === "item.updated" &&
+    method === "item/mcpToolCall/progress"
+  ) {
+    const item = toRecord(threadEvent.item);
+    const itemId = item ? (readString(item, "id") ?? undefined) : undefined;
+    const progressText = item ? mcpProgressText(item._progress) : undefined;
+    if (itemId && progressText) {
+      return {
+        kind: "enqueue-delta",
+        delta: {
+          messageId: itemId,
+          partIndex: 0,
+          kind: "tool-output",
+          text: progressText,
+          toolCallId: itemId,
+          stream: "progress",
+        },
+      };
+    }
     return { kind: "skip" };
   }
 

@@ -1,24 +1,20 @@
 "use client";
 
 import { useTerragonThread } from "./thread-context";
-import { ChatMessage } from "../chat-message";
-import type { UIMessage } from "@terragon/shared";
+import { SystemMessage } from "../chat-message-system";
+import type { UISystemMessage } from "@terragon/shared";
 
 /**
- * Renders a system message (git-diff, stop, etc.) within the assistant-ui thread.
- *
- * `isLatestMessage` is passed by the parent `TerragonThread.messages.map()`
- * loop so this component doesn't re-read `ctx.messages` on every token
- * delta.
+ * Renders a system message (git-diff, stop, etc.) within the assistant-ui
+ * thread. The caller (`TerragonTranscriptSurface`) only routes
+ * `UISystemMessage` lifecycle entries here.
  */
 export function TerragonSystemMessage({
   message,
   messageIndex,
-  isLatestMessage,
 }: {
-  message: UIMessage;
+  message: UISystemMessage;
   messageIndex: number;
-  isLatestMessage: boolean;
 }) {
   const ctx = useTerragonThread();
 
@@ -27,16 +23,14 @@ export function TerragonSystemMessage({
       className="flex flex-col gap-1 [scroll-margin-top:6rem]"
       data-message-index={messageIndex}
     >
-      <ChatMessage
+      <SystemMessage
         message={message}
-        isLatestMessage={isLatestMessage}
-        isAgentWorking={false}
         thread={ctx.thread}
         latestGitDiffTimestamp={ctx.latestGitDiffTimestamp}
         artifactDescriptors={ctx.artifactDescriptors}
         artifactDescriptorLookup={ctx.artifactDescriptorLookup}
         onOpenArtifact={ctx.onOpenArtifact}
-        planOccurrences={ctx.planOccurrences}
+        onOpenRepoFile={ctx.onOpenRepoFile}
       />
     </div>
   );

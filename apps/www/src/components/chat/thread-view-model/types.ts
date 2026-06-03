@@ -64,8 +64,6 @@ export type ThreadViewModel = {
   threadId: string;
   threadChatId: string;
   lifecycleMessages: UISystemMessage[];
-  runtimeState: ThreadViewRuntimeState;
-  runtimeActivities: ThreadViewRuntimeActivities;
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
   threadStatus: ThreadStatus | null;
@@ -130,8 +128,6 @@ export type ThreadViewEvent =
 export type ThreadViewModelState = {
   threadId: string;
   threadChatId: string;
-  runtimeState: ThreadViewRuntimeState;
-  runtimeActivities: ThreadViewRuntimeActivities;
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
   threadStatus: ThreadStatus | null;
@@ -172,19 +168,6 @@ export type ThreadViewLifecycle = {
   runStarted: boolean;
   threadChatUpdatedAt: Date | string | null;
 };
-
-export type ThreadViewRuntimeState = Record<string, unknown>;
-
-export type ThreadViewRuntimeActivity = {
-  messageId: string;
-  activityType: string;
-  content: Record<string, unknown>;
-};
-
-export type ThreadViewRuntimeActivities = Record<
-  string,
-  ThreadViewRuntimeActivity
->;
 
 export type ThreadViewQuarantineEntry = {
   reason:

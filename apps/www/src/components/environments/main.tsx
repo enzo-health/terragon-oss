@@ -19,7 +19,7 @@ import { DeleteEnvironmentButton } from "@/components/environments/delete-enviro
 import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { publicDocsUrl } from "@terragon/env/next-public";
 import { usePageHeader } from "@/contexts/page-header";
-import { Portal } from "@radix-ui/react-portal";
+import { createPortal } from "react-dom";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import { unwrapResult } from "@/lib/server-actions";
 import type { EnvironmentSnapshot } from "@terragon/shared/db/schema";
@@ -53,9 +53,8 @@ export function Environments({
 
   return (
     <>
-      <Portal container={headerActionContainer}>
-        <CreateEnvironmentButton />
-      </Portal>
+      {headerActionContainer &&
+        createPortal(<CreateEnvironmentButton />, headerActionContainer)}
       <div className="flex flex-col justify-start h-full w-full max-w-4xl gap-8">
         <div className="rounded-xl border border-hairline bg-canvas p-5">
           <h3 className="text-sm font-medium text-strong mb-1">
@@ -496,12 +495,14 @@ export function EnvironmentUI({
   }
   return (
     <div className="flex flex-col justify-start h-full w-full max-w-4xl">
-      <Portal container={headerActionContainer}>
-        <DeleteEnvironmentButton
-          environmentId={environmentId}
-          repoFullName={environment.repoFullName}
-        />
-      </Portal>
+      {headerActionContainer &&
+        createPortal(
+          <DeleteEnvironmentButton
+            environmentId={environmentId}
+            repoFullName={environment.repoFullName}
+          />,
+          headerActionContainer,
+        )}
       <EnvironmentBreadcrumb label={environment.repoFullName} />
       <div className="flex flex-col gap-4 w-full pb-4">
         <EnvironmentVariablesSection

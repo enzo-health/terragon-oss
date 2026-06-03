@@ -7,8 +7,13 @@
  * (`./replayer.ts`). The legacy harness exercises the full Next.js route
  * + DB pipeline; this one exercises the *frontend* half of the AG-UI
  * migration end-to-end, proving that an SSE-style BaseEvent stream updates
- * lifecycle, artifacts, runtime state, and quarantine state without becoming a
- * second transcript renderer.
+ * lifecycle, artifacts, and quarantine state without becoming a second
+ * transcript renderer.
+ *
+ * The transcript itself is rendered by the assistant-ui runtime
+ * (`useAgUiRuntime` / `NativeThread`) and covered by `native-thread.test.tsx`;
+ * this harness only asserts the live sidecar projection
+ * (`useThreadViewModel` / `useAgUiSidecarRouter`).
  *
  * No DB, no Redis, no route — a pure in-memory `HttpAgent` double pumps
  * events into the hook. Suitable for deterministic CI assertions.
@@ -22,20 +27,16 @@ import type { UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { getStableArtifactsForMessages } from "../../src/components/chat/thread-view-model/artifact-descriptors";
 import { createEmptyThreadViewSnapshot } from "../../src/components/chat/thread-view-model/snapshot-adapter";
 import type {
   ThreadViewLifecycle,
   ThreadViewQuarantineEntry,
-  ThreadViewRuntimeActivities,
-  ThreadViewRuntimeState,
   ThreadViewSnapshot,
 } from "../../src/components/chat/thread-view-model/types";
 import {
   useAgUiSidecarRouter,
   useThreadViewModel,
 } from "../../src/components/chat/use-thread-view-model";
-import { runReducerHarness } from "./streaming-harness/reducer-harness";
 
 // ---------------------------------------------------------------------------
 // Fake HttpAgent (mirrors the one in use-thread-view-model.test.tsx)
@@ -87,28 +88,18 @@ export type ReplayAgUiOptions = {
 };
 
 export type ReplayAgUiResult = {
-  /** Runtime transcript projection after all events are drained. */
-  messages: UIMessage[];
-  /** Final artifact descriptors projected by ThreadViewModel. */
+  /** Final artifact descriptors projected by the live ThreadViewModel sidecar. */
   artifactDescriptors: ArtifactDescriptor[];
-  /** Final lifecycle state projected by ThreadViewModel. */
+  /** Final lifecycle state projected by the live ThreadViewModel sidecar. */
   lifecycle: ThreadViewLifecycle;
-  /** Native AG UI runtime state restored from STATE_* events. */
-  runtimeState: ThreadViewRuntimeState;
-  /** Native AG UI activity records restored from ACTIVITY_* events. */
-  runtimeActivities: ThreadViewRuntimeActivities;
   /** Explicit diagnostics for AG UI events the active renderer cannot handle yet. */
   quarantine: ThreadViewQuarantineEntry[];
-  /** Snapshots of UIMessage[] after each event, for step-by-step assertions. */
-  snapshots: UIMessage[][];
-  /** Artifact descriptor references after each event, for stability assertions. */
-  artifactSnapshots: ArtifactDescriptor[][];
 };
 
 /**
  * Mounts `useThreadViewModel` into a detached DOM, drives it with a fake
- * HttpAgent, emits each event in order, and captures the resulting
- * `UIMessage[]` projections.
+ * HttpAgent, emits each event in order, and captures the resulting live
+ * sidecar projection (lifecycle, artifacts, quarantine).
  *
  * Callers are expected to run this inside a jsdom-enabled Vitest test
  * (`@vitest-environment jsdom`).
@@ -127,38 +118,18 @@ export async function replayAgUi(
   const fake = createFakeAgent();
   const agent = asHttpAgent(fake);
 
-  const transcript = runReducerHarness(events, {
-    agent: agentKind,
-    initialMessages,
-  });
-  const artifactSnapshots = getArtifactSnapshots({
-    snapshots: transcript.snapshots,
-    snapshot: initialSnapshot,
-  });
   let currentSidecarArtifacts: ArtifactDescriptor[] = [];
   let currentQuarantine: ThreadViewQuarantineEntry[] = [];
-  let currentRuntimeState: ThreadViewRuntimeState = {};
-  let currentRuntimeActivities: ThreadViewRuntimeActivities = {};
   let currentLifecycle: ThreadViewLifecycle = initialSnapshot.lifecycle;
 
   function onProjection(params: {
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
-    runtimeState: ThreadViewRuntimeState;
-    runtimeActivities: ThreadViewRuntimeActivities;
     quarantine: ThreadViewQuarantineEntry[];
   }): void {
-    const {
-      artifactDescriptors,
-      lifecycle,
-      runtimeState,
-      runtimeActivities,
-      quarantine,
-    } = params;
+    const { artifactDescriptors, lifecycle, quarantine } = params;
     currentSidecarArtifacts = artifactDescriptors;
     currentLifecycle = lifecycle;
-    currentRuntimeState = runtimeState;
-    currentRuntimeActivities = runtimeActivities;
     currentQuarantine = quarantine;
   }
 
@@ -186,17 +157,9 @@ export async function replayAgUi(
     }
 
     return {
-      messages: transcript.finalMessages,
-      artifactDescriptors: [
-        ...(artifactSnapshots.at(-1) ?? []),
-        ...currentSidecarArtifacts,
-      ],
+      artifactDescriptors: currentSidecarArtifacts,
       lifecycle: currentLifecycle,
-      runtimeState: currentRuntimeState,
-      runtimeActivities: currentRuntimeActivities,
       quarantine: currentQuarantine,
-      snapshots: transcript.snapshots,
-      artifactSnapshots,
     };
   } finally {
     if (root) {
@@ -220,8 +183,6 @@ function Harness({
   onProjection: (params: {
     artifactDescriptors: ArtifactDescriptor[];
     lifecycle: ThreadViewLifecycle;
-    runtimeState: ThreadViewRuntimeState;
-    runtimeActivities: ThreadViewRuntimeActivities;
     quarantine: ThreadViewQuarantineEntry[];
   }) => void;
 }): null {
@@ -233,29 +194,9 @@ function Harness({
   onProjection({
     artifactDescriptors: viewModel.artifacts.descriptors,
     lifecycle: viewModel.lifecycle,
-    runtimeState: viewModel.runtimeState,
-    runtimeActivities: viewModel.runtimeActivities,
     quarantine: viewModel.quarantine,
   });
   return null;
-}
-
-function getArtifactSnapshots({
-  snapshots,
-  snapshot,
-}: {
-  snapshots: UIMessage[][];
-  snapshot: ThreadViewSnapshot;
-}): ArtifactDescriptor[][] {
-  let artifacts = snapshot.artifacts;
-  return snapshots.map((messages) => {
-    artifacts = getStableArtifactsForMessages({
-      previous: artifacts,
-      messages,
-      artifactThread: snapshot.artifactThread,
-    });
-    return artifacts.descriptors;
-  });
 }
 
 // ---------------------------------------------------------------------------

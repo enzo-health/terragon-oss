@@ -61,7 +61,7 @@ export function TerragonTranscriptSurface({
   });
 
   return (
-    <div className="flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 mt-6 sm:mt-8 mb-8">
+    <div className="nauval-chat-surface flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 py-6 sm:py-8 mt-6 sm:mt-8 mb-8 rounded-[var(--radius-outer)]">
       {lifecycleMessages.length > 0 ? (
         <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
           {lifecycleMessages.map((message, index) => (
@@ -69,7 +69,6 @@ export function TerragonTranscriptSurface({
               key={`lifecycle-${message.id}`}
               message={message}
               messageIndex={index}
-              isLatestMessage={index === lifecycleMessages.length - 1}
             />
           ))}
         </div>

@@ -329,8 +329,12 @@ export type DaemonDeltaInput = {
   messageId: string;
   partIndex: number;
   deltaSeq: number;
-  kind?: "text" | "thinking";
+  kind?: "text" | "thinking" | "tool-output";
   text: string;
+  /** Owning tool-call id; required for `kind: "tool-output"`. */
+  toolCallId?: string;
+  /** Output stream the chunk came from; informs `progressKind`. */
+  stream?: "stdout" | "stderr" | "progress";
 };
 
 export function mapDaemonDeltaToAgui(
@@ -343,6 +347,28 @@ export function mapDaemonDeltaToAgui(
       timestamp,
       messageId: delta.messageId,
       delta: delta.text,
+    };
+    return event;
+  }
+  // Tool-output deltas (live command stdout / MCP progress) are command
+  // *output*, so they stream into the tool card's RESULT channel via
+  // TOOL_CALL_RESULT, not its args. The aggregator's `finishToolCall` REPLACES
+  // `result` with each event's content (the daemon sends cumulative
+  // `aggregated_output`, so replace — not append — is correct and avoids
+  // quadratic growth), keeping `argsText` the command only. `role` is omitted so
+  // `isError` stays undefined while streaming; the terminal `tool_result` sends
+  // the final TOOL_CALL_RESULT that finalizes content + error state. This also
+  // makes the live transcript match reload, where output arrives as the
+  // persisted tool result. `toolCallId` defaults to `messageId` for safety, but
+  // the daemon always sets it explicitly for this kind.
+  if (delta.kind === "tool-output") {
+    const toolCallId = delta.toolCallId ?? delta.messageId;
+    const event: ToolCallResultEvent = {
+      type: EventType.TOOL_CALL_RESULT,
+      timestamp,
+      messageId: toolCallId,
+      toolCallId,
+      content: capToolResultContent(delta.text),
     };
     return event;
   }

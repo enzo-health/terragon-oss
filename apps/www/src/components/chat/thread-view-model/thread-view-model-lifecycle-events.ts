@@ -51,24 +51,6 @@ function isThreadLifecycleMessage(
   );
 }
 
-export function splitThreadLifecycleMessages(messages: UIMessage[]): {
-  transcriptMessages: UIMessage[];
-  lifecycleMessages: UISystemMessage[];
-} {
-  const transcriptMessages: UIMessage[] = [];
-  const lifecycleMessages: UISystemMessage[] = [];
-
-  for (const message of messages) {
-    if (isThreadLifecycleMessage(message)) {
-      lifecycleMessages.push(message);
-      continue;
-    }
-    transcriptMessages.push(message);
-  }
-
-  return { transcriptMessages, lifecycleMessages };
-}
-
 export function extractThreadLifecycleMessages(
   messages: UIMessage[],
 ): UISystemMessage[] {

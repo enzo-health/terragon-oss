@@ -282,8 +282,7 @@ describe("prompt to daemon to client trace", () => {
     const receivedEvents = await readReplayBurst(response, daemonEvents.length);
     expect(receivedEvents).toEqual(daemonEvents);
 
-    const { messages, lifecycle, quarantine } =
-      await replayAgUi(receivedEvents);
+    const { lifecycle, quarantine } = await replayAgUi(receivedEvents);
 
     expect(quarantine).toEqual([]);
     expect(lifecycle).toMatchObject({
@@ -291,14 +290,6 @@ describe("prompt to daemon to client trace", () => {
       runStarted: false,
       threadStatus: "complete",
     });
-    expect(messages).toEqual([
-      {
-        id: "assistant-trace-1",
-        role: "agent",
-        agent: "claudeCode",
-        parts: [{ type: "text", text: assistantText }],
-      },
-    ]);
 
     const spanNames = traceSpans.map((span) => span.name);
     expect(spanNames).toEqual(

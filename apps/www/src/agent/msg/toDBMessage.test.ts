@@ -1544,6 +1544,24 @@ describe("toDBMessage", () => {
       });
     });
 
+    test("persists Codex item error into an inline DBErrorPart", () => {
+      const msg: ClaudeMessage = {
+        type: "codex-error",
+        session_id: "thread-1",
+        message: "Tool invocation failed: connection refused",
+      };
+      const [agent] = toDBMessage(msg) as Array<{
+        type: string;
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(agent?.type).toBe("agent");
+      expect(agent?.parts[0]).toEqual({
+        type: "error",
+        message: "Tool invocation failed: connection refused",
+        source: "codex",
+      });
+    });
+
     test("maps Claude SDK url-sourced document block to DBResourceLinkPart", () => {
       const claudeMessage: ClaudeMessage = {
         type: "assistant",

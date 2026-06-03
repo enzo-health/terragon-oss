@@ -1,5 +1,4 @@
 import type { ThreadStatus } from "@terragon/shared";
-export { stableSerialize } from "@/lib/stable-serialize";
 
 export function getObjectField(
   value: unknown,
@@ -24,28 +23,12 @@ export function getStringField(value: unknown, field: string): string | null {
     : null;
 }
 
-export function getJsonPointerPathField(value: unknown): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = Reflect.get(value, "path");
-  return typeof candidate === "string" ? candidate : null;
-}
-
 export function getArrayField(value: unknown, field: string): unknown[] | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const candidate = Reflect.get(value, field);
   return Array.isArray(candidate) ? candidate : null;
-}
-
-export function getBooleanField(value: unknown, field: string): boolean | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = Reflect.get(value, field);
-  return typeof candidate === "boolean" ? candidate : null;
 }
 
 export function getNumberField(value: unknown, field: string): number | null {

@@ -10,7 +10,11 @@ import { MentionListContent } from "./mention-list";
 import { SlashCommandListContent } from "./slash-command-list";
 import { Typeahead } from "./typeahead/typeahead";
 import { Editor } from "@tiptap/react";
-import * as Popover from "@radix-ui/react-popover";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Plus, AtSign, Slash, Paperclip, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -535,8 +539,8 @@ export function AddContextButton({
       </Drawer>
 
       {/* Desktop Popover */}
-      <Popover.Root open={popoverOpen} onOpenChange={setPopoverOpen}>
-        <Popover.Trigger asChild>
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+        <PopoverTrigger asChild>
           <Button
             variant="ghost"
             size="icon"
@@ -546,20 +550,18 @@ export function AddContextButton({
           >
             <Plus className="size-4" />
           </Button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            className={cn(
-              "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden transition-[width] duration-200",
-              view === "menu" ? "w-[200px]" : "w-[320px]",
-            )}
-            sideOffset={5}
-            align="end"
-          >
-            {renderContent(closePopover, false)}
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+        </PopoverTrigger>
+        <PopoverContent
+          className={cn(
+            "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden p-0 transition-[width] duration-200",
+            view === "menu" ? "w-[200px]" : "w-[320px]",
+          )}
+          sideOffset={5}
+          align="end"
+        >
+          {renderContent(closePopover, false)}
+        </PopoverContent>
+      </Popover>
     </>
   );
 }

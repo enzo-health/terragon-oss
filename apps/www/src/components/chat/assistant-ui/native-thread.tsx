@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type DataMessagePartComponent,
   MessagePrimitive,
   type ReasoningMessagePartComponent,
   type TextMessagePartComponent,
@@ -8,18 +9,41 @@ import {
   type ToolCallMessagePartComponent,
   useAuiState,
 } from "@assistant-ui/react";
-import { Check, ChevronDown, Copy, Link, Loader2, Wrench } from "lucide-react";
-import { type PropsWithChildren, type SyntheticEvent, useState } from "react";
+import { AlertCircle, Check, Copy, Link, Wrench } from "lucide-react";
+import { type PropsWithChildren, useState } from "react";
 import { toast } from "sonner";
+import { Callout, CalloutContent, CalloutIcon } from "@/components/ai/callout";
+import {
+  Message,
+  MessageAction,
+  MessageContent,
+  MessageText,
+} from "@/components/ai/message";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai/reasoning";
+import {
+  Tool,
+  ToolArgument,
+  ToolBlock,
+  ToolContent,
+  ToolError,
+  ToolIcon,
+  ToolLabel,
+  ToolName,
+  ToolSubtitle,
+  ToolTrigger,
+} from "@/components/ai/tool";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { TextPart } from "../text-part";
 import {
-  decodeToolGroupFlags,
   getToolGroupFlags,
-  toolArgPreview,
-  toolArgsDisplayText,
-  toolCallResultText,
+  reasoningViewProps,
+  toolGroupViewPropsFromFlags,
+  toolViewProps,
 } from "./native-thread-utils";
 
 /**
@@ -33,68 +57,61 @@ import {
  */
 
 const NativeText: TextMessagePartComponent = ({ text, status }) => (
-  <TextPart text={text} streaming={status.type === "running"} />
+  <MessageText variant="plain">
+    <TextPart text={text} streaming={status.type === "running"} />
+  </MessageText>
 );
 
-const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => (
-  <details className="my-2 text-sm text-muted-foreground">
-    <summary className="cursor-pointer select-none">Thinking</summary>
-    <div className="mt-1 text-muted-foreground">
-      <TextPart text={text} streaming={status.type === "running"} />
-    </div>
-  </details>
-);
+const NativeReasoning: ReasoningMessagePartComponent = ({ text, status }) => {
+  const { body, streaming, label } = reasoningViewProps(text, status);
+  const [open, setOpen] = useState(streaming);
+
+  return (
+    <Reasoning className="my-2" open={open} onOpenChange={setOpen}>
+      <ReasoningTrigger>{label}</ReasoningTrigger>
+      <ReasoningContent keepMounted>
+        <TextPart text={body} streaming={streaming} />
+      </ReasoningContent>
+    </Reasoning>
+  );
+};
 
 const NativeToolGroup = ({
   startIndex,
   endIndex,
   children,
 }: PropsWithChildren<{ startIndex: number; endIndex: number }>) => {
-  const toolGroupFlags = useAuiState((state) =>
-    getToolGroupFlags(state.message.parts, startIndex, endIndex),
+  const flags = useAuiState((s) =>
+    getToolGroupFlags(s.message.parts, startIndex, endIndex),
   );
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const { count, hasActive, hasError } = decodeToolGroupFlags(toolGroupFlags);
-  const open = hasActive || manualOpen === true;
-  const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
-    setManualOpen(event.currentTarget.open);
-  };
+  const { count, state, statusLabel, defaultOpen } =
+    toolGroupViewPropsFromFlags(flags);
+  // Follow live group state every render; a manual toggle only adds open intent.
+  // Restores the pre-reskin `open={hasActive || manualOpen}` behavior so a group
+  // that mounted closed still opens when a late tool starts running.
+  const [manualOpen, setManualOpen] = useState(false);
+  const open = defaultOpen || manualOpen;
 
   if (count <= 1) return <>{children}</>;
 
   return (
-    <details
-      className={cn(
-        "group/tool-group my-2 rounded-md border border-border bg-surface-soft text-sm",
-        hasError && "border-error/40 bg-error/5",
-      )}
+    <Tool
+      className="my-2"
+      state={state}
       open={open}
-      onToggle={handleToggle}
+      onOpenChange={setManualOpen}
     >
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-muted-foreground marker:content-['']">
-        {hasActive ? (
-          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-        ) : (
-          <Wrench className="size-3.5" aria-hidden="true" />
-        )}
-        <span className="font-medium text-foreground">
-          Tool calls ({count})
-        </span>
-        <span className="ml-auto text-xs">
-          {hasActive ? "Running" : hasError ? "Needs attention" : "Completed"}
-        </span>
-        <ChevronDown
-          className="size-3.5 transition-transform group-open/tool-group:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="border-t border-border/70 p-2">{children}</div>
-    </details>
+      <ToolTrigger>
+        <ToolIcon>
+          <Wrench />
+        </ToolIcon>
+        <ToolName>Tool calls ({count})</ToolName>
+        <ToolLabel>{statusLabel}</ToolLabel>
+      </ToolTrigger>
+      <ToolContent>{children}</ToolContent>
+    </Tool>
   );
 };
-
-const truncatePreview = (value: string, maxLength: number): string =>
-  value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 
 const NativeToolCall: ToolCallMessagePartComponent = ({
   toolName,
@@ -105,70 +122,76 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
 }) => {
   const active = status.type === "running" || result === undefined;
   const failed = isError === true || status.type === "incomplete";
-  const resultText = toolCallResultText(result);
-  const preview = toolArgPreview(argsText);
-  const displayArgsText = toolArgsDisplayText(argsText, active);
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
-  const open = active || manualOpen === true;
-  const handleToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
-    setManualOpen(event.currentTarget.open);
-  };
+  const { name, preview, state, stream, resultText, errorText, defaultOpen } =
+    toolViewProps({ toolName, argsText, result, active, failed });
+  // See NativeToolGroup: open follows live tool state, manual toggle adds intent.
+  const [manualOpen, setManualOpen] = useState(false);
+  const open = defaultOpen || manualOpen;
 
   return (
-    <details
-      className={cn(
-        "group/tool-call my-1 rounded-md border border-border bg-background text-sm",
-        failed && "border-error/40 bg-error/5",
-      )}
+    <Tool
+      className="my-1"
+      state={state}
       open={open}
-      onToggle={handleToggle}
+      onOpenChange={setManualOpen}
     >
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 marker:content-['']">
-        {active ? (
-          <Loader2
-            className="size-3.5 animate-spin text-muted-foreground"
-            aria-hidden="true"
-          />
-        ) : (
-          <Wrench
-            className="size-3.5 text-muted-foreground"
-            aria-hidden="true"
-          />
-        )}
-        <span className="font-mono text-xs text-muted-foreground">
-          {toolName}
-        </span>
-        {preview ? (
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {truncatePreview(preview, 120)}
-          </span>
+      <ToolTrigger>
+        <ToolIcon>
+          <Wrench />
+        </ToolIcon>
+        <ToolName>{name}</ToolName>
+        {preview ? <ToolLabel>{preview}</ToolLabel> : null}
+      </ToolTrigger>
+      <ToolContent keepMounted>
+        {stream.text ? (
+          <>
+            <ToolSubtitle>Input</ToolSubtitle>
+            <ToolArgument
+              value={stream.text}
+              state={stream.streaming ? "streaming" : "complete"}
+            />
+          </>
         ) : null}
-        <span
-          className={cn(
-            "ml-auto text-xs",
-            failed ? "text-error" : "text-muted-foreground",
-          )}
-        >
-          {active ? "Running" : failed ? "Failed" : "Done"}
-        </span>
-        <ChevronDown
-          className="size-3.5 text-muted-foreground transition-transform group-open/tool-call:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="border-t border-border/70 px-3 py-2">
-        {displayArgsText ? (
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
-            {displayArgsText}
-          </pre>
+        {state !== "error" && resultText ? (
+          <>
+            <ToolSubtitle>Output</ToolSubtitle>
+            <ToolBlock>{resultText}</ToolBlock>
+          </>
         ) : null}
-        {resultText ? (
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
-            {resultText}
-          </pre>
-        ) : null}
-      </div>
-    </details>
+        {errorText ? <ToolError>{errorText}</ToolError> : null}
+      </ToolContent>
+    </Tool>
+  );
+};
+
+/**
+ * Inline item-level error (e.g. a Codex `error` item → `DBErrorPart`). On the
+ * live AG-UI path this arrives as a `terragon.error` data part, so it renders
+ * through `MessagePrimitive.Parts`'s `data.by_name` slot rather than the
+ * legacy part registry. Falls back to the data part's `message` or `value`
+ * string (then a generic message) when the typed payload is missing.
+ */
+const errorMessageFromData = (data: unknown): string => {
+  if (typeof data === "string" && data.trim()) return data;
+  if (data && typeof data === "object") {
+    for (const key of ["message", "value"]) {
+      const field = Reflect.get(data, key);
+      if (typeof field === "string" && field.trim()) return field;
+    }
+  }
+  return "An error occurred.";
+};
+
+const NativeError: DataMessagePartComponent = ({ data }) => {
+  const message = errorMessageFromData(data);
+
+  return (
+    <Callout className="my-2" tone="danger" role="alert">
+      <CalloutIcon>
+        <AlertCircle />
+      </CalloutIcon>
+      <CalloutContent>{message}</CalloutContent>
+    </Callout>
   );
 };
 
@@ -177,6 +200,7 @@ const ASSISTANT_PART_COMPONENTS = {
   Reasoning: NativeReasoning,
   tools: { Override: NativeToolCall },
   ToolGroup: NativeToolGroup,
+  data: { by_name: { "terragon.error": NativeError } },
 } as const;
 
 type MessageContentPart = {
@@ -238,9 +262,9 @@ const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
   if (!hasText) return null;
 
   return (
-    <div
+    <MessageAction
       className={cn(
-        "mt-1 flex min-h-[32px] gap-1.5 opacity-0 transition-opacity group-hover/native-msg:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
+        "mt-1 min-h-[32px] gap-1.5 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
         align === "end" ? "justify-end" : "justify-start",
       )}
     >
@@ -270,25 +294,34 @@ const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
           <Link className="size-3.5" />
         )}
       </button>
-    </div>
+    </MessageAction>
   );
 };
 
 const NativeUserMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col items-end py-2 [content-visibility:auto] [contain-intrinsic-size:auto_96px] animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
-    <div className="ml-auto w-fit max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] sm:max-w-[85%]">
-      <MessagePrimitive.Parts />
-    </div>
-    <NativeMessageActions align="end" />
+  <MessagePrimitive.Root className="py-2 [content-visibility:auto] [contain-intrinsic-size:auto_96px] animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
+    <Message type="outgoing">
+      <MessageContent>
+        <MessageText
+          variant="bubble"
+          className="max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] ring-0 sm:max-w-[85%]"
+        >
+          <MessagePrimitive.Parts />
+        </MessageText>
+        <NativeMessageActions align="end" />
+      </MessageContent>
+    </Message>
   </MessagePrimitive.Root>
 );
 
 const NativeAssistantMessage = () => (
-  <MessagePrimitive.Root className="group/native-msg flex flex-col py-2 [content-visibility:auto] [contain-intrinsic-size:auto_160px] animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
-    <div className="mr-auto w-full break-words text-sm leading-relaxed">
-      <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
-    </div>
-    <NativeMessageActions align="start" />
+  <MessagePrimitive.Root className="py-2 [content-visibility:auto] [contain-intrinsic-size:auto_160px] animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+    <Message type="incoming">
+      <MessageContent className="break-words text-sm leading-relaxed">
+        <MessagePrimitive.Parts components={ASSISTANT_PART_COMPONENTS} />
+        <NativeMessageActions align="start" />
+      </MessageContent>
+    </Message>
   </MessagePrimitive.Root>
 );
 

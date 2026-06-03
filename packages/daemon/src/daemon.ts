@@ -1704,6 +1704,12 @@ export class TerragonDaemon {
               partIndex: decision.delta.partIndex,
               kind: decision.delta.kind,
               text: decision.delta.text,
+              ...(decision.delta.toolCallId !== undefined
+                ? { toolCallId: decision.delta.toolCallId }
+                : {}),
+              ...(decision.delta.stream !== undefined
+                ? { stream: decision.delta.stream }
+                : {}),
             });
             return;
           }
@@ -1716,6 +1722,12 @@ export class TerragonDaemon {
               partIndex: decision.delta.partIndex,
               kind: decision.delta.kind,
               text: decision.delta.text,
+              ...(decision.delta.toolCallId !== undefined
+                ? { toolCallId: decision.delta.toolCallId }
+                : {}),
+              ...(decision.delta.stream !== undefined
+                ? { stream: decision.delta.stream }
+                : {}),
             });
           }
 
@@ -4158,8 +4170,10 @@ export class TerragonDaemon {
     token: string;
     messageId: string;
     partIndex: number;
-    kind: "text" | "thinking";
+    kind: "text" | "thinking" | "tool-output";
     text: string;
+    toolCallId?: string;
+    stream?: "stdout" | "stderr" | "progress";
   }): void {
     const runState = this.getOrCreateDaemonEventRunState(entry.threadChatId);
     const deltaSeq = runState.nextDeltaSeq;
@@ -4413,6 +4427,8 @@ export class TerragonDaemon {
             deltaSeq: d.deltaSeq,
             kind: d.kind,
             text: d.text,
+            ...(d.toolCallId !== undefined ? { toolCallId: d.toolCallId } : {}),
+            ...(d.stream !== undefined ? { stream: d.stream } : {}),
           });
         }
         for (const entry of this.metaEventBuffer) {
@@ -4711,6 +4727,8 @@ export class TerragonDaemon {
             deltaSeq: d.deltaSeq,
             kind: d.kind,
             text: d.text,
+            ...(d.toolCallId !== undefined ? { toolCallId: d.toolCallId } : {}),
+            ...(d.stream !== undefined ? { stream: d.stream } : {}),
           });
         } else {
           remainingDeltas.push(d);

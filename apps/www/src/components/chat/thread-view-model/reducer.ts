@@ -18,7 +18,7 @@ import {
   getQuarantineEntry,
   mergeMetaSnapshot,
 } from "./thread-view-model-lifecycle-events";
-import { applyNativeRuntimeEvent } from "./thread-view-model-runtime-events";
+import { quarantineNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type {
   ThreadViewEvent,
   ThreadViewModel,
@@ -32,8 +32,6 @@ export function createInitialThreadViewModelState(
   return {
     threadId: snapshot.threadId,
     threadChatId: snapshot.threadChatId,
-    runtimeState: {},
-    runtimeActivities: {},
     dbMessages: snapshot.dbMessages,
     queuedMessages: snapshot.queuedMessages,
     threadStatus: snapshot.threadStatus,
@@ -118,8 +116,6 @@ export function projectThreadViewModel(
     threadId: state.threadId,
     threadChatId: state.threadChatId,
     lifecycleMessages: state.lifecycleMessages,
-    runtimeState: state.runtimeState,
-    runtimeActivities: state.runtimeActivities,
     dbMessages: state.dbMessages,
     queuedMessages: state.queuedMessages,
     threadStatus: state.threadStatus,
@@ -315,17 +311,14 @@ function applyAgUiEvent(
     return state;
   }
 
-  const nativeRuntimeProjection = applyNativeRuntimeEvent(state, event);
-  if (nativeRuntimeProjection?.quarantineEntry) {
+  const nativeRuntimeQuarantineEntry = quarantineNativeRuntimeEvent(event);
+  if (nativeRuntimeQuarantineEntry) {
     const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
     return {
       ...state,
       seenEventKeys: tracked.seenEventKeys,
       seenEventOrder: tracked.seenEventOrder,
-      quarantine: [
-        ...state.quarantine,
-        nativeRuntimeProjection.quarantineEntry,
-      ],
+      quarantine: [...state.quarantine, nativeRuntimeQuarantineEntry],
     };
   }
 
@@ -348,10 +341,6 @@ function applyAgUiEvent(
     snapshotLifecycleMessages.length > 0
       ? snapshotLifecycleMessages
       : state.lifecycleMessages;
-  const runtimeState =
-    nativeRuntimeProjection?.runtimeState ?? state.runtimeState;
-  const runtimeActivities =
-    nativeRuntimeProjection?.runtimeActivities ?? state.runtimeActivities;
   const artifactReferenceDescriptor = getArtifactReferenceDescriptor(event);
   const artifacts = upsertSynthesizedDescriptor(
     state.artifacts,
@@ -361,8 +350,6 @@ function applyAgUiEvent(
     artifacts === state.artifacts &&
     meta === state.meta &&
     lifecycle === state.lifecycle &&
-    runtimeState === state.runtimeState &&
-    runtimeActivities === state.runtimeActivities &&
     lifecycleMessages === state.lifecycleMessages
   ) {
     return state;
@@ -374,8 +361,6 @@ function applyAgUiEvent(
     artifacts,
     meta,
     lifecycle,
-    runtimeState,
-    runtimeActivities,
     lifecycleMessages,
     threadStatus: lifecycle.threadStatus,
     seenEventKeys: tracked.seenEventKeys,

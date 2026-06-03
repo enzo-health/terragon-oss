@@ -1,25 +1,42 @@
 "use client";
 
 import * as React from "react";
-import * as SheetPrimitive from "@radix-ui/react-dialog";
+import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { asChildToRender } from "./base-ui-as-child";
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />;
+  return <SheetPrimitive.Root {...props} />;
 }
 
 function SheetTrigger({
+  asChild,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Trigger>) {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />;
+}: React.ComponentProps<typeof SheetPrimitive.Trigger> & {
+  asChild?: boolean;
+}) {
+  return (
+    <SheetPrimitive.Trigger
+      data-slot="sheet-trigger"
+      {...asChildToRender({ asChild, ...props })}
+    />
+  );
 }
 
 function SheetClose({
+  asChild,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Close>) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />;
+}: React.ComponentProps<typeof SheetPrimitive.Close> & {
+  asChild?: boolean;
+}) {
+  return (
+    <SheetPrimitive.Close
+      data-slot="sheet-close"
+      {...asChildToRender({ asChild, ...props })}
+    />
+  );
 }
 
 function SheetPortal({
@@ -31,12 +48,12 @@ function SheetPortal({
 function SheetOverlay({
   className,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Overlay>) {
+}: React.ComponentProps<typeof SheetPrimitive.Backdrop>) {
   return (
-    <SheetPrimitive.Overlay
+    <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-canvas/40 backdrop-blur-[2px]",
+        "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity fixed inset-0 z-50 bg-canvas/40 backdrop-blur-[2px]",
         className,
       )}
       {...props}
@@ -49,24 +66,24 @@ function SheetContent({
   children,
   side = "right",
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Content> & {
+}: React.ComponentProps<typeof SheetPrimitive.Popup> & {
   side?: "top" | "right" | "bottom" | "left";
 }) {
   return (
     <SheetPortal>
       <SheetOverlay />
-      <SheetPrimitive.Content
+      <SheetPrimitive.Popup
         data-slot="sheet-content"
         className={cn(
-          "bg-raised text-strong data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-card transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
+          "bg-raised text-strong fixed z-50 flex flex-col gap-4 shadow-card transition ease-in-out data-[ending-style]:duration-300 data-[starting-style]:duration-500",
           side === "right" &&
-            "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full w-3/4 border-l border-hairline sm:max-w-sm",
+            "data-[ending-style]:translate-x-full data-[starting-style]:translate-x-full inset-y-0 right-0 h-full w-3/4 border-l border-hairline sm:max-w-sm",
           side === "left" &&
-            "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full w-3/4 border-r border-hairline sm:max-w-sm",
+            "data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full inset-y-0 left-0 h-full w-3/4 border-r border-hairline sm:max-w-sm",
           side === "top" &&
-            "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 h-auto border-b border-hairline",
+            "data-[ending-style]:-translate-y-full data-[starting-style]:-translate-y-full inset-x-0 top-0 h-auto border-b border-hairline",
           side === "bottom" &&
-            "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t border-hairline",
+            "data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full inset-x-0 bottom-0 h-auto border-t border-hairline",
           className,
         )}
         {...props}
@@ -76,7 +93,7 @@ function SheetContent({
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>
-      </SheetPrimitive.Content>
+      </SheetPrimitive.Popup>
     </SheetPortal>
   );
 }

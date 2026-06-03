@@ -1,3 +1,10 @@
+/**
+ * View-props adapter for the native transcript leaves. Every value a nauval
+ * leaf needs is computed here as a plain string/boolean/number; leaves receive
+ * only these, never a runtime part. Keep these functions stateless — stateful
+ * streaming detection (refs, append fast-path) stays in `TextPart`, not here.
+ */
+
 type ToolGroupPart = {
   readonly type: string;
   readonly status?: { readonly type: string };
@@ -119,3 +126,135 @@ export const toolCallResultText = (result: unknown): string => {
   if (result === undefined) return "";
   return JSON.stringify(result, null, 2);
 };
+
+type ReasoningStatus = { readonly type: string };
+
+export type ReasoningViewProps = {
+  readonly body: string;
+  readonly streaming: boolean;
+  readonly label: string;
+};
+
+/**
+ * Plain view props for the reasoning leaf. `streaming` mirrors the runtime
+ * "running" status so the nauval `Reasoning` shell stays a pure renderer; the
+ * leaf passes these down and never sees the runtime part itself.
+ */
+export const reasoningViewProps = (
+  text: string,
+  status: ReasoningStatus,
+): ReasoningViewProps => ({
+  body: text,
+  streaming: status.type === "running",
+  label: "Thinking",
+});
+
+/**
+ * One streaming shape for every nauval leaf: the text to render plus whether
+ * the runtime is still pushing tokens into it. `streaming` is the pulse only;
+ * lifecycle state (`toolCallState`) is tracked separately and never merged in.
+ */
+export type StreamingView = {
+  readonly text: string;
+  readonly streaming: boolean;
+};
+
+export const streamingView = (
+  text: string,
+  status: { readonly type: string },
+): StreamingView => ({ text, streaming: status.type === "running" });
+
+/**
+ * Tool lifecycle state, separate from the streaming pulse. `pending`/`approval`
+ * are reserved for future use by the nauval `Tool` shell; the adapter only ever
+ * derives the three states a runtime tool part can actually be in.
+ */
+export type ToolCallState =
+  | "pending"
+  | "approval"
+  | "running"
+  | "success"
+  | "error";
+
+export const toolCallState = (
+  active: boolean,
+  failed: boolean,
+): ToolCallState => (failed ? "error" : active ? "running" : "success");
+
+export type ToolViewInput = {
+  readonly toolName: string;
+  readonly argsText: string;
+  readonly result: unknown;
+  readonly active: boolean;
+  readonly failed: boolean;
+};
+
+export type ToolViewProps = {
+  readonly name: string;
+  readonly preview: string | null;
+  readonly state: ToolCallState;
+  readonly stream: StreamingView;
+  readonly resultText: string;
+  readonly errorText: string;
+  readonly defaultOpen: boolean;
+};
+
+/**
+ * Plain view props for one tool-call leaf. Composes the existing arg/result
+ * adapters so the nauval `Tool` shell never sees the runtime part. `errorText`
+ * `errorText` carries the failure result only; the `error` state already styles
+ * the card, so a failed call with no result body shows no body rather than
+ * mislabeling its input args as the error.
+ */
+export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
+  const { toolName, argsText, result, active, failed } = input;
+  const resultText = toolCallResultText(result);
+  const state = toolCallState(active, failed);
+  return {
+    name: toolName,
+    preview: toolArgPreview(argsText),
+    state,
+    stream: { text: toolArgsDisplayText(argsText, active), streaming: active },
+    resultText,
+    errorText: state === "error" ? resultText : "",
+    defaultOpen: active,
+  };
+};
+
+export type ToolGroupViewProps = {
+  readonly count: number;
+  readonly state: "running" | "error" | "success";
+  readonly statusLabel: string;
+  readonly defaultOpen: boolean;
+};
+
+/**
+ * Plain view props for a grouped tool-call header. Reuses the bit-packed
+ * `getToolGroupFlags`/`decodeToolGroupFlags` so the reactive selector over
+ * sibling parts stays inside the leaf and only the decoded view crosses out.
+ */
+/**
+ * Decode + map the bit-packed group flags into view props. Split from the
+ * parts-reading entry point so the `useAuiState` selector can return the stable
+ * primitive `flags` number; mapping to a fresh object happens outside the
+ * selector (a new object per render would loop the equality check).
+ */
+export const toolGroupViewPropsFromFlags = (
+  flags: number,
+): ToolGroupViewProps => {
+  const { count, hasActive, hasError } = decodeToolGroupFlags(flags);
+  const state = hasActive ? "running" : hasError ? "error" : "success";
+  const statusLabel = hasActive
+    ? "Running"
+    : hasError
+      ? "Needs attention"
+      : "Completed";
+  return { count, state, statusLabel, defaultOpen: hasActive };
+};
+
+export const toolGroupViewProps = (
+  parts: readonly ToolGroupPart[],
+  startIndex: number,
+  endIndex: number,
+): ToolGroupViewProps =>
+  toolGroupViewPropsFromFlags(getToolGroupFlags(parts, startIndex, endIndex));

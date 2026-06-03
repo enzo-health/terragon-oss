@@ -5,12 +5,9 @@ import {
   DialogContent,
   DialogTitle,
   DialogClose,
-  DialogPortal,
-  DialogOverlay,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
-import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useEffect, useCallback } from "react";
 import { Attachment } from "@/lib/attachment-types";
 
@@ -104,26 +101,21 @@ export function ImageLightbox({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogPortal>
-        <DialogOverlay />
-        <DialogContent
-          className="!max-w-[80vw] !max-h-[80vh] p-0 overflow-hidden bg-transparent border-none shadow-none"
-          hideCloseButton
-        >
-          <VisuallyHidden>
-            <DialogTitle>Image</DialogTitle>
-          </VisuallyHidden>
-          <div className="relative flex items-center justify-center">
-            <img
-              src={displayUrl}
-              alt="Expanded image"
-              width={800}
-              height={600}
-              loading="lazy"
-              className="max-w-full max-h-[70vh] object-contain rounded bg-background"
-            />
-          </div>
-        </DialogContent>
+      <DialogContent
+        className="!max-w-[80vw] !max-h-[80vh] p-0 overflow-hidden bg-transparent border-none shadow-none"
+        hideCloseButton
+      >
+        <DialogTitle className="sr-only">Image</DialogTitle>
+        <div className="relative flex items-center justify-center">
+          <img
+            src={displayUrl}
+            alt="Expanded image"
+            width={800}
+            height={600}
+            loading="lazy"
+            className="max-w-full max-h-[70vh] object-contain rounded bg-background"
+          />
+        </div>
         <DialogClose
           className="fixed top-4 right-4 text-on-dark rounded-full p-3 transition-colors z-[60] cursor-pointer"
           asChild
@@ -136,7 +128,7 @@ export function ImageLightbox({
             <X className="size-6" />
           </Button>
         </DialogClose>
-      </DialogPortal>
+      </DialogContent>
     </Dialog>
   );
 }

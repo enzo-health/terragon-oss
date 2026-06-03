@@ -368,6 +368,18 @@ export type ClaudeMessage =
       diff: string;
     }
 
+  // Codex item-level error — a single failing step within an otherwise live
+  // turn (e.g. a tool the model invoked errored). Distinct from a terminal
+  // turn failure (`type: "result"` / `error_during_execution`): this renders
+  // INLINE in the transcript where the error occurred, via DBErrorPart, so the
+  // failing step keeps its surrounding context. The turn continues; only the
+  // item failed.
+  | {
+      type: "codex-error";
+      session_id: string | null;
+      message: string;
+    }
+
   // ACP image content block
   | {
       type: "acp-image";
@@ -425,8 +437,22 @@ export type DaemonDelta = {
   messageId: string;
   partIndex: number;
   deltaSeq: number;
-  kind?: "text" | "thinking";
+  kind?: "text" | "thinking" | "tool-output";
   text: string;
+  /**
+   * For `kind: "tool-output"` only: the id of the tool call this output belongs
+   * to (the Codex command-execution / MCP item id). Lets the client stream the
+   * output into the owning tool card's result channel via AG-UI
+   * `TOOL_CALL_RESULT` rather than as a standalone assistant-text blob. Ignored
+   * for `text` / `thinking`.
+   */
+  toolCallId?: string;
+  /**
+   * For `kind: "tool-output"` only: which output stream the chunk came from, so
+   * the renderer can distinguish stdout from stderr (command output) or a
+   * structured progress message (MCP). Defaults to `stdout` when omitted.
+   */
+  stream?: "stdout" | "stderr" | "progress";
 };
 
 /**

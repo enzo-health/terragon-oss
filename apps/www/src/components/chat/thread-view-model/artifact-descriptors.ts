@@ -1,8 +1,6 @@
 import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
-import type { UIMessage } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import { getArtifactDescriptorsForMessages } from "./snapshot-adapter";
 import { getObjectField, getStringField } from "./renderable-part-shape";
 import type { ThreadViewModelState } from "./types";
 
@@ -18,32 +16,6 @@ function isSynthesizedDescriptor(descriptor: ArtifactDescriptor): boolean {
     descriptor.origin.type === "repo-file" ||
     descriptor.origin.type === "repo-tree"
   );
-}
-
-export function getStableArtifactsForMessages({
-  previous,
-  messages,
-  artifactThread,
-}: {
-  previous: ThreadViewModelState["artifacts"];
-  messages: UIMessage[];
-  artifactThread: ThreadViewModelState["artifactThread"];
-}): ThreadViewModelState["artifacts"] {
-  const preservedSynthesizedDescriptors = previous.descriptors.filter(
-    isSynthesizedDescriptor,
-  );
-  const next = {
-    descriptors: mergeArtifactDescriptors([
-      ...preservedSynthesizedDescriptors,
-      ...getArtifactDescriptorsForMessages({
-        messages,
-        artifactThread,
-      }),
-    ]),
-  };
-  return areArtifactDescriptorsStable(previous.descriptors, next.descriptors)
-    ? previous
-    : next;
 }
 
 export function preserveSynthesizedDescriptors(

@@ -20,5 +20,35 @@
         "useExhaustiveDependencies": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/apps/www/src/components/ai/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@assistant-ui/*"],
+                    "message": "components/ai/* is Layer A (pure, prop-driven). Keep assistant-ui runtime bindings in the binding shells (native-thread.tsx, chat-message-system.tsx) and pass plain props down."
+                  },
+                  {
+                    "group": ["@terragon/*"],
+                    "message": "components/ai/* is Layer A (pure, prop-driven). It must not depend on Terragon packages; pass plain props from the binding shells instead."
+                  },
+                  {
+                    "group": ["jotai", "jotai/*"],
+                    "message": "components/ai/* is Layer A (pure, prop-driven). Read store state in the binding shells and pass plain props down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

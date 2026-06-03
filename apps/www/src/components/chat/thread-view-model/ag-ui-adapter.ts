@@ -1,9 +1,6 @@
 import type { BaseEvent } from "@ag-ui/core";
 import { stableSerialize } from "@/lib/stable-serialize";
 
-const HYDRATION_AGENT_ID_PATTERN = /^agent-\d+$/;
-const CANONICAL_EVENT_MESSAGE_ID_PATTERN = /^[a-f0-9]{64}$/;
-const DELTA_STREAM_MESSAGE_ID_PATTERN = /^msg_[a-f0-9]+$/;
 const NO_FALLBACK_DEDUPE_EVENT_TYPES = new Set<string>([
   "TEXT_MESSAGE_CONTENT",
   "REASONING_MESSAGE_CONTENT",
@@ -16,18 +13,6 @@ export function getAgUiEventDedupeKey(event: BaseEvent): string | null {
     getIdentityFirstEventDedupeKey(event) ??
     getStructuralFallbackEventDedupeKey(event)
   );
-}
-
-export function isHydrationAgentMessageId(id: string): boolean {
-  return HYDRATION_AGENT_ID_PATTERN.test(id);
-}
-
-export function isCanonicalEventMessageId(id: string): boolean {
-  return CANONICAL_EVENT_MESSAGE_ID_PATTERN.test(id);
-}
-
-export function isDeltaStreamMessageId(id: string): boolean {
-  return DELTA_STREAM_MESSAGE_ID_PATTERN.test(id);
 }
 
 export function trackSeenAgUiEventKey(params: {

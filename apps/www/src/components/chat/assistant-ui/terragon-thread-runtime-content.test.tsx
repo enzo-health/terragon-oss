@@ -8,8 +8,17 @@ import type { DBUserMessage, ThreadInfoFull } from "@terragon/shared";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_MESSAGE_PART_PROPS } from "../chat-message.types";
 import { createInitialThreadMetaSnapshot } from "../thread-view-model/snapshot-adapter";
+
+const BASE_TOOL_PROPS = {
+  threadId: "",
+  threadChatId: "",
+  isReadOnly: false,
+  childThreads: [] as { id: string; parentToolId: string | null }[],
+  githubRepoFullName: "",
+  repoBaseBranchName: "main",
+  branchName: null as string | null,
+};
 
 const runtimeState = vi.hoisted(() => ({
   thread: {
@@ -195,7 +204,7 @@ describe("TerragonThreadRuntimeContent", () => {
         artifactDescriptors: [],
         onOpenArtifact: vi.fn(),
         toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          ...BASE_TOOL_PROPS,
           threadId: "thread-1",
           threadChatId: "chat-1",
           githubRepoFullName: "acme/app",
@@ -231,7 +240,7 @@ describe("TerragonThreadRuntimeContent", () => {
         artifactDescriptors: [],
         onOpenArtifact: vi.fn(),
         toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          ...BASE_TOOL_PROPS,
           threadId: "thread-1",
           threadChatId: "chat-1",
           githubRepoFullName: "acme/app",
@@ -288,7 +297,7 @@ describe("TerragonThreadRuntimeContent", () => {
         artifactDescriptors: [],
         onOpenArtifact: vi.fn(),
         toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          ...BASE_TOOL_PROPS,
           threadId: "thread-1",
           threadChatId: "chat-1",
           githubRepoFullName: "acme/app",
@@ -333,7 +342,7 @@ describe("TerragonThreadRuntimeContent", () => {
         artifactDescriptors: [],
         onOpenArtifact: vi.fn(),
         toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          ...BASE_TOOL_PROPS,
           threadId: "thread-1",
           threadChatId: "chat-1",
           githubRepoFullName: "acme/app",
@@ -386,7 +395,7 @@ describe("TerragonThreadRuntimeContent", () => {
         artifactDescriptors: [],
         onOpenArtifact: vi.fn(),
         toolProps: {
-          ...DEFAULT_MESSAGE_PART_PROPS.toolProps,
+          ...BASE_TOOL_PROPS,
           threadId: "thread-1",
           threadChatId: "chat-1",
           githubRepoFullName: "acme/app",

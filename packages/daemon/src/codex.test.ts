@@ -557,20 +557,18 @@ describe("parseCodexLine", () => {
     }
   });
 
-  test("should parse error item into result message", () => {
+  test("should parse error item into an inline codex-error message", () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_err","type":"error","message":"Something went wrong"}}';
     const results = parseCodexLine({ line, runtime: mockRuntime });
 
+    // Item-level errors render INLINE (DBErrorPart) rather than as a terminal
+    // `type: "result"` lifecycle footer, so the failing step keeps its context.
     expect(results).toHaveLength(1);
     expect(results[0]).toEqual({
-      type: "result",
-      subtype: "error_during_execution",
-      is_error: true,
-      session_id: "",
-      error: "Something went wrong",
-      num_turns: 0,
-      duration_ms: 0,
+      type: "codex-error",
+      session_id: null,
+      message: "Something went wrong",
     });
   });
 

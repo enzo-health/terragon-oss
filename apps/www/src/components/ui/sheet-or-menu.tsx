@@ -18,7 +18,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Button } from "./button";
 import { assertNever } from "@terragon/shared/utils";
 import Link from "next/link";
@@ -129,12 +128,7 @@ export function SheetOrMenu({
         }}
       >
         <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          onCloseAutoFocus={(e) => {
-            e.preventDefault();
-          }}
-        >
+        <DropdownMenuContent align="end">
           <MenuContents
             getItems={getItems}
             isSmallScreen={isSmallScreen}
@@ -187,9 +181,7 @@ export function SheetOrMenu({
     >
       <SheetTrigger asChild>{trigger}</SheetTrigger>
       <SheetContent side="top" className="pt-16 px-4 pb-4">
-        <VisuallyHidden>
-          <SheetTitle>{title}</SheetTitle>
-        </VisuallyHidden>
+        <SheetTitle className="sr-only">{title}</SheetTitle>
         <MenuContents
           getItems={getItems}
           isSmallScreen={isSmallScreen}

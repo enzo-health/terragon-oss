@@ -1,30 +1,27 @@
 /**
  * UI assertion harness tests.
  *
- * Verifies that the chat-page helpers render delegation, terminal, and
- * message-part content correctly from synthesized UI parts — without needing
- * a live DB or full ChatUI mount.
- *
- * The "delta events → rendered DOM" assertion is achieved by synthesizing
- * the accumulated message state (as toUIMessages.ts would produce after
- * processing the events) and passing it directly to the renderers.
+ * Verifies the chat-page harness helpers used by the turn tests. The live
+ * transcript renders text through the production `TextPart` (native-thread's
+ * markdown slot); terminal and delegation parts surface in production as the
+ * persisted DB part shape that the live AG-UI mapper consumes, so the harness
+ * exposes data-shape query helpers over those parts rather than rendering the
+ * removed bespoke views.
  */
 import { describe, expect, it } from "vitest";
 import {
-  renderDelegationItem,
-  renderTerminalPart,
+  queryDelegation,
+  queryTerminalChunks,
   renderMessagePart,
-  queryDelegationCard,
-  queryTerminalOutput,
 } from "./chat-page";
 import type { DBDelegationMessage } from "@terragon/shared";
 import type { DBTerminalPart } from "@terragon/shared";
 
 // ---------------------------------------------------------------------------
-// Delegation item rendering
+// Delegation projection
 // ---------------------------------------------------------------------------
 
-describe("renderDelegationItem", () => {
+describe("queryDelegation", () => {
   function makeDelegation(
     overrides: Partial<DBDelegationMessage> = {},
   ): DBDelegationMessage {
@@ -44,43 +41,37 @@ describe("renderDelegationItem", () => {
     };
   }
 
-  it("renders an initiated DelegationItemCard with status badge", () => {
-    const html = renderDelegationItem(makeDelegation({ status: "initiated" }));
-    const query = queryDelegationCard(html);
+  it("projects an initiated delegation status", () => {
+    const query = queryDelegation(makeDelegation({ status: "initiated" }));
     expect(query.found).toBe(true);
     expect(query.statusText).toBe("initiated");
   });
 
-  it("renders a running DelegationItemCard", () => {
-    const html = renderDelegationItem(makeDelegation({ status: "running" }));
-    expect(queryDelegationCard(html).statusText).toBe("running");
+  it("projects a running delegation status", () => {
+    expect(
+      queryDelegation(makeDelegation({ status: "running" })).statusText,
+    ).toBe("running");
   });
 
-  it("renders a completed DelegationItemCard", () => {
-    const html = renderDelegationItem(makeDelegation({ status: "completed" }));
-    expect(queryDelegationCard(html).statusText).toBe("completed");
+  it("projects a completed delegation status", () => {
+    expect(
+      queryDelegation(makeDelegation({ status: "completed" })).statusText,
+    ).toBe("completed");
   });
 
-  it("shows agent count from receiverThreadIds", () => {
-    const html = renderDelegationItem(
+  it("counts agents from receiverThreadIds", () => {
+    const query = queryDelegation(
       makeDelegation({ receiverThreadIds: ["a", "b", "c"] }),
     );
-    expect(queryDelegationCard(html).agentCount).toBe(3);
-  });
-
-  it("contains a prompt toggle button", () => {
-    // The prompt itself is collapsed by default (useState starts false in SSR),
-    // but the "Prompt" toggle button is always rendered.
-    const html = renderDelegationItem(makeDelegation());
-    expect(html).toContain("Prompt");
+    expect(query.agentCount).toBe(3);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Terminal part rendering
+// Terminal chunk projection
 // ---------------------------------------------------------------------------
 
-describe("renderTerminalPart", () => {
+describe("queryTerminalChunks", () => {
   function makePart(overrides: Partial<DBTerminalPart> = {}): DBTerminalPart {
     return {
       type: "terminal",
@@ -91,64 +82,64 @@ describe("renderTerminalPart", () => {
     };
   }
 
-  it("renders stdout chunks with data-kind attribute", () => {
-    const part = makePart({
-      chunks: [{ streamSeq: 0, kind: "stdout", text: "npm test passed" }],
-    });
-    const html = renderTerminalPart(part);
-    const query = queryTerminalOutput(html);
+  it("projects stdout chunks with the stdout kind", () => {
+    const query = queryTerminalChunks(
+      makePart({
+        chunks: [{ streamSeq: 0, kind: "stdout", text: "npm test passed" }],
+      }),
+    );
     expect(query.found).toBe(true);
     expect(query.kinds.has("stdout")).toBe(true);
     expect(query.text).toContain("npm test passed");
   });
 
-  it("renders stderr chunks", () => {
-    const part = makePart({
-      chunks: [{ streamSeq: 0, kind: "stderr", text: "Error: file not found" }],
-    });
-    const html = renderTerminalPart(part);
-    expect(queryTerminalOutput(html).kinds.has("stderr")).toBe(true);
+  it("projects stderr chunks", () => {
+    const query = queryTerminalChunks(
+      makePart({
+        chunks: [
+          { streamSeq: 0, kind: "stderr", text: "Error: file not found" },
+        ],
+      }),
+    );
+    expect(query.kinds.has("stderr")).toBe(true);
   });
 
-  it("simulates 2 delta events by accumulating chunks", () => {
+  it("accumulates 2 delta chunks in stream order", () => {
     // Simulate what happens after 2 item/commandExecution/outputDelta events:
     // each event appends a chunk to the terminal part.
-    const part = makePart({
-      chunks: [
-        { streamSeq: 0, kind: "stdout", text: "Running tests...\n" },
-        { streamSeq: 1, kind: "stdout", text: "All tests passed!\n" },
-      ],
-    });
-    const html = renderTerminalPart(part);
-    const query = queryTerminalOutput(html);
+    const query = queryTerminalChunks(
+      makePart({
+        chunks: [
+          { streamSeq: 0, kind: "stdout", text: "Running tests...\n" },
+          { streamSeq: 1, kind: "stdout", text: "All tests passed!\n" },
+        ],
+      }),
+    );
     expect(query.text).toContain("Running tests...");
     expect(query.text).toContain("All tests passed!");
-    // Both deltas map to the same kind
-    const kindMatches = [...html.matchAll(/data-kind="stdout"/g)];
-    expect(kindMatches.length).toBe(2);
+    expect(query.kindCounts.stdout).toBe(2);
   });
 
-  it("shows empty state for a part with no chunks", () => {
-    const html = renderTerminalPart(makePart());
-    expect(html).toContain("No output");
+  it("projects empty text for a part with no chunks", () => {
+    const query = queryTerminalChunks(makePart());
+    expect(query.found).toBe(true);
+    expect(query.text).toBe("");
+    expect(query.kinds.size).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// renderMessagePart type coverage
+// renderMessagePart — text rendering via production TextPart
 // ---------------------------------------------------------------------------
 
 describe("renderMessagePart", () => {
-  // MessagePart is a memo-wrapped dispatcher that routes to leaf renderers.
-  // The MessagePart test in message-part.test.tsx documents why we avoid
-  // full SSR rendering of the dispatcher (React 19 + renderToStaticMarkup is
-  // flaky for components with useMemo/useRef/useEffect). The harness exposes
-  // renderMessagePart for test authors who need it, but the canonical approach
-  // for hook-heavy part types is to render leaf components directly
-  // (renderDelegationItem, renderTerminalPart) which is what 6.7 and 6.8 do.
-  //
-  // This test just ensures renderMessagePart is callable and exported.
-  it("is exported from the harness module", () => {
-    expect(typeof renderMessagePart).toBe("function");
+  it("renders a text part through the production TextPart", () => {
+    const html = renderMessagePart({ type: "text", text: "hello world" });
+    expect(html).toContain("hello world");
+  });
+
+  it("returns empty string for parts with no production text renderer", () => {
+    const html = renderMessagePart({ type: "thinking", thinking: "internal" });
+    expect(html).toBe("");
   });
 });
