@@ -832,11 +832,15 @@
   --radius-outer: 1rem;
 }
 
+/* Base anchored to the Codex-dark canvas (--background L 0.2964) so the
+ * transcript blends into the page instead of floating as a darker card. The
+ * elevation ladder reuses the app's measured dark tokens (card L 0.367,
+ * border L 0.40, muted L 0.34) so inner cards still read as raised. */
 .dark .nauval-chat-surface {
-  background: oklch(0.1985 0.0022 106.6);
-  --color-surface: oklch(0.2065 0.0022 106.6);
-  --color-surface-elevated: oklch(0.2364 0.0022 106.6);
-  --color-border: oklch(0.2867 0.0022 106.6);
-  --color-muted: oklch(0.22 0.0022 106.6);
-  --color-muted-foreground: oklch(0.65 0.0014 106.4);
+  background: oklch(0.2964 0.0036 106.6);
+  --color-surface: oklch(0.31 0.0034 106.6);
+  --color-surface-elevated: oklch(0.367 0.0034 106.6);
+  --color-border: oklch(0.4 0.0033 106.5);
+  --color-muted: oklch(0.34 0.0034 106.6);
+  --color-muted-foreground: oklch(0.6328 0.0029 106.5);
 }
