@@ -80,7 +80,6 @@ export const defaultConfig: ArchitectureLintConfig = {
     "packages/agent/src/canonical-events.ts",
   ],
   exhaustiveSwitchFiles: [
-    "apps/www/src/components/chat/message-part.tsx",
     "apps/www/src/components/chat/ag-ui-messages-reducer.ts",
     "apps/www/src/components/chat/db-messages-to-ag-ui.ts",
     "apps/www/src/components/chat/thread-view-model/reducer.ts",
