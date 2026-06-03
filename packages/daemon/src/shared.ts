@@ -200,8 +200,8 @@ export type ClaudeMessage =
        * W-ID.3: Content block indices (0-based) in this assistant message
        * whose text/thinking was already streamed as deltas. The canonical-
        * event builder skips these blocks to prevent duplicate transcript
-       * messages. Set by ClaudeCodeParser; absent when no deltas were
-       * streamed or for non-Claude transports.
+       * messages. Set by streaming transport adapters such as ClaudeCodeParser
+       * and ACP; absent when no blocks were streamed as deltas.
        */
       _claudeStreamedBlockIndices?: number[];
     }

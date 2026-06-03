@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { nanoid } from "nanoid/non-secure";
 import {
   afterEach,
@@ -11,6 +13,7 @@ import {
 } from "vitest";
 import { createCodexParserState } from "./codex";
 import type { ThreadMetaEvent } from "./codex-app-server";
+import { AcpToolCallTracker } from "./acp-adapter";
 import {
   isRecoverableAcpPromptPostFailure,
   parseDaemonAcpSsePayload,
@@ -26,6 +29,7 @@ import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
   DAEMON_EVENT_VERSION_HEADER,
+  DaemonDelta,
   DAEMON_VERSION,
   type DaemonEventAPIBody,
   DaemonMessageClaude,
@@ -45,6 +49,16 @@ async function sleepUntil(condition: () => boolean, maxWaitMs: number = 2000) {
     }
   }
 }
+
+function loadAcpFixture(name: string): string {
+  return readFileSync(join(__dirname, "__fixtures__/acp", name), "utf-8");
+}
+
+type BufferedDaemonDelta = DaemonDelta & {
+  threadId: string;
+  threadChatId: string;
+  token: string;
+};
 
 const TEST_INPUT_MESSAGE: DaemonMessageClaude = {
   type: "claude",
@@ -399,6 +413,123 @@ describe("daemon", () => {
       }),
       TEST_INPUT_MESSAGE.token,
     );
+  });
+
+  it("keeps message-coupled daemon deltas retryable after a transient POST failure", async () => {
+    Reflect.set(daemon, "deltaBuffer", [
+      {
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId: "msg-acp-stream",
+        partIndex: 0,
+        deltaSeq: 0,
+        kind: "text",
+        text: "streamed text",
+      },
+    ] satisfies BufferedDaemonDelta[]);
+    serverPostMock
+      .mockRejectedValueOnce(new Error("transient failure"))
+      .mockResolvedValue(undefined);
+
+    const messages: ClaudeMessage[] = [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "streamed text" }],
+        },
+        parent_tool_use_id: null,
+        session_id: "session-1",
+        _claudeStreamedBlockIndices: [0],
+      },
+    ];
+    const sendMessagesToAPI = Reflect.get(daemon, "sendMessagesToAPI");
+    if (typeof sendMessagesToAPI !== "function") {
+      throw new Error("Missing sendMessagesToAPI test seam");
+    }
+    const send = () =>
+      Reflect.apply(sendMessagesToAPI, daemon, [
+        {
+          messages,
+          entryCount: messages.length,
+          timezone: "UTC",
+          token: TEST_INPUT_MESSAGE.token,
+          threadId: TEST_INPUT_MESSAGE.threadId,
+          threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        },
+      ]);
+
+    await expect(send()).rejects.toThrow("transient failure");
+    expect(Reflect.get(daemon, "deltaBuffer")).toEqual([
+      expect.objectContaining({
+        messageId: "msg-acp-stream",
+        text: "streamed text",
+      }),
+    ]);
+
+    await send();
+
+    const firstPayload = serverPostMock.mock.calls[0]?.[0];
+    const retryPayload = serverPostMock.mock.calls[1]?.[0];
+    if (!firstPayload || !retryPayload) {
+      throw new Error("expected initial and retry daemon-event payloads");
+    }
+    expect(firstPayload.deltas).toEqual([
+      expect.objectContaining({
+        messageId: "msg-acp-stream",
+        text: "streamed text",
+      }),
+    ]);
+    expect(retryPayload.deltas).toEqual(firstPayload.deltas);
+    expect(Reflect.get(daemon, "deltaBuffer")).toHaveLength(0);
+  });
+
+  it("keeps delta-only tail flushes retryable after a transient POST failure", async () => {
+    Reflect.set(daemon, "deltaBuffer", [
+      {
+        threadId: TEST_INPUT_MESSAGE.threadId,
+        threadChatId: TEST_INPUT_MESSAGE.threadChatId,
+        token: TEST_INPUT_MESSAGE.token,
+        messageId: "msg-tail-stream",
+        partIndex: 0,
+        deltaSeq: 0,
+        kind: "text",
+        text: "tail text",
+      },
+    ] satisfies BufferedDaemonDelta[]);
+    serverPostMock
+      .mockRejectedValueOnce(new Error("transient tail failure"))
+      .mockResolvedValue(undefined);
+
+    const flushMessageBuffer = Reflect.get(daemon, "flushMessageBuffer");
+    if (typeof flushMessageBuffer !== "function") {
+      throw new Error("Missing flushMessageBuffer test seam");
+    }
+
+    await Reflect.apply(flushMessageBuffer, daemon, []);
+
+    expect(Reflect.get(daemon, "deltaBuffer")).toEqual([
+      expect.objectContaining({
+        messageId: "msg-tail-stream",
+        text: "tail text",
+      }),
+    ]);
+
+    await sleepUntil(() => serverPostMock.mock.calls.length === 2);
+
+    const firstPayload = serverPostMock.mock.calls[0]?.[0];
+    const retryPayload = serverPostMock.mock.calls[1]?.[0];
+    expect(firstPayload?.messages).toEqual([]);
+    expect(firstPayload?.deltas).toEqual([
+      expect.objectContaining({
+        messageId: "msg-tail-stream",
+        text: "tail text",
+      }),
+    ]);
+    expect(retryPayload?.messages).toEqual([]);
+    expect(retryPayload?.deltas).toEqual(firstPayload?.deltas);
+    expect(Reflect.get(daemon, "deltaBuffer")).toHaveLength(0);
   });
 
   it("includes v2 envelope on delta-only flush so canonical consumers accept it", async () => {
@@ -4296,6 +4427,43 @@ describe("daemon", () => {
 });
 
 describe("ACP SSE terminal validation", () => {
+  it("preserves ACP tool-call lifecycle state across daemon SSE payloads", () => {
+    const tracker = new AcpToolCallTracker();
+    const parseFixture = (fixture: string) =>
+      parseDaemonAcpSsePayload({
+        payload: loadAcpFixture(fixture),
+        currentSessionId: "fallback-session",
+        activePromptRequestId: 7,
+        toolCallTracker: tracker,
+      });
+
+    const pending = parseFixture("tool-call.json");
+    const inProgress = parseFixture("tool-call-update-in-progress.json");
+    const completed = parseFixture("tool-call-update-completed.json");
+
+    expect(pending).toHaveLength(1);
+    expect(inProgress).toHaveLength(1);
+    expect(completed).toHaveLength(1);
+    expect(pending[0]?.type).toBe("acp-tool-call");
+    expect(inProgress[0]?.type).toBe("acp-tool-call");
+    expect(completed[0]?.type).toBe("acp-tool-call");
+
+    if (
+      pending[0]?.type !== "acp-tool-call" ||
+      inProgress[0]?.type !== "acp-tool-call" ||
+      completed[0]?.type !== "acp-tool-call"
+    ) {
+      throw new Error("expected ACP tool-call snapshots");
+    }
+
+    expect(pending[0].status).toBe("pending");
+    expect(inProgress[0].status).toBe("in_progress");
+    expect(inProgress[0].progressChunks).toHaveLength(1);
+    expect(completed[0].status).toBe("completed");
+    expect(completed[0].progressChunks).toHaveLength(2);
+    expect(completed[0].rawOutput).toBe("File contents read successfully");
+  });
+
   it("accepts daemon-owned prompt response ids and ignores forged terminal ids", () => {
     const legitimate = parseDaemonAcpSsePayload({
       payload: JSON.stringify({

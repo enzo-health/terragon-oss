@@ -6,6 +6,7 @@ import {
 } from "@terragon/agent/canonical-events";
 import { AIAgent } from "@terragon/agent/types";
 import {
+  AcpToolCallTracker,
   coalesceAssistantTextMessages,
   createAcpPermissionRequestMessage,
   normalizeAcpPermissionRequest,
@@ -456,17 +457,24 @@ export function parseDaemonAcpSsePayload({
   payload,
   currentSessionId,
   activePromptRequestId,
+  toolCallTracker,
 }: {
   payload: string;
   currentSessionId: string;
   activePromptRequestId: unknown | null;
+  toolCallTracker?: AcpToolCallTracker;
 }): ClaudeMessage[] {
-  return parseAcpLineToClaudeMessages(payload, currentSessionId, undefined, {
-    allowedTerminalResponseIds:
-      activePromptRequestId === null
-        ? undefined
-        : new Set<unknown>([activePromptRequestId]),
-  });
+  return parseAcpLineToClaudeMessages(
+    payload,
+    currentSessionId,
+    toolCallTracker,
+    {
+      allowedTerminalResponseIds:
+        activePromptRequestId === null
+          ? undefined
+          : new Set<unknown>([activePromptRequestId]),
+    },
+  );
 }
 
 export class TerragonDaemon {
@@ -2183,6 +2191,7 @@ export class TerragonDaemon {
     // routed through the structured Codex parsing pipeline (parseCodexItem).
     const codexAcpState =
       input.agent === "codex" ? createCodexParserState() : null;
+    const acpToolCallTracker = new AcpToolCallTracker();
 
     let sawTerminalEventFromStream = false;
     let circuitBreakerTripped = false;
@@ -2202,10 +2211,10 @@ export class TerragonDaemon {
     let lastEventId: string | null = null;
     const promptPostAbortController = new AbortController();
 
-    // Delta streaming: stable message ID for accumulating text/thinking deltas
-    // on the client. Resets each time a non-text message arrives (tool_use, result).
+    // Delta streaming: stable message ID for accumulating adjacent
+    // text/thinking chunks on the client. Non-text ACP messages split streams
+    // so assistant prose does not coalesce across tool/progress cards.
     let deltaMessageId: string = randomUUID();
-    let deltaPartIndex = 0;
 
     const createUrl = (bootstrapAgent: boolean): string => {
       const url = new URL(`${baseUrl}/v1/acp/${encodeURIComponent(serverId)}`);
@@ -2393,38 +2402,58 @@ export class TerragonDaemon {
           message.type === "custom-stop"
         ) {
           deltaMessageId = randomUUID();
-          deltaPartIndex = 0;
         } else if (message.type === "assistant" && message.message?.content) {
           const content = message.message.content;
           if (Array.isArray(content)) {
-            for (const block of content) {
+            const streamedBlockIndices: number[] = [];
+            let shouldSplitAfterAssistant = false;
+            for (
+              let blockIndex = 0;
+              blockIndex < content.length;
+              blockIndex += 1
+            ) {
+              const block = content[blockIndex];
+              if (!block) {
+                continue;
+              }
               if (block.type === "text" && block.text) {
+                streamedBlockIndices.push(blockIndex);
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
                   token: input.token,
                   messageId: deltaMessageId,
-                  partIndex: deltaPartIndex,
+                  partIndex: blockIndex,
                   kind: "text",
                   text: block.text,
                 });
               } else if (block.type === "thinking" && block.thinking) {
+                streamedBlockIndices.push(blockIndex);
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
                   token: input.token,
                   messageId: deltaMessageId,
-                  partIndex: deltaPartIndex,
+                  partIndex: blockIndex,
                   kind: "thinking",
                   text: block.thinking,
                 });
+              } else {
+                shouldSplitAfterAssistant = true;
               }
             }
-            // If any content block is a tool_use, bump the part index for the next text block
-            if (content.some((b: { type: string }) => b.type === "tool_use")) {
-              deltaPartIndex += 1;
+            if (streamedBlockIndices.length > 0) {
+              message._claudeStreamedBlockIndices = streamedBlockIndices;
+            }
+            if (
+              shouldSplitAfterAssistant ||
+              streamedBlockIndices.length === 0
+            ) {
+              deltaMessageId = randomUUID();
             }
           }
+        } else if (message.type !== "user") {
+          deltaMessageId = randomUUID();
         }
 
         this.addMessageToBuffer({
@@ -2571,6 +2600,7 @@ export class TerragonDaemon {
         payload,
         currentSessionId,
         activePromptRequestId,
+        toolCallTracker: acpToolCallTracker,
       });
       if (messages.length > 0) {
         applyAcpMessages(messages);
@@ -4465,7 +4495,20 @@ export class TerragonDaemon {
           threadId: string;
           threadChatId: string;
           token: string;
+          deltaEntries: Array<
+            DaemonDelta & {
+              threadId: string;
+              threadChatId: string;
+              token: string;
+            }
+          >;
           deltas: DaemonDelta[];
+          metaEventEntries: Array<{
+            metaEvent: ThreadMetaEvent;
+            threadId: string;
+            threadChatId: string;
+            token: string;
+          }>;
           metaEvents: ThreadMetaEvent[];
         };
         const tailByThread = new Map<string, RemainingTail>();
@@ -4480,7 +4523,9 @@ export class TerragonDaemon {
               threadId,
               threadChatId,
               token,
+              deltaEntries: [],
               deltas: [],
+              metaEventEntries: [],
               metaEvents: [],
             };
             tailByThread.set(threadChatId, t);
@@ -4496,7 +4541,9 @@ export class TerragonDaemon {
             droppedDeltaCounts.set(d.threadChatId, previous + 1);
             continue;
           }
-          ensure(d.threadChatId, d.threadId, d.token).deltas.push({
+          const tail = ensure(d.threadChatId, d.threadId, d.token);
+          tail.deltaEntries.push(d);
+          tail.deltas.push({
             messageId: d.messageId,
             partIndex: d.partIndex,
             deltaSeq: d.deltaSeq,
@@ -4513,11 +4560,9 @@ export class TerragonDaemon {
             droppedMetaCounts.set(entry.threadChatId, previous + 1);
             continue;
           }
-          ensure(
-            entry.threadChatId,
-            entry.threadId,
-            entry.token,
-          ).metaEvents.push(entry.metaEvent);
+          const tail = ensure(entry.threadChatId, entry.threadId, entry.token);
+          tail.metaEventEntries.push(entry);
+          tail.metaEvents.push(entry.metaEvent);
         }
         for (const [threadChatId, droppedCount] of droppedDeltaCounts) {
           this.runtime.logger.warn(
@@ -4568,7 +4613,19 @@ export class TerragonDaemon {
             };
             await this.runtime.serverPost(tailPayload, tail.token);
           } catch (error) {
-            // Deltas + meta events are ephemeral — log and drop on failure
+            if (!isNonRetryableAuthError(error)) {
+              this.deltaBuffer = [...tail.deltaEntries, ...this.deltaBuffer];
+              this.metaEventBuffer = [
+                ...tail.metaEventEntries,
+                ...this.metaEventBuffer,
+              ];
+            }
+            failedGroups.push({
+              threadId: tail.threadId,
+              threadChatId: tail.threadChatId,
+              messageCount: 0,
+              error,
+            });
             this.runtime.logger.warn("Tail flush failed", {
               threadId: tail.threadId,
               deltaCount: tail.deltas.length,
@@ -4754,6 +4811,8 @@ export class TerragonDaemon {
     threadChatId: string;
     codexPreviousResponseId?: string | null;
   }): Promise<void> {
+    let matchingDeltaEntries: typeof this.deltaBuffer = [];
+    let matchingMetaEventEntries: typeof this.metaEventBuffer = [];
     try {
       this.runtime.logger.info("Sending messages to API", {
         messageCount: messages.length,
@@ -4796,6 +4855,7 @@ export class TerragonDaemon {
       const remainingDeltas: typeof this.deltaBuffer = [];
       for (const d of this.deltaBuffer) {
         if (d.threadChatId === threadChatId) {
+          matchingDeltaEntries.push(d);
           matchingDeltas.push({
             messageId: d.messageId,
             partIndex: d.partIndex,
@@ -4818,6 +4878,7 @@ export class TerragonDaemon {
       const remainingMetaEvents: typeof this.metaEventBuffer = [];
       for (const entry of this.metaEventBuffer) {
         if (entry.threadChatId === threadChatId) {
+          matchingMetaEventEntries.push(entry);
           matchingMetaEvents.push(entry.metaEvent);
         } else {
           remainingMetaEvents.push(entry);
@@ -4861,6 +4922,13 @@ export class TerragonDaemon {
         error: formatError(error),
         messageCount: messages.length,
       });
+      if (!isNonRetryableAuthError(error)) {
+        this.deltaBuffer = [...matchingDeltaEntries, ...this.deltaBuffer];
+        this.metaEventBuffer = [
+          ...matchingMetaEventEntries,
+          ...this.metaEventBuffer,
+        ];
+      }
       // Re-throw the error so flushMessageBuffer can handle it
       throw error;
     }
