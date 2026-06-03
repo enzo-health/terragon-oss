@@ -467,7 +467,7 @@ function assertDaytonaSdkRuntimeModulesAvailable(): void {
   }
 
   if (typeof sdkEntryPoint !== "string") {
-    console.warn("[daytona] @daytonaio/sdk resolved to a non-path module id", {
+    console.debug("[daytona] @daytonaio/sdk resolved to a non-path module id", {
       type: getDaytonaCreateValueType(sdkEntryPoint),
       value: sdkEntryPoint,
     });

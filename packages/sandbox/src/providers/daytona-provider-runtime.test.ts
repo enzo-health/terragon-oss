@@ -71,7 +71,7 @@ describe("DaytonaProvider bundled runtime module resolution", () => {
 
   it("skips filesystem SDK dependency probing when require.resolve returns a bundled module id", async () => {
     vi.stubEnv("DAYTONA_API_KEY", "test-api-key");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
     runtimeRequireMock.resolve.mockReturnValue(889967);
     daytonaCreateMock.mockResolvedValue({
       id: "sandbox-123",
@@ -102,7 +102,7 @@ describe("DaytonaProvider bundled runtime module resolution", () => {
         apiKey: "test-api-key",
       });
       expect(daytonaCreateMock).toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(
+      expect(debugSpy).toHaveBeenCalledWith(
         "[daytona] @daytonaio/sdk resolved to a non-path module id",
         {
           type: "number",
@@ -110,7 +110,7 @@ describe("DaytonaProvider bundled runtime module resolution", () => {
         },
       );
     } finally {
-      warnSpy.mockRestore();
+      debugSpy.mockRestore();
     }
   });
 });
