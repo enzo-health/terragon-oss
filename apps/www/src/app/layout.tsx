@@ -9,6 +9,7 @@ import {
   Outfit,
   Merriweather,
   JetBrains_Mono,
+  Instrument_Serif,
 } from "next/font/google";
 import { ServerProviders } from "@/components/system/server-providers";
 import { KonamiVideo } from "@/components/konami-video";
@@ -98,6 +99,18 @@ const jetbrainsMono = JetBrains_Mono({
   preload: false,
 });
 
+// Brand display serif (Stack A). High-contrast editorial serif for the
+// wordmark + hero headings; UI/body stays Geist, code stays Geist Mono.
+// Instrument Serif ships a single 400 weight — display sizes don't need bold.
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  display: "swap",
+  variable: "--font-instrument-serif",
+  preload: true,
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -126,7 +139,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geist.variable} ${geistMono.variable} ${cormorant.variable} ${outfit.variable} ${merriweather.variable} ${jetbrainsMono.variable} font-sans antialiased`}
+        className={`${geist.variable} ${geistMono.variable} ${cormorant.variable} ${outfit.variable} ${merriweather.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} font-sans antialiased`}
       >
         <ServerProviders>
           <UserAtomsHydratorServer>

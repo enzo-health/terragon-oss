@@ -86,17 +86,15 @@
      paint isn't system-Roboto while the new fonts stream in. The
      --font-outfit / --font-merriweather / --font-jetbrains-mono CSS
      variables are produced by next/font/google in layout.tsx. */
-  --font-sans:
-    var(--font-geist, ui-sans-serif), var(--font-outfit, "Outfit"), system-ui,
-    sans-serif;
-  --font-serif: var(--font-merriweather, "Merriweather"), ui-serif, serif;
+  --font-sans: var(--font-geist, ui-sans-serif), system-ui, sans-serif;
+  --font-serif:
+    var(--font-instrument-serif, "Instrument Serif"), ui-serif, serif;
   --font-mono:
-    var(--font-jetbrains-mono, "JetBrains Mono"),
     var(--font-geist-mono, ui-monospace), SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
   --font-display:
-    var(--font-merriweather, "Merriweather"), "Tiempos Headline", "EB Garamond",
-    Garamond, "Times New Roman", serif;
+    var(--font-instrument-serif, "Instrument Serif"), "Tiempos Headline",
+    "EB Garamond", Garamond, "Times New Roman", serif;
 
   --radius: 0.5rem;
   --tracking-normal: 0rem;
