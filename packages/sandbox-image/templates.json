@@ -849,23 +849,23 @@
     "createdAt": "2026-06-01T22:55:19.010Z"
   },
   {
-    "name": "terry-vCPU-2-RAM-4GB-2026-06-03-20-14-57-61ispo",
+    "name": "terry-vCPU-2-RAM-4GB-2026-06-03-20-58-10-svqa7e",
     "dockerfileHash": "d9e5e03d52fc9204cf69e4af6d4034c8e449181db2df9282041979c0f3b22175",
     "cpuCount": 2,
     "memoryGB": 4,
     "diskGB": 10,
     "provider": "daytona",
     "size": "small",
-    "createdAt": "2026-06-03T20:17:25.779Z"
+    "createdAt": "2026-06-03T20:58:16.013Z"
   },
   {
-    "name": "terry-vCPU-4-RAM-8GB-2026-06-03-20-18-35-191wy0",
+    "name": "terry-vCPU-4-RAM-8GB-2026-06-03-20-58-37-mdi1vf",
     "dockerfileHash": "d9e5e03d52fc9204cf69e4af6d4034c8e449181db2df9282041979c0f3b22175",
     "cpuCount": 4,
     "memoryGB": 8,
     "diskGB": 10,
     "provider": "daytona",
     "size": "large",
-    "createdAt": "2026-06-03T20:18:38.562Z"
+    "createdAt": "2026-06-03T20:58:39.694Z"
   }
 ]
