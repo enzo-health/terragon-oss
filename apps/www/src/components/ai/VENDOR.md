@@ -69,9 +69,8 @@ No other edits — no token hardcoding, no logic changes.
 
 Audit of the semantic Tailwind tokens the vendored files reference, against
 the registrations in `apps/www/src/app/globals.css` (`@theme inline`, ~line 291).
-Most already resolve. The aliases below are **not yet added** — this is the
-theming-prep mapping; the `@theme inline` edits land with the chat re-skin
-(globals.css is outside this prep task's file partition).
+All required aliases now resolve: the `surface` / `surface-elevated` / `inflight`
+mappings below are registered in `globals.css` alongside `--color-surface-soft`.
 
 **Already resolve (no action — registered in `@theme inline`):**
 
@@ -85,9 +84,9 @@ theming-prep mapping; the `@theme inline` edits land with the chat re-skin
 | `bg/text-accent`                             | `--color-accent`                                                |
 | `text-success`, `text-warning`               | `--color-success`, `--color-warning` (canonical 11-token block) |
 
-**Need a one-line alias (NOT registered today) — add to `@theme inline`:**
+**Registered in `@theme inline` for the vendored leaves:**
 
-| nauval token                                               | suggested alias                           | rationale                                                                                              |
+| nauval token                                               | alias                                     | rationale                                                                                              |
 | ---------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `bg/border-surface`                                        | `--color-surface: var(--card)`            | nauval's base card surface = Terragon cream card                                                       |
 | `bg-surface-elevated`                                      | `--color-surface-elevated: var(--raised)` | raised ladder stop (matches `--color-surface-soft: var(--raised)` already present)                     |

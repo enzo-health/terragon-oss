@@ -420,6 +420,13 @@
      tokens — these stub the utilities to the correct ladder stops. */
   --color-surface-cream-strong: var(--sunken);
   --color-surface-soft: var(--raised);
+  /* Vendored components/ai/* leaves use bg-surface / bg-surface-elevated and
+     ring/border-inflight. Tailwind v4 silently emits nothing for unregistered
+     tokens, so without these the leaves fall back to a transparent surface and
+     a currentColor in-flight border. Mappings per components/ai/VENDOR.md. */
+  --color-surface: var(--card);
+  --color-surface-elevated: var(--raised);
+  --color-inflight: var(--info);
   /* Disabled fill for buttons / inputs / chips. The button base class
      references `disabled:bg-disabled` — without this registration that
      utility silently emits nothing and the variant's bg leaks through,
