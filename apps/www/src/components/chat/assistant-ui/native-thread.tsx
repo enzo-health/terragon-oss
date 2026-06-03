@@ -125,7 +125,7 @@ const NativeToolCall: ToolCallMessagePartComponent = ({
         <ToolName>{name}</ToolName>
         {preview ? <ToolLabel>{preview}</ToolLabel> : null}
       </ToolTrigger>
-      <ToolContent>
+      <ToolContent keepMounted>
         {stream.text ? (
           <ToolArgument
             value={stream.text}
