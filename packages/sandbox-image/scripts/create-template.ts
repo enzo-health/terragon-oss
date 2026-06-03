@@ -147,8 +147,10 @@ function runCommandCapture(command: string): Promise<string> {
  * while prod remained broken.
  *
  * Fix: read the CLI's currently-active org and fail loudly if it doesn't
- * match the ID in `DAYTONA_PROD_ORG_ID`. The intent is to make it impossible
- * to publish a Daytona snapshot to the wrong namespace.
+ * match the ID in `DAYTONA_PROD_ORG_ID`. When the CLI is authenticated with
+ * an API key, Daytona hides org commands, so also require a SHA-256 hash of the
+ * prod key. The intent is to make it impossible to publish a Daytona snapshot
+ * to the wrong namespace.
  *
  * The env var is required only for `create-template.ts`; other tests and
  * scripts don't set it and aren't affected.
@@ -172,8 +174,9 @@ async function assertActiveDaytonaOrg(): Promise<void> {
         "organization commands are not available when using API key authentication",
       )
     ) {
+      assertDaytonaApiKeyMatchesProdHash();
       console.log(
-        "Verified Daytona CLI is using API key authentication; organization selection is scoped by the key.",
+        "Verified Daytona CLI is using API key authentication with the expected prod key.",
       );
       return;
     }
@@ -200,6 +203,29 @@ async function assertActiveDaytonaOrg(): Promise<void> {
   console.log(
     `Verified Daytona CLI is in the prod org "${activeName}" (${activeId}).`,
   );
+}
+
+function assertDaytonaApiKeyMatchesProdHash(): void {
+  const expectedHash = process.env.DAYTONA_PROD_API_KEY_SHA256?.trim();
+  if (!expectedHash) {
+    throw new Error(
+      "DAYTONA_PROD_API_KEY_SHA256 is not set. API-key auth cannot expose " +
+        "the active Daytona org, so export the SHA-256 hash of prod's " +
+        "DAYTONA_API_KEY before running create-template.",
+    );
+  }
+  const apiKey = process.env.DAYTONA_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("DAYTONA_API_KEY is not set");
+  }
+  const actualHash = crypto.createHash("sha256").update(apiKey).digest("hex");
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      "Refusing to build: DAYTONA_API_KEY does not match " +
+        "DAYTONA_PROD_API_KEY_SHA256. Pull/export the production Daytona key " +
+        "before publishing snapshots.",
+    );
+  }
 }
 
 async function verifyDaytonaSnapshotRegistered(name: string): Promise<void> {
