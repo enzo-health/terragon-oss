@@ -435,7 +435,7 @@ describe("mapDaemonDeltaToAgui", () => {
     });
   });
 
-  it("maps tool-output delta to TOOL_CALL_CHUNK keyed on the owning tool id", () => {
+  it("maps tool-output delta to TOOL_CALL_RESULT keyed on the owning tool id", () => {
     const result = mapDaemonDeltaToAgui(
       {
         messageId: "cmd-1",
@@ -450,11 +450,14 @@ describe("mapDaemonDeltaToAgui", () => {
     );
 
     expect(result).toMatchObject({
-      type: EventType.TOOL_CALL_CHUNK,
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "cmd-1",
       toolCallId: "cmd-1",
-      delta: "$ npm test\nPASS\n",
+      content: "$ npm test\nPASS\n",
       timestamp: 1_700_000_000_000,
     });
+    // role omitted so isError stays undefined until the terminal tool_result.
+    expect(result).not.toHaveProperty("role");
   });
 
   it("falls back toolCallId to messageId when omitted on a tool-output delta", () => {
@@ -466,8 +469,8 @@ describe("mapDaemonDeltaToAgui", () => {
       text: "Analyzing... (step 2/5)",
     });
 
-    expect(result.type).toBe(EventType.TOOL_CALL_CHUNK);
-    expect(result).toMatchObject({ toolCallId: "mcp-9" });
+    expect(result.type).toBe(EventType.TOOL_CALL_RESULT);
+    expect(result).toMatchObject({ toolCallId: "mcp-9", messageId: "mcp-9" });
   });
 });
 

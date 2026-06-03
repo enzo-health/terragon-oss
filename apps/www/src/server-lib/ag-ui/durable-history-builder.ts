@@ -361,13 +361,28 @@ function addHistoryToolResult(
       ? event.content
       : JSON.stringify(event.content);
   const failed = isFailedToolResultEvent(event);
-  state.items.push({
+  const toolResult: DurableAgUiHistoryItem = {
     id: event.messageId,
     role: "tool",
     toolCallId: event.toolCallId,
     content: content ?? "",
     ...(failed ? { error: content ?? "Tool call failed" } : {}),
-  });
+  };
+  // Live command output (Codex stdout / MCP progress) arrives as repeated
+  // cumulative TOOL_CALL_RESULT events for one tool, capped by the terminal
+  // result. Collapse them to a single history row (last wins) so resume history
+  // doesn't grow a tool-result item per output chunk.
+  const existingIndex = state.items.findIndex(
+    (item) =>
+      "role" in item &&
+      item.role === "tool" &&
+      item.toolCallId === event.toolCallId,
+  );
+  if (existingIndex >= 0) {
+    state.items[existingIndex] = toolResult;
+  } else {
+    state.items.push(toolResult);
+  }
   state.unresolvedToolCallIds.delete(event.toolCallId);
   return true;
 }

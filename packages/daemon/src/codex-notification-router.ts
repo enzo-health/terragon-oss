@@ -161,11 +161,12 @@ export function routeCodexNotification({
   }
 
   // commandExecution/outputDelta carries live command output. Stream it as a
-  // "tool-output" delta keyed on the command item id so the client appends each
-  // chunk INTO the owning Bash tool card (via AG-UI TOOL_CALL_CHUNK) rather than
-  // rendering it as a standalone assistant-text blob beside the card. The
-  // command's full output still lands in the card via the `command_execution`
-  // completed -> tool_result path; the live chunks just arrive first.
+  // "tool-output" delta keyed on the command item id so the client renders the
+  // output INSIDE the owning Bash tool card's result channel (via AG-UI
+  // TOOL_CALL_RESULT) rather than as a standalone assistant-text blob beside the
+  // card. The command's full output also lands via the `command_execution`
+  // completed -> tool_result path; the live deltas (cumulative aggregated_output)
+  // just arrive first and are superseded by the terminal result.
   if (
     threadEvent.type === "item.updated" &&
     method === "item/commandExecution/outputDelta"

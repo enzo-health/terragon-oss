@@ -736,7 +736,7 @@ describe("ag-ui-publisher", () => {
     ]);
   });
 
-  it("daemonDeltasToAgUiRows: tool-output deltas become bare TOOL_CALL_CHUNK rows with no synthetic START", () => {
+  it("daemonDeltasToAgUiRows: tool-output deltas become bare TOOL_CALL_RESULT rows with no synthetic START", () => {
     const runId = "run-tool-output";
     const rows = daemonDeltasToAgUiRows({
       runId,
@@ -762,11 +762,13 @@ describe("ag-ui-publisher", () => {
       ],
     });
 
-    // No TEXT/REASONING START is synthesized — the chunk streams into the
-    // already-open tool card. Both chunks map to TOOL_CALL_CHUNK rows.
+    // No TEXT/REASONING START is synthesized — the output streams into the
+    // already-open tool card's result channel. Both chunks map to
+    // TOOL_CALL_RESULT rows (the daemon sends cumulative output; the aggregator
+    // replaces `result` each time).
     expect(rows.map((r) => r.event.type)).toEqual([
-      EventType.TOOL_CALL_CHUNK,
-      EventType.TOOL_CALL_CHUNK,
+      EventType.TOOL_CALL_RESULT,
+      EventType.TOOL_CALL_RESULT,
     ]);
     expect(rows.map((r) => r.eventId)).toEqual([
       `delta:${runId}:cmd-1:0:tool-output:0`,
@@ -774,7 +776,7 @@ describe("ag-ui-publisher", () => {
     ]);
     expect(rows[0]?.event).toMatchObject({
       toolCallId: "cmd-1",
-      delta: "$ npm test\n",
+      content: "$ npm test\n",
     });
   });
 

@@ -442,8 +442,9 @@ export type DaemonDelta = {
   /**
    * For `kind: "tool-output"` only: the id of the tool call this output belongs
    * to (the Codex command-execution / MCP item id). Lets the client stream the
-   * chunk into the owning tool card via AG-UI `TOOL_CALL_CHUNK` rather than as a
-   * standalone assistant-text blob. Ignored for `text` / `thinking`.
+   * output into the owning tool card's result channel via AG-UI
+   * `TOOL_CALL_RESULT` rather than as a standalone assistant-text blob. Ignored
+   * for `text` / `thinking`.
    */
   toolCallId?: string;
   /**
