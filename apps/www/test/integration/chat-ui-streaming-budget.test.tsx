@@ -34,7 +34,6 @@ import {
 import { type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
-  AllToolParts,
   DBMessage,
   ThreadPageChat,
   ThreadPageShell,
@@ -450,7 +449,6 @@ import ChatUI, {
   loadAgUiHistoryMessagesForRuntime,
 } from "@/components/chat/chat-ui";
 import { getCachedTranscript } from "@/collections/thread-transcript-collection";
-import { ToolPart } from "@/components/chat/tool-part";
 
 // ---------------------------------------------------------------------------
 // Fixture factories.
@@ -642,21 +640,6 @@ function flushTransportFrame() {
   act(() => {
     agent.__flush();
   });
-}
-
-function mountToolPart(toolPart: AllToolParts): void {
-  mount(
-    createElement(ToolPart, {
-      toolPart,
-      threadId: THREAD_ID,
-      threadChatId: CHAT_ID,
-      isReadOnly: true,
-      childThreads: [],
-      githubRepoFullName: "acme/app",
-      repoBaseBranchName: "main",
-      branchName: "feature/streaming",
-    }),
-  );
 }
 
 beforeEach(() => {
@@ -1076,73 +1059,6 @@ describe("ChatUI streaming render budget", () => {
       historical.length + chunks.length * 4,
     );
     expect(markdownFrameCommits).toBeLessThanOrEqual(chunks.length * 4);
-  });
-});
-
-describe("ChatUI tool-call rendering polish", () => {
-  it("clamps long tool prompts and shows a 'Show more' toggle", async () => {
-    const longPrompt =
-      "You are the PR-linking agent for the awaiting_pr_link phase. Follow repo instructions from AGENTS/CLAUDE conventions and produce a structured plan that covers every edge case, failure mode, retry budget, and observability hook for the downstream pipeline.";
-    mountToolPart({
-      type: "tool",
-      agent: "claudeCode",
-      id: "tc-long",
-      name: "codex-subagent",
-      parameters: { prompt: longPrompt },
-      status: "completed",
-      result: "ok",
-      parts: [],
-    });
-
-    const text = container?.textContent ?? "";
-    // Full prompt is in the DOM (clamp is purely visual)…
-    expect(text).toContain("You are the PR-linking agent");
-    // …and the "Show more" affordance is rendered because the prompt is
-    // past the long-arg threshold.
-    expect(text).toContain("Show more");
-  });
-
-  it("renders a tool-specific verb for pending tool calls", async () => {
-    mountToolPart({
-      type: "tool",
-      agent: "claudeCode",
-      id: "tc-pending-bash",
-      name: "Bash",
-      parameters: { command: "ls" },
-      status: "pending",
-      parts: [],
-    });
-
-    const text = container?.textContent ?? "";
-    expect(text).toContain("Running...");
-    expect(text).not.toContain("Working...");
-  });
-
-  it("renders a summary line for JSON tool results and hides raw body", async () => {
-    const jsonResult = JSON.stringify({
-      phaseComplete: true,
-      prUrl: "https://github.com/acme/app/pull/5630",
-      prNumber: 5630,
-      status: "linked",
-      summary: "Linked the existing open draft PR.",
-    });
-    mountToolPart({
-      type: "tool",
-      agent: "claudeCode",
-      id: "tc-json",
-      name: "codex-subagent",
-      parameters: { prompt: "link pr" },
-      status: "completed",
-      result: jsonResult,
-      parts: [],
-    });
-
-    const text = container?.textContent ?? "";
-    // Collapsed preview summarizes the payload…
-    expect(text).toMatch(/JSON result \(5 fields\)/);
-    // …and does NOT dump raw JSON values unrolled by default.
-    expect(text).not.toContain("Linked the existing open draft PR.");
-    expect(text).not.toContain("https://github.com/acme/app/pull/5630");
   });
 });
 

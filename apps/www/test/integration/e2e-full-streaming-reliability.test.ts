@@ -14,11 +14,7 @@
 
 import type { DBMessage, DBTerminalPart } from "@terragon/shared";
 import { describe, expect, it } from "vitest";
-import {
-  queryTerminalOutput,
-  renderMessagePart,
-  renderTerminalPart,
-} from "./chat-page";
+import { queryTerminalChunks, renderMessagePart } from "./chat-page";
 
 type DBAgentMessageForTest = Extract<DBMessage, { type: "agent" }>;
 
@@ -145,11 +141,10 @@ async function runFullReliabilityTest(params: {
           ],
         };
 
-        const html = renderTerminalPart(terminalPart);
-        const query = queryTerminalOutput(html);
+        const query = queryTerminalChunks(terminalPart);
 
         if (!query.found) {
-          renderErrors.push("Terminal output not rendered");
+          renderErrors.push("Terminal output not projected");
         }
         if (!query.kinds.has("stdout")) {
           renderErrors.push("Terminal stdout kind not found");

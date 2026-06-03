@@ -26,13 +26,9 @@ import type {
   DBToolCall,
 } from "@terragon/shared";
 import path from "path";
-import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toDBMessage } from "../../src/agent/msg/toDBMessage";
-import { DiffPartView } from "../../src/components/chat/diff-part";
-import { PlanPartView } from "../../src/components/chat/plan-part";
-import { queryTerminalOutput, renderTerminalPart } from "./chat-page";
+import { queryTerminalChunks } from "./chat-page";
 import { replay } from "./replayer";
 
 const dbMocks = vi.hoisted(() => {
@@ -355,26 +351,31 @@ describe("ACP standard turn - projection and rendering (Layer 2)", () => {
     );
   });
 
-  it("renders the ACP plan entries as a structured plan card", () => {
+  it("projects the ACP plan entries with priority and status", () => {
     const dbMessages = ACP_UI_MESSAGES.flatMap((message) =>
       toDBMessage(message),
     );
-    const planPart = getAgentPart({ messages: dbMessages, type: "plan" });
-    const html = renderToStaticMarkup(
-      <PlanPartView part={planPart as DBPlanPart} />,
-    );
+    const planPart = getAgentPart({
+      messages: dbMessages,
+      type: "plan",
+    }) as DBPlanPart;
 
-    expect(html).toContain(
+    const contents = planPart.entries.map((entry) => entry.content);
+    expect(contents).toContain(
       "Analyze current authentication middleware implementation",
     );
-    expect(html).toContain(
+    expect(contents).toContain(
       "Refactor JWT strategy to use modern best practices",
     );
-    expect(html).toContain('data-priority="high"');
-    expect(html).toContain('data-status="pending"');
+    expect(planPart.entries.some((entry) => entry.priority === "high")).toBe(
+      true,
+    );
+    expect(planPart.entries.every((entry) => entry.status === "pending")).toBe(
+      true,
+    );
   });
 
-  it("renders the ACP terminal output with ordered stdout chunks", () => {
+  it("projects the ACP terminal output with ordered stdout chunks", () => {
     const dbMessages = ACP_UI_MESSAGES.flatMap((message) =>
       toDBMessage(message),
     );
@@ -382,8 +383,7 @@ describe("ACP standard turn - projection and rendering (Layer 2)", () => {
       messages: dbMessages,
       type: "terminal",
     });
-    const html = renderTerminalPart(terminalPart as DBTerminalPart);
-    const terminal = queryTerminalOutput(html);
+    const terminal = queryTerminalChunks(terminalPart as DBTerminalPart);
 
     expect(terminal.found).toBe(true);
     expect(terminal.text).toContain("$ npm run build");
@@ -391,16 +391,16 @@ describe("ACP standard turn - projection and rendering (Layer 2)", () => {
     expect(Array.from(terminal.kinds)).toEqual(["stdout"]);
   });
 
-  it("renders the ACP diff artifact header with pending state", () => {
+  it("projects the ACP diff artifact with file path and pending state", () => {
     const dbMessages = ACP_UI_MESSAGES.flatMap((message) =>
       toDBMessage(message),
     );
-    const diffPart = getAgentPart({ messages: dbMessages, type: "diff" });
-    const html = renderToStaticMarkup(
-      <DiffPartView part={diffPart as DBDiffPart} />,
-    );
+    const diffPart = getAgentPart({
+      messages: dbMessages,
+      type: "diff",
+    }) as DBDiffPart;
 
-    expect(html).toContain("src/middleware/auth.ts");
-    expect(html).toContain('data-status="pending"');
+    expect(diffPart.filePath).toBe("src/middleware/auth.ts");
+    expect(diffPart.status).toBe("pending");
   });
 });

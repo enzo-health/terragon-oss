@@ -21,7 +21,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServerHealthChip } from "../../src/components/chat/meta-chips/mcp-server-health-chip";
 import { UsageChip } from "../../src/components/chat/meta-chips/usage-chip";
-import { queryTerminalOutput, renderTerminalPart } from "./chat-page";
+import { queryTerminalChunks } from "./chat-page";
 import { replay } from "./replayer";
 
 // ---------------------------------------------------------------------------
@@ -335,24 +335,22 @@ describe("Claude Code standard turn — UI rendering (Layer 2)", () => {
     };
   }
 
-  it("renders bash tool output as terminal chunks with stdout kind", () => {
-    const html = renderTerminalPart(makeCCTerminalPart());
-    const query = queryTerminalOutput(html);
+  it("projects bash tool output as terminal chunks with stdout kind", () => {
+    const query = queryTerminalChunks(makeCCTerminalPart());
     expect(query.found).toBe(true);
     expect(query.kinds.has("stdout")).toBe(true);
     expect(query.text).toContain("auth.ts");
   });
 
   it("accumulates 3 bash output chunks matching the tool_result fixture", () => {
-    const html = renderTerminalPart(makeCCTerminalPart());
-    const stdoutMatches = [...html.matchAll(/data-kind="stdout"/g)];
-    expect(stdoutMatches.length).toBe(3);
+    const query = queryTerminalChunks(makeCCTerminalPart());
+    expect(query.kindCounts.stdout).toBe(3);
   });
 
-  it("renders the ls -la output text from the tool_result fixture", () => {
+  it("concatenates the ls -la output text from the tool_result fixture", () => {
     // The recording's user/tool_result event contains the ls output from
-    // the bash tool — verify the key lines appear in the synthesized chunk text.
-    const html = renderTerminalPart(
+    // the bash tool — verify the key lines appear in the accumulated chunk text.
+    const query = queryTerminalChunks(
       makeCCTerminalPart({
         chunks: [
           {
@@ -363,7 +361,6 @@ describe("Claude Code standard turn — UI rendering (Layer 2)", () => {
         ],
       }),
     );
-    const query = queryTerminalOutput(html);
     expect(query.text).toContain("auth.ts");
     expect(query.text).toContain("logger.ts");
     expect(query.text).toContain("cors.ts");

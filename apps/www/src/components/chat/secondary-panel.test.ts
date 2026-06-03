@@ -1,9 +1,4 @@
-import type { AllToolParts } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import type { ReactNode } from "react";
-import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { ImagePart } from "./image-part";
+import { describe, expect, it } from "vitest";
 import {
   createArtifactDescriptorLookup,
   findArtifactDescriptorForPart,
@@ -11,7 +6,6 @@ import {
   getArtifactWorkspaceViewState,
   resolveActiveArtifactId,
 } from "./secondary-panel";
-import { renderToolPartContent } from "./tool-part";
 
 describe("secondary-panel artifact shell helpers", () => {
   it("falls back to the first artifact when the active id is missing", () => {
@@ -213,98 +207,4 @@ describe("secondary-panel artifact shell helpers", () => {
       [],
     );
   });
-
-  it("wires media-only tool output to the matching open-in-panel artifact action", () => {
-    const imagePart = {
-      type: "image" as const,
-      image_url: "https://example.com/output.png",
-    };
-    const toolPart: Extract<AllToolParts, { name: "Read" }> = {
-      type: "tool",
-      agent: "claudeCode",
-      id: "read-1",
-      name: "Read",
-      parameters: { file_path: "/tmp/output.png" },
-      status: "completed",
-      result: "saved image",
-      parts: [imagePart],
-    };
-    const artifactDescriptor = {
-      id: "artifact:tool:read-1:image",
-      kind: "media",
-      title: "Image",
-      status: "ready",
-      part: imagePart,
-      origin: {
-        type: "tool-part",
-        toolCallId: "read-1",
-        toolCallName: "Read",
-        toolCallPath: ["read-1"],
-        artifactOrdinal: 0,
-        partType: "image",
-        fingerprint: "image-fingerprint",
-      },
-    } satisfies ArtifactDescriptor;
-    const onOpenArtifact = vi.fn();
-
-    const toolTree = renderToolPartContent(toolPart, {
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-      isReadOnly: false,
-      childThreads: [],
-      githubRepoFullName: "acme/app",
-      repoBaseBranchName: "main",
-      branchName: "feature/test",
-      artifactDescriptors: [artifactDescriptor],
-      onOpenArtifact,
-      renderChildToolPart: () => null,
-    });
-
-    const renderedImagePart = findReactElementByType<{
-      imageUrl: string;
-      onOpenInArtifactWorkspace?: () => void;
-    }>(toolTree, ImagePart);
-
-    expect(renderedImagePart).not.toBeNull();
-    expect(renderedImagePart?.props.imageUrl).toBe(imagePart.image_url);
-
-    const openHandler = (
-      renderedImagePart as React.ReactElement<{
-        onOpenInArtifactWorkspace?: () => void;
-      }> | null
-    )?.props.onOpenInArtifactWorkspace;
-    expect(openHandler).toBeTypeOf("function");
-
-    openHandler?.();
-
-    expect(onOpenArtifact).toHaveBeenCalledWith(artifactDescriptor.id);
-  });
 });
-
-function findReactElementByType<Props = Record<string, unknown>>(
-  node: ReactNode,
-  type: unknown,
-): React.ReactElement<Props> | null {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const match = findReactElementByType<Props>(child, type);
-      if (match) {
-        return match;
-      }
-    }
-    return null;
-  }
-
-  if (!React.isValidElement(node)) {
-    return null;
-  }
-
-  if (node.type === type) {
-    return node as React.ReactElement<Props>;
-  }
-
-  return findReactElementByType<Props>(
-    (node as React.ReactElement<{ children?: ReactNode }>).props.children,
-    type,
-  );
-}

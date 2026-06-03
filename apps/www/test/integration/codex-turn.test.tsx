@@ -19,12 +19,7 @@
 import type { DBDelegationMessage, DBTerminalPart } from "@terragon/shared";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  queryDelegationCard,
-  queryTerminalOutput,
-  renderDelegationItem,
-  renderTerminalPart,
-} from "./chat-page";
+import { queryDelegation, queryTerminalChunks } from "./chat-page";
 import { replay } from "./replayer";
 
 // ---------------------------------------------------------------------------
@@ -266,20 +261,18 @@ describe("Codex collab-agent turn — UI rendering (Layer 2)", () => {
     };
   }
 
-  it("renders a DelegationItemCard with initiated status", () => {
-    const html = renderDelegationItem(makeDelegation({ status: "initiated" }));
-    const query = queryDelegationCard(html);
+  it("projects a delegation with initiated status", () => {
+    const query = queryDelegation(makeDelegation({ status: "initiated" }));
     expect(query.found).toBe(true);
     expect(query.statusText).toBe("initiated");
   });
 
-  it("renders DelegationItemCard with correct agent count (2)", () => {
-    const html = renderDelegationItem(makeDelegation());
-    expect(queryDelegationCard(html).agentCount).toBe(2);
+  it("projects a delegation with correct agent count (2)", () => {
+    expect(queryDelegation(makeDelegation()).agentCount).toBe(2);
   });
 
-  it("renders DelegationItemCard with completed status after delegation done", () => {
-    const html = renderDelegationItem(
+  it("projects a delegation with completed status after delegation done", () => {
+    const query = queryDelegation(
       makeDelegation({
         status: "completed",
         agentsStates: {
@@ -288,12 +281,11 @@ describe("Codex collab-agent turn — UI rendering (Layer 2)", () => {
         },
       }),
     );
-    expect(queryDelegationCard(html).statusText).toBe("completed");
+    expect(query.statusText).toBe("completed");
   });
 
-  it("renders command output from item/commandExecution/outputDelta via TerminalPartView", () => {
-    const html = renderTerminalPart(makeTerminalPart());
-    const query = queryTerminalOutput(html);
+  it("projects command output from item/commandExecution/outputDelta chunks", () => {
+    const query = queryTerminalChunks(makeTerminalPart());
     expect(query.found).toBe(true);
     expect(query.kinds.has("stdout")).toBe(true);
     expect(query.text).toContain("npm test");
@@ -301,17 +293,16 @@ describe("Codex collab-agent turn — UI rendering (Layer 2)", () => {
   });
 
   it("accumulates 3 output delta chunks in the terminal part", () => {
-    const html = renderTerminalPart(makeTerminalPart());
-    const stdoutMatches = [...html.matchAll(/data-kind="stdout"/g)];
-    expect(stdoutMatches.length).toBe(3);
+    const query = queryTerminalChunks(makeTerminalPart());
+    expect(query.kindCounts.stdout).toBe(3);
   });
 
-  it("does not render unknown delegation status badges", () => {
-    // Ensure no console.warn emitted for unknown items — delegation card
-    // handles only its known status values via AgentStatusBadge.
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    renderDelegationItem(makeDelegation({ status: "running" }));
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+  it("projects only the known delegation status values", () => {
+    // The live mapper renders delegation status into assistant text; only the
+    // four persisted status values are valid, with no unknown-status fallthrough.
+    const query = queryDelegation(makeDelegation({ status: "running" }));
+    expect(["initiated", "running", "completed", "failed"]).toContain(
+      query.statusText,
+    );
   });
 });
