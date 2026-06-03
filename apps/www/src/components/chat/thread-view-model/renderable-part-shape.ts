@@ -24,14 +24,6 @@ export function getStringField(value: unknown, field: string): string | null {
     : null;
 }
 
-export function getJsonPointerPathField(value: unknown): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = Reflect.get(value, "path");
-  return typeof candidate === "string" ? candidate : null;
-}
-
 export function getArrayField(value: unknown, field: string): unknown[] | null {
   if (!value || typeof value !== "object") {
     return null;
