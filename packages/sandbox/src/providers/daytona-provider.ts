@@ -230,29 +230,35 @@ async function getDaytonaVolumeForMount(
     daytonaVolume.volumeName,
     "Daytona volume name",
   );
+
+  let existingVolume: DaytonaVolumeForMount | undefined;
   try {
     const volumes = await daytona.volume.list();
     const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
     if (listedVolume) {
       return listedVolume;
     }
+    existingVolume = findDaytonaVolumeByName(volumes, volumeName);
   } catch {
     // Fall through to get-or-create so a list outage does not disable volume use.
   }
-  const volume = await daytona.volume.get(volumeName, true);
-  if (isDaytonaVolumeMountableId(volume.id)) {
-    return volume;
-  }
+
+  const ensuredVolume = await daytona.volume.get(volumeName, true);
   try {
-    const volumes = await daytona.volume.list();
-    const listedVolume = findMountableDaytonaVolumeByName(volumes, volumeName);
-    if (listedVolume) {
-      return listedVolume;
+    const refreshedVolumes = await daytona.volume.list();
+    const refreshedVolume = findMountableDaytonaVolumeByName(
+      refreshedVolumes,
+      volumeName,
+    );
+    if (refreshedVolume) {
+      return refreshedVolume;
     }
+    existingVolume = findDaytonaVolumeByName(refreshedVolumes, volumeName);
   } catch {
     // The final volume id validation reports the unmountable id from get-or-create.
   }
-  return volume;
+
+  return existingVolume ?? ensuredVolume;
 }
 
 function findMountableDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
@@ -263,6 +269,15 @@ function findMountableDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
     (volume) =>
       normalizeOptionalDaytonaString(volume.name) === volumeName &&
       isDaytonaVolumeMountableId(volume.id),
+  );
+}
+
+function findDaytonaVolumeByName<T extends DaytonaVolumeForMount>(
+  volumes: T[],
+  volumeName: string,
+): T | undefined {
+  return volumes.find(
+    (volume) => normalizeOptionalDaytonaString(volume.name) === volumeName,
   );
 }
 
