@@ -50,19 +50,18 @@ export type UIWebSearchResultPart = DBWebSearchResultPart;
 
 /**
  * Canonical full delegation payload — matches `DBDelegationMessage` from the
- * wire. The registry's `delegation` entry narrows to this shape so its prop
- * builder is sound (no unsafe cast at the dispatch boundary).
+ * wire. Consumers narrow to this shape so prop building is sound (no unsafe
+ * cast when distinguishing it from the stub).
  */
 export type UIDelegationPart = DBDelegationMessage;
 
 /**
  * Minimal stub fallback for a delegation that hasn't yet been resolved to a
  * full `DBDelegationMessage`. Carries a distinct `type: "delegation-stub"`
- * discriminator so the registry dispatcher and the message-part renderer can
- * branch on it explicitly rather than via `"delegationId" in part`. Producers
- * that previously emitted `{ type: "delegation", agentName, status, message }`
- * partials should emit `type: "delegation-stub"` so the union narrows
- * cleanly at the dispatch boundary.
+ * discriminator so consumers can branch on it explicitly rather than via
+ * `"delegationId" in part`. Producers that previously emitted
+ * `{ type: "delegation", agentName, status, message }` partials should emit
+ * `type: "delegation-stub"` so the union narrows cleanly.
  */
 export type UIDelegationStubPart = {
   type: "delegation-stub";
