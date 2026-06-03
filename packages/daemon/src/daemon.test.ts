@@ -11,7 +11,11 @@ import {
 } from "vitest";
 import { createCodexParserState } from "./codex";
 import type { ThreadMetaEvent } from "./codex-app-server";
-import { parseDaemonAcpSsePayload, TerragonDaemon } from "./daemon";
+import {
+  isRecoverableAcpPromptPostFailure,
+  parseDaemonAcpSsePayload,
+  TerragonDaemon,
+} from "./daemon";
 import {
   DaemonRuntime,
   DaemonServerPostError,
@@ -4315,5 +4319,39 @@ describe("ACP SSE terminal validation", () => {
       activePromptRequestId: 7,
     });
     expect(forged).toEqual([]);
+  });
+
+  it("classifies only dead ACP prompt subprocess POST failures as recoverable", () => {
+    expect(
+      isRecoverableAcpPromptPostFailure(
+        new Error(
+          'ACP POST failed (502 Bad Gateway) {"type":"urn:sandbox-agent:error:stream_error","title":"Stream Error","status":502,"detail":"stream error: failed writing to agent stdin: Broken pipe (os error 32)"}',
+        ),
+      ),
+    ).toBe(true);
+
+    expect(
+      isRecoverableAcpPromptPostFailure(
+        new Error(
+          'ACP POST failed (502 Bad Gateway) {"type":"urn:sandbox-agent:error:stream_error","detail":"stream error: failed writing to agent stdin"}',
+        ),
+      ),
+    ).toBe(true);
+
+    expect(
+      isRecoverableAcpPromptPostFailure(
+        new Error(
+          'ACP POST failed (400 Bad Request) {"error":"invalid session"}',
+        ),
+      ),
+    ).toBe(false);
+
+    expect(
+      isRecoverableAcpPromptPostFailure(
+        new Error(
+          'ACP POST failed (500 Internal Server Error) {"error":"Internal error"}',
+        ),
+      ),
+    ).toBe(false);
   });
 });
