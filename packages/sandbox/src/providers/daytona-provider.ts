@@ -457,13 +457,21 @@ function getDaytonaOrThrow(): Daytona {
 }
 
 function assertDaytonaSdkRuntimeModulesAvailable(): void {
-  let sdkEntryPoint: string;
+  let sdkEntryPoint: unknown;
   try {
     sdkEntryPoint = runtimeRequire.resolve("@daytonaio/sdk");
   } catch (error) {
     throw new Error(
       `[daytona] @daytonaio/sdk is not resolvable in this runtime: ${formatError(error)}`,
     );
+  }
+
+  if (typeof sdkEntryPoint !== "string") {
+    console.debug("[daytona] @daytonaio/sdk resolved to a non-path module id", {
+      type: getDaytonaCreateValueType(sdkEntryPoint),
+      value: sdkEntryPoint,
+    });
+    return;
   }
 
   if (path.isAbsolute(sdkEntryPoint)) {

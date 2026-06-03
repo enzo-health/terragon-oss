@@ -289,8 +289,7 @@ describe("runtime", () => {
       env: {},
     });
 
-    // Wait for process to complete
-    await sleep(200);
+    await waitForMockCalls(onCloseMock);
 
     // onClose should be called exactly once, not multiple times
     // (even though both 'exit' and 'close' events may fire)
@@ -312,8 +311,7 @@ describe("runtime", () => {
       env: {},
     });
 
-    // Wait for process to complete
-    await sleep(200);
+    await waitForMockCalls(onCloseMock);
 
     // onClose should be called exactly once
     expect(onCloseMock).toHaveBeenCalledTimes(1);
