@@ -2,6 +2,7 @@ import {
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
   DAEMON_EVENT_CAPABILITIES_HEADER,
 } from "@terragon/daemon/shared";
+import { EventType } from "@ag-ui/core";
 import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
@@ -115,7 +116,9 @@ const agUiPublisherMocks = vi.hoisted(() => ({
         timestamp: new Date(),
       })),
   ),
-  daemonDeltasToAgUiRows: vi.fn(() => []),
+  daemonDeltasToAgUiRows: vi.fn(
+    (): Array<{ event: unknown; eventId: string; timestamp: Date }> => [],
+  ),
   dbAgentMessagePartsToAgUiRows: vi.fn(
     (): Array<{ event: unknown; eventId: string; timestamp: Date }> => [],
   ),
@@ -737,6 +740,39 @@ describe("daemon-event route", () => {
   });
 
   it("routes daemon deltas through the AG-UI publisher", async () => {
+    const expectedDeltaRows = [
+      {
+        event: {
+          type: "TEXT_MESSAGE_START",
+          messageId: "m",
+          role: "assistant",
+        },
+        eventId: "delta-start:run-1:m:text",
+        timestamp: new Date("2026-04-27T00:00:00.000Z"),
+      },
+      {
+        event: {
+          type: "TEXT_MESSAGE_CONTENT",
+          messageId: "m",
+          delta: "a",
+        },
+        eventId: "delta:run-1:m:0:text:10",
+        timestamp: new Date("2026-04-27T00:00:00.000Z"),
+      },
+      {
+        event: {
+          type: "TEXT_MESSAGE_CONTENT",
+          messageId: "m",
+          delta: "b",
+        },
+        eventId: "delta:run-1:m:0:text:11",
+        timestamp: new Date("2026-04-27T00:00:00.000Z"),
+      },
+    ];
+    agUiPublisherMocks.daemonDeltasToAgUiRows.mockReturnValueOnce(
+      expectedDeltaRows,
+    );
+
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -746,6 +782,7 @@ describe("daemon-event route", () => {
         runId: "run-1",
         seq: 8,
         messages: [],
+        transportMode: "acp",
         deltas: [
           {
             messageId: "m",
@@ -783,6 +820,76 @@ describe("daemon-event route", () => {
         runId: "run-1",
         threadId: "thread-1",
         threadChatId: "chat-1",
+        rows: expectedDeltaRows,
+      }),
+    );
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [],
+        skipThreadChatPersistence: true,
+      }),
+    );
+  });
+
+  it("persists completed ACP tool-call snapshots as native rows in delta batches", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-acp-tool-delta",
+        runId: "run-1",
+        seq: 9,
+        messages: [
+          {
+            type: "acp-tool-call",
+            session_id: "session-1",
+            toolCallId: "tool-acp-1",
+            kind: "read",
+            title: "Read file",
+            status: "completed",
+            progressChunks: [],
+            rawInput: { path: "README.md" },
+            rawOutput: "file contents",
+          },
+        ],
+        deltas: [
+          {
+            messageId: "msg-acp-stream",
+            partIndex: 0,
+            deltaSeq: 0,
+            kind: "text",
+            text: "streaming",
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skipThreadChatPersistence: true,
+      }),
+    );
+    expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            event: expect.objectContaining({
+              type: EventType.TOOL_CALL_START,
+              toolCallId: "tool-acp-1",
+              toolCallName: "Read file",
+            }),
+          }),
+          expect.objectContaining({
+            event: expect.objectContaining({
+              type: EventType.TOOL_CALL_RESULT,
+              toolCallId: "tool-acp-1",
+              content: "file contents",
+            }),
+          }),
+        ]),
       }),
     );
   });

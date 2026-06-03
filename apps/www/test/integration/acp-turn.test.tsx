@@ -13,6 +13,7 @@
  * the key UI primitives render or persist with the expected shape.
  */
 
+import { EventType } from "@ag-ui/core";
 import type {
   ClaudeMessage,
   DaemonEventAPIBody,
@@ -40,7 +41,7 @@ const dbMocks = vi.hoisted(() => {
   const insertOnConflictDoNothing = vi.fn(() => ({
     returning: insertReturning,
   }));
-  const insertValues = vi.fn(() => ({
+  const insertValues = vi.fn((_values: unknown) => ({
     onConflictDoNothing: insertOnConflictDoNothing,
   }));
   const insert = vi.fn(() => ({ values: insertValues }));
@@ -57,6 +58,7 @@ const dbMocks = vi.hoisted(() => {
   return {
     execute,
     selectWhere,
+    insertValues,
     transaction,
     db: {
       execute,
@@ -176,6 +178,11 @@ const ACP_RECORDING = path.resolve(
   "recordings/acp-standard-turn.jsonl",
 );
 
+const ACP_STREAMING_RECORDING = path.resolve(
+  import.meta.dirname,
+  "recordings/acp-streaming-turn.jsonl",
+);
+
 const ACP_UI_MESSAGES: ClaudeMessage[] = [
   {
     type: "acp-plan",
@@ -285,6 +292,32 @@ function getToolCall(messages: DBMessage[]): DBToolCall {
   return toolCall;
 }
 
+type InsertedAgUiRow = {
+  eventId: string;
+  eventType: string;
+  payloadJson: Record<string, unknown>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isInsertedAgUiRow(value: unknown): value is InsertedAgUiRow {
+  return (
+    isRecord(value) &&
+    typeof value.eventId === "string" &&
+    typeof value.eventType === "string" &&
+    isRecord(value.payloadJson)
+  );
+}
+
+function getInsertedAgUiRows(): InsertedAgUiRow[] {
+  return dbMocks.insertValues.mock.calls.flatMap(([value]) => {
+    const values = Array.isArray(value) ? value : [value];
+    return values.filter(isInsertedAgUiRow);
+  });
+}
+
 describe("ACP standard turn - route contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -332,6 +365,83 @@ describe("ACP standard turn - route contract", () => {
       "acp-diff",
       "result",
     ]);
+  });
+});
+
+describe("ACP streaming turn - route contract", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("replays delta-only ACP events and gets HTTP 200 for each", async () => {
+    const results = await replay(ACP_STREAMING_RECORDING, {
+      mode: "fast-forward",
+    });
+
+    expect(results).toHaveLength(5);
+    expect(results.map((result) => result.status)).toEqual([
+      200, 200, 200, 200, 200,
+    ]);
+    expect(results.map((result) => result.body.seq)).toEqual([0, 1, 2, 3, 4]);
+
+    const deltaBodies = results
+      .map((result) => result.body)
+      .filter((body) => (body.deltas?.length ?? 0) > 0);
+    expect(deltaBodies).toHaveLength(3);
+    expect(deltaBodies.every((body) => body.messages.length === 0)).toBe(true);
+    expect(deltaBodies.map((body) => body.transportMode)).toEqual([
+      "acp",
+      "acp",
+      "acp",
+    ]);
+  });
+
+  it("persists streaming ACP deltas as AG-UI rows", async () => {
+    await replay(ACP_STREAMING_RECORDING, { mode: "fast-forward" });
+
+    const rows = getInsertedAgUiRows();
+    expect(rows.map((row) => row.eventType)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TOOL_CALL_RESULT,
+      EventType.RUN_FINISHED,
+    ]);
+    expect(rows.map((row) => row.eventId)).toEqual([
+      "canon-acp-stream-start:RUN_STARTED:0",
+      "delta-start:run-acp-canonical-001:msg-acp-stream-1:text",
+      "delta:run-acp-canonical-001:msg-acp-stream-1:0:text:0",
+      "delta-start:run-acp-canonical-001:msg-acp-stream-1:text",
+      "delta:run-acp-canonical-001:msg-acp-stream-1:0:text:1",
+      "delta:run-acp-canonical-001:tool-acp-stream-1:0:tool-output:0",
+      "canon-acp-stream-finished:RUN_FINISHED:0",
+    ]);
+
+    const textContentRows = rows.filter(
+      (row) => row.eventType === EventType.TEXT_MESSAGE_CONTENT,
+    );
+    expect(textContentRows.map((row) => row.payloadJson)).toEqual([
+      expect.objectContaining({
+        messageId: "msg-acp-stream-1",
+        delta: "I'll inspect ",
+      }),
+      expect.objectContaining({
+        messageId: "msg-acp-stream-1",
+        delta: "the auth middleware.",
+      }),
+    ]);
+    expect(
+      rows.find((row) => row.eventType === EventType.TOOL_CALL_RESULT)
+        ?.payloadJson,
+    ).toEqual(
+      expect.objectContaining({
+        messageId: "tool-acp-stream-1",
+        toolCallId: "tool-acp-stream-1",
+        content: "npm test\nPASS\n",
+      }),
+    );
   });
 });
 

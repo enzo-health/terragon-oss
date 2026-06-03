@@ -1,5 +1,13 @@
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
-import type { DBMessage } from "@terragon/shared";
+import {
+  EventType,
+  type BaseEvent,
+  type ToolCallArgsEvent,
+  type ToolCallEndEvent,
+  type ToolCallResultEvent,
+  type ToolCallStartEvent,
+} from "@ag-ui/core";
+import type { DBMessage, DBToolCall } from "@terragon/shared";
 import type { DB } from "@terragon/shared/db";
 import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
@@ -7,6 +15,7 @@ import {
   type AgUiPublishRow,
   type AssistantMessagePartsInput,
   canonicalEventsToAgUiRows,
+  buildAgUiEventId,
   daemonDeltasToAgUiRows,
   dbAgentMessagePartsToAgUiRows,
   persistAgUiEvents,
@@ -422,7 +431,9 @@ function buildRichPartRows(params: {
   envelopeV2: DaemonEventEnvelopeV2;
   messages: DaemonEventAPIBody["messages"];
 }): AgUiPublishRow[] {
+  const richPartRows: AgUiPublishRow[] = [];
   const richPartInputs: AssistantMessagePartsInput[] = [];
+  const timestamp = new Date();
   let messageIndex = 0;
   for (const claudeMessage of params.messages) {
     const isCodexDeltaStreamed =
@@ -437,6 +448,16 @@ function buildRichPartRows(params: {
     for (const dbMsg of dbMsgs) {
       const currentIndex = messageIndex;
       messageIndex++;
+      if (dbMsg.type === "tool-call") {
+        richPartRows.push(
+          ...dbToolCallToAgUiRows({
+            messageId: `${params.envelopeV2.eventId}:msg:${currentIndex}`,
+            toolCall: dbMsg,
+            timestamp,
+          }),
+        );
+        continue;
+      }
       if (dbMsg.type !== "agent") continue;
       if (isCodexDeltaStreamed) continue;
       const filteredParts =
@@ -457,7 +478,77 @@ function buildRichPartRows(params: {
       });
     }
   }
-  return richPartInputs.length > 0
-    ? dbAgentMessagePartsToAgUiRows(richPartInputs)
-    : [];
+  if (richPartInputs.length > 0) {
+    richPartRows.push(...dbAgentMessagePartsToAgUiRows(richPartInputs));
+  }
+  return richPartRows;
+}
+
+function dbToolCallToAgUiRows(params: {
+  messageId: string;
+  toolCall: DBToolCall;
+  timestamp: Date;
+}): AgUiPublishRow[] {
+  const timestampMs = params.timestamp.getTime();
+  const startEvent = {
+    type: EventType.TOOL_CALL_START,
+    timestamp: timestampMs,
+    toolCallId: params.toolCall.id,
+    toolCallName: params.toolCall.name,
+  } satisfies ToolCallStartEvent;
+  const argsEvent = {
+    type: EventType.TOOL_CALL_ARGS,
+    timestamp: timestampMs,
+    toolCallId: params.toolCall.id,
+    delta: JSON.stringify(params.toolCall.parameters ?? {}),
+  } satisfies ToolCallArgsEvent;
+  const endEvent = {
+    type: EventType.TOOL_CALL_END,
+    timestamp: timestampMs,
+    toolCallId: params.toolCall.id,
+  } satisfies ToolCallEndEvent;
+  const events: BaseEvent[] = [startEvent, argsEvent, endEvent];
+  const resultContent = dbToolCallResultContent(params.toolCall);
+  if (resultContent !== null) {
+    const resultEvent: ToolCallResultEvent =
+      params.toolCall.status === "failed"
+        ? {
+            type: EventType.TOOL_CALL_RESULT,
+            timestamp: timestampMs,
+            messageId: params.toolCall.id,
+            toolCallId: params.toolCall.id,
+            content: resultContent,
+            role: "tool",
+            isError: true,
+          }
+        : {
+            type: EventType.TOOL_CALL_RESULT,
+            timestamp: timestampMs,
+            messageId: params.toolCall.id,
+            toolCallId: params.toolCall.id,
+            content: resultContent,
+          };
+    events.push(resultEvent);
+  }
+
+  return events.map((event, index) => ({
+    event,
+    eventId: buildAgUiEventId(
+      `msg:${params.messageId}`,
+      String(event.type),
+      index,
+    ),
+    timestamp: params.timestamp,
+  }));
+}
+
+function dbToolCallResultContent(toolCall: DBToolCall): string | null {
+  const rawOutput = Reflect.get(toolCall.parameters, "rawOutput");
+  if (typeof rawOutput === "string" && rawOutput.length > 0) {
+    return rawOutput;
+  }
+  if (toolCall.progressChunks && toolCall.progressChunks.length > 0) {
+    return toolCall.progressChunks.map((chunk) => chunk.text).join("\n");
+  }
+  return null;
 }

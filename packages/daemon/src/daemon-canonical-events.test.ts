@@ -170,6 +170,30 @@ describe("buildCanonicalEventsForBatch", () => {
     expect(result.nextCanonicalSeqAfterBatch).toBe(1);
   });
 
+  it("suppresses ACP text blocks already streamed as daemon deltas", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Streamed over ACP" }],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+            _claudeStreamedBlockIndices: [0],
+          },
+        ],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({ type: "run-started" }),
+    ]);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(1);
+  });
+
   it("emits tool-call-start and tool-call-result events", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
