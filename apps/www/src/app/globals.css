@@ -197,8 +197,8 @@
   --muted-foreground: oklch(0.6328 0.0029 106.5);
   --accent: oklch(0.44 0.0033 106.5);
   --accent-foreground: oklch(0.82 0.0014 106.4);
-  --destructive: oklch(0.594 0.0443 196.0233);
-  --destructive-foreground: oklch(0.2 0.004 106.6);
+  --destructive: oklch(0.62 0.17 22);
+  --destructive-foreground: oklch(0.97 0 0);
   --border: oklch(0.4 0.0033 106.5);
   --input: oklch(0.44 0.0033 106.5);
   --ring: oklch(0.7214 0.1337 49.9802);
@@ -234,12 +234,11 @@
   --coral: var(--primary);
   --coral-active: oklch(0.6 0.12 49.9);
 
-  /* Semantics — kept from prior system. The shadcn export uses teal
-     for --destructive in dark, which would make destructive buttons
-     read as a calm teal instead of danger; --error stays red here. */
+  /* One red for danger: --destructive and --error are the same red in
+     both themes. Teal lives on --secondary/--chart-1, never on danger. */
   --warning: oklch(0.65 0.1 54);
   --success: oklch(0.68 0.08 150);
-  --error: oklch(0.62 0.17 22);
+  --error: var(--destructive);
   --info: oklch(0.68 0.11 230);
 
   /* Brand-anchored dark surfaces */
@@ -817,29 +816,27 @@
 }
 
 /* Hallmark · studied-DNA (source: github.com/nauvalazhar/ai · src/styles/tokens.css)
- * Exact nauval (ai.nauv.al) palette, scoped to the chat transcript so the rest
- * of the app keeps Terragon's tokens. Gray canvas + white cards + faint-gray
- * insets + violet in-flight + cool-gray neutrals (hue 259) + 1rem outer radius.
+ * nauval (ai.nauv.al) chat-transcript surface, re-anchored to Terragon's warm
+ * neutral hue (106° dark / 264° light) so the transcript shares the app's
+ * color temperature. Keeps nauval's elevation ladder + 1rem outer radius; the
+ * brand accent and in-flight color inherit the app tokens (no scoped --primary
+ * or --inflight override), so orange stays orange inside the chat.
  */
 .nauval-chat-surface {
-  background: oklch(0.97 0.0022 259.23);
+  background: oklch(0.97 0.0022 264.54);
   --color-surface: oklch(1 0 0);
-  --color-surface-elevated: oklch(0.9781 0.0022 259.23);
-  --color-inflight: oklch(0.6 0.25 293);
-  --color-border: oklch(0.9421 0.0022 259.23);
-  --color-muted: oklch(0.94 0.0022 259.23);
+  --color-surface-elevated: oklch(0.9781 0.0022 264.54);
+  --color-border: oklch(0.9421 0.0022 264.54);
+  --color-muted: oklch(0.94 0.0022 264.54);
   --color-muted-foreground: oklch(0.5 0 0);
-  --color-primary: oklch(0.55 0.1906 259.23);
   --radius-outer: 1rem;
 }
 
 .dark .nauval-chat-surface {
-  background: oklch(0.1985 0.0022 259.23);
-  --color-surface: oklch(0.2065 0.0022 259.23);
-  --color-surface-elevated: oklch(0.2364 0.0022 259.23);
-  --color-inflight: oklch(0.72 0.22 293);
-  --color-border: oklch(0.2867 0 0);
-  --color-muted: oklch(0.22 0 0);
-  --color-muted-foreground: oklch(0.65 0 0);
-  --color-primary: oklch(0.6 0.1906 259.23);
+  background: oklch(0.1985 0.0022 106.6);
+  --color-surface: oklch(0.2065 0.0022 106.6);
+  --color-surface-elevated: oklch(0.2364 0.0022 106.6);
+  --color-border: oklch(0.2867 0.0022 106.6);
+  --color-muted: oklch(0.22 0.0022 106.6);
+  --color-muted-foreground: oklch(0.65 0.0014 106.4);
 }

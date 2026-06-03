@@ -52,7 +52,7 @@ export function ChatError({
     !isReadOnly
   );
   return (
-    <div className="p-2 border border-destructive bg-destructive/10 rounded-md text-sm animate-in fade-in slide-in-from-bottom-1 duration-200">
+    <div className="p-2 border border-error/70 bg-error/12 rounded-md text-sm animate-in fade-in slide-in-from-bottom-1 duration-200">
       <div className="flex gap-2 mb-1 justify-between items-start">
         <div className="min-w-0 flex-1">
           <ChatContent errorType={errorType} errorInfo={errorInfo} />
@@ -88,7 +88,9 @@ function ChatErrorContents({
 }) {
   return (
     <div className="flex flex-col gap-2 font-mono">
-      <p className="text-xs font-medium flex items-center gap-1">{header}</p>
+      <p className="text-xs font-medium flex items-center gap-1 text-error">
+        {header}
+      </p>
       <div className="text-xs text-muted-foreground">{body}</div>
     </div>
   );
@@ -108,7 +110,9 @@ function ChatErrorContentsWithPre({
 
   return (
     <div className="flex flex-col gap-2 font-mono">
-      <p className="text-xs font-medium flex items-center gap-1">{header}</p>
+      <p className="text-xs font-medium flex items-center gap-1 text-error">
+        {header}
+      </p>
       {errorStr && (
         <div className="text-xs text-muted-foreground">
           {renderAnsi ? (
