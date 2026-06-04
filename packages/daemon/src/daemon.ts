@@ -121,6 +121,12 @@ type AcpResponseEnvelope = {
   error?: unknown;
 };
 
+type AcpHostRecoveryMode = "normal" | "replace-session" | "restart-host";
+
+type AcpRuntimeAuthResult =
+  | { status: "ready"; hostRestarted: boolean }
+  | { status: "restart-required"; reason: string };
+
 class AcpSseHttpError extends Error {
   constructor(
     readonly status: number,
@@ -140,6 +146,13 @@ class RecoverableAcpPromptPostError extends Error {
   }
 }
 
+class InvalidAcpSessionError extends Error {
+  constructor(cause: Error) {
+    super(`ACP session is invalid: ${cause.message}`, { cause });
+    this.name = "InvalidAcpSessionError";
+  }
+}
+
 export function isRecoverableAcpPromptPostFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -152,6 +165,18 @@ export function isRecoverableAcpPromptPostFailure(error: unknown): boolean {
     message.includes("broken pipe") ||
     message.includes("stream_error") ||
     message.includes("failed writing to agent stdin")
+  );
+}
+
+function isInvalidAcpSessionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("invalid session") ||
+    message.includes("session not found") ||
+    message.includes("unknown session")
   );
 }
 
@@ -854,7 +879,32 @@ export class TerragonDaemon {
     }, this.messageHandleDelay);
   }
 
-  private killActiveProcess(threadChatId: string) {
+  private destroyAcpServerForProcess(
+    activeProcessState: ActiveProcessState,
+    reason: "daemon-shutdown",
+  ): void {
+    if (!activeProcessState.acpUrl) {
+      return;
+    }
+    fetch(activeProcessState.acpUrl, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10_000),
+    }).catch((error) => {
+      this.runtime.logger.warn("ACP server cleanup failed", {
+        threadChatId: activeProcessState.threadChatId,
+        reason,
+        error: formatError(error),
+      });
+    });
+  }
+
+  private killActiveProcess(
+    threadChatId: string,
+    options: { destroyAcpServer?: boolean } = {},
+  ) {
     // Kill specific process
     const activeProcessState = this.activeProcesses.get(threadChatId);
     if (activeProcessState) {
@@ -870,6 +920,9 @@ export class TerragonDaemon {
       if (activeProcessState.acpAbortController) {
         this.runtime.logger.info("Aborting ACP transport", { threadChatId });
         activeProcessState.acpAbortController.abort();
+      }
+      if (options.destroyAcpServer) {
+        this.destroyAcpServerForProcess(activeProcessState, "daemon-shutdown");
       }
       // Clean up polling interval to prevent memory leaks
       if (activeProcessState.pollInterval) {
@@ -896,7 +949,7 @@ export class TerragonDaemon {
 
   private killAllActiveProcesses() {
     for (const threadChatId of this.activeProcesses.keys()) {
-      this.killActiveProcess(threadChatId);
+      this.killActiveProcess(threadChatId, { destroyAcpServer: true });
     }
     for (const threadChatId of this.appServerRunContexts.keys()) {
       const context = this.appServerRunContexts.get(threadChatId);
@@ -2156,6 +2209,7 @@ export class TerragonDaemon {
   private async runAcpTransportCommand(
     input: DaemonMessageClaude,
     promptPostRecoveryAttempt = 0,
+    recoveryMode: AcpHostRecoveryMode = "normal",
   ): Promise<void> {
     if (!this.activeProcesses.has(input.threadChatId)) {
       throw new Error("Missing active process state for ACP transport");
@@ -2221,6 +2275,11 @@ export class TerragonDaemon {
         resolveRecoverablePromptPostFailure = resolve;
       },
     );
+    let invalidAcpSessionError: Error | null = null;
+    let resolveInvalidAcpSession: ((error: Error) => void) | null = null;
+    const invalidAcpSessionPromise = new Promise<Error>((resolve) => {
+      resolveInvalidAcpSession = resolve;
+    });
     let lastAcpMessageAtMs = Date.now();
     let lastEventId: string | null = null;
     const promptPostAbortController = new AbortController();
@@ -2712,20 +2771,48 @@ export class TerragonDaemon {
       once: true,
     });
 
-    // Propagate the daemon token to sandbox-agent's environment.
-    // In ACP mode, sandbox-agent spawns agent processes (e.g., Codex).
-    // Codex reads DAEMON_TOKEN via env_http_headers for proxy auth.
-    // The token changes each run, so sandbox-agent must be restarted to
-    // inherit the updated process.env before spawning the agent.
-    await this.ensureSandboxAgentHasToken(baseUrl, input);
+    const shouldForceRestart =
+      process.env.TERRAGON_ACP_RESTART_EVERY_RUN === "1" ||
+      recoveryMode === "restart-host" ||
+      !input.acpSessionId;
+    const shouldCreateSession =
+      shouldForceRestart ||
+      recoveryMode === "replace-session" ||
+      !input.acpSessionId;
+
+    const runtimeAuthResult = await this.ensureSandboxAgentRuntime(baseUrl, input, {
+      restart: shouldForceRestart,
+    });
+    if (runtimeAuthResult.status === "restart-required") {
+      this.runtime.logger.warn(
+        "ACP runtime auth requires sandbox-agent restart before session reuse",
+        {
+          threadChatId: input.threadChatId,
+          runId: input.runId ?? null,
+          serverId,
+          reason: runtimeAuthResult.reason,
+        },
+      );
+      await this.runAcpTransportCommand(
+        {
+          ...input,
+          acpSessionId: null,
+        },
+        promptPostRecoveryAttempt + 1,
+        "restart-host",
+      );
+      return;
+    }
 
     // Wait for ACP endpoints to register after health passes. sandbox-agent's
     // /v1/health responds before ACP endpoints are ready (~15s gap). This delay
     // avoids burning retry budget on guaranteed-to-fail requests.
-    await new Promise((r) => setTimeout(r, 5_000));
+    if (shouldForceRestart) {
+      await new Promise((r) => setTimeout(r, 5_000));
+    }
 
     // Track that we just restarted so we can suppress expected initial SSE 404s
-    let justRestarted = true;
+    let justRestarted = shouldForceRestart;
     // Track whether initialize + session/new have succeeded. Before this is set,
     // SSE error envelopes (e.g. "Internal error") must NOT be treated as terminal
     // because they're expected during the ACP registration window.
@@ -2891,10 +2978,11 @@ export class TerragonDaemon {
         );
       }
 
-      // Always create a fresh session — sandbox-agent was just restarted
-      // so any previous acpSessionId is stale and meaningless.
-      let sessionId: string | undefined;
-      {
+      let sessionId =
+        recoveryMode === "replace-session"
+          ? undefined
+          : (input.acpSessionId ?? runState.acpSessionId ?? undefined);
+      if (shouldCreateSession || !sessionId) {
         let newSessionResponse: AcpResponseEnvelope | undefined;
         for (let attempt = 0; attempt < ACP_INIT_MAX_ATTEMPTS; attempt++) {
           try {
@@ -2927,6 +3015,9 @@ export class TerragonDaemon {
           throw new Error("ACP session/new returned invalid sessionId");
         }
         sessionId = newSessionId;
+      }
+      if (!sessionId) {
+        throw new Error("ACP transport could not resolve a sessionId");
       }
 
       // Mark ACP as initialized — SSE error envelopes are now treated as
@@ -2989,6 +3080,12 @@ export class TerragonDaemon {
               resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
               return;
             }
+            if (!sawAssistantOrUserMessage && isInvalidAcpSessionFailure(err)) {
+              invalidAcpSessionError =
+                err instanceof Error ? err : new Error(getErrorMessage(err));
+              resolveInvalidAcpSession?.(invalidAcpSessionError);
+              return;
+            }
             this.runtime.logger.warn(
               "ACP session/prompt POST failed (non-fatal)",
               {
@@ -3005,6 +3102,9 @@ export class TerragonDaemon {
         sseTerminalPromise.then(() => "sse_terminal" as const),
         recoverablePromptPostFailurePromise.then(
           () => "prompt_post_recoverable_failure" as const,
+        ),
+        invalidAcpSessionPromise.then(
+          () => "prompt_post_invalid_session" as const,
         ),
         new Promise<"timeout">((resolve) => {
           inactivityTimer = setInterval(() => {
@@ -3028,6 +3128,11 @@ export class TerragonDaemon {
         throw new RecoverableAcpPromptPostError(
           recoverablePromptPostError ??
             new Error("Recoverable ACP session/prompt POST failed"),
+        );
+      }
+      if (completionReason === "prompt_post_invalid_session") {
+        throw new InvalidAcpSessionError(
+          invalidAcpSessionError ?? new Error("ACP session is invalid"),
         );
       }
 
@@ -3075,6 +3180,32 @@ export class TerragonDaemon {
             acpSessionId: null,
           },
           promptPostRecoveryAttempt + 1,
+          "restart-host",
+        );
+        return;
+      }
+      if (
+        error instanceof InvalidAcpSessionError &&
+        promptPostRecoveryAttempt < 1 &&
+        this.activeProcesses.has(input.threadChatId)
+      ) {
+        this.runtime.logger.warn(
+          "ACP session/prompt failed with stale session; creating replacement session and retrying once",
+          {
+            threadChatId: input.threadChatId,
+            runId: input.runId ?? null,
+            serverId,
+            staleAcpSessionId: input.acpSessionId ?? null,
+            error: formatError(error),
+          },
+        );
+        await this.runAcpTransportCommand(
+          {
+            ...input,
+            acpSessionId: null,
+          },
+          promptPostRecoveryAttempt + 1,
+          "replace-session",
         );
         return;
       }
@@ -3104,16 +3235,6 @@ export class TerragonDaemon {
     } finally {
       promptPostAbortController.abort();
       await closeSse();
-      // Fire-and-forget: server cleanup is best-effort, don't block on it
-      fetch(createUrl(false), {
-        method: "DELETE",
-        headers: {
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      }).catch(() => {
-        // Intentionally ignore - server cleanup is best-effort
-      });
       // Only delete if this run still owns the entry — a newer run may have
       // already replaced it, and deleting would destroy the new run's state.
       const currentProcess = this.activeProcesses.get(input.threadChatId);
@@ -3126,19 +3247,19 @@ export class TerragonDaemon {
   }
 
   /**
-   * Restart sandbox-agent with the daemon token in its environment.
+   * Ensure sandbox-agent is healthy and has runtime auth available.
    *
    * In ACP transport, sandbox-agent spawns agent processes (e.g., Codex
    * `app-server`). Agents like Codex read DAEMON_TOKEN from their env
    * (via `env_http_headers` in config.toml) to authenticate API calls
-   * through our proxy. Since the token changes each run and sandbox-agent
-   * was originally started without it, we must restart sandbox-agent so
-   * the new process inherits the updated `process.env`.
+   * through our proxy. Fresh ACP follow-up turns must not restart
+   * sandbox-agent in the normal path because that kills the ACP session.
    */
-  private async ensureSandboxAgentHasToken(
+  private async ensureSandboxAgentRuntime(
     baseUrl: string,
     input: DaemonMessageClaude,
-  ): Promise<void> {
+    options: { restart: boolean },
+  ): Promise<AcpRuntimeAuthResult> {
     // Set token env vars on daemon process so execSync children inherit them.
     process.env.DAEMON_TOKEN = input.token;
     // Increase sandbox-agent's ACP proxy timeout from 120s default to 10 minutes.
@@ -3161,7 +3282,35 @@ export class TerragonDaemon {
       // Use defaults
     }
 
-    // Kill existing sandbox-agent so we can restart with updated env
+    const healthUrl = `${baseUrl.replace(/\/+$/, "")}/v1/health`;
+
+    if (!options.restart) {
+      const envAuthRequired =
+        input.agent === "codex" ||
+        (input.agent === "claudeCode" && input.useCredits === true);
+      if (envAuthRequired) {
+        return {
+          status: "restart-required",
+          reason: "sandbox-agent auth is currently inherited from process env",
+        };
+      }
+      try {
+        const response = await fetch(healthUrl);
+        if (response.ok) {
+          this.runtime.logger.info("sandbox-agent healthy for ACP resume", {
+            port,
+          });
+          return { status: "ready", hostRestarted: false };
+        }
+      } catch (error) {
+        this.runtime.logger.warn(
+          "sandbox-agent health check failed before ACP resume; restarting",
+          { port, error: formatError(error) },
+        );
+      }
+    }
+
+    // Kill existing sandbox-agent so we can restart for first start or recovery.
     try {
       this.runtime.execSync(
         `pkill -f "sandbox-agent.*--port ${port}" 2>/dev/null || true`,
@@ -3207,7 +3356,6 @@ export class TerragonDaemon {
     }
 
     // Wait for sandbox-agent health (matches setup.ts pattern)
-    const healthUrl = `${baseUrl.replace(/\/+$/, "")}/v1/health`;
     const maxRetries = 20;
     for (let i = 0; i < maxRetries; i++) {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -3218,7 +3366,7 @@ export class TerragonDaemon {
             "sandbox-agent restarted with DAEMON_TOKEN",
             { port, retries: i },
           );
-          return;
+          return { status: "ready", hostRestarted: true };
         }
       } catch {
         // Continue retrying

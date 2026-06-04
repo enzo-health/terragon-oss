@@ -34,6 +34,7 @@ export type ImplementationAdapterInput = {
   prompt: string;
   permissionMode: "allowAll" | "plan";
   runId: string;
+  threadChatId: string;
   sessionId: string | null;
   codexPreviousResponseId: string | null;
   shouldUseCredits: boolean;
@@ -85,7 +86,7 @@ const genericImplementationAdapter: ImplementationRuntimeAdapter = {
           runId: input.runId,
           transportMode: "acp" as const,
           protocolVersion: 2 as const,
-          acpServerId: `terragon-${input.runId}`,
+          acpServerId: `terragon-thread-chat-${input.threadChatId}`,
           acpSessionId: input.sessionId ?? null,
           runtimeAdapterContract: contract,
           ...(input.shouldUseCredits ? { useCredits: true } : {}),

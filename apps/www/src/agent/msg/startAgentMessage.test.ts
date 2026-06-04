@@ -7,6 +7,7 @@ const baseInput = {
   prompt: "do the thing",
   permissionMode: "plan" as const,
   runId: "run-123",
+  threadChatId: "thread-chat-123",
   sessionId: "session-123",
   codexPreviousResponseId: "response-123",
   shouldUseCredits: false,
@@ -47,7 +48,9 @@ describe("startAgentMessage runtime adapter dispatch contracts", () => {
     expect(dispatch.transportMode).toBe("acp");
     expect(dispatch.protocolVersion).toBe(2);
     expect(dispatch.requestedSessionId).toBeNull();
-    expect(dispatch.message.acpServerId).toBe("terragon-run-123");
+    expect(dispatch.message.acpServerId).toBe(
+      "terragon-thread-chat-thread-chat-123",
+    );
     expect(dispatch.message.acpSessionId).toBe("session-123");
     expect(
       dispatch.message.runtimeAdapterContract.operations["permission-response"]

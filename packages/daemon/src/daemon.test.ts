@@ -4427,6 +4427,47 @@ describe("daemon", () => {
 });
 
 describe("ACP SSE terminal validation", () => {
+  it("does not restart sandbox-agent for a healthy ACP resume", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const localRuntime = new DaemonRuntime({
+      url: "http://localhost:3000",
+      unixSocketPath: `/tmp/terragon-daemon-${nanoid()}.sock`,
+      outputFormat: "text",
+    });
+    vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
+    const execSyncSpy = vi
+      .spyOn(localRuntime, "execSync")
+      .mockReturnValue("");
+    const localDaemon = new TerragonDaemon({ runtime: localRuntime });
+    const internals = localDaemon as unknown as {
+      ensureSandboxAgentRuntime: (
+        baseUrl: string,
+        input: DaemonMessageClaude,
+        options: { restart: boolean },
+      ) => Promise<void>;
+    };
+
+    await internals.ensureSandboxAgentRuntime(
+      "http://127.0.0.1:2468",
+      {
+        ...TEST_INPUT_MESSAGE,
+        transportMode: "acp",
+        protocolVersion: 2,
+        acpSessionId: "acp-session-1",
+      },
+      { restart: false },
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:2468/v1/health");
+    expect(execSyncSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("pkill"),
+    );
+    await localRuntime.teardown();
+  });
+
   it("preserves ACP tool-call lifecycle state across daemon SSE payloads", () => {
     const tracker = new AcpToolCallTracker();
     const parseFixture = (fixture: string) =>
