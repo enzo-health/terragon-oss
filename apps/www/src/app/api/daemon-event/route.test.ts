@@ -653,6 +653,13 @@ describe("daemon-event route", () => {
         threadId: "thread-1",
         threadChatId: "chat-1",
         messages: [createSuccessResultMessage()],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-terminal-without-log",
+            seq: 10,
+            status: "completed",
+          }),
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-terminal-without-log",
@@ -1692,28 +1699,6 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects non-v2 terminal messages before terminal side effects", async () => {
-    const response = await POST(
-      createDaemonRequest(
-        {
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
-          timezone: "UTC",
-        },
-        {},
-        { autoCapabilities: false },
-      ),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(data.error).toBe("daemon_event_terminal_requires_v2_envelope");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
-    expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-  });
-
   it("returns v2 acknowledgements when a run is already terminal", async () => {
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
       runId: "run-1",
@@ -2137,6 +2122,13 @@ describe("daemon-event route", () => {
         threadId: "thread-1",
         threadChatId: "chat-1",
         messages: [createSuccessResultMessage()],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-terminal-v3",
+            seq: 10,
+            status: "completed",
+          }),
+        ],
         timezone: "UTC",
         payloadVersion: 2,
         eventId: "event-terminal-v3",
@@ -2402,6 +2394,13 @@ describe("daemon-event route", () => {
             session_id: "codex-thread-1",
           },
         ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-codex-1",
+            seq: 0,
+            status: "completed",
+          }),
+        ],
         timezone: "UTC",
         transportMode: "codex-app-server",
         protocolVersion: 1,
@@ -2553,40 +2552,6 @@ describe("daemon-event route", () => {
       acknowledgedSeq: 4,
     });
     expect(dbMocks.deleteFrom).not.toHaveBeenCalled();
-  });
-
-  it("rejects canonical daemon events without v2 envelope even when capability header is missing", async () => {
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-      }),
-    );
-    const data = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(data.error).toBe("daemon_event_terminal_requires_v2_envelope");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
-  });
-
-  it("requires v2 envelopes for canonical terminal runs even without capability headers", async () => {
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [createSuccessResultMessage()],
-        timezone: "UTC",
-      }),
-    );
-
-    const data = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(data.error).toBe("daemon_event_terminal_requires_v2_envelope");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
-    expect(dbMocks.insert).not.toHaveBeenCalled();
   });
 
   it("accepts canonical daemon events with v2 envelope", async () => {
@@ -3013,6 +2978,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-1",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           headShaAtCompletion: "abc123def456",
           timezone: "UTC",
           payloadVersion: 2,
@@ -3086,6 +3058,13 @@ describe("daemon-event route", () => {
             },
             createSuccessResultMessage(),
           ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-mixed-terminal",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-mixed-terminal",
@@ -3132,6 +3111,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-no-checkpoint",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-no-checkpoint",
@@ -3160,6 +3146,13 @@ describe("daemon-event route", () => {
               type: "custom-stop",
               duration_ms: 10,
             } as any,
+          ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-stopped",
+              seq: 10,
+              status: "stopped",
+            }),
           ],
           timezone: "UTC",
           payloadVersion: 2,
@@ -3206,6 +3199,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-cas-lose",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-cas-lose",
@@ -3251,6 +3251,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-cas-win",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-cas-win",
@@ -3301,6 +3308,13 @@ describe("daemon-event route", () => {
               parent_tool_use_id: null,
             },
             createSuccessResultMessage(),
+          ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-mixed-cas-lose",
+              seq: 10,
+              status: "completed",
+            }),
           ],
           timezone: "UTC",
           payloadVersion: 2,
@@ -3430,6 +3444,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-different-terminal",
+              seq: 11,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-different-terminal",
@@ -3498,6 +3519,13 @@ describe("daemon-event route", () => {
             parent_tool_use_id: null,
           },
           createSuccessResultMessage(),
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-projection-retry",
+            seq: 12,
+            status: "completed",
+          }),
         ],
         timezone: "UTC",
         payloadVersion: 2,
@@ -3751,6 +3779,15 @@ describe("daemon-event route", () => {
               error_info: "context length exceeded",
             } as any,
           ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-fenced-prompt-too-long",
+              seq: 10,
+              status: "failed",
+              errorMessage: "context length exceeded",
+              errorCode: "daemon_result_error",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-fenced-prompt-too-long",
@@ -3787,6 +3824,15 @@ describe("daemon-event route", () => {
               duration_ms: 10,
               error_info: "You've hit your usage limit.",
             } as any,
+          ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-fenced-force-error",
+              seq: 10,
+              status: "failed",
+              errorMessage: "You've hit your usage limit.",
+              errorCode: "daemon_result_error",
+            }),
           ],
           timezone: "UTC",
           payloadVersion: 2,
@@ -4277,6 +4323,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-planning-terminal",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-planning-terminal",
@@ -4319,6 +4372,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-planning-terminal-legacy",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-planning-terminal-legacy",
@@ -4361,6 +4421,13 @@ describe("daemon-event route", () => {
           threadId: "thread-1",
           threadChatId: "chat-1",
           messages: [createSuccessResultMessage()],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "event-pure-v2-implementing-terminal",
+              seq: 10,
+              status: "completed",
+            }),
+          ],
           timezone: "UTC",
           payloadVersion: 2,
           eventId: "event-pure-v2-implementing-terminal",
@@ -4380,26 +4447,6 @@ describe("daemon-event route", () => {
           }),
         }),
       );
-    });
-
-    it("rejects pure v2 daemon event without v2 envelope", async () => {
-      const response = await POST(
-        createDaemonRequest(
-          {
-            threadId: "thread-1",
-            threadChatId: "chat-1",
-            messages: [createSuccessResultMessage()],
-            timezone: "UTC",
-          },
-          {},
-          { autoCapabilities: false },
-        ),
-      );
-      const data = await response.json();
-
-      expect(response.status).toBe(409);
-      expect(data.error).toBe("daemon_event_terminal_requires_v2_envelope");
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     // v1 bridged workflow test removed; the old workflow table no longer exists.

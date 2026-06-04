@@ -53,7 +53,6 @@ import {
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
-  buildCanonicalRunTerminalEvent,
   buildPreLegacyAgUiCommitPlan,
   commitPreLegacyAgUiEvents,
   commitTerminalAgUiEvents,
@@ -200,58 +199,6 @@ function deriveSessionIdFromMessages(
   return null;
 }
 
-function deriveRunStatusFromMessages(
-  messages: DaemonEventAPIBody["messages"],
-): "processing" | "completed" | "failed" | "stopped" {
-  let sawResult = false;
-  for (const message of messages) {
-    if (message.type === "custom-stop") {
-      return "stopped";
-    }
-    if (message.type === "custom-error") {
-      return "failed";
-    }
-    if (message.type === "result") {
-      sawResult = true;
-      if (message.is_error) {
-        return "failed";
-      }
-    }
-  }
-  if (sawResult) {
-    return "completed";
-  }
-  return "processing";
-}
-
-function deriveDaemonTerminalErrorInfo(
-  messages: DaemonEventAPIBody["messages"],
-): { errorMessage: string | null; errorCategory: DaemonTerminalErrorCategory } {
-  for (const message of messages) {
-    if (message.type === "custom-error") {
-      const errorMessage = message.error_info ?? null;
-      return {
-        errorMessage,
-        errorCategory: classifyDaemonTerminalErrorCategory(errorMessage),
-      };
-    }
-    if (message.type === "result" && message.is_error) {
-      const errorMessage =
-        "error" in message && typeof message.error === "string"
-          ? message.error
-          : null;
-      return {
-        errorMessage,
-        errorCategory: "daemon_result_error",
-      };
-    }
-  }
-  return {
-    errorMessage: null,
-    errorCategory: "unknown",
-  };
-}
-
 function publishMetaEvents(params: {
   metaEvents: NonNullable<DaemonEventAPIBody["metaEvents"]> | null;
   threadId: string;
@@ -272,17 +219,6 @@ function publishMetaEvents(params: {
       });
     });
   }
-}
-
-function deriveTerminalFailureSource(
-  messages: DaemonEventAPIBody["messages"],
-): "custom-error" | "result" | "custom-stop" | "unknown" | null {
-  for (const message of messages) {
-    if (message.type === "custom-error") return "custom-error";
-    if (message.type === "custom-stop") return "custom-stop";
-    if (message.type === "result" && message.is_error) return "result";
-  }
-  return null;
 }
 
 function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
@@ -437,11 +373,6 @@ export async function POST(request: Request) {
     transportMode = "acp",
     protocolVersion = 2,
   } = json;
-  const daemonHeadShaAtCompletion =
-    typeof json.headShaAtCompletion === "string" &&
-    json.headShaAtCompletion.length > 0
-      ? json.headShaAtCompletion
-      : null;
   const rawThreadChatId = json.threadChatId;
   if (!hasValidThreadChatId(rawThreadChatId)) {
     return Response.json(
@@ -845,44 +776,31 @@ export async function POST(request: Request) {
     : null;
 
   const canonicalTerminal = canonicalTerminalBeforePersistence;
-  // The canonical run-terminal is the authoritative completion signal. The
-  // message-sniffing path is a back-compat shim only for un-rebundled daemons
-  // (shipped in the sandbox image) that still emit the legacy `result` message
-  // and no run-terminal — keep it until those sandboxes drain.
-  const daemonRunStatusFromMessages = canonicalTerminal
-    ? canonicalTerminal.status
-    : deriveRunStatusFromMessages(messages);
-  const daemonTerminalErrorInfo = canonicalTerminal
+  // The canonical run-terminal is the sole completion authority. Daemons emit it
+  // alongside any terminal message (deriveRunTerminalFromMessages in the daemon
+  // normalizer), so the server never sniffs raw messages for completion.
+  const daemonRunStatusFromMessages:
+    | "processing"
+    | "completed"
+    | "failed"
+    | "stopped" = canonicalTerminal ? canonicalTerminal.status : "processing";
+  const daemonTerminalErrorInfo: {
+    errorMessage: string | null;
+    errorCategory: DaemonTerminalErrorCategory;
+  } = canonicalTerminal
     ? {
         errorMessage: canonicalTerminal.errorMessage,
         errorCategory: canonicalTerminal.errorMessage
           ? classifyDaemonTerminalErrorCategory(canonicalTerminal.errorMessage)
           : "unknown",
       }
-    : deriveDaemonTerminalErrorInfo(messages);
-  const terminalFailureSource = canonicalTerminal
-    ? daemonRunStatusFromMessages === "stopped"
+    : { errorMessage: null, errorCategory: "unknown" };
+  const terminalFailureSource =
+    daemonRunStatusFromMessages === "stopped"
       ? ("custom-stop" as const)
       : daemonRunStatusFromMessages === "failed"
         ? ("custom-error" as const)
-        : null
-    : deriveTerminalFailureSource(messages);
-  const effectiveHeadShaAtCompletion =
-    daemonHeadShaAtCompletion ?? canonicalTerminal?.headShaAtCompletion ?? null;
-
-  if (
-    daemonRunStatusFromMessages !== "processing" &&
-    !envelopeV2 &&
-    !canonicalTerminal
-  ) {
-    return Response.json(
-      {
-        success: false,
-        error: "daemon_event_terminal_requires_v2_envelope",
-      },
-      { status: 409 },
-    );
-  }
+        : null;
 
   if (
     daemonRunStatusFromMessages !== "processing" &&
@@ -954,27 +872,8 @@ export async function POST(request: Request) {
 
   const {
     canonicalEventsForPersistence,
-    terminalCanonicalEventsForPersistence:
-      initialTerminalCanonicalEventsForPersistence,
+    terminalCanonicalEventsForPersistence,
   } = splitCanonicalEventsForCommit(canonicalEvents);
-  let terminalCanonicalEventsForPersistence =
-    initialTerminalCanonicalEventsForPersistence;
-  if (
-    daemonRunStatusFromMessages !== "processing" &&
-    envelopeV2 &&
-    !canonicalTerminal
-  ) {
-    const synthesizedTerminal = buildCanonicalRunTerminalEvent({
-      envelope: envelopeV2,
-      threadId,
-      threadChatId,
-      status: daemonRunStatusFromMessages,
-      errorMessage: daemonTerminalErrorInfo.errorMessage,
-      errorCode: daemonTerminalErrorInfo.errorCategory,
-      headShaAtCompletion: effectiveHeadShaAtCompletion,
-    });
-    terminalCanonicalEventsForPersistence = [synthesizedTerminal];
-  }
 
   const preLegacyCommitPlan = buildPreLegacyAgUiCommitPlan({
     canPersistCanonicalEvents,
