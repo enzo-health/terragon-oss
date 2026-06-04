@@ -1,4 +1,8 @@
 import { getStalledThreadChats } from "@terragon/shared/model/threads";
+import {
+  completeAgentRunContextTerminal,
+  getLatestAgentRunContextForThreadChat,
+} from "@terragon/shared/model/agent-run-context";
 import { DB } from "@terragon/shared/db";
 import { maybeHibernateSandboxById } from "@/agent/sandbox";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
@@ -46,6 +50,43 @@ async function terminateStalledThreadChat(
     },
   });
   return didUpdateStatus;
+}
+
+// Close the agent run-context for a swept chat through the canonical terminal fence,
+// so a late daemon event from the dead run can't pass the route's active-run guards and
+// append to the swept transcript. The stalled row carries no runId, so resolve the
+// newest run for the chat first. Fenced + idempotent: terminalEventId is keyed to the
+// runId (a re-run returns "duplicate"), and the CAS self-rejects if a newer run has
+// already superseded this one — so it can never stomp a live successor.
+async function closeStalledRunContext(
+  db: DB,
+  threadChat: SweepThreadChat,
+): Promise<void> {
+  const runContext = await getLatestAgentRunContextForThreadChat({
+    db,
+    userId: threadChat.userId,
+    threadId: threadChat.threadId,
+    threadChatId: threadChat.id,
+  });
+  if (!runContext) return;
+  await completeAgentRunContextTerminal({
+    db,
+    runId: runContext.runId,
+    userId: runContext.userId,
+    threadId: runContext.threadId,
+    threadChatId: runContext.threadChatId,
+    transportMode: runContext.transportMode,
+    protocolVersion: runContext.protocolVersion,
+    runtimeProvider: runContext.runtimeProvider,
+    daemonTokenKeyId: runContext.daemonTokenKeyId,
+    terminalStatus: "failed",
+    lastAcceptedSeq: (runContext.lastAcceptedSeq ?? 0) + 1,
+    terminalEventId: `deadline-sweep:${runContext.runId}`,
+    failureUpdates: {
+      failureSource: "custom-error",
+      failureTerminalReason: DEADLINE_ERROR_INFO,
+    },
+  });
 }
 
 async function releaseStalledSandboxes(
@@ -127,6 +168,15 @@ export async function runDeadlineSweep({
         error,
       );
     }
+    // Always attempt the run-context close (even when the status transition was a
+    // no-op): the split-ownership bug is precisely a chat that already reads terminal
+    // while its run-context stays live. Tolerant of rejection so it never aborts a row.
+    await closeStalledRunContext(db, threadChat).catch((error) => {
+      console.error(
+        `Run deadline sweep: run-context close failed for thread chat ${threadChat.id}`,
+        error,
+      );
+    });
   }
 
   await releaseStalledSandboxes(stalledThreadChats);

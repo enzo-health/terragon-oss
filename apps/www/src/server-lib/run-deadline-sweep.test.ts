@@ -13,6 +13,11 @@ const sandboxMocks = vi.hoisted(() => ({
   maybeHibernateSandboxById: vi.fn(),
 }));
 
+const runContextMocks = vi.hoisted(() => ({
+  getLatestAgentRunContextForThreadChat: vi.fn(),
+  completeAgentRunContextTerminal: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => ({
   db: { label: "db" },
 }));
@@ -32,6 +37,13 @@ vi.mock("@/agent/sandbox-resource", () => ({
 
 vi.mock("@/agent/sandbox", () => ({
   maybeHibernateSandboxById: sandboxMocks.maybeHibernateSandboxById,
+}));
+
+vi.mock("@terragon/shared/model/agent-run-context", () => ({
+  getLatestAgentRunContextForThreadChat:
+    runContextMocks.getLatestAgentRunContextForThreadChat,
+  completeAgentRunContextTerminal:
+    runContextMocks.completeAgentRunContextTerminal,
 }));
 
 import { db } from "@/lib/db";
@@ -63,6 +75,21 @@ describe("runDeadlineSweep", () => {
     });
     sandboxMocks.setActiveThreadChat.mockResolvedValue(undefined);
     sandboxMocks.maybeHibernateSandboxById.mockResolvedValue(undefined);
+    runContextMocks.getLatestAgentRunContextForThreadChat.mockResolvedValue({
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      threadChatId: "chat-1",
+      transportMode: "acp",
+      protocolVersion: 2,
+      runtimeProvider: "e2b",
+      daemonTokenKeyId: null,
+      status: "processing",
+      lastAcceptedSeq: 3,
+    });
+    runContextMocks.completeAgentRunContextTerminal.mockResolvedValue({
+      status: "committed",
+    });
   });
 
   describe("selection", () => {
@@ -154,6 +181,36 @@ describe("runDeadlineSweep", () => {
       const call =
         updateStatusMocks.updateThreadChatWithTransition.mock.calls[0]![0];
       expect(call.chatUpdates.replaceQueuedMessages).toEqual([]);
+    });
+
+    it("closes the run-context through a fenced terminal keyed to the runId", async () => {
+      threadMocks.getStalledThreadChats.mockResolvedValue([stalledChat()]);
+
+      await runDeadlineSweep({ db });
+
+      expect(
+        runContextMocks.completeAgentRunContextTerminal,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "run-1",
+          terminalStatus: "failed",
+          terminalEventId: "deadline-sweep:run-1",
+          lastAcceptedSeq: 4,
+        }),
+      );
+    });
+
+    it("skips the run-context close when no run-context exists for the chat", async () => {
+      threadMocks.getStalledThreadChats.mockResolvedValue([stalledChat()]);
+      runContextMocks.getLatestAgentRunContextForThreadChat.mockResolvedValue(
+        null,
+      );
+
+      await runDeadlineSweep({ db });
+
+      expect(
+        runContextMocks.completeAgentRunContextTerminal,
+      ).not.toHaveBeenCalled();
     });
   });
 
