@@ -4,7 +4,10 @@ import {
   createRepoFileArtifactDescriptor,
   createRepoTreeArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
-import { isPrimaryChatLiveThreadStatus } from "@terragon/shared/model/thread-lifecycle-policy";
+import {
+  isPrimaryChatLiveThreadStatus,
+  isTerminalThreadStatus,
+} from "@terragon/shared/model/thread-lifecycle-policy";
 import { getAgUiEventDedupeKey, trackSeenAgUiEventKey } from "./ag-ui-adapter";
 import {
   getArtifactReferenceDescriptor,
@@ -173,12 +176,6 @@ export function projectThreadViewModel(
  * liveness authority: a snapshot carrying one of these is authoritative-terminal
  * and, once the local optimistic latch is past its fresh-grace TTL, wins over it.
  */
-const TERMINAL_THREAD_STATUSES = new Set<ThreadStatus>([
-  "complete",
-  "error",
-  "stopped",
-]);
-
 /**
  * Client-side TTL for an unconfirmed optimistic "started" latch. A fresh
  * optimistic submit holds the snappy overlay for this window even against a
@@ -190,8 +187,8 @@ const TERMINAL_THREAD_STATUSES = new Set<ThreadStatus>([
  */
 export const OPTIMISTIC_SUBMIT_TTL_MS = 15_000;
 
-function isTerminalThreadStatus(status: ThreadStatus | null): boolean {
-  return status !== null && TERMINAL_THREAD_STATUSES.has(status);
+function isTerminalStatus(status: ThreadStatus | null): boolean {
+  return status !== null && isTerminalThreadStatus(status);
 }
 
 function isLiveThreadStatus(status: ThreadStatus | null): boolean {
@@ -223,7 +220,7 @@ function applySnapshot(
   const shouldYieldToAuthoritative =
     !shouldReplaceLocalState &&
     optimisticLatchIsStale &&
-    isTerminalThreadStatus(snapshot.threadStatus);
+    isTerminalStatus(snapshot.threadStatus);
   const overlay =
     shouldReplaceLocalState || shouldYieldToAuthoritative
       ? EMPTY_OPTIMISTIC_OVERLAY
