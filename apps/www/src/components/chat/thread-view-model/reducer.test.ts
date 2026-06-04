@@ -1003,6 +1003,50 @@ describe("ThreadViewModel reducer", () => {
     });
   });
 
+  describe("reported status_changed -> runStarted (characterization)", () => {
+    const ALL_THREAD_STATUSES = [
+      "queued-blocked",
+      "error",
+      "stopped",
+      "working-stopped",
+      "draft",
+      "scheduled",
+      "queued",
+      "queued-tasks-concurrency",
+      "queued-sandbox-creation-rate-limit",
+      "queued-agent-rate-limit",
+      "booting",
+      "working",
+      "stopping",
+      "working-error",
+      "working-done",
+      "checkpointing",
+      "complete",
+    ] as const;
+
+    const expectedReportedRunStarted = (status: string) =>
+      status === "working" || status === "booting";
+
+    for (const status of ALL_THREAD_STATUSES) {
+      it(`status_changed(${status}) -> runStarted=${expectedReportedRunStarted(status)}`, () => {
+        const state = threadViewModelReducer(
+          createInitialThreadViewModelState(snapshotWithMessages([])),
+          {
+            type: "ag-ui.event",
+            event: {
+              type: EventType.CUSTOM,
+              name: "thread.status_changed",
+              value: { status },
+            } as BaseEvent,
+          },
+        );
+        const lifecycle = projectThreadViewModel(state).lifecycle;
+        expect(lifecycle.threadStatus).toBe(status);
+        expect(lifecycle.runStarted).toBe(expectedReportedRunStarted(status));
+      });
+    }
+  });
+
   it("projects optimistic permission updates through the view model", () => {
     const state = threadViewModelReducer(
       createInitialThreadViewModelState(snapshotWithMessages([])),

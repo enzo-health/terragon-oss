@@ -1,4 +1,5 @@
 import type { ThreadStatus } from "@terragon/shared";
+import { runStartedForOptimisticStatus } from "./status-machine";
 import type { ThreadViewLifecycle, ThreadViewModelState } from "./types";
 
 /**
@@ -18,7 +19,7 @@ export function setThreadStatus(
     lifecycle: {
       ...state.lifecycle,
       threadStatus: nextStatus,
-      runStarted: nextStatus !== null && nextStatus !== "complete",
+      runStarted: runStartedForOptimisticStatus(nextStatus),
     },
   };
 }

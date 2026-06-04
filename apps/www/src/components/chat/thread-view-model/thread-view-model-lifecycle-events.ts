@@ -13,6 +13,7 @@ import {
   isRenderablePartShape,
   isThreadStatus,
 } from "./renderable-part-shape";
+import { runStartedForReportedStatus } from "./status-machine";
 import { isUnsupportedNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type { ThreadViewModelState, ThreadViewQuarantineEntry } from "./types";
 
@@ -171,7 +172,7 @@ function applyLifecycleCustomEvent(
   return {
     ...lifecycle,
     threadStatus: status,
-    runStarted: status === "working" || status === "booting",
+    runStarted: runStartedForReportedStatus(status),
   };
 }
 
