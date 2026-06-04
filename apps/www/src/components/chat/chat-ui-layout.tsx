@@ -7,21 +7,21 @@ import {
   ThreadErrorMessage,
   ThreadInfoFull,
 } from "@terragon/shared";
+import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
+import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { cn } from "@/lib/utils";
-import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
 import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
-import type { ThreadPageChat } from "@terragon/shared/db/types";
 import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
@@ -108,6 +108,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     onOptimisticUserSubmit,
     onOptimisticQueuedMessagesUpdate,
     onOptimisticPermissionModeUpdate,
+    onAppendRejected,
     reconcileActiveChatFromServer,
   } = optimisticHandlers;
 
@@ -135,6 +136,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
             threadId={thread.id}
             threadChatId={threadChat.id}
             setReplayCursor={coreData.setReplayCursor}
+            onAppendRejected={onAppendRejected}
             callerError={error || threadChat.errorMessageInfo || undefined}
             callerErrorType={threadChat.errorMessage || undefined}
             callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
@@ -381,6 +383,7 @@ export type ChatUIOptimisticHandlers = {
   >["onOptimisticUserSubmit"];
   onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
   onOptimisticPermissionModeUpdate: (mode: "allowAll" | "plan") => void;
+  onAppendRejected: (rejection: { kind: "rejected" | "lock-held" }) => void;
   reconcileActiveChatFromServer: () => Promise<unknown>;
 };
 

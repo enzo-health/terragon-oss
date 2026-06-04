@@ -3,10 +3,10 @@ import type { DBUserMessage } from "@terragon/shared";
 import { describe, expect, it, vi } from "vitest";
 import { dbUserPartsToAssistantContent } from "@/lib/user-message-content";
 import {
-  classifyComposerSubmitRoute,
-  routeComposerSubmit,
   type ComposerSubmitCommand,
   type ComposerSubmitRuntime,
+  classifyComposerSubmitRoute,
+  routeComposerSubmit,
 } from "./composer-submit-routing";
 
 const model = "claude-3-5-sonnet-20241022" as AIModel;
@@ -308,5 +308,111 @@ describe("routeComposerSubmit", () => {
       reason: "no-runtime",
     });
     expect(fallback).toHaveBeenCalledOnce();
+  });
+
+  it("fires optimisticSubmit once before runtime append for an idle supported message", async () => {
+    const calls: string[] = [];
+    const append = vi.fn<ComposerSubmitRuntime["append"]>(() => {
+      calls.push("append");
+    });
+    const fallback = vi.fn<ComposerSubmitCommand>();
+    const queue = vi.fn<ComposerSubmitCommand>();
+    const optimisticSubmit = vi.fn(() => {
+      calls.push("optimistic");
+    });
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      userMessage: richTextMessage("ship it"),
+      threadRuntime: runtime(append),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+      queueMessage: queue,
+      optimisticSubmit,
+    });
+
+    expect(outcome).toEqual({ type: "runtime-append-started" });
+    expect(optimisticSubmit).toHaveBeenCalledOnce();
+    expect(optimisticSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ clientSubmissionId: "submission-1" }),
+    );
+    expect(calls).toEqual(["optimistic", "append"]);
+  });
+
+  it("fires optimisticSubmit once before the unsupported-parts fallback route", async () => {
+    const calls: string[] = [];
+    const fallback = vi.fn<ComposerSubmitCommand>(async () => {
+      calls.push("fallback");
+    });
+    const optimisticSubmit = vi.fn(() => {
+      calls.push("optimistic");
+    });
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      userMessage: messageWithPdf(),
+      threadRuntime: runtime(vi.fn()),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+      optimisticSubmit,
+    });
+
+    expect(outcome).toEqual({
+      type: "fallback-submitted",
+      reason: "unsupported-parts",
+    });
+    expect(optimisticSubmit).toHaveBeenCalledOnce();
+    expect(calls).toEqual(["optimistic", "fallback"]);
+  });
+
+  it("fires optimisticSubmit once on the draft fallback route while idle", async () => {
+    const calls: string[] = [];
+    const fallback = vi.fn<ComposerSubmitCommand>(async () => {
+      calls.push("fallback");
+    });
+    const optimisticSubmit = vi.fn(() => {
+      calls.push("optimistic");
+    });
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      saveAsDraft: true,
+      userMessage: richTextMessage("save"),
+      threadRuntime: runtime(vi.fn()),
+      isAgentWorking: false,
+      isQueueingEnabled: true,
+      submitFallback: fallback,
+      queueMessage: vi.fn(),
+      optimisticSubmit,
+    });
+
+    expect(outcome).toEqual({
+      type: "fallback-submitted",
+      reason: "unsupported-intent",
+    });
+    expect(optimisticSubmit).toHaveBeenCalledOnce();
+    expect(calls).toEqual(["optimistic", "fallback"]);
+  });
+
+  it("does NOT fire optimisticSubmit on the queue route", async () => {
+    const optimisticSubmit = vi.fn();
+    const queue = vi.fn<ComposerSubmitCommand>();
+
+    const outcome = await routeComposerSubmit({
+      ...submitArgs(),
+      userMessage: richTextMessage("queue it"),
+      threadRuntime: runtime(vi.fn()),
+      isAgentWorking: true,
+      isQueueingEnabled: true,
+      submitFallback: vi.fn(),
+      queueMessage: queue,
+      optimisticSubmit,
+    });
+
+    expect(outcome).toEqual({ type: "queued-locally" });
+    expect(queue).toHaveBeenCalledOnce();
+    expect(optimisticSubmit).not.toHaveBeenCalled();
   });
 });

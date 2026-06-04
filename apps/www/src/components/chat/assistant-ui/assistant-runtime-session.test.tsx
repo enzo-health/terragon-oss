@@ -1,14 +1,13 @@
 /* @vitest-environment jsdom */
 
-import React from "react";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpAgent } from "@ag-ui/client";
 import type { Message as AgUiMessage } from "@ag-ui/core";
 import type { UseAgUiRuntimeOptions } from "@assistant-ui/react-ag-ui";
 import type { AIAgent } from "@terragon/agent/types";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantRuntimeSession } from "./assistant-runtime-session";
 
 const useAgUiRuntimeSpy = vi.fn<(options: UseAgUiRuntimeOptions) => unknown>();
@@ -46,6 +45,7 @@ function SessionHarness({
   isAgentWorking,
   loadAgUiHistoryMessages,
   setReplayCursor = vi.fn(),
+  onAppendRejected,
 }: {
   agent: HttpAgent;
   chatAgent?: AIAgent;
@@ -57,6 +57,9 @@ function SessionHarness({
   setReplayCursor?: React.ComponentProps<
     typeof AssistantRuntimeSession
   >["setReplayCursor"];
+  onAppendRejected?: React.ComponentProps<
+    typeof AssistantRuntimeSession
+  >["onAppendRejected"];
 }) {
   return (
     <AssistantRuntimeSession
@@ -67,6 +70,7 @@ function SessionHarness({
       threadId="thread-abc"
       threadChatId="chat-xyz"
       setReplayCursor={setReplayCursor}
+      onAppendRejected={onAppendRejected}
     >
       {() => <div />}
     </AssistantRuntimeSession>
@@ -96,6 +100,7 @@ function mountSessionHarness(
         threadId="thread-abc"
         threadChatId="chat-xyz"
         setReplayCursor={props.setReplayCursor ?? vi.fn()}
+        onAppendRejected={props.onAppendRejected}
       >
         {(renderProps) => {
           onRenderProps?.(renderProps);
@@ -448,6 +453,33 @@ describe("AssistantRuntimeSession", () => {
       expect(mounted.container.textContent).toContain(
         "Cancel failed: not allowed",
       );
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("calls onAppendRejected for a real append error but not a transient lifecycle race", () => {
+    const agent = makeAgent();
+    const onAppendRejected = vi.fn();
+    const mounted = mountSessionHarness({
+      agent,
+      isAgentWorking: true,
+      onAppendRejected,
+      loadAgUiHistoryMessages: async () => ({ messages: [], lastSeq: 0 }),
+    });
+    try {
+      const opts = lastRuntimeOptions();
+      // Transient race: must be swallowed, no revert.
+      opts.onError?.(
+        new Error("Cannot send 'RUN_STARTED' while a run is still active"),
+      );
+      expect(onAppendRejected).not.toHaveBeenCalled();
+      // Real lock-held rejection: reverts and tags lock-held.
+      opts.onError?.(new Error("Run already in progress"));
+      expect(onAppendRejected).toHaveBeenCalledWith({ kind: "lock-held" });
+      // Real non-lock rejection: reverts as a plain rejection.
+      opts.onError?.(new Error("Something else failed"));
+      expect(onAppendRejected).toHaveBeenLastCalledWith({ kind: "rejected" });
     } finally {
       mounted.unmount();
     }

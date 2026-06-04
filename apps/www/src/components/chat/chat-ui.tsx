@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Message as AgUiMessage } from "@ag-ui/core";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureAgent } from "@terragon/agent/utils";
 import {
   DBUserMessage,
@@ -57,11 +57,11 @@ import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
   createOptimisticQueuedMessagesUpdatedEvent,
+  createOptimisticUserSubmitRejectedEvent,
   createOptimisticUserSubmittedEvent,
   createRepoFileOpenedEvent,
   createRepoTreeOpenedEvent,
 } from "./thread-view-model/optimistic-events";
-import { useThreadViewModel } from "./use-thread-view-model";
 import {
   useAutoOpenPanelOnNewPlan,
   useAutoOpenSecondaryPanelOnDiff,
@@ -74,6 +74,7 @@ import {
   useReconcileActiveChatFromServer,
   useRetryThreadMutation,
 } from "./use-thread-mutations";
+import { useThreadViewModel } from "./use-thread-view-model";
 
 export async function loadAgUiHistoryMessagesForRuntime({
   threadId,
@@ -284,6 +285,12 @@ function ChatUIContent() {
   });
 
   const dispatch = threadViewModel.dispatchThreadViewEvent;
+  // Single-in-flight correlation for optimistic-submit rollback. The runtime
+  // onError path carries no clientSubmissionId, so we stash the latest pending
+  // id here and read it back in onAppendRejected. The reducer also keys its
+  // stash off the authoritative status change. v1 supports one submit in
+  // flight; multi-submit is a tracked non-goal.
+  const pendingClientSubmissionIdRef = useRef<string | null>(null);
   const onOptimisticPermissionModeUpdate = useCallback(
     (mode: "allowAll" | "plan") =>
       dispatch(createOptimisticPermissionModeUpdatedEvent(mode)),
@@ -460,11 +467,17 @@ function ChatUIContent() {
   }, [thread, threadChat.id, threadViewModel.threadStatus]);
 
   const onOptimisticUserSubmit = useCallback(
-    (userMessage: DBUserMessage, optimisticStatus: ThreadStatus) => {
+    (
+      userMessage: DBUserMessage,
+      optimisticStatus: ThreadStatus,
+      clientSubmissionId: string,
+    ) => {
+      pendingClientSubmissionIdRef.current = clientSubmissionId;
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
           optimisticStatus,
+          clientSubmissionId,
         }),
       );
     },
@@ -475,6 +488,21 @@ function ChatUIContent() {
     (messages: DBUserMessage[]) =>
       dispatch(createOptimisticQueuedMessagesUpdatedEvent(messages)),
     [dispatch],
+  );
+
+  const onAppendRejected = useCallback(
+    (rejection: { kind: "rejected" | "lock-held" }) => {
+      const clientSubmissionId = pendingClientSubmissionIdRef.current;
+      if (!clientSubmissionId) {
+        return;
+      }
+      pendingClientSubmissionIdRef.current = null;
+      dispatch(createOptimisticUserSubmitRejectedEvent({ clientSubmissionId }));
+      if (rejection.kind === "lock-held") {
+        void reconcileActiveChatFromServer();
+      }
+    },
+    [dispatch, reconcileActiveChatFromServer],
   );
 
   // Group props by concern so `<ChatUILayout/>` sees a stable ~7-prop signature
@@ -585,9 +613,11 @@ function ChatUIContent() {
       onOptimisticUserSubmit,
       onOptimisticQueuedMessagesUpdate,
       onOptimisticPermissionModeUpdate,
+      onAppendRejected,
       reconcileActiveChatFromServer,
     }),
     [
+      onAppendRejected,
       onOptimisticPermissionModeUpdate,
       onOptimisticQueuedMessagesUpdate,
       onOptimisticUserSubmit,

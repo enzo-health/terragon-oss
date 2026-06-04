@@ -9,7 +9,10 @@ import {
   preserveSynthesizedDescriptors,
   upsertSynthesizedDescriptor,
 } from "./artifact-descriptors";
-import { applyOptimisticUserSubmit } from "./optimistic-events";
+import {
+  applyOptimisticUserSubmit,
+  applyOptimisticUserSubmitRejected,
+} from "./optimistic-events";
 import {
   applyLifecycleEvent,
   applyMetaEvent,
@@ -50,6 +53,7 @@ export function createInitialThreadViewModelState(
     hasOptimisticUserSubmit: false,
     hasOptimisticQueuedMessages: false,
     hasOptimisticPermissionMode: false,
+    optimisticSubmission: null,
     seenEventKeys: new Set(),
     seenEventOrder: [],
   };
@@ -70,6 +74,8 @@ export function threadViewModelReducer(
       return applyAgUiEvent(state, event.event);
     case "optimistic.user-submitted":
       return applyOptimisticUserSubmit(state, event);
+    case "optimistic.user-submit-rejected":
+      return applyOptimisticUserSubmitRejected(state, event);
     case "optimistic.queued-messages-updated":
       return {
         ...state,
@@ -195,6 +201,9 @@ function applySnapshot(
     hasOptimisticUserSubmit: shouldReplaceLocalState
       ? false
       : state.hasOptimisticUserSubmit,
+    optimisticSubmission: shouldReplaceLocalState
+      ? null
+      : state.optimisticSubmission,
     hasOptimisticQueuedMessages: shouldReplaceLocalState
       ? false
       : state.hasOptimisticQueuedMessages,
@@ -356,6 +365,7 @@ function applyAgUiEvent(
   }
 
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
+  const statusChanged = lifecycle.threadStatus !== state.threadStatus;
   return {
     ...state,
     artifacts,
@@ -363,6 +373,7 @@ function applyAgUiEvent(
     lifecycle,
     lifecycleMessages,
     threadStatus: lifecycle.threadStatus,
+    optimisticSubmission: statusChanged ? null : state.optimisticSubmission,
     seenEventKeys: tracked.seenEventKeys,
     seenEventOrder: tracked.seenEventOrder,
     hasLiveLifecycleEvents:
