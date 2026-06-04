@@ -1,18 +1,19 @@
 import type { BaseEvent } from "@ag-ui/core";
+import type { DB } from "@terragon/shared/db";
 import {
   getAgUiEventEnvelopesForThreadChat,
   getLatestRunIdForThreadChat,
   isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import type { DB } from "@terragon/shared/db";
-import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
+import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
 import {
   isTerminalRunEventType,
-  repairReplayTextMessageLifecycles,
   type ReplayEntry,
+  repairReplayTextMessageLifecycles,
   toReplayEntries,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
+import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 export type LiveTailSseSession = {
   readonly closed: boolean;
@@ -110,7 +111,9 @@ export async function reconcileActiveRunFromDurable(params: {
         runId,
         daemonRunStatus: runContext.status,
         errorMessage: runContext.failureTerminalReason ?? null,
-        errorCode: runContext.failureCategory ?? null,
+        errorCode: deriveChatFailureThreadErrorType(
+          runContext.failureTerminalReason ?? null,
+        ),
       });
       if (!sse.emitAgUiEvent(terminalEvent, null)) {
         return true;

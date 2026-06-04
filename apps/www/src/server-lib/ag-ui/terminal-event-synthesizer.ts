@@ -1,11 +1,12 @@
 import type { AgUiEventEnvelope } from "@terragon/shared/model/agent-event-log";
 import { isTerminalAgentRunStatus } from "@terragon/shared/model/agent-event-log";
 import type { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
+import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
 import {
   isTerminalRunEventType,
   type ReplayEntry,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
+import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 type RunContext = Awaited<ReturnType<typeof getAgentRunContextByRunId>>;
 
@@ -52,7 +53,9 @@ export function synthesizeTerminalEntry(params: {
       runId,
       daemonRunStatus: runContext.status,
       errorMessage: runContext.failureTerminalReason ?? null,
-      errorCode: runContext.failureCategory ?? null,
+      errorCode: deriveChatFailureThreadErrorType(
+        runContext.failureTerminalReason ?? null,
+      ),
     });
     return {
       hasTerminalEvent,
