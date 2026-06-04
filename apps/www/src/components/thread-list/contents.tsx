@@ -108,7 +108,7 @@ export function ThreadListContents({
           <button
             type="button"
             onClick={toggleAllSections}
-            className="text-micro text-muted-foreground hover:text-foreground transition-colors text-left pl-2.5 py-0.5 flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none"
+            className="text-micro text-muted-foreground hover:text-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] text-left pl-2.5 py-0.5 flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none"
             title={
               allCollapsed ? "Expand all sections" : "Collapse all sections"
             }

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RepoSelector } from "../repo-branch-selector";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
 
 export function GitHubMentionTriggerForm({
@@ -25,7 +25,7 @@ export function GitHubMentionTriggerForm({
   const includeBotMentions = value.filter.includeBotMentions ?? false;
 
   return (
-    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-inset-edge">
       <div className="space-y-2">
         <FormLabel>Repository</FormLabel>
         <RepoSelector
@@ -68,10 +68,10 @@ export function GitHubMentionTriggerForm({
               <FormLabel>Bot usernames</FormLabel>
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Security notice</AlertTitle>
                 <AlertDescription>
-                  <strong>Security Notice:</strong> Make sure you trust these
-                  bot users. Their mentions will be read directly by the agent
-                  when the automation runs.
+                  Make sure you trust these bot users. Their mentions will be
+                  read directly by the agent when the automation runs.
                 </AlertDescription>
               </Alert>
               <Input
@@ -129,7 +129,11 @@ export function GitHubMentionTriggerForm({
           )}
         </div>
       </div>
-      {errorMessage && <p className="text-sm text-error">{errorMessage}</p>}
+      <div className="min-h-5 text-sm">
+        {errorMessage ? (
+          <span className="text-error">{errorMessage}</span>
+        ) : null}
+      </div>
     </div>
   );
 }

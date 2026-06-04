@@ -1,18 +1,14 @@
 import type { ThreadStatus } from "@terragon/shared";
+import { runStartedForOptimisticStatus } from "./status-machine";
 import type { ThreadViewLifecycle, ThreadViewModelState } from "./types";
 
 /**
- * The two thread-status fields — `state.threadStatus` and
- * `state.lifecycle.threadStatus` — must always agree. These helpers are the one
- * place an optimistic flip / rollback writes both together so they cannot drift.
+ * Thread status lives only on `lifecycle.threadStatus`; the public
+ * ThreadViewModel exposes a top-level `threadStatus` derived from it in
+ * `projectThreadViewModel`. These helpers are the one place an optimistic flip /
+ * rollback writes the status, keeping the derived `runStarted` in sync.
  *
- * They write ONLY `threadStatus` + `lifecycle` (and the derived
- * `lifecycle.runStarted`). They never touch `dbMessages`, `sidePanel`, or
- * `optimisticSubmission`, so callers spread those from the original state after
- * spreading the setter result.
- *
- * `applyAgUiEvent` does not use these: it derives `threadStatus` from a freshly
- * computed `lifecycle` on a single line, which cannot diverge.
+ * `applyAgUiEvent` does not use these: it computes a fresh `lifecycle` directly.
  */
 export function setThreadStatus(
   state: ThreadViewModelState,
@@ -20,29 +16,25 @@ export function setThreadStatus(
 ): ThreadViewModelState {
   return {
     ...state,
-    threadStatus: nextStatus,
     lifecycle: {
       ...state.lifecycle,
       threadStatus: nextStatus,
-      runStarted: nextStatus !== null && nextStatus !== "complete",
+      runStarted: runStartedForOptimisticStatus(nextStatus),
     },
   };
 }
 
 /**
- * Re-adopt a previously captured status + lifecycle (used on optimistic
- * rollback). Restores `threadStatus` and the full `lifecycle` object so
- * `runStarted` / `runId` / `threadChatUpdatedAt` return to their pre-flip
- * values, keeping the two status fields in agreement.
+ * Re-adopt a previously captured lifecycle (used on optimistic rollback) so
+ * `threadStatus` / `runStarted` / `runId` / `threadChatUpdatedAt` return to
+ * their pre-flip values.
  */
 export function restoreThreadStatus(
   state: ThreadViewModelState,
-  priorThreadStatus: ThreadStatus | null,
   priorLifecycle: ThreadViewLifecycle,
 ): ThreadViewModelState {
   return {
     ...state,
-    threadStatus: priorThreadStatus,
     lifecycle: priorLifecycle,
   };
 }

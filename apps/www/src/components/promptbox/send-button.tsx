@@ -24,7 +24,7 @@ function getLabel({
   isTouchDevice: boolean;
 }) {
   if (isSubmitting) {
-    return "Submitting...";
+    return "Submitting…";
   }
   return isSmallScreen || isTouchDevice ? "Submit" : "Submit (Enter)";
 }
@@ -100,11 +100,7 @@ export const SendButton = memo(function SendButton({
       title={title}
       aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
-      className={cn(
-        "size-auto h-11 px-3 sm:h-8 sm:px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.98]",
-        isSubmitting && "animate-pulse-subtle",
-        className,
-      )}
+      className={cn("size-auto h-11 px-3 sm:h-8 sm:px-2", className)}
       size="icon"
     >
       <SendActionIcon
@@ -170,12 +166,7 @@ export const SendComboButton = memo(function SendComboButton({
 
   return (
     <>
-      <div
-        className={cn(
-          "relative inline-flex",
-          isSubmitting && "animate-pulse-subtle",
-        )}
-      >
+      <div className="relative inline-flex">
         <Button
           onClick={(event) => {
             event.preventDefault();
@@ -183,11 +174,7 @@ export const SendComboButton = memo(function SendComboButton({
           }}
           title={title}
           disabled={isDisabled}
-          className={cn(
-            "h-8 px-2 pr-6 transition-[background-color,box-shadow,scale,opacity] duration-200 rounded-r-none group active:scale-[0.98]",
-            isSubmitting && "opacity-90",
-            className,
-          )}
+          className={cn("h-8 px-2 pr-6 rounded-r-none group", className)}
           size="sm"
         >
           <SendActionIcon
@@ -200,12 +187,12 @@ export const SendComboButton = memo(function SendComboButton({
             <Button
               disabled={isDisabled}
               className={cn(
-                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[background-color,border-color,scale] duration-200 active:scale-[0.98]",
+                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[transform,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
                 className,
               )}
               size="sm"
             >
-              <ChevronDown className={cn("size-3 transition-transform")} />
+              <ChevronDown className="size-3" />
             </Button>
           }
           title="Submit Options"

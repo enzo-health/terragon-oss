@@ -330,16 +330,16 @@ describe("ThreadViewModel reducer", () => {
         at: 1_000,
       },
     );
-    expect(state.hasOptimisticUserSubmit).toBe(true);
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
 
     state = threadViewModelReducer(state, {
       type: "ag-ui.event",
       event: { type: EventType.RUN_FINISHED } as BaseEvent,
     });
     expect(projectThreadViewModel(state).threadStatus).toBe("complete");
-    expect(state.hasOptimisticUserSubmit).toBe(false);
-    expect(state.optimisticPendingSince).toBeNull();
-    expect(state.optimisticSubmission).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
 
     // With the optimistic latch cleared, an authoritative reconcile yields
     // straight to the snapshot's DB status — no stale optimistic status remains.
@@ -374,8 +374,8 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(projectThreadViewModel(state).threadStatus).toBe("stopped");
-    expect(state.hasOptimisticUserSubmit).toBe(false);
-    expect(state.optimisticPendingSince).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
   });
 
   it("reverts an unconfirmed optimistic latch to the terminal snapshot status after the TTL", () => {
@@ -414,8 +414,8 @@ describe("ThreadViewModel reducer", () => {
     const viewModel = projectThreadViewModel(state);
     expect(viewModel.threadStatus).toBe("complete");
     expect(viewModel.lifecycle.threadStatus).toBe("complete");
-    expect(state.hasOptimisticUserSubmit).toBe(false);
-    expect(state.optimisticPendingSince).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
   });
 
   it("does not revert a slow-to-boot optimistic latch when the snapshot DB status is still live", () => {
@@ -442,8 +442,8 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(projectThreadViewModel(state).threadStatus).toBe("booting");
-    expect(state.hasOptimisticUserSubmit).toBe(true);
-    expect(state.optimisticPendingSince).toBe(1_000);
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
+    expect(state.optimisticOverlay.userSubmit?.pendingSince).toBe(1_000);
   });
 
   it("does not revert the optimistic latch on a stale-complete snapshot.hydrated with no timestamp", () => {
@@ -468,7 +468,7 @@ describe("ThreadViewModel reducer", () => {
     });
 
     expect(projectThreadViewModel(state).threadStatus).toBe("booting");
-    expect(state.hasOptimisticUserSubmit).toBe(true);
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
   });
 
   it("reverts the optimistic submit on rejection and clears the optimistic flag", () => {
@@ -499,8 +499,7 @@ describe("ThreadViewModel reducer", () => {
     });
     expect(viewModel.dbMessages).toHaveLength(1);
     expect(viewModel.sidePanel.messages).toHaveLength(1);
-    expect(state.hasOptimisticUserSubmit).toBe(false);
-    expect(state.optimisticSubmission).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
   });
 
   it("no-ops a rejection whose clientSubmissionId does not match the pending submit", () => {
@@ -522,21 +521,19 @@ describe("ThreadViewModel reducer", () => {
     expect(after).toBe(before);
   });
 
-  it("keeps the two status fields in agreement across submit/reject/run events", () => {
+  it("projects threadStatus from lifecycle across submit/reject/run events", () => {
     let state = createInitialThreadViewModelState(
       snapshotWithMessages([userMessage("hi")]),
     );
-    const assertAgree = () => {
-      expect(state.threadStatus).toBe(state.lifecycle.threadStatus);
-    };
-    assertAgree();
+    const projectedStatus = () => projectThreadViewModel(state).threadStatus;
+    expect(projectedStatus()).toBe(state.lifecycle.threadStatus);
     state = threadViewModelReducer(state, {
       type: "optimistic.user-submitted",
       message: userMessage("go"),
       optimisticStatus: "booting",
       clientSubmissionId: "sub-inv-1",
     });
-    assertAgree();
+    expect(projectedStatus()).toBe("booting");
     state = threadViewModelReducer(state, {
       type: "ag-ui.event",
       event: {
@@ -545,12 +542,12 @@ describe("ThreadViewModel reducer", () => {
         value: { status: "working" },
       } as BaseEvent,
     });
-    assertAgree();
+    expect(projectedStatus()).toBe("working");
     state = threadViewModelReducer(state, {
       type: "optimistic.user-submit-rejected",
       clientSubmissionId: "sub-inv-1",
     });
-    assertAgree();
+    expect(projectedStatus()).toBe(state.lifecycle.threadStatus);
   });
 
   it("preserves optimistic permission mode across hydration until durable reconciliation", () => {
@@ -1158,6 +1155,50 @@ describe("ThreadViewModel reducer", () => {
       runStarted: false,
       threadStatus: "error",
     });
+  });
+
+  describe("reported status_changed -> runStarted (characterization)", () => {
+    const ALL_THREAD_STATUSES = [
+      "queued-blocked",
+      "error",
+      "stopped",
+      "working-stopped",
+      "draft",
+      "scheduled",
+      "queued",
+      "queued-tasks-concurrency",
+      "queued-sandbox-creation-rate-limit",
+      "queued-agent-rate-limit",
+      "booting",
+      "working",
+      "stopping",
+      "working-error",
+      "working-done",
+      "checkpointing",
+      "complete",
+    ] as const;
+
+    const expectedReportedRunStarted = (status: string) =>
+      status === "working" || status === "booting";
+
+    for (const status of ALL_THREAD_STATUSES) {
+      it(`status_changed(${status}) -> runStarted=${expectedReportedRunStarted(status)}`, () => {
+        const state = threadViewModelReducer(
+          createInitialThreadViewModelState(snapshotWithMessages([])),
+          {
+            type: "ag-ui.event",
+            event: {
+              type: EventType.CUSTOM,
+              name: "thread.status_changed",
+              value: { status },
+            } as BaseEvent,
+          },
+        );
+        const lifecycle = projectThreadViewModel(state).lifecycle;
+        expect(lifecycle.threadStatus).toBe(status);
+        expect(lifecycle.runStarted).toBe(expectedReportedRunStarted(status));
+      });
+    }
   });
 
   it("projects optimistic permission updates through the view model", () => {

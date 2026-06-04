@@ -42,13 +42,13 @@ import {
   parseContextWindowExhausted,
 } from "@/agent/msg/helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type DaemonTokenAuthContext,
   type DaemonTokenProvider,
   getDaemonTokenAuthContextOrNull,
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
-import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import {
   type AgUiPublishRow,
@@ -57,25 +57,25 @@ import {
   metaEventsToAgUiEvents,
 } from "@/server-lib/ag-ui-publisher";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
-import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
   buildPreLegacyAgUiCommitPlan,
+  type CanonicalPersistenceSummary,
   commitPreLegacyAgUiEvents,
   commitTerminalAgUiEvents,
-  type CanonicalPersistenceSummary,
   type DaemonEventEnvelopeV2,
   filterCanonicalEventsForDeltaCoexistence,
   findCanonicalEventContextMismatch,
   findCanonicalRunTerminalEvent,
   splitCanonicalEventsForCommit,
 } from "@/server-lib/daemon-event/event-commit";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   buildFailedTerminalErrorMetadata,
   buildTerminalLifecyclePolicy,
   resolveTerminalStatusForTransition,
   shouldQueueTerminalCheckpoint,
 } from "@/server-lib/daemon-event/run-completion";
+import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
+import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";

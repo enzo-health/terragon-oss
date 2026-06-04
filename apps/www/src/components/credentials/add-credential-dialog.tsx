@@ -47,6 +47,7 @@ const API_KEY_CONFIGS = {
         >
           Amp Code Settings Page
         </a>
+        .
       </>
     ),
   },
@@ -66,6 +67,7 @@ const API_KEY_CONFIGS = {
         >
           Google AI Studio
         </a>
+        .
       </>
     ),
   },
@@ -126,7 +128,7 @@ function AddApiKeyDialog({
             Add your {config.agentName} API key.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
+        <div className="space-y-3">
           <p className="text-sm text-muted-foreground">{config.helpText}</p>
           <div className="relative">
             <Input
@@ -138,10 +140,12 @@ function AddApiKeyDialog({
               className="pr-10"
             />
             <Button
-              size="sm"
+              type="button"
+              size="icon"
               variant="ghost"
+              aria-label={showApiKey ? "Hide API key" : "Show API key"}
               onClick={() => setShowApiKey(!showApiKey)}
-              className="absolute right-0 top-0 h-full px-3"
+              className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
             >
               {showApiKey ? (
                 <EyeOff className="h-4 w-4" />
@@ -156,7 +160,7 @@ function AddApiKeyDialog({
             onClick={handleSubmit}
             disabled={!apiKey || saveApiKeyMutation.isPending}
           >
-            {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+            {saveApiKeyMutation.isPending ? "Adding…" : "Add credential"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -319,7 +323,7 @@ export function AddClaudeCredentialDialog({
           <DialogTitle>Claude</DialogTitle>
           <DialogDescription>
             {mode === null
-              ? "Choose how you'd like to add credentials for Claude."
+              ? "Choose how you’d like to add credentials for Claude."
               : mode === "api-key"
                 ? "Add a new API key for Claude."
                 : "Connect your Claude account."}
@@ -338,7 +342,7 @@ export function AddClaudeCredentialDialog({
                 disabled={loading}
               >
                 {loading && authType === "account-link"
-                  ? "Opening..."
+                  ? "Opening…"
                   : "Connect Claude account"}
               </Button>
               <Button
@@ -347,11 +351,11 @@ export function AddClaudeCredentialDialog({
                 className="w-full justify-start"
                 onClick={() => setMode("api-key")}
               >
-                Add API Key
+                Add API key
               </Button>
             </div>
           ) : mode === "api-key" ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Enter your Anthropic API key. Create one at{" "}
                 <a
@@ -362,6 +366,7 @@ export function AddClaudeCredentialDialog({
                 >
                   console.anthropic.com
                 </a>
+                .
               </p>
               <div className="relative">
                 <Input
@@ -373,10 +378,12 @@ export function AddClaudeCredentialDialog({
                   className="pr-10"
                 />
                 <Button
-                  size="sm"
+                  type="button"
+                  size="icon"
                   variant="ghost"
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-0 top-0 h-full px-3"
+                  className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
                 >
                   {showApiKey ? (
                     <EyeOff className="h-4 w-4" />
@@ -415,7 +422,7 @@ export function AddClaudeCredentialDialog({
               onClick={handleSubmit}
               disabled={!apiKey || saveApiKeyMutation.isPending}
             >
-              {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+              {saveApiKeyMutation.isPending ? "Adding…" : "Add credential"}
             </Button>
           )}
           {mode === "account-link" && codeVerifier && (
@@ -423,7 +430,7 @@ export function AddClaudeCredentialDialog({
               onClick={handleExchangeCode}
               disabled={!authCode || exchangeCodeMutation.isPending}
             >
-              {exchangeCodeMutation.isPending ? "Connecting..." : "Connect"}
+              {exchangeCodeMutation.isPending ? "Connecting…" : "Connect"}
             </Button>
           )}
         </DialogFooter>
@@ -505,7 +512,7 @@ export function AddCodexCredentialDialog({
           <DialogTitle>Codex</DialogTitle>
           <DialogDescription>
             {mode === null
-              ? "Choose how you'd like to add credentials for Codex."
+              ? "Choose how you’d like to add credentials for Codex."
               : mode === "api-key"
                 ? "Add a new API key for Codex."
                 : "Connect your ChatGPT account."}
@@ -527,11 +534,11 @@ export function AddCodexCredentialDialog({
                 className="w-full justify-start"
                 onClick={() => setMode("api-key")}
               >
-                Add API Key
+                Add API key
               </Button>
             </div>
           ) : mode === "api-key" ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Enter your OpenAI API key. Get one from{" "}
                 <a
@@ -542,6 +549,7 @@ export function AddCodexCredentialDialog({
                 >
                   platform.openai.com/api-keys
                 </a>
+                .
               </p>
               <div className="relative">
                 <Input
@@ -553,10 +561,12 @@ export function AddCodexCredentialDialog({
                   className="pr-10"
                 />
                 <Button
-                  size="sm"
+                  type="button"
+                  size="icon"
                   variant="ghost"
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-0 top-0 h-full px-3"
+                  className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
                 >
                   {showApiKey ? (
                     <EyeOff className="h-4 w-4" />
@@ -592,7 +602,7 @@ export function AddCodexCredentialDialog({
                   : "How to get auth.json"}
               </Button>
               {showCodexHelp && (
-                <div className="mt-2 space-y-2 text-sm">
+                <div className="mt-2 space-y-2 text-sm animate-in fade-in-0 duration-[var(--duration-quick)] ease-[var(--ease-standard)]">
                   <pre className="rounded-md bg-muted p-2 overflow-x-auto">
                     <code>{`# Install Codex
 npm install -g @openai/codex
@@ -621,7 +631,7 @@ cat ~/.codex/auth.json | pbcopy`}</code>
               onClick={handleSubmit}
               disabled={!apiKey || saveApiKeyMutation.isPending}
             >
-              {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+              {saveApiKeyMutation.isPending ? "Adding…" : "Add credential"}
             </Button>
           )}
           {mode === "account-link" && (
@@ -629,7 +639,7 @@ cat ~/.codex/auth.json | pbcopy`}</code>
               onClick={handleSaveCodexAuth}
               disabled={saveCodexMutation.isPending}
             >
-              {saveCodexMutation.isPending ? "Connecting..." : "Connect"}
+              {saveCodexMutation.isPending ? "Connecting…" : "Connect"}
             </Button>
           )}
         </DialogFooter>

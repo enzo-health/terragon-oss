@@ -7,11 +7,12 @@ import {
   useAgUiRuntime,
 } from "@assistant-ui/react-ag-ui";
 import type { AIAgent } from "@terragon/agent/types";
+import type { ThreadErrorType } from "@terragon/shared";
 import { useCallback, useMemo, useState } from "react";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { createAssistantHistoryHydrationAdapter } from "../assistant-history-hydration-adapter";
-import { isTransientRunLifecycleError } from "./runtime-error-classification";
+import { extractRuntimeErrorPayload } from "./runtime-error-classification";
 import { resolveRuntimeResumePolicy } from "./runtime-resume-policy";
 
 class AssistantHistoryLoadError extends Error {
@@ -62,12 +63,14 @@ function resolveThreadRuntimeErrorProps({
   callerErrorInfo,
   historyLoadError,
   runtimeError,
+  runtimeErrorCode,
 }: {
   callerError?: string | null;
   callerErrorType?: string | undefined;
   callerErrorInfo?: string | undefined;
   historyLoadError: string | null;
   runtimeError: string | null;
+  runtimeErrorCode?: ThreadErrorType | null;
 }): { errorType?: string; errorInfo?: string } {
   const hasCallerError =
     Boolean(callerError) ||
@@ -87,7 +90,7 @@ function resolveThreadRuntimeErrorProps({
   }
   if (runtimeError) {
     return {
-      errorType: "runtime",
+      errorType: runtimeErrorCode ?? "runtime",
       errorInfo: runtimeError,
     };
   }
@@ -131,7 +134,10 @@ export type AssistantRuntimeSessionProps = {
   threadId: string;
   threadChatId?: string;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
-  onAppendRejected?: (rejection: { kind: "rejected" | "lock-held" }) => void;
+  onAppendRejected?: (rejection: {
+    kind: "rejected" | "lock-held";
+    clientSubmissionId: string | null;
+  }) => void;
   callerError?: string | null;
   callerErrorType?: string;
   callerErrorInfo?: string;
@@ -166,6 +172,7 @@ export function AssistantRuntimeSession({
   const [runtimeErrorState, setRuntimeErrorState] = useState<{
     agent: HttpAgent;
     message: string;
+    code: ThreadErrorType | null;
   } | null>(null);
   const [runtimeRecoveryNonce, setRuntimeRecoveryNonce] = useState(0);
   const historyLoadError =
@@ -175,14 +182,23 @@ export function AssistantRuntimeSession({
       : null;
   const runtimeError =
     runtimeErrorState?.agent === agent ? runtimeErrorState.message : null;
+  const runtimeErrorCode =
+    runtimeErrorState?.agent === agent ? runtimeErrorState.code : null;
+  // Server-authoritative run liveness captured from the most recent history
+  // load. `undefined` until the first load resolves, which makes the resume
+  // policy fall back to `isAgentWorking`.
+  const [serverRunActive, setServerRunActive] = useState<boolean | undefined>(
+    undefined,
+  );
   const runtimeResumePolicy = useMemo(
     () =>
       resolveRuntimeResumePolicy({
         isAgentWorking,
+        serverRunActive,
         threadChatId,
         retryNonce: runtimeRecoveryNonce,
       }),
-    [isAgentWorking, threadChatId, runtimeRecoveryNonce],
+    [isAgentWorking, serverRunActive, threadChatId, runtimeRecoveryNonce],
   );
 
   const handleLocalRuntimeRetry = useCallback(async () => {
@@ -194,6 +210,9 @@ export function AssistantRuntimeSession({
   const loadHistoryMessages = useCallback(async () => {
     try {
       const history = await loadAgUiHistoryMessages();
+      // Capture server-authoritative liveness for the resume policy. `undefined`
+      // (server did not report) leaves the policy on the isAgentWorking fallback.
+      setServerRunActive(history.runActive);
       if (runtimeResumePolicy.replayCursorAction === "apply-history-last-seq") {
         setReplayCursor(
           history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
@@ -233,17 +252,32 @@ export function AssistantRuntimeSession({
         });
         return;
       }
+      const payload = extractRuntimeErrorPayload(error);
       // A `RUN_STARTED`-while-active race (and the symmetric post-finish tail
       // race) is a benign client-side lifecycle hiccup — the run is still
-      // streaming, nothing failed. Surfacing it as "An error occurred" is
-      // noise, so swallow it instead of flipping the thread into an error
-      // state. Real failures still surface.
-      if (isTransientRunLifecycleError(error)) {
+      // streaming, nothing failed. Swallow it; real failures still surface.
+      if (payload.kind === "transient-lifecycle") {
         return;
       }
-      const isLockHeld = /Run already in progress/i.test(error.message);
-      onAppendRejected?.({ kind: isLockHeld ? "lock-held" : "rejected" });
-      setRuntimeErrorState({ agent, message: error.message });
+      if (payload.kind === "lock-held") {
+        onAppendRejected?.({
+          kind: "lock-held",
+          clientSubmissionId: payload.clientSubmissionId,
+        });
+        setRuntimeErrorState({ agent, message: error.message, code: null });
+        return;
+      }
+      // run-failure | transport both map to a non-lock "rejected" for the
+      // reducer; only run-failure carries a typed ThreadErrorType for copy.
+      onAppendRejected?.({
+        kind: "rejected",
+        clientSubmissionId: payload.clientSubmissionId,
+      });
+      setRuntimeErrorState({
+        agent,
+        message: payload.info,
+        code: payload.kind === "run-failure" ? payload.code : null,
+      });
     },
     [agent, loadAgUiHistoryMessages, onAppendRejected],
   );
@@ -305,6 +339,7 @@ export function AssistantRuntimeSession({
     callerErrorInfo,
     historyLoadError,
     runtimeError,
+    runtimeErrorCode,
   });
 
   return (

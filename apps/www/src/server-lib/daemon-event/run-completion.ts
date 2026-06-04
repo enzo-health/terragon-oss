@@ -1,3 +1,5 @@
+import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
+
 export type TerminalRunStatus = "completed" | "failed" | "stopped";
 
 export type TerminalLifecycleEventType =
@@ -73,10 +75,7 @@ export function buildFailedTerminalErrorMetadata(
   errorMessage: string | null,
 ): FailedTerminalErrorMetadata {
   const isPromptTooLong =
-    errorMessage !== null &&
-    /context.?length.?exceeded|context.?window|ran out of room|exceeds the context window|max.*tokens.*exceeded/i.test(
-      errorMessage,
-    );
+    deriveChatFailureThreadErrorType(errorMessage) === "prompt-too-long";
   return {
     errorMessage: isPromptTooLong ? "prompt-too-long" : "agent-generic-error",
     errorMessageInfo: isPromptTooLong ? null : (errorMessage ?? ""),

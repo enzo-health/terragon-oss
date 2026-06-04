@@ -25,7 +25,7 @@ export function DateRangeSelector({
             aria-checked={isActive}
             variant={isActive ? "default" : "outline"}
             size="sm"
-            className="tabular-nums"
+            className="tabular-nums transition-colors"
             onClick={() => {
               onNumDaysChange(days);
             }}

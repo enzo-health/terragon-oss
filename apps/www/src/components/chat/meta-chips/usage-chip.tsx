@@ -25,7 +25,7 @@ export function UsageChip({ tokenUsage }: UsageChipProps) {
       data-testid="usage-chip"
       data-state={isWarning ? "warning" : "active"}
       variant={isWarning ? "warning" : "active"}
-      title={`Input: ${tokenUsage.inputTokens}, Cached: ${tokenUsage.cachedInputTokens}, Output: ${tokenUsage.outputTokens}`}
+      title={`Input: ${tokenUsage.inputTokens.toLocaleString()}, Cached: ${tokenUsage.cachedInputTokens.toLocaleString()}, Output: ${tokenUsage.outputTokens.toLocaleString()}`}
       icon={<Coins className="size-3" />}
     >
       {formatTokens(total)}

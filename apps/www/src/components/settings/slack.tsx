@@ -56,7 +56,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   const isConnected = !!account.installation;
 
   return (
-    <div className="space-y-4 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
+    <div className="space-y-4 rounded-xl border border-hairline-soft bg-canvas/40 p-4">
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-2 flex-1">
           <div className="flex items-center gap-2">
@@ -64,7 +64,9 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
             <span className="font-semibold">{account.slackTeamName}</span>
             <ConnectionStatusPill connected={isConnected} />
           </div>
-          <p className="text-xs text-mid">Workspace ID: {account.teamId}</p>
+          <p className="text-xs text-mid">
+            Workspace ID: <span className="font-mono">{account.teamId}</span>
+          </p>
         </div>
       </div>
 
@@ -76,14 +78,14 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
           </p>
           <Button size="sm" onClick={handleInstallApp}>
             <Slack className="h-4 w-4" />
-            Install Slack App
+            Install Slack app
           </Button>
         </div>
       ) : (
         <>
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="space-y-1">
-              <Label className="text-sm">Default Repository</Label>
+              <Label className="text-sm">Default repository</Label>
               <RepoSelector
                 selectedRepoFullName={defaultRepo}
                 onChange={(repoFullName) => {
@@ -101,7 +103,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-sm">Default Model</Label>
+              <Label className="text-sm">Default model</Label>
               <ModelSelector
                 className="border-solid p-2 text-foreground bg-raised"
                 forcedAgent={null}
@@ -129,9 +131,9 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               disabled={isDisconnecting}
               size="sm"
               variant="link"
-              className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
+              className="text-mid font-normal underline px-0 hover:text-strong"
             >
-              {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+              {isDisconnecting ? "Disconnecting…" : "Disconnect account"}
             </Button>
           </div>
         </>
@@ -173,8 +175,8 @@ export function SlackAccountSettings({
           >
             <Slack className="h-4 w-4" />
             {getSlackOAuthUrlMutation.isPending
-              ? "Connecting..."
-              : "Connect Slack Workspace"}
+              ? "Connecting…"
+              : "Connect Slack workspace"}
           </Button>
         </div>
       </div>
@@ -189,12 +191,13 @@ export function SlackAccountSettings({
       <div className="flex">
         <Button
           variant="link"
+          size="sm"
           onClick={handleConnect}
           disabled={getSlackOAuthUrlMutation.isPending}
-          className="underline cursor-pointer"
+          className="text-mid font-normal underline px-0 hover:text-strong"
         >
           {getSlackOAuthUrlMutation.isPending
-            ? "Connecting..."
+            ? "Connecting…"
             : "Connect another workspace"}
         </Button>
       </div>

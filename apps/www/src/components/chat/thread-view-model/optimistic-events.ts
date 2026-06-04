@@ -85,7 +85,6 @@ export function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
 ): ThreadViewModelState {
-  const priorThreadStatus = state.threadStatus;
   const priorLifecycle = state.lifecycle;
   return {
     ...setThreadStatus(state, event.optimisticStatus),
@@ -94,14 +93,15 @@ export function applyOptimisticUserSubmit(
       ...state.sidePanel,
       messages: [...state.sidePanel.messages, event.message],
     },
-    optimisticSubmission: {
-      clientSubmissionId: event.clientSubmissionId,
-      message: event.message,
-      priorThreadStatus,
-      priorLifecycle,
+    optimisticOverlay: {
+      ...state.optimisticOverlay,
+      userSubmit: {
+        clientSubmissionId: event.clientSubmissionId,
+        message: event.message,
+        priorLifecycle,
+        pendingSince: event.at ?? null,
+      },
     },
-    hasOptimisticUserSubmit: true,
-    optimisticPendingSince: event.at ?? null,
   };
 }
 
@@ -109,15 +109,11 @@ export function applyOptimisticUserSubmitRejected(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submit-rejected" }>,
 ): ThreadViewModelState {
-  const pending = state.optimisticSubmission;
+  const pending = state.optimisticOverlay.userSubmit;
   if (!pending || pending.clientSubmissionId !== event.clientSubmissionId) {
     return state;
   }
-  const restored = restoreThreadStatus(
-    state,
-    pending.priorThreadStatus,
-    pending.priorLifecycle,
-  );
+  const restored = restoreThreadStatus(state, pending.priorLifecycle);
   const matchesPending = (m: (typeof state.dbMessages)[number]): boolean =>
     m === pending.message ||
     (m.type === "user" &&
@@ -130,8 +126,9 @@ export function applyOptimisticUserSubmitRejected(
       ...state.sidePanel,
       messages: state.sidePanel.messages.filter((m) => !matchesPending(m)),
     },
-    optimisticSubmission: null,
-    hasOptimisticUserSubmit: false,
-    optimisticPendingSince: null,
+    optimisticOverlay: {
+      ...state.optimisticOverlay,
+      userSubmit: null,
+    },
   };
 }

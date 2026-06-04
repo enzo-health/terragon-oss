@@ -97,7 +97,7 @@ export function Environments({
             </h2>
             <p className="text-sm text-mid">
               {environments?.length === 0
-                ? 'Click "Create Environment" to add one.'
+                ? "Create an environment to add one."
                 : "Per-repository variables, MCP servers, and setup scripts."}
             </p>
           </div>
@@ -149,7 +149,7 @@ function EnvironmentVariablesSection({
   return (
     <div className="flex flex-col gap-2 mt-6">
       <h2 className="text-base font-semibold text-strong">
-        Environment Variables
+        Environment variables
       </h2>
       <div className="flex flex-col gap-2">
         <span className="text-xs text-mid">
@@ -322,13 +322,13 @@ function SnapshotSection({
     <div className="flex flex-col gap-2 mt-10">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-strong">
-          Sandbox Snapshots
+          Sandbox snapshots
         </h2>
         <div className="flex items-center gap-2">
           <select
             value={selectedSize}
             onChange={(e) => setSelectedSize(e.target.value as SandboxSize)}
-            className="text-xs rounded-full border border-hairline px-3 py-1 bg-canvas text-strong tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/50"
+            className="text-xs rounded-full border border-hairline px-3 py-1 bg-canvas text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/50"
           >
             <option value="small">Small (2 vCPU, 4 GB)</option>
             <option value="large">Large (4 vCPU, 8 GB)</option>
@@ -346,8 +346,7 @@ function SnapshotSection({
             <div className="flex items-center gap-2">
               <Package className="h-4 w-4 text-mid" />
               <span className="text-sm text-mid">
-                No snapshot built for{" "}
-                <span className="tabular-nums">{selectedSize}</span> size.
+                No snapshot built for <span>{selectedSize}</span> size.
               </span>
             </div>
             <Button
@@ -366,7 +365,7 @@ function SnapshotSection({
               ) : (
                 <Package className="h-3 w-3 mr-1" />
               )}
-              Build Snapshot
+              Build snapshot
             </Button>
           </div>
         </div>
@@ -381,7 +380,10 @@ function SnapshotSection({
                 currentSnapshot.status !== "building" && (
                   <span className="text-xs text-mid tabular-nums">
                     Built{" "}
-                    {new Date(currentSnapshot.builtAt).toLocaleDateString()}
+                    {new Date(currentSnapshot.builtAt).toLocaleDateString(
+                      undefined,
+                      { year: "numeric", month: "short", day: "numeric" },
+                    )}
                   </span>
                 )}
             </div>
@@ -513,7 +515,7 @@ export function EnvironmentUI({
         />
         <div className="flex flex-col gap-2 mt-10">
           <h2 className="text-base font-semibold text-strong">
-            MCP Server Configuration
+            MCP server configuration
           </h2>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-mid">
@@ -546,12 +548,12 @@ export function EnvironmentUI({
         <div className="flex flex-col gap-2 mt-10 mb-8">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-strong">
-              Environment Setup
+              Environment setup
             </h2>
             <Link href={`/environments/${environmentId}/setup`}>
               <Button variant="outline" size="sm">
                 <FileCog className="h-4 w-4 mr-1" />
-                Edit Setup Script
+                Edit setup script
               </Button>
             </Link>
           </div>

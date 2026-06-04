@@ -18,6 +18,8 @@ export type ThreadTranscriptEntry = {
   messages: AgUiHistoryItem[];
   lastSeq: number;
   lastCursor?: AgUiReplayCursor;
+  runActive?: boolean;
+  activeRunId?: string | null;
   /** Wall-clock ms when this snapshot was cached. */
   cachedAt: number;
 };
@@ -103,6 +105,8 @@ export function seedTranscript({
     messages: result.messages,
     lastSeq: result.lastSeq,
     lastCursor: result.lastCursor,
+    runActive: result.runActive,
+    activeRunId: result.activeRunId,
     cachedAt: Date.now(),
   };
   applyCollectionWrite((collection) => {
@@ -143,12 +147,19 @@ export function getCachedTranscript(
     return undefined;
   }
   const entry = raw as unknown as ThreadTranscriptEntry;
+  const liveness = {
+    ...(entry.runActive !== undefined ? { runActive: entry.runActive } : {}),
+    ...(entry.activeRunId !== undefined
+      ? { activeRunId: entry.activeRunId }
+      : {}),
+  };
   return entry.lastCursor === undefined
-    ? { messages: entry.messages, lastSeq: entry.lastSeq }
+    ? { messages: entry.messages, lastSeq: entry.lastSeq, ...liveness }
     : {
         messages: entry.messages,
         lastSeq: entry.lastSeq,
         lastCursor: entry.lastCursor,
+        ...liveness,
       };
 }
 

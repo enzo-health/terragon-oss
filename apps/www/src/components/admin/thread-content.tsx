@@ -62,7 +62,7 @@ export function AdminThreadIdInput() {
   const router = useRouter();
   return (
     <EntityIdInput
-      placeholder="Enter Thread ID..."
+      placeholder="Enter Thread ID…"
       onSubmit={(threadId) => {
         router.push(`/internal/admin/thread/${threadId}`);
       }}
@@ -268,7 +268,7 @@ export function AdminThreadContent({
                               {threadOrNull.githubRepoFullName}
                             </span>
                             <Link
-                              className="underline text-xs text-mid-text"
+                              className="underline text-xs text-mid"
                               href={`/internal/admin/environment?id=${threadOrNull.id}`}
                             >
                               (Environment)

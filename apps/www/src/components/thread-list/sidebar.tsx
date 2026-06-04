@@ -64,7 +64,7 @@ export function ThreadListSidebar() {
           ) : (
             <Link
               href="/dashboard"
-              className="flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-caption font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
+              className="flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-caption font-medium text-muted-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-accent hover:text-foreground"
             >
               <SquarePen className="size-3.5 text-muted-foreground" />
               <span>New Task</span>
@@ -102,7 +102,7 @@ export function ThreadListSidebar() {
       <button
         type="button"
         className={cn(
-          "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-accent transition-colors z-30",
+          "absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-accent transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] z-30",
           isResizing && "bg-accent",
         )}
         onMouseDown={handleMouseDown}

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth-client";
-import { Mail, ArrowRight } from "lucide-react";
+import { Mail, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -31,7 +31,6 @@ export function MagicLinkAuth() {
         callbackURL: "/dashboard",
       });
       setSent(true);
-      toast.success("Magic link sent! Check your email.");
     } catch (error) {
       console.error("Failed to send magic link:", error);
       toast.error("Failed to send magic link. Please try again.");
@@ -67,24 +66,25 @@ export function MagicLinkAuth() {
 
   return (
     <form onSubmit={handleSubmit} className="w-full space-y-4">
-      <div className="space-y-2">
-        <Input
-          type="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={loading}
-          required
-          className="w-full"
-        />
-      </div>
+      <Input
+        type="email"
+        placeholder="Enter your email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={loading}
+        required
+        className="w-full"
+      />
       <Button type="submit" disabled={loading || !email} className="w-full">
         {loading ? (
-          "Sending..."
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            Sending…
+          </>
         ) : (
           <>
-            Continue with Email
-            <ArrowRight className="ml-2 size-4" />
+            Continue with email
+            <ArrowRight className="size-4" />
           </>
         )}
       </Button>
@@ -100,14 +100,14 @@ export function MagicLinkSignInButton() {
       <DialogTrigger asChild>
         <Button variant="outline">
           <Mail className="size-4" />
-          Sign in with Email
+          Sign in with email
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Sign in with Email</DialogTitle>
+          <DialogTitle>Sign in with email</DialogTitle>
           <DialogDescription>
-            Enter your email address and we'll send you a magic link to sign in.
+            Enter your email address and we’ll send you a magic link to sign in.
           </DialogDescription>
         </DialogHeader>
         <div className="px-1">

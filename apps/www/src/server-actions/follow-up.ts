@@ -1,7 +1,8 @@
 "use server";
 
-import { userOnlyAction } from "@/lib/auth-server";
 import { DBUserMessage } from "@terragon/shared";
+import { userOnlyAction } from "@/lib/auth-server";
+import { withFollowUpSubmissionGuard } from "@/server-lib/ag-ui/follow-up-submission-guard";
 import {
   followUpInternal,
   queueFollowUpInternal,
@@ -27,13 +28,29 @@ export const followUp = userOnlyAction(
     },
   ) {
     console.log("followUp", { threadId, threadChatId });
-    await followUpInternal({
+    // Mirror the AG-UI append path's run-lock so this fallback path can't
+    // dispatch a second concurrent run on the same thread chat. clientSubmissionId
+    // is null here (not yet plumbed through the intent system), so this provides
+    // the run-lock but not the per-submission dedupe.
+    const guarded = await withFollowUpSubmissionGuard({
       userId,
       threadId,
       threadChatId,
-      message,
-      source: "www",
+      clientSubmissionId: null,
+      dispatch: async (markDispatched) => {
+        await followUpInternal({
+          userId,
+          threadId,
+          threadChatId,
+          message,
+          source: "www",
+        });
+        markDispatched();
+      },
     });
+    if (guarded.type === "lock-held") {
+      throw new Error("Run already in progress");
+    }
   },
   { defaultErrorMessage: "Failed to submit follow up" },
 );

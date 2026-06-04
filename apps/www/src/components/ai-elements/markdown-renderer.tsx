@@ -421,9 +421,11 @@ function CodeBlockPre(props: unknown) {
 
   return (
     <div className="group/code relative my-3">
-      <div className="absolute top-2 left-3 z-10 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">
-        {language ?? "code"}
-      </div>
+      {language ? (
+        <div className="absolute top-2 left-3 z-10 text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-wider">
+          {language}
+        </div>
+      ) : null}
       <pre
         {...rest}
         className={cn(
@@ -437,7 +439,7 @@ function CodeBlockPre(props: unknown) {
         type="button"
         size="icon"
         variant="ghost"
-        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover/code:opacity-70 [@media(hover:none)]:opacity-70"
+        className="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] group-hover/code:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
         onClick={onCopy}
         title={isCopied ? "Copied" : "Copy code"}
         aria-label={isCopied ? "Code copied" : "Copy code"}
@@ -510,7 +512,7 @@ function getResponseComponents(
     ol(props) {
       const children = getChildren(props);
       return (
-        <ol className="list-decimal pl-8 mb-2 text-foreground">{children}</ol>
+        <ol className="list-decimal pl-6 mb-2 text-foreground">{children}</ol>
       );
     },
     li(props) {
@@ -528,19 +530,25 @@ function getResponseComponents(
     h1(props) {
       const children = getChildren(props);
       return (
-        <h1 className="text-xl font-bold mb-2 text-foreground">{children}</h1>
+        <h1 className="text-xl font-semibold mb-2 text-foreground">
+          {children}
+        </h1>
       );
     },
     h2(props) {
       const children = getChildren(props);
       return (
-        <h2 className="text-lg font-bold mb-2 text-foreground">{children}</h2>
+        <h2 className="text-lg font-semibold mb-2 text-foreground">
+          {children}
+        </h2>
       );
     },
     h3(props) {
       const children = getChildren(props);
       return (
-        <h3 className="text-base font-bold mb-2 text-foreground">{children}</h3>
+        <h3 className="text-base font-semibold mb-2 text-foreground">
+          {children}
+        </h3>
       );
     },
     table(props) {

@@ -56,7 +56,7 @@ const columns: ColumnDef<ThreadWithUser>[] = [
           {u.name}
         </Link>
       ) : (
-        "Unknown"
+        <span className="text-muted-foreground">Unknown</span>
       );
     },
   },
@@ -95,7 +95,11 @@ const columns: ColumnDef<ThreadWithUser>[] = [
   {
     accessorKey: "thread.sandboxProvider",
     header: "Sandbox Provider",
-    cell: ({ row }) => row.original.thread.sandboxProvider,
+    cell: ({ row }) => (
+      <span className="font-mono text-xs">
+        {row.original.thread.sandboxProvider}
+      </span>
+    ),
   },
   {
     accessorKey: "thread.createdAt",
@@ -119,7 +123,7 @@ const columns: ColumnDef<ThreadWithUser>[] = [
           repoFullName={t.githubRepoFullName}
         />
       ) : (
-        <span>No PR</span>
+        <span className="text-muted-foreground">No PR</span>
       );
     },
   },
@@ -127,10 +131,21 @@ const columns: ColumnDef<ThreadWithUser>[] = [
     id: "thread.errorMessage",
     header: "Error Message",
     cell: ({ row }) => {
-      return row.original.thread.threadChats
+      const message = row.original.thread.threadChats
         .map((chat) => chat.errorMessage)
         .filter(Boolean)
         .join(", ");
+      if (!message) {
+        return null;
+      }
+      return (
+        <span
+          className="block max-w-[320px] truncate text-error-strong"
+          title={message}
+        >
+          {message}
+        </span>
+      );
     },
   },
 ];
@@ -216,7 +231,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableHeader>
               <TableRow>
                 {sortedStatusKeys.map((key) => (
-                  <TableHead className="!w-[50px]" key={key}>
+                  <TableHead className="text-center" key={key}>
                     <button
                       className="underline cursor-pointer"
                       onClick={() => filterByStatus(key)}
@@ -230,7 +245,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedStatusKeys.map((key) => (
-                  <TableCell className="!w-[50px] tabular-nums" key={key}>
+                  <TableCell className="text-center tabular-nums" key={key}>
                     {counts.byStatus[key]}
                   </TableCell>
                 ))}
@@ -246,7 +261,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableHeader>
               <TableRow>
                 {sortedAgentKeys.map((key) => (
-                  <TableHead className="!w-[50px]" key={key}>
+                  <TableHead className="text-center" key={key}>
                     <button
                       className="underline cursor-pointer"
                       onClick={() => filterByAgent(key)}
@@ -260,7 +275,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedAgentKeys.map((key) => (
-                  <TableCell className="!w-[50px] tabular-nums" key={key}>
+                  <TableCell className="text-center tabular-nums" key={key}>
                     {counts.byAgent[key]}
                   </TableCell>
                 ))}
@@ -282,7 +297,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
               <TableHeader>
                 <TableRow>
                   {sortedErrorMessageKeys.map((key) => (
-                    <TableHead className="!w-[50px]" key={key}>
+                    <TableHead className="text-center" key={key}>
                       {key}
                     </TableHead>
                   ))}
@@ -291,7 +306,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
               <TableBody>
                 <TableRow>
                   {sortedErrorMessageKeys.map((key) => (
-                    <TableCell className="!w-[50px] tabular-nums" key={key}>
+                    <TableCell className="text-center tabular-nums" key={key}>
                       {counts.byErrorMessage[key]}
                     </TableCell>
                   ))}
@@ -310,7 +325,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableHeader>
               <TableRow>
                 {sortedSourceKeys.map((key) => (
-                  <TableHead className="!w-[50px]" key={key}>
+                  <TableHead className="text-center" key={key}>
                     <Link
                       href={`/internal/admin/thread?source=${key}`}
                       className="underline"
@@ -324,7 +339,7 @@ function AdminThreadsListCounts({ counts }: { counts: ThreadCounts }) {
             <TableBody>
               <TableRow>
                 {sortedSourceKeys.map((key) => (
-                  <TableCell className="!w-[50px] tabular-nums" key={key}>
+                  <TableCell className="text-center tabular-nums" key={key}>
                     {counts.bySource[key]}
                   </TableCell>
                 ))}

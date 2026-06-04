@@ -204,7 +204,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
                       type="button"
                       onClick={forceScrollToBottom}
                       className={cn(
-                        "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform,scale,box-shadow,background-color] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] hover:shadow-md active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         hasInitialized && !isAtBottom
                           ? "opacity-100 translate-y-0 scale-100"
                           : "opacity-0 translate-y-2 scale-95 pointer-events-none",
@@ -383,7 +383,10 @@ export type ChatUIOptimisticHandlers = {
   >["onOptimisticUserSubmit"];
   onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
   onOptimisticPermissionModeUpdate: (mode: "allowAll" | "plan") => void;
-  onAppendRejected: (rejection: { kind: "rejected" | "lock-held" }) => void;
+  onAppendRejected: (rejection: {
+    kind: "rejected" | "lock-held";
+    clientSubmissionId: string | null;
+  }) => void;
   reconcileActiveChatFromServer: () => Promise<unknown>;
 };
 

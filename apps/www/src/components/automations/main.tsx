@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
@@ -18,6 +18,7 @@ import { useRealtimeUser } from "@/hooks/useRealtime";
 import { AutomationItem } from "./item";
 import { EditAutomationDialog } from "./edit-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { usePageHeader } from "@/contexts/page-header";
 import { createPortal } from "react-dom";
 import { RecommendedAutomations } from "./recommended-automations";
@@ -126,17 +127,25 @@ function AutomationsList({
   );
   if (isLoading) {
     return (
-      <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="size-4 animate-spin" />
+      <div className="flex flex-col gap-2">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="h-16 rounded-lg bg-card shadow-inset-edge animate-pulse"
+          />
+        ))}
       </div>
     );
   }
   if (error) {
     return (
-      <div className="flex h-full w-full items-center justify-center">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">
           Error loading automations. Please try again.
         </p>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     );
   }
@@ -145,7 +154,7 @@ function AutomationsList({
       {hasReachedLimit && (
         <Alert className="mb-3 bg-warning/10 text-warning border-none rounded-lg">
           <AlertCircle className="size-4" />
-          <AlertDescription className="text-warning">
+          <AlertDescription className="text-warning-strong">
             You have reached the active automation limit. To create another,
             disable or delete an existing active automation.
           </AlertDescription>
@@ -153,7 +162,7 @@ function AutomationsList({
       )}
       {automations?.length === 0 && (
         <div className="flex flex-col gap-4">
-          <div className="rounded-lg bg-card p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+          <div className="rounded-lg bg-card p-4 shadow-inset-edge">
             <h3 className="text-sm font-semibold mb-1.5">About automations</h3>
             <p className="text-sm text-muted-foreground leading-normal">
               Automations are saved prompts that run automatically in response
@@ -170,7 +179,7 @@ function AutomationsList({
             </Link>
           </div>
           <div className="flex flex-col gap-2">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-8 bg-canvas z-9 py-1">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-8 bg-canvas z-10 py-1">
               Suggested automations
             </h3>
             <RecommendedAutomations

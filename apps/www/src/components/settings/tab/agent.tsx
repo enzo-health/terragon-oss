@@ -52,8 +52,8 @@ export function AgentSettings() {
   return (
     <div className="flex flex-col gap-8">
       <SettingsSection
-        label="Agent Configuration"
-        description="Customize how the coding agent behaves across all your tasks"
+        label="Agent configuration"
+        description="Customize how the coding agent behaves across all your tasks."
       >
         <CustomSystemPromptSetting />
       </SettingsSection>
@@ -85,15 +85,15 @@ function AgentProvidersSection() {
       onClick={() => setSelectProviderOpen(true)}
     >
       <Plus className="h-4 w-4" />
-      Add Credential
+      Add credential
     </Button>
   );
 
   return (
     <div id="agent-providers">
       <SettingsSection
-        label="Agent Providers"
-        description="Connect provider accounts to power your coding agents"
+        label="Agent providers"
+        description="Connect provider accounts to power your coding agents."
         cta={addCredentialCTA}
       >
         <CredentialsList />
@@ -167,9 +167,9 @@ function SelectProviderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Credential</DialogTitle>
+          <DialogTitle>Add credential</DialogTitle>
           <DialogDescription>
-            Choose which agent provider you'd like to add credentials for.
+            Choose which agent provider you’d like to add credentials for.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-4">
@@ -177,7 +177,7 @@ function SelectProviderDialog({
             <Button
               key={agent}
               variant="outline"
-              className="w-full justify-start flex items-center gap-2 px-4 h-fit"
+              className="w-full flex items-center h-11 justify-start gap-2 py-2 pl-3 pr-4"
               onClick={() => onSelect(agent)}
             >
               <AgentIcon agent={agent} sessionId={null} />
@@ -212,12 +212,12 @@ function CustomSystemPromptSetting() {
     }
   };
   return (
-    <SettingsWithCTA label="Custom System Prompt" direction="col">
+    <SettingsWithCTA label="Custom system prompt" direction="col">
       <div className="flex flex-col gap-3 w-full">
         <Textarea
           value={customSystemPrompt}
           onChange={(e) => handleChange(e.target.value)}
-          placeholder="Eg. Always use descriptive variable names..."
+          placeholder="e.g. Always use descriptive variable names…"
           className="min-h-48 rounded-xl"
         />
         <Button
@@ -226,7 +226,7 @@ function CustomSystemPromptSetting() {
           size="sm"
           className="self-start transition-[transform,opacity,background-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
         >
-          {isSaving ? "Saving…" : "Save Changes"}
+          {isSaving ? "Saving…" : "Save changes"}
         </Button>
       </div>
     </SettingsWithCTA>
@@ -276,8 +276,8 @@ function AgentAndModelsEnabledSection() {
   return (
     <div id="available-agents-and-models">
       <SettingsSection
-        label="Available Agents & Models"
-        description="Choose which agents and models are available when you create a new task"
+        label="Available agents and models"
+        description="Choose which agents and models are available when you create a new task."
       >
         <div className="space-y-4">
           {allAgents.map((agent) => {
@@ -376,7 +376,7 @@ function ModelItem({
     <label
       htmlFor={`model-${model}`}
       className={cn(
-        "group/model flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+        "flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         agentEnabled ? "hover:bg-canvas/70" : "cursor-not-allowed opacity-60",
         !isEnabled && agentEnabled && "opacity-70",
       )}

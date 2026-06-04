@@ -9,36 +9,15 @@ import {
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionOrNull } from "@/lib/auth-server";
 import {
   replayQueryAfterSeq,
   resolveAgUiReplayCursor,
   shouldReplayEnvelope,
 } from "@/lib/ag-ui-replay-cursor";
+import { getSessionOrNull } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import { handleAgUiPostCommand } from "@/server-lib/ag-ui/ag-ui-command-handler";
-import {
-  captureStreamCursor,
-  encodeSseComment,
-  encodeSseEvent,
-  isXreadTimeoutError,
-  MIN_XREAD_BLOCK_MS,
-  MAX_XREAD_BLOCK_MS,
-  XREAD_COUNT,
-  KEEPALIVE_INTERVAL_MS,
-  XREAD_BACKOFF_MS,
-  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS,
-  XREAD_ERROR_LOG_INITIAL_BUDGET,
-  XREAD_ERROR_LOG_EVERY_N,
-} from "@/server-lib/ag-ui/ag-ui-sse-writer";
-import { AgUiSseSession } from "@/server-lib/ag-ui/ag-ui-sse-session";
-import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
-import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
-import {
-  buildSyntheticBenchmarkStream,
-  isSyntheticBenchmarkRequest,
-} from "@/server-lib/ag-ui/synthetic-benchmark-stream";
 import {
   buildResumeRunStartedEvent,
   isTerminalRunEventType,
@@ -47,12 +26,33 @@ import {
   splitHistoryOnlyPrefix,
   toReplayEntries,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
+import { AgUiSseSession } from "@/server-lib/ag-ui/ag-ui-sse-session";
+import {
+  captureStreamCursor,
+  encodeSseComment,
+  encodeSseEvent,
+  isXreadTimeoutError,
+  KEEPALIVE_INTERVAL_MS,
+  MAX_XREAD_BLOCK_MS,
+  MIN_XREAD_BLOCK_MS,
+  TERMINAL_STATUS_CHECK_EVERY_EMPTY_POLLS,
+  XREAD_BACKOFF_MS,
+  XREAD_COUNT,
+  XREAD_ERROR_LOG_EVERY_N,
+  XREAD_ERROR_LOG_INITIAL_BUDGET,
+} from "@/server-lib/ag-ui/ag-ui-sse-writer";
 import { parseStreamEntries } from "@/server-lib/ag-ui/ag-ui-stream-entry";
+import {
+  buildSyntheticBenchmarkStream,
+  isSyntheticBenchmarkRequest,
+} from "@/server-lib/ag-ui/synthetic-benchmark-stream";
+import { synthesizeTerminalEntry } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 import {
   discoverRunFromDurableLog,
   reconcileActiveRunFromDurable,
   replayDurableEventsAfterCursor,
 } from "@/server-lib/ag-ui/thread-event-live-tail";
+import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -115,6 +115,7 @@ export async function GET(
   if (request.nextUrl.searchParams.get("history") === "messages") {
     const projection = await projectThreadHistory({
       threadChatId,
+      userId: session.user.id,
       dbMessages: ownership.messages,
     });
     return NextResponse.json(projection);

@@ -61,7 +61,7 @@ export function InlineNameEditor({ thread, onDone }: InlineNameEditorProps) {
       onBlur={handleSave}
       onKeyDown={handleKeyDown}
       aria-label="Task name"
-      className="h-auto py-0 px-1 text-[15px] font-medium border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm flex-1 min-w-0"
+      className="h-auto py-0 px-1 -ml-1 text-[13px] font-medium leading-snug border-0 bg-transparent focus-visible:ring-1 focus-visible:ring-ring rounded-sm flex-1 min-w-0"
       placeholder={thread.name || "Untitled"}
       onClick={stopLinkEventPropagation}
       onTouchStart={stopTouchEventPropagation}

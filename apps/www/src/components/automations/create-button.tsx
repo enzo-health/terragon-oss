@@ -40,17 +40,13 @@ export function CreateAutomationButton({
 
   return (
     <>
-      <Button
-        size="sm"
-        className="h-7 rounded-full active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-coral/50"
-        onClick={handleClick}
-      >
+      <Button size="sm" className="h-7 rounded-full" onClick={handleClick}>
         Create automation
       </Button>
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <AutomationEditorDialogContent
           automation={null}
-          title="Create Automation"
+          title="Create automation"
           ctaLabel="Create"
           initialValues={initialValues}
           onSubmit={async (values) => {

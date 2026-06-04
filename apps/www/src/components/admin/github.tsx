@@ -86,9 +86,10 @@ const columns: ColumnDef<GitHubPR>[] = [
     header: () => {
       return (
         <div className="flex flex-col py-2">
-          Thread ID
-          <br />
-          (If created by a thread)
+          <span>Thread ID</span>
+          <span className="text-xs font-normal text-mid">
+            If created by a thread
+          </span>
         </div>
       );
     },
@@ -111,7 +112,11 @@ const columns: ColumnDef<GitHubPR>[] = [
     accessorKey: "updatedAt",
     header: "Updated At",
     cell: ({ row }) => {
-      return format(row.getValue<Date>("updatedAt"), "MMM d, yyyy h:mm a zzz");
+      return (
+        <span className="tabular-nums text-xs">
+          {format(row.getValue<Date>("updatedAt"), "MMM d, yyyy h:mm a zzz")}
+        </span>
+      );
     },
   },
   {
@@ -119,7 +124,9 @@ const columns: ColumnDef<GitHubPR>[] = [
     header: "Base Ref",
     cell: ({ row }) => (
       <span className="font-mono block max-w-[120px] truncate">
-        {row.getValue("baseRef")}
+        {row.getValue("baseRef") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
       </span>
     ),
   },
@@ -127,14 +134,22 @@ const columns: ColumnDef<GitHubPR>[] = [
     accessorKey: "mergeableState",
     header: "Mergeable State",
     cell: ({ row }) => (
-      <span className="font-mono">{row.getValue("mergeableState")}</span>
+      <span className="font-mono">
+        {row.getValue("mergeableState") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
     ),
   },
   {
     accessorKey: "checksStatus",
     header: "Checks Status",
     cell: ({ row }) => (
-      <span className="font-mono">{row.getValue("checksStatus")}</span>
+      <span className="font-mono">
+        {row.getValue("checksStatus") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
     ),
   },
   {
@@ -273,7 +288,7 @@ export function AdminGithubAppTester() {
   return (
     <div className="max-w-4xl">
       <p className="text-muted-foreground mb-6">
-        Test leaving a comment on a GitHub issue or PR
+        Test leaving a comment on a GitHub issue or PR.
       </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
@@ -281,7 +296,7 @@ export function AdminGithubAppTester() {
             htmlFor="issue-or-pr-url"
             className="block text-sm font-medium mb-2"
           >
-            Repository Owner
+            Issue or PR URL
           </label>
           <Input
             id="issue-or-pr-url"
@@ -334,20 +349,20 @@ export function AdminGithubAppTester() {
       </form>
 
       {state.error && (
-        <div className="mt-6 p-4 bg-[var(--error)]/10 border border-[var(--error)]/40 rounded-2xl">
-          <h2 className="text-lg font-semibold text-[var(--error)] mb-2">
+        <div className="mt-6 p-4 bg-error/10 border border-error/40 rounded-2xl">
+          <h2 className="text-lg font-semibold text-error-strong mb-2">
             Error
           </h2>
-          <p className="text-sm text-[var(--error)]/90 whitespace-pre-wrap font-mono">
+          <p className="text-sm text-error-strong/90 whitespace-pre-wrap font-mono">
             {state.error}
           </p>
         </div>
       )}
 
       {state.output && (
-        <div className="mt-6 p-4 bg-[var(--card-cream,var(--card))] rounded-2xl border border-[var(--hairline,var(--border))]">
+        <div className="mt-6 p-4 bg-card rounded-2xl border border-hairline">
           <h2 className="text-lg font-semibold mb-2">Comment Posted</h2>
-          <pre className="text-sm whitespace-pre-wrap font-mono bg-[var(--code-floor,var(--muted))] text-[var(--on-dark,var(--foreground))] p-4 rounded-xl border border-[var(--hairline,var(--border))]">
+          <pre className="text-sm whitespace-pre-wrap font-mono bg-sunken text-foreground p-4 rounded-xl border border-hairline">
             {state.output}
           </pre>
         </div>

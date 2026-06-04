@@ -73,7 +73,7 @@ function SelectTrigger({
       data-size={size}
       data-variant={variant}
       className={cn(
-        "data-[placeholder]:text-mid [&_svg:not([class*='text-'])]:text-mid text-strong focus-visible:border-coral/60 focus-visible:ring-coral/20 aria-invalid:ring-error/20 dark:aria-invalid:ring-error/40 aria-invalid:border-error flex w-fit items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm whitespace-nowrap transition-[color,border-color,box-shadow] outline-none focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "data-[placeholder]:text-mid [&_svg:not([class*='text-'])]:text-mid text-strong focus-visible:border-coral/60 focus-visible:ring-coral/20 aria-invalid:ring-error/20 dark:aria-invalid:ring-error/40 aria-invalid:border-error flex w-fit items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm whitespace-nowrap transition-[color,border-color] outline-none focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         variant === "default" &&
           "border-hairline border bg-canvas hover:bg-sunken/60",
         variant === "ghost" && "border-transparent hover:bg-sunken/60",

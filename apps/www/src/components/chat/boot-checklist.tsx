@@ -73,7 +73,7 @@ function ActiveStepTimer({ startedAt }: { startedAt: string }) {
 
   return (
     <span
-      className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums"
+      className="font-mono text-[0.6875rem] text-muted-foreground/70 flex-shrink-0 tabular-nums"
       aria-live="polite"
       aria-label={`Running for ${formatDuration(elapsed)}`}
     >
@@ -112,7 +112,7 @@ function InstallProgressBar({
   return (
     <div className="mt-1 mb-1.5 pl-[26px] flex flex-col gap-0.5">
       <span
-        className="font-mono text-[11px] tracking-tight tabular-nums"
+        className="font-mono text-[0.6875rem] tracking-tight tabular-nums"
         aria-label={
           total !== undefined
             ? `Install progress: ${resolved} of ${total} packages`
@@ -122,12 +122,12 @@ function InstallProgressBar({
         {total === undefined ? (
           // Indeterminate: pulse the filled portion to signal ongoing activity
           <span>
-            <span className="animate-pulse text-primary/70">{filledChars}</span>
+            <span className="animate-pulse text-primary">{filledChars}</span>
             <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         ) : (
           <span>
-            <span className="text-primary/70">{filledChars}</span>
+            <span className="text-primary">{filledChars}</span>
             <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         )}{" "}
@@ -141,7 +141,7 @@ function InstallProgressBar({
       </span>
       {currentPackage && (
         <span
-          className="text-[11px] text-muted-foreground/60 truncate max-w-full"
+          className="text-[0.6875rem] text-muted-foreground/60 truncate max-w-full"
           title={currentPackage}
         >
           Installing {currentPackage}
@@ -264,18 +264,21 @@ export function BootChecklist({
 
               {/* Step label */}
               <span
-                className={cn("flex-1 text-sm transition-colors duration-200", {
-                  "text-foreground font-medium": isActive,
-                  "text-muted-foreground": isCompleted,
-                  "text-muted-foreground opacity-40": isPending,
-                })}
+                className={cn(
+                  "flex-1 text-sm transition-colors duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+                  {
+                    "text-foreground font-medium": isActive,
+                    "text-muted-foreground": isCompleted,
+                    "text-muted-foreground opacity-40": isPending,
+                  },
+                )}
               >
                 {step.label}
               </span>
 
               {isCompleted && durationMs !== undefined && (
                 <span
-                  className="font-mono text-[11px] text-muted-foreground/70 flex-shrink-0 tabular-nums animate-in fade-in slide-in-from-right-1 duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
+                  className="font-mono text-[0.6875rem] text-muted-foreground/70 flex-shrink-0 tabular-nums animate-in fade-in slide-in-from-right-1 duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
                   aria-label={`Completed in ${formatDuration(durationMs)}`}
                 >
                   {formatDuration(durationMs)}

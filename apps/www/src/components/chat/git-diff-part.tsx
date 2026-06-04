@@ -148,7 +148,7 @@ export const GitDiffPart = memo(function GitDiffPart({
             <div className="shrink-0">
               <ChevronRight
                 className={cn(
-                  "size-4 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
+                  "size-4 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
                   isExpanded && "rotate-90",
                 )}
               />
@@ -164,7 +164,7 @@ export const GitDiffPart = memo(function GitDiffPart({
             )}
           </div>
           {(diffStats.additions > 0 || diffStats.deletions > 0) && (
-            <div className="flex items-center gap-2 text-xs font-medium flex-shrink-0 min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium flex-shrink-0 min-w-0 tabular-nums">
               {diffStats.additions > 0 && (
                 <span className="flex items-center gap-1 text-[var(--diff-added-fg)] whitespace-nowrap">
                   <span>+{diffStats.additions}</span>

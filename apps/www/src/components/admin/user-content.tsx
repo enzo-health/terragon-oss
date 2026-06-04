@@ -214,12 +214,7 @@ export function AdminUserContent({
       cell: ({ row }) => {
         const flag = row.original;
         return (
-          <span
-            className={cn(
-              "font-mono",
-              !flag.globalOverride && "text-muted-foreground/50",
-            )}
-          >
+          <span className={cn("font-mono", !flag.globalOverride && "text-mid")}>
             {JSON.stringify(flag.globalOverride)}
           </span>
         );
@@ -428,9 +423,7 @@ export function AdminUserContent({
                   <TableCell className="flex flex-col items-start gap-2">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm text-mid-text font-mono">
-                          $
-                        </span>
+                        <span className="text-sm text-mid font-mono">$</span>
                         <Input
                           type="number"
                           step="0.01"
@@ -445,7 +438,7 @@ export function AdminUserContent({
                         onClick={handleTopUpCredits}
                         disabled={isTopUpPending}
                       >
-                        {isTopUpPending ? "Adding..." : "Add Credits"}
+                        {isTopUpPending ? "Adding…" : "Add Credits"}
                       </Button>
                     </div>
                     <span className="text-xs text-muted-foreground">
@@ -535,7 +528,7 @@ export function AdminUserContent({
                                 }
                               >
                                 {refreshClaudeCredentialsMutation.isPending
-                                  ? "Refreshing..."
+                                  ? "Refreshing…"
                                   : "Refresh"}
                               </Button>
                               <span className="text-xs text-muted-foreground">
@@ -591,7 +584,7 @@ export function AdminUserContent({
                                 }
                               >
                                 {refreshCodexCredentialsMutation.isPending
-                                  ? "Refreshing..."
+                                  ? "Refreshing…"
                                   : "Refresh"}
                               </Button>
                               <span className="text-xs text-muted-foreground">

@@ -451,6 +451,68 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 42,
+      runActive: false,
+      activeRunId: null,
+    });
+  });
+
+  it("reports runActive=true with the active runId when the latest run is non-terminal", async () => {
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [{ id: "user-1", role: "user", content: "start here" }],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(
+      "run-live" as Awaited<ReturnType<typeof getLatestRunIdForThreadChat>>,
+    );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-live", status: "processing" }),
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeq: 42,
+      runActive: true,
+      activeRunId: "run-live",
+    });
+  });
+
+  it("reports runActive=false but keeps the active runId when the latest run is terminal", async () => {
+    const snapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      timestamp: 1,
+      messages: [{ id: "user-1", role: "user", content: "start here" }],
+    } as BaseEvent;
+    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
+    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(
+      "run-done" as Awaited<ReturnType<typeof getLatestRunIdForThreadChat>>,
+    );
+    vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
+      makeRunContext({ runId: "run-done", status: "completed" }),
+    );
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&history=messages",
+      ),
+      makeContext("thread-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      messages: [{ id: "user-1", role: "user", content: "start here" }],
+      lastSeq: 42,
+      runActive: false,
+      activeRunId: "run-done",
     });
   });
 
@@ -575,6 +637,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 70,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -610,6 +674,8 @@ describe("ag-ui SSE route", () => {
       ],
       lastSeq: 7,
       lastCursor: { seq: 7, projectionIndex: 1 },
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -653,6 +719,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 31,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -713,6 +781,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 60,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -775,6 +845,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 31,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -999,6 +1071,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 51,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -1043,6 +1117,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 21,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -1090,6 +1166,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 42,
+      runActive: false,
+      activeRunId: null,
     });
   });
 
@@ -1154,6 +1232,8 @@ describe("ag-ui SSE route", () => {
         },
       ],
       lastSeq: 141,
+      runActive: false,
+      activeRunId: null,
     });
   });
 

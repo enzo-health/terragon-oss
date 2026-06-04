@@ -1,4 +1,4 @@
-import { EventType, type Message as AgUiMessage } from "@ag-ui/core";
+import { type Message as AgUiMessage, EventType } from "@ag-ui/core";
 import type {
   AgUiHistoryItem,
   AgUiHistoryMessagesResult,
@@ -91,9 +91,21 @@ export function parseAgUiHistoryMessagesResponse(
     throw new Error("Invalid AG UI history cursor");
   }
   const lastCursor = parseAgUiHistoryCursor(value.lastCursor);
+  const runActive =
+    typeof value.runActive === "boolean" ? value.runActive : undefined;
+  const activeRunId =
+    typeof value.activeRunId === "string"
+      ? value.activeRunId
+      : value.activeRunId === null
+        ? null
+        : undefined;
+  const liveness = {
+    ...(runActive !== undefined ? { runActive } : {}),
+    ...(activeRunId !== undefined ? { activeRunId } : {}),
+  };
   return lastCursor === undefined
-    ? { messages: value.messages, lastSeq }
-    : { messages: value.messages, lastSeq, lastCursor };
+    ? { messages: value.messages, lastSeq, ...liveness }
+    : { messages: value.messages, lastSeq, lastCursor, ...liveness };
 }
 
 /**

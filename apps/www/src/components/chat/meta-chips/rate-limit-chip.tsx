@@ -30,7 +30,7 @@ export function RateLimitChip({ rateLimits }: RateLimitChipProps) {
       variant={isWarning ? "warning" : "active"}
       icon={<Gauge className="size-3" />}
     >
-      {isWarning ? "Rate limit" : "Limits OK"}
+      {isWarning ? "Rate limit" : "Limits"}
     </MetaChip>
   );
 }

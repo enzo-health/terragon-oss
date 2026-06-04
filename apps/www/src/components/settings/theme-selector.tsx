@@ -21,7 +21,7 @@ export function ThemeSelector() {
   }
   return (
     <Select value={theme} onValueChange={setTheme}>
-      <SelectTrigger className="w-40">
+      <SelectTrigger className="w-fit">
         <SelectValue placeholder="Select theme" />
       </SelectTrigger>
       <SelectContent>

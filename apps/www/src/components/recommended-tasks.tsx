@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import type { AIModel } from "@terragon/agent/types";
 import { tasksForModel } from "./recommended-tasks.utils";
 
@@ -26,18 +26,14 @@ function ListRecommendedTaskItem({
     <button
       type="button"
       onClick={() => onTaskSelect(task.prompt)}
-      className="group flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left transition-[background-color,color] duration-150 hover:bg-surface-cream-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]"
+      className="group flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)] hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Sparkles
-        aria-hidden
-        className="size-4 shrink-0 text-muted-foreground transition-colors duration-200 group-hover:text-coral"
-      />
-      <span className="flex-1 text-[14px] font-medium text-foreground/85 group-hover:text-foreground">
+      <span className="flex-1 text-[14px] font-medium text-mid group-hover:text-strong">
         {task.label}
       </span>
       <ArrowRight
         aria-hidden
-        className="size-4 shrink-0 -translate-x-1 text-transparent transition-[color,transform] duration-200 group-hover:translate-x-0 group-hover:text-coral"
+        className="size-4 shrink-0 -translate-x-1 text-muted-foreground/40 transition-[color,transform] duration-[var(--duration-quick)] ease-[var(--ease-standard)] group-hover:translate-x-0 group-hover:text-coral"
       />
     </button>
   );

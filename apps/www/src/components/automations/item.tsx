@@ -97,7 +97,7 @@ export function AutomationItem({
           }
         }}
         className={cn(
-          "group flex flex-col rounded-lg bg-card transition-colors py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)] hover:bg-sunken",
+          "group flex flex-col rounded-lg bg-card transition-colors py-2.5 shadow-inset-edge hover:bg-sunken",
           verbose && "!cursor-default",
         )}
       >
@@ -182,7 +182,7 @@ function AutomationItemContents({
     case "pull_request": {
       const config = automation.triggerConfig as PullRequestTriggerConfig;
       triggerDescriptionParts.push(
-        `Pull Request in ${automation.repoFullName}`,
+        `Pull request in ${automation.repoFullName}`,
       );
       const triggerOnParts = [];
       if (config.on.open) {
@@ -231,7 +231,7 @@ function AutomationItemContents({
     case "github_mention": {
       const config = automation.triggerConfig as GitHubMentionTriggerConfig;
       triggerDescriptionParts.push(
-        `GitHub Mention in ${automation.repoFullName}`,
+        `GitHub mention in ${automation.repoFullName}`,
       );
       const filterParts = [];
       if (config.filter.includeBotMentions) {
@@ -265,7 +265,7 @@ function AutomationItemContents({
           aria-hidden="true"
           className={cn(
             "mr-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full",
-            automation.enabled ? "bg-success" : "bg-neutral",
+            automation.enabled ? "bg-success" : "bg-mid",
           )}
         />
         <span className="flex-shrink-0">
@@ -315,7 +315,7 @@ function AutomationItemContents({
             </div>
           )}
           {promptText.length > 0 && (
-            <div className="mt-2 rounded-xl bg-canvas px-3 py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.05)]">
+            <div className="mt-2 rounded-xl bg-canvas px-3 py-2.5 shadow-inset-edge">
               <pre className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap font-sans">
                 {promptText}
               </pre>
@@ -467,7 +467,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
+            className="h-fit py-1 text-xs rounded-full"
             onClick={() => {
               setPrPopoverOpen(true);
             }}
@@ -493,6 +493,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             <Button
               size="sm"
               variant="outline"
+              className="rounded-full"
               onClick={async () => {
                 const prNumberInt = parseInt(prNumber);
                 if (!prNumberInt) {
@@ -510,7 +511,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
               {runPullRequestMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Run now"
+                "Run on this PR"
               )}
             </Button>
           </div>
@@ -525,7 +526,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
+            className="h-fit py-1 text-xs rounded-full"
             onClick={() => {
               setIssuePopoverOpen(true);
             }}
@@ -551,6 +552,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             <Button
               size="sm"
               variant="outline"
+              className="rounded-full"
               onClick={async () => {
                 const issueNumberInt = parseInt(issueNumber);
                 if (!issueNumberInt) {
@@ -568,7 +570,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
               {runIssueMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Run now"
+                "Run on this issue"
               )}
             </Button>
           </div>
@@ -584,7 +586,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
         await runMutation.mutateAsync(automation.id);
       }}
       aria-label="Run automation"
-      className="h-fit py-1 text-xs"
+      className="h-fit py-1 text-xs rounded-full"
       disabled={runMutation.isPending}
     >
       Run now
