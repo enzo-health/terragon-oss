@@ -10,14 +10,15 @@ import {
   ThreadErrorMessage,
   ThreadStatus,
 } from "@terragon/shared";
-import React, { memo, useCallback } from "react";
+import React, { memo, useCallback, useMemo } from "react";
 import { ThreadPromptBox } from "@/components/promptbox/thread-promptbox";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
+import { useThreadIntent } from "@/hooks/use-thread-intent";
 import {
   convertToPlainText,
   getLastUserMessageModel,
 } from "@/lib/db-message-helpers";
-import { useThreadIntent } from "@/hooks/use-thread-intent";
+import type { ComposerOptimisticSubmit } from "../promptbox/composer-submit-routing";
 import type {
   HandleSubmit,
   HandleSubmitArgs,
@@ -48,6 +49,7 @@ export type ChatPromptBoxProps = {
   onOptimisticUserSubmit: (
     userMessage: DBUserMessage,
     optimisticStatus: ThreadStatus,
+    clientSubmissionId: string,
   ) => void;
   onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
   onPermissionModeChange: (mode: "allowAll" | "plan") => void;
@@ -87,21 +89,31 @@ export const ChatPromptBox = memo(function ChatPromptBox({
 }: ChatPromptBoxProps) {
   const chatAgent = ensureAgent(agent);
   const showContextUsageChip = useFeatureFlag("contextUsageChip");
+  const instantOptimisticSubmit = useFeatureFlag("instantOptimisticSubmit");
 
   const { publish } = useThreadIntent();
 
   const handleSubmit = useCallback<HandleSubmit>(
-    async ({ userMessage }) => {
+    async ({ userMessage, clientSubmissionId }) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
         return;
       }
       forceScrollToBottom();
       setError(null);
-      // Optimistically add the message to the thread
+      // Optimistically add the message to the thread. When the
+      // instantOptimisticSubmit flag is ON, this flip is hoisted into
+      // routeComposerSubmit (so it also fires on the runtime.append path);
+      // firing it here too would double-apply on the fallback path, so skip it.
       const isClearContext = plainText.trim() === "/clear";
       const optimisticStatus = isClearContext ? "complete" : "booting";
-      onOptimisticUserSubmit(userMessage, optimisticStatus);
+      if (!instantOptimisticSubmit) {
+        onOptimisticUserSubmit(
+          userMessage,
+          optimisticStatus,
+          clientSubmissionId,
+        );
+      }
       try {
         await publish({
           type: "send-message",
@@ -124,9 +136,38 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       setError,
       forceScrollToBottom,
       onOptimisticUserSubmit,
+      instantOptimisticSubmit,
       publish,
     ],
   );
+
+  // Hoisted optimistic flip for the runtime path, gated by the flag. undefined
+  // when OFF so routeComposerSubmit behaves exactly as today. The /clear ->
+  // 'complete' status special-case lives here so the router stays
+  // status-agnostic.
+  const optimisticSubmit = useMemo<ComposerOptimisticSubmit | undefined>(() => {
+    if (!instantOptimisticSubmit) {
+      return undefined;
+    }
+    return ({ userMessage, clientSubmissionId }) => {
+      const plainText = convertToPlainText({ message: userMessage });
+      if (plainText.length === 0) {
+        return;
+      }
+      forceScrollToBottom();
+      setError(null);
+      const isClearContext = plainText.trim() === "/clear";
+      const optimisticStatus: ThreadStatus = isClearContext
+        ? "complete"
+        : "booting";
+      onOptimisticUserSubmit(userMessage, optimisticStatus, clientSubmissionId);
+    };
+  }, [
+    instantOptimisticSubmit,
+    forceScrollToBottom,
+    setError,
+    onOptimisticUserSubmit,
+  ]);
 
   const handleStop = useCallback(async () => {
     try {
@@ -220,6 +261,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
         onPermissionModeChange={onPermissionModeChange}
         handleStop={handleStop}
         handleSubmit={handleSubmit}
+        optimisticSubmit={optimisticSubmit}
         queuedMessages={queuedMessages}
         handleQueueMessage={handleQueueMessage}
         onUpdateQueuedMessage={updateQueuedMessages}

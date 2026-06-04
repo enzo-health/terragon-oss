@@ -1,7 +1,7 @@
+import type { ThreadUserMessagePart } from "@assistant-ui/react";
 import type { SelectedAIModels } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
-import type { ThreadUserMessagePart } from "@assistant-ui/react";
-import { encodeRunMetadata, type EncodedRunMetadata } from "@/lib/run-metadata";
+import { type EncodedRunMetadata, encodeRunMetadata } from "@/lib/run-metadata";
 import {
   dbUserMessageHasUnsupportedAssistantContent,
   dbUserPartsToAssistantContent,
@@ -35,6 +35,11 @@ export type ComposerSubmitCommand = (args: {
   clientSubmissionId: string;
 }) => Promise<void>;
 
+export type ComposerOptimisticSubmit = (args: {
+  userMessage: DBUserMessage;
+  clientSubmissionId: string;
+}) => void;
+
 export type RouteComposerSubmitArgs = {
   userMessage: DBUserMessage;
   selectedModels: SelectedAIModels;
@@ -48,6 +53,7 @@ export type RouteComposerSubmitArgs = {
   isQueueingEnabled: boolean;
   submitFallback: ComposerSubmitCommand;
   queueMessage?: ComposerSubmitCommand;
+  optimisticSubmit?: ComposerOptimisticSubmit;
 };
 
 export async function routeComposerSubmit({
@@ -63,6 +69,7 @@ export async function routeComposerSubmit({
   isQueueingEnabled,
   submitFallback,
   queueMessage,
+  optimisticSubmit,
 }: RouteComposerSubmitArgs): Promise<ComposerSubmitRouteOutcome> {
   const commandArgs = {
     userMessage,
@@ -73,6 +80,24 @@ export async function routeComposerSubmit({
     scheduleAt,
     clientSubmissionId,
   };
+
+  // A queued message is not a started run, so it must NOT flip lifecycle to
+  // booting. Compute the queue route up front and skip the optimistic flip for
+  // it. The branch order below is unchanged (draft/schedule still beats queue);
+  // only the optimistic flip is guarded. isQueueRoute excludes
+  // saveAsDraft/scheduleAt because a draft/scheduled submit takes the fallback
+  // branch, so the flip still fires for that path — matching legacy handleSubmit.
+  const isQueueRoute =
+    threadRuntime !== null &&
+    !saveAsDraft &&
+    scheduleAt === null &&
+    isAgentWorking &&
+    isQueueingEnabled &&
+    queueMessage !== undefined;
+
+  if (!isQueueRoute) {
+    optimisticSubmit?.({ userMessage, clientSubmissionId });
+  }
 
   if (threadRuntime !== null && (saveAsDraft || scheduleAt !== null)) {
     await submitFallback(commandArgs);

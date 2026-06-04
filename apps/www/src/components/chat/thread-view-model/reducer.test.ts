@@ -1,24 +1,24 @@
-import { EventType, type BaseEvent } from "@ag-ui/core";
+import { readFileSync } from "node:fs";
+import { type BaseEvent, EventType } from "@ag-ui/core";
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import {
   buildRepoFileArtifactId,
   buildRepoTreeArtifactId,
 } from "@terragon/shared/db/artifact-descriptors";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { dbMessagesToAgUiMessages } from "../db-messages-to-ag-ui";
 import { toUIMessages } from "../toUIMessages";
 import { createThreadViewSidecarEventProjector } from "../use-thread-view-model";
 import {
-  createThreadViewSnapshot,
-  selectThreadViewDbMessages,
-} from "./snapshot-adapter";
-import {
   createInitialThreadViewModelState,
   projectThreadViewModel,
   threadViewModelReducer,
 } from "./reducer";
+import {
+  createThreadViewSnapshot,
+  selectThreadViewDbMessages,
+} from "./snapshot-adapter";
 import type {
   ThreadViewEvent,
   ThreadViewModelState,
@@ -221,6 +221,7 @@ describe("ThreadViewModel reducer", () => {
         type: "optimistic.user-submitted",
         message: userMessage("next"),
         optimisticStatus: "booting",
+        clientSubmissionId: "sub-existing-1",
       },
     );
 
@@ -255,6 +256,7 @@ describe("ThreadViewModel reducer", () => {
         type: "optimistic.user-submitted",
         message: userMessage("stale optimistic"),
         optimisticStatus: "booting",
+        clientSubmissionId: "sub-existing-2",
       },
     );
 
@@ -275,6 +277,125 @@ describe("ThreadViewModel reducer", () => {
       parts: [{ type: "text", text: "hi" }],
     });
     expect(viewModel.sidePanel.messages).toHaveLength(1);
+  });
+
+  it("keeps optimistic 'booting' across a stale-complete snapshot.hydrated, then yields to authoritative reconcile", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-guard-1",
+      },
+    );
+    expect(projectThreadViewModel(state).lifecycle.threadStatus).toBe(
+      "booting",
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")]),
+    });
+    let viewModel = projectThreadViewModel(state);
+    expect(viewModel.threadStatus).toBe("booting");
+    expect(viewModel.lifecycle.threadStatus).toBe("booting");
+
+    state = threadViewModelReducer(state, {
+      type: "ag-ui.event",
+      event: {
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: "working" },
+      } as BaseEvent,
+    });
+    viewModel = projectThreadViewModel(state);
+    expect(viewModel.threadStatus).toBe("working");
+    expect(viewModel.lifecycle.threadStatus).toBe("working");
+  });
+
+  it("reverts the optimistic submit on rejection and clears the optimistic flag", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-reject-1",
+      },
+    );
+    expect(projectThreadViewModel(state).lifecycle.threadStatus).toBe(
+      "booting",
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "optimistic.user-submit-rejected",
+      clientSubmissionId: "sub-reject-1",
+    });
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.threadStatus).toBe("complete");
+    expect(viewModel.lifecycle).toMatchObject({
+      threadStatus: "complete",
+      runStarted: false,
+    });
+    expect(viewModel.dbMessages).toHaveLength(1);
+    expect(viewModel.sidePanel.messages).toHaveLength(1);
+    expect(state.hasOptimisticUserSubmit).toBe(false);
+    expect(state.optimisticSubmission).toBeNull();
+  });
+
+  it("no-ops a rejection whose clientSubmissionId does not match the pending submit", () => {
+    const before = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-keep",
+      },
+    );
+    const after = threadViewModelReducer(before, {
+      type: "optimistic.user-submit-rejected",
+      clientSubmissionId: "sub-other",
+    });
+    expect(after).toBe(before);
+  });
+
+  it("keeps the two status fields in agreement across submit/reject/run events", () => {
+    let state = createInitialThreadViewModelState(
+      snapshotWithMessages([userMessage("hi")]),
+    );
+    const assertAgree = () => {
+      expect(state.threadStatus).toBe(state.lifecycle.threadStatus);
+    };
+    assertAgree();
+    state = threadViewModelReducer(state, {
+      type: "optimistic.user-submitted",
+      message: userMessage("go"),
+      optimisticStatus: "booting",
+      clientSubmissionId: "sub-inv-1",
+    });
+    assertAgree();
+    state = threadViewModelReducer(state, {
+      type: "ag-ui.event",
+      event: {
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: "working" },
+      } as BaseEvent,
+    });
+    assertAgree();
+    state = threadViewModelReducer(state, {
+      type: "optimistic.user-submit-rejected",
+      clientSubmissionId: "sub-inv-1",
+    });
+    assertAgree();
   });
 
   it("preserves optimistic permission mode across hydration until durable reconciliation", () => {
@@ -477,6 +598,7 @@ describe("ThreadViewModel reducer", () => {
         type: "optimistic.user-submitted",
         message: userMessage("optimistic"),
         optimisticStatus: "booting",
+        clientSubmissionId: "sub-existing-3",
       },
     );
     state = threadViewModelReducer(state, {

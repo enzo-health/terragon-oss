@@ -21,6 +21,7 @@ import {
   isAgentWorking,
   isPreSandboxStatus,
 } from "@/agent/thread-status";
+import type { ComposerOptimisticSubmit } from "./composer-submit-routing";
 import { QueuedMessages } from "./queued-messages";
 import { SimplePromptBox } from "./simple-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
@@ -56,6 +57,7 @@ interface ThreadPromptBoxProps {
   onPermissionModeChange?: (mode: "allowAll" | "plan") => void;
   handleStop: HandleStop;
   handleSubmit: HandleSubmit;
+  optimisticSubmit?: ComposerOptimisticSubmit;
   queuedMessages: DBUserMessage[] | null;
   handleQueueMessage: HandleSubmit;
   onUpdateQueuedMessage: (messages: DBUserMessage[]) => void;

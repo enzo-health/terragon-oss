@@ -33,6 +33,11 @@ export type DBUserMessage = {
   )[];
   timestamp?: string;
   permissionMode?: "allowAll" | "plan";
+  // Client-only optimistic identity. Lets the reducer's rollback fall back to
+  // id matching when reference identity is lost across a snapshot rehydrate.
+  // Never written by the durable pipeline (followUpInternal owns durable
+  // identity via messageSeq).
+  clientSubmissionId?: string;
 };
 
 export type DBUserMessageWithModel = DBUserMessage & {

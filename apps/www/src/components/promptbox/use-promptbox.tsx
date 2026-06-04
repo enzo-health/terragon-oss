@@ -1,36 +1,38 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import type { DBUserMessage } from "@terragon/shared";
+import { useThreadRuntime } from "@assistant-ui/react";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
+import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
+import type { DBUserMessage } from "@terragon/shared";
+import Placeholder from "@tiptap/extension-placeholder";
+import { JSONContent, ReactRenderer, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import tippy, { Instance as TippyInstance } from "tippy.js";
 import { useLocalStorage } from "usehooks-ts";
+import { MentionList } from "@/components/promptbox/mention-list";
+import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
 import { useSelectedModel } from "@/hooks/use-selected-model";
 import { useTouchDevice } from "@/hooks/useTouchDevice";
-import { JSONContent, useEditor } from "@tiptap/react";
-import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
+import { Attachment } from "@/lib/attachment-types";
 import {
   uploadImageToR2,
   uploadPdfToR2,
   uploadTextFileToR2,
 } from "@/lib/r2-file-upload-client";
-import { Attachment } from "@/lib/attachment-types";
-import StarterKit from "@tiptap/starter-kit";
-import { useThreadRuntime } from "@assistant-ui/react";
+import { getDynamicSlashCommands } from "./add-context-button";
+import {
+  type ComposerOptimisticSubmit,
+  routeComposerSubmit,
+} from "./composer-submit-routing";
 import {
   FolderAwareMention,
   folderAwareMentionPluginKey,
 } from "./folder-aware-mention";
-import { SlashCommand, slashCommandPluginKey } from "./slash-command-extension";
-import Placeholder from "@tiptap/extension-placeholder";
-import { ReactRenderer } from "@tiptap/react";
-import tippy, { Instance as TippyInstance } from "tippy.js";
-import { MentionList } from "@/components/promptbox/mention-list";
-import { SlashCommandList } from "./slash-command-list";
-import { Typeahead } from "./typeahead/typeahead";
-import { tiptapToRichText } from "./tiptap-to-richtext";
 import { TSubmitForm } from "./send-button";
-import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
-import { toast } from "sonner";
-import { getDynamicSlashCommands } from "./add-context-button";
-import { routeComposerSubmit } from "./composer-submit-routing";
+import { SlashCommand, slashCommandPluginKey } from "./slash-command-extension";
+import { SlashCommandList } from "./slash-command-list";
+import { tiptapToRichText } from "./tiptap-to-richtext";
+import { Typeahead } from "./typeahead/typeahead";
 
 export type HandleSubmitArgs = {
   userMessage: DBUserMessage;
@@ -63,6 +65,7 @@ interface UsePromptBoxProps {
   handleStop: HandleStop;
   onUpdate?: HandleUpdate;
   handleSubmit: HandleSubmit;
+  optimisticSubmit?: ComposerOptimisticSubmit;
   handleQueueMessage?: HandleSubmit;
   typeahead: Typeahead;
   clearContentOnSubmit?: boolean;
@@ -92,6 +95,7 @@ export function usePromptBox({
   onUpdate,
   handleStop,
   handleSubmit,
+  optimisticSubmit,
   handleQueueMessage,
   typeahead,
   clearContentOnSubmit = true,
@@ -742,6 +746,7 @@ export function usePromptBox({
           isQueueingEnabled,
           submitFallback: handleSubmit,
           queueMessage: handleQueueMessage,
+          optimisticSubmit,
         });
 
         if (clearContentOnSubmit) {
@@ -774,6 +779,7 @@ export function usePromptBox({
       isAgentWorking,
       isQueueingEnabled,
       handleQueueMessage,
+      optimisticSubmit,
       threadRuntime,
     ],
   );

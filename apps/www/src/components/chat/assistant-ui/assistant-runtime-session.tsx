@@ -3,13 +3,13 @@
 import type { HttpAgent } from "@ag-ui/client";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
-  useAgUiRuntime,
   type UseAgUiRuntimeOptions,
+  useAgUiRuntime,
 } from "@assistant-ui/react-ag-ui";
 import type { AIAgent } from "@terragon/agent/types";
 import { useCallback, useMemo, useState } from "react";
-import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
+import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { createAssistantHistoryHydrationAdapter } from "../assistant-history-hydration-adapter";
 import { isTransientRunLifecycleError } from "./runtime-error-classification";
 import { resolveRuntimeResumePolicy } from "./runtime-resume-policy";
@@ -131,6 +131,7 @@ export type AssistantRuntimeSessionProps = {
   threadId: string;
   threadChatId?: string;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
+  onAppendRejected?: (rejection: { kind: "rejected" | "lock-held" }) => void;
   callerError?: string | null;
   callerErrorType?: string;
   callerErrorInfo?: string;
@@ -150,6 +151,7 @@ export function AssistantRuntimeSession({
   threadId,
   threadChatId,
   setReplayCursor,
+  onAppendRejected,
   callerError,
   callerErrorType,
   callerErrorInfo,
@@ -239,9 +241,11 @@ export function AssistantRuntimeSession({
       if (isTransientRunLifecycleError(error)) {
         return;
       }
+      const isLockHeld = /Run already in progress/i.test(error.message);
+      onAppendRejected?.({ kind: isLockHeld ? "lock-held" : "rejected" });
       setRuntimeErrorState({ agent, message: error.message });
     },
-    [agent, loadAgUiHistoryMessages],
+    [agent, loadAgUiHistoryMessages, onAppendRejected],
   );
 
   const history = useMemo(

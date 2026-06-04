@@ -101,6 +101,11 @@ export type ThreadViewEvent =
       type: "optimistic.user-submitted";
       message: DBUserMessage;
       optimisticStatus: ThreadStatus;
+      clientSubmissionId: string;
+    }
+  | {
+      type: "optimistic.user-submit-rejected";
+      clientSubmissionId: string;
     }
   | {
       type: "optimistic.queued-messages-updated";
@@ -151,6 +156,12 @@ export type ThreadViewModelState = {
   hasOptimisticUserSubmit: boolean;
   hasOptimisticQueuedMessages: boolean;
   hasOptimisticPermissionMode: boolean;
+  optimisticSubmission: {
+    clientSubmissionId: string;
+    message: DBUserMessage;
+    priorThreadStatus: ThreadStatus | null;
+    priorLifecycle: ThreadViewLifecycle;
+  } | null;
   seenEventKeys: Set<string>;
   seenEventOrder: string[];
 };
