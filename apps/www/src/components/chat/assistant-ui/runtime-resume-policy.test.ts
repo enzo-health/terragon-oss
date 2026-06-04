@@ -69,7 +69,7 @@ describe("resolveRuntimeResumePolicy", () => {
     expect(policy.replayCursorAction).toBe("clear");
   });
 
-  it("undefined serverRunActive falls back to isAgentWorking (flag off = legacy)", () => {
+  it("undefined serverRunActive falls back to isAgentWorking (server has not reported yet)", () => {
     expect(
       resolveRuntimeResumePolicy({
         isAgentWorking: false,

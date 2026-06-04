@@ -73,7 +73,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     artifactDescriptors,
     effectiveThreadStatus,
     isAgentCurrentlyWorking,
-    serverAuthoritativeSubscriptionEnabled,
     toolProps,
     lastUsedModel,
     handleOpenArtifact,
@@ -134,9 +133,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
             loadAgUiHistoryMessages={loadAgUiHistoryMessages}
             chatAgent={chatAgent}
             isAgentWorking={isAgentCurrentlyWorking}
-            serverAuthoritativeSubscriptionEnabled={
-              serverAuthoritativeSubscriptionEnabled
-            }
             threadId={thread.id}
             threadChatId={threadChat.id}
             setReplayCursor={coreData.setReplayCursor}
@@ -319,8 +315,6 @@ export type ChatUIViewModelData = {
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];
   isAgentCurrentlyWorking: boolean;
-  /** serverAuthoritativeSubscription feature flag, read in chat-ui.tsx. */
-  serverAuthoritativeSubscriptionEnabled: boolean;
   toolProps: React.ComponentProps<
     typeof TerragonThreadRuntimeContent
   >["toolProps"];

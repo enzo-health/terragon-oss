@@ -140,12 +140,6 @@ export const featureFlagsDefinitions = {
     description:
       "Enables in-repo file preview: clicking links/file references that point to files inside the sandboxed repo opens a preview in the artifacts panel instead of navigating away (source files via the Pierre diff/code renderer, .md/.mdx via the streamdown markdown renderer). When disabled, links keep the existing new-tab behavior. NOTE: scoping this to the Bonaparte healthcare monorepo is an operational admin toggle (global default off, enabled per-user or globally via the admin overrides) — the flag system has NO per-repo mechanism, and this feature ships NO repo allowlist enforcement in code. Repo gating is operational, not code-enforced.",
   },
-  serverAuthoritativeSubscription: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Gates the live AG-UI resume decision on a server-computed runActive flag (from the durable agent run context) instead of the lagging client-derived isAgentWorking. When enabled, the resume stream opens whenever the server reports an active run OR the client thinks the agent is working; isAgentWorking becomes a secondary close hint. Defuses the stale-idle resume deadlock. When disabled, the policy uses isAgentWorking only (current behavior).",
-  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;
