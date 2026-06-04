@@ -855,6 +855,7 @@ export async function startAgentMessage({
             prompt: finalFinalPrompt,
             permissionMode: effectivePermissionMode,
             runId,
+            threadChatId,
             sessionId,
             codexPreviousResponseId,
             shouldUseCredits,

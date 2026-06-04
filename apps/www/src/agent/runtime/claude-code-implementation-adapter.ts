@@ -59,7 +59,7 @@ export const claudeCodeImplementationAdapter: ImplementationRuntimeAdapter = {
         runId: input.runId,
         transportMode: "acp",
         protocolVersion: 2,
-        acpServerId: `terragon-${input.runId}`,
+        acpServerId: `terragon-thread-chat-${input.threadChatId}`,
         acpSessionId: input.sessionId ?? null,
         runtimeAdapterContract: contract,
         ...(input.shouldUseCredits ? { useCredits: true } : {}),

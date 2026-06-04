@@ -19,6 +19,7 @@ import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
+  updateThreadChat,
   updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
 import {
@@ -191,10 +192,12 @@ function deriveSessionIdFromMessages(
   messages: DaemonEventAPIBody["messages"],
 ): string | null {
   for (const message of messages) {
-    if (message.type === "assistant" || message.type === "user") {
-      if (typeof message.session_id === "string" && message.session_id.length) {
-        return message.session_id;
-      }
+    if (
+      "session_id" in message &&
+      typeof message.session_id === "string" &&
+      message.session_id.length
+    ) {
+      return message.session_id;
     }
   }
   return null;
@@ -1216,6 +1219,18 @@ export async function POST(request: Request) {
           ...(resolvedStatus === "processing"
             ? { status: "processing" as const }
             : {}),
+        }),
+      );
+    }
+    if (resolvedSessionId) {
+      postHandleOps.push(
+        updateThreadChat({
+          db,
+          userId,
+          threadId,
+          threadChatId,
+          updates: { sessionId: resolvedSessionId },
+          skipBroadcast: true,
         }),
       );
     }

@@ -87,10 +87,8 @@ function DropdownMenuItem({
   variant?: "default" | "destructive";
   asChild?: boolean;
   // Radix used `onSelect`; Base UI uses `onClick`. Accept both so call sites
-  // that still pass `onSelect` keep working. The loose signature mirrors
-  // Radix's original `onSelect` so existing call sites typecheck unchanged.
-  // biome-ignore lint/suspicious/noExplicitAny: matches Radix's permissive onSelect
-  onSelect?: (event: any) => void;
+  // that still pass `onSelect` keep working.
+  onSelect?: (event: MouseEvent) => void;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
 }) {
   return (
