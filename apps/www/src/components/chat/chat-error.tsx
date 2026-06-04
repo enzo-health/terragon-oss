@@ -1,9 +1,9 @@
-import { Button } from "../ui/button";
-import { RotateCcw, GitBranch, Loader2 } from "lucide-react";
 import { Thread, ThreadErrorType } from "@terragon/shared";
+import { GitBranch, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
-import { isAgentWorking } from "@/agent/thread-status";
 import { useTheme } from "next-themes";
+import { isAgentWorking } from "@/agent/thread-status";
+import { Button } from "../ui/button";
 import { ansiToHtml } from "./tools/utils";
 
 const ERROR_TYPES_THAT_HIDE_RETRY_BUTTON = new Set<ThreadErrorType>([
@@ -28,6 +28,41 @@ export function isSandboxErrorType(
 ): boolean {
   if (!errorType) return false;
   return SANDBOX_ERROR_TYPES.has(errorType as ThreadErrorType);
+}
+
+// Membership guard. ThreadErrorMessage is `ThreadErrorType | string`, so the
+// banner may receive an arbitrary string ("runtime", a free-form message, an
+// unmapped code). Narrow to a real ThreadErrorType so the ChatContent switch is
+// exhaustive over a closed union. Mirrors the union in
+// packages/shared/src/db/types.ts (18 members).
+const KNOWN_THREAD_ERROR_TYPES = new Set<ThreadErrorType>([
+  "request-timeout",
+  "no-user-message",
+  "unknown-error",
+  "sandbox-not-found",
+  "sandbox-creation-failed",
+  "sandbox-resume-failed",
+  "missing-gemini-credentials",
+  "missing-amp-credentials",
+  "chatgpt-sub-required",
+  "invalid-codex-credentials",
+  "invalid-claude-credentials",
+  "agent-not-responding",
+  "agent-generic-error",
+  "git-checkpoint-diff-failed",
+  "git-checkpoint-push-failed",
+  "setup-script-failed",
+  "prompt-too-long",
+  "queue-limit-exceeded",
+]);
+
+function normalizeChatErrorType(
+  errorType: Thread["errorMessage"],
+): ThreadErrorType | null {
+  if (!errorType) return null;
+  return KNOWN_THREAD_ERROR_TYPES.has(errorType as ThreadErrorType)
+    ? (errorType as ThreadErrorType)
+    : null;
 }
 
 export function ChatError({
@@ -140,7 +175,10 @@ function ChatContent({
   errorType: Thread["errorMessage"];
   errorInfo: Thread["errorMessageInfo"];
 }) {
-  const errorTypeStrict = errorType as ThreadErrorType;
+  const errorTypeStrict = normalizeChatErrorType(errorType);
+  if (errorTypeStrict === null) {
+    return <UnknownChatError errorType={errorType} errorInfo={errorInfo} />;
+  }
   switch (errorTypeStrict) {
     case "invalid-claude-credentials": {
       return (
@@ -424,13 +462,21 @@ function ChatContent({
       );
     }
     default: {
+      // Every ThreadErrorType above must have a case; adding a union variant
+      // without a case here is now a compile error.
       const _exhaustiveCheck: never = errorTypeStrict;
-      console.log("Unhandled error", _exhaustiveCheck);
+      return _exhaustiveCheck;
     }
-    // TODO: make typescript error here if non-exhaustive
   }
+}
 
-  // Backwards compatibility
+function UnknownChatError({
+  errorType,
+  errorInfo,
+}: {
+  errorType: Thread["errorMessage"];
+  errorInfo: Thread["errorMessageInfo"];
+}) {
   if (errorType || errorInfo) {
     const errorStr = [errorType, errorInfo].filter(Boolean).join("\n\n");
     return (
@@ -440,7 +486,6 @@ function ChatContent({
       />
     );
   }
-
   return (
     <ChatErrorContentsWithPre
       header="An unexpected error occurred"

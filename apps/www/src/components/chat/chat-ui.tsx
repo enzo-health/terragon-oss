@@ -491,8 +491,16 @@ function ChatUIContent() {
   );
 
   const onAppendRejected = useCallback(
-    (rejection: { kind: "rejected" | "lock-held" }) => {
-      const clientSubmissionId = pendingClientSubmissionIdRef.current;
+    (rejection: {
+      kind: "rejected" | "lock-held";
+      clientSubmissionId: string | null;
+    }) => {
+      // Prefer the id carried on the error payload (the typed onError seam);
+      // fall back to the single-in-flight ref when the runtime did not carry one
+      // (older/unpatched runtime path). The ref deletion is a tracked follow-up
+      // once the carried id is proven on a live runtime.
+      const clientSubmissionId =
+        rejection.clientSubmissionId ?? pendingClientSubmissionIdRef.current;
       if (!clientSubmissionId) {
         return;
       }

@@ -383,7 +383,10 @@ export type ChatUIOptimisticHandlers = {
   >["onOptimisticUserSubmit"];
   onOptimisticQueuedMessagesUpdate: (messages: DBUserMessage[]) => void;
   onOptimisticPermissionModeUpdate: (mode: "allowAll" | "plan") => void;
-  onAppendRejected: (rejection: { kind: "rejected" | "lock-held" }) => void;
+  onAppendRejected: (rejection: {
+    kind: "rejected" | "lock-held";
+    clientSubmissionId: string | null;
+  }) => void;
   reconcileActiveChatFromServer: () => Promise<unknown>;
 };
 
