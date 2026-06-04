@@ -474,12 +474,45 @@ describe("AssistantRuntimeSession", () => {
         new Error("Cannot send 'RUN_STARTED' while a run is still active"),
       );
       expect(onAppendRejected).not.toHaveBeenCalled();
-      // Real lock-held rejection: reverts and tags lock-held.
-      opts.onError?.(new Error("Run already in progress"));
-      expect(onAppendRejected).toHaveBeenCalledWith({ kind: "lock-held" });
-      // Real non-lock rejection: reverts as a plain rejection.
+      // Real lock-held rejection: tags lock-held, carries the id.
+      opts.onError?.(
+        Object.assign(new Error("Run already in progress"), {
+          clientSubmissionId: "sub-lock",
+        }),
+      );
+      expect(onAppendRejected).toHaveBeenCalledWith({
+        kind: "lock-held",
+        clientSubmissionId: "sub-lock",
+      });
+      // Real non-lock rejection without a carried id: rejected, id null.
       opts.onError?.(new Error("Something else failed"));
-      expect(onAppendRejected).toHaveBeenLastCalledWith({ kind: "rejected" });
+      expect(onAppendRejected).toHaveBeenLastCalledWith({
+        kind: "rejected",
+        clientSubmissionId: null,
+      });
+      // Typed run-failure (code passes the membership guard) + carried id.
+      opts.onError?.(
+        Object.assign(new Error("queue limit reached"), {
+          code: "queue-limit-exceeded",
+          clientSubmissionId: "sub-fail",
+        }),
+      );
+      expect(onAppendRejected).toHaveBeenLastCalledWith({
+        kind: "rejected",
+        clientSubmissionId: "sub-fail",
+      });
+      // Unknown code (not a ThreadErrorType) degrades to transport: rejected,
+      // id carried, no crash.
+      opts.onError?.(
+        Object.assign(new Error("infra blew up"), {
+          code: "some-runtime-failure-category",
+          clientSubmissionId: "sub-infra",
+        }),
+      );
+      expect(onAppendRejected).toHaveBeenLastCalledWith({
+        kind: "rejected",
+        clientSubmissionId: "sub-infra",
+      });
     } finally {
       mounted.unmount();
     }
