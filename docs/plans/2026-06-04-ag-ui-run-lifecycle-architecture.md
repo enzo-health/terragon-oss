@@ -43,6 +43,32 @@ thread.status_changed` (`thread-view-model-lifecycle-events.ts:130-176`).
   `synthesizeTerminalEntry` degrade-to-terminal (`terminal-event-synthesizer.ts`).
 - Emit API: `broadcastAgUiEventEphemeral({ threadChatId, event })` (ag-ui-publisher.ts:481).
 
+## Recovery regression from W4 (discovered while removing the legacy path)
+
+W4's daemon `deriveRunTerminalFromMessages` canonicalizes EVERY terminal message
+into a `run-terminal`, including **recoverable** results — rate-limit, OAuth-token-
+revoked, prompt-too-long (auto-compact). The canonical terminal carries none of those
+signals, so route.ts completed/failed the run and the message-based recovery
+(`queued-agent-rate-limit` re-queue, `tryOAuthRetryRecovery`, `tryAutoCompactRecovery`
+in router.ts) never fired. On `main` these auto-recovered; after W4 they terminate.
+
+This means the legacy message-based path (`router.ts` + `message-parser.ts`) is **not
+dead code** — it is the recovery handler — and cannot be removed until recovery is
+carried in the canonical model.
+
+- **Rate-limit: FIXED** (`ca9fa335`). route.ts detects a recoverable rate-limit (pure
+  `parseClaude/CodexRateLimitMessage`) and drops the canonical run-terminal so the fence
+  is skipped and the router re-queues. Route-level regression test added.
+- **OAuth-revoked + prompt-too-long: NOT fixed.** They are _conditionally_ recoverable
+  (recovery may fail → terminate) and entangled with run-context terminal-metadata
+  preservation (`updateThreadChatTerminalMetadataIfTerminal` with `prompt-too-long`).
+  A naive drop-the-terminal guard breaks that metadata. They need the recovery attempt
+  to run BEFORE the terminal decision, with metadata preserved — the canonical
+  recovery-model work below.
+- **Legacy removal: BLOCKED** on the canonical recovery model. Until the daemon signals
+  recovery conditions canonically (or route.ts owns recovery end to end), `router.ts`'s
+  message-based completion+recovery path must stay.
+
 ## The gaps (this plan)
 
 ### W1 — server emits `thread.status_changed` (fixes existing sandboxes)
