@@ -56,18 +56,22 @@ This means the legacy message-based path (`router.ts` + `message-parser.ts`) is 
 dead code** — it is the recovery handler — and cannot be removed until recovery is
 carried in the canonical model.
 
-- **Rate-limit: FIXED** (`ca9fa335`). route.ts detects a recoverable rate-limit (pure
-  `parseClaude/CodexRateLimitMessage`) and drops the canonical run-terminal so the fence
-  is skipped and the router re-queues. Route-level regression test added.
-- **OAuth-revoked + prompt-too-long: NOT fixed.** They are _conditionally_ recoverable
-  (recovery may fail → terminate) and entangled with run-context terminal-metadata
-  preservation (`updateThreadChatTerminalMetadataIfTerminal` with `prompt-too-long`).
-  A naive drop-the-terminal guard breaks that metadata. They need the recovery attempt
-  to run BEFORE the terminal decision, with metadata preserved — the canonical
-  recovery-model work below.
-- **Legacy removal: BLOCKED** on the canonical recovery model. Until the daemon signals
-  recovery conditions canonically (or route.ts owns recovery end to end), `router.ts`'s
-  message-based completion+recovery path must stay.
+- **All recovery conditions: FIXED** (`ca9fa335` rate-limit, `f47c867b` OAuth-revoked +
+  prompt-too-long). route.ts detects a recoverable result via the pure parsers
+  (`parseClaude/CodexRateLimitMessage`, `parseClaudeOAuthTokenRevokedMessage`,
+  `parseContextWindowExhausted`) and drops the canonical run-terminal so the fence is
+  skipped; the message-based recovery path then compacts/refreshes and re-queues, or
+  terminates itself with the error classification preserved (the router writes
+  `errorMessage` to the same threadChat fields the fence wrote). This also resolves a W4
+  conflict where prompt-too-long was both fenced terminally AND auto-compacted. Route-level
+  defer tests for all three conditions.
+- **Legacy removal: still BLOCKED, and the reason has narrowed.** After the fix the
+  `router.ts` path is no longer the _completion_ authority (route.ts owns plain
+  done/error/stop via the canonical fence), but it IS the recovery handler
+  (`tryAutoCompactRecovery`, `tryOAuthRetryRecovery`, rate-limit re-queue) and the
+  non-terminal message handler. Deleting it requires merging recovery + non-terminal
+  handling into route.ts and rewriting the e2e suite (which drives `handleDaemonEvent`
+  directly) — a large consolidation that needs the integration harness. Not a quick step.
 
 ## The gaps (this plan)
 
