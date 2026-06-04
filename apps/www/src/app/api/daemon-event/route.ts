@@ -35,6 +35,10 @@ import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
+import {
+  parseClaudeRateLimitMessage,
+  parseCodexRateLimitMessage,
+} from "@/agent/msg/helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
   type DaemonTokenAuthContext,
@@ -767,10 +771,28 @@ export async function POST(request: Request) {
     }
   }
 
-  const canonicalEvents = filterCanonicalEventsForDeltaCoexistence({
-    canonicalEvents: rawCanonicalEvents,
-    deltas,
-  });
+  const canonicalEventsAfterDeltaFilter =
+    filterCanonicalEventsForDeltaCoexistence({
+      canonicalEvents: rawCanonicalEvents,
+      deltas,
+    });
+  // The daemon canonicalizes every terminal message into a run-terminal, but a
+  // rate-limit result must RE-QUEUE (queued-agent-rate-limit with a reattempt
+  // time), not terminate. The canonical terminal carries no rate-limit signal,
+  // so detect it and drop the terminal here; the message-based recovery path then
+  // re-queues. Reset-time parsing is timezone-dependent and lives server-side.
+  const isRecoverableRateLimit = messages.some((message) =>
+    runContext?.agent === "codex"
+      ? parseCodexRateLimitMessage(message)?.isRateLimited === true
+      : parseClaudeRateLimitMessage({ message, timezone })?.isRateLimited ===
+        true,
+  );
+  const canonicalEvents =
+    isRecoverableRateLimit && canonicalEventsAfterDeltaFilter
+      ? canonicalEventsAfterDeltaFilter.filter(
+          (event) => event.type !== "run-terminal",
+        )
+      : canonicalEventsAfterDeltaFilter;
   const canonicalTerminalBeforePersistence = canonicalEvents
     ? findCanonicalRunTerminalEvent(canonicalEvents)
     : null;

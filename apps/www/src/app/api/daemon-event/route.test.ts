@@ -680,6 +680,51 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
+  it("re-queues a rate-limit result instead of completing it", async () => {
+    // A Claude rate-limit arrives as a result message that the daemon
+    // canonicalizes into a `completed` run-terminal. Completing it would skip the
+    // rate-limit re-queue (queued-agent-rate-limit), so the route must drop the
+    // terminal and defer recovery to the message-based path. Without the guard,
+    // completeAgentRunContextTerminal fires and the run wrongly terminates.
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "Claude AI usage limit reached|1752350400",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "rate-limit-terminal",
+            seq: 10,
+            status: "completed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "rate-limit-terminal",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+    );
+  });
+
   it("fails closed when runtime-session run-context columns are unavailable", async () => {
     vi.mocked(getDaemonEventDbPreflight).mockResolvedValueOnce({
       agentEventLogReady: true,
