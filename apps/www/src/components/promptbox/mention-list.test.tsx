@@ -32,11 +32,11 @@ describe("formatFilePath", () => {
         "packages/shared/src/db/abcdef/models/user.ts",
       );
       // "packages/shared/src/db/abcdef/models" is 36 chars
-      // With 30 char limit, we have 27 chars after "..."
-      // "shared/src/db/abcdef/models" is exactly 27 chars, so it will fit
+      // With 30 char limit, we have 29 chars after the "…" ellipsis
+      // "shared/src/db/abcdef/models" is 27 chars, so it will fit
       expect(result).toEqual({
         filename: "user.ts",
-        directory: ".../shared/src/db/abcdef/models",
+        directory: "…/shared/src/db/abcdef/models",
       });
     });
 
@@ -46,7 +46,7 @@ describe("formatFilePath", () => {
       );
       expect(result).toEqual({
         filename: "file.ts",
-        directory: ".../nested/folder/structure",
+        directory: "…/nested/folder/structure",
       });
     });
 
@@ -64,7 +64,7 @@ describe("formatFilePath", () => {
       const result = formatFilePath("src/components/ui/file.tsx", 10);
       expect(result).toEqual({
         filename: "file.tsx",
-        directory: ".../ui",
+        directory: "…/ui",
       });
     });
 
@@ -81,11 +81,11 @@ describe("formatFilePath", () => {
 
     it("should handle very small limits", () => {
       const result = formatFilePath("src/components/ui/buttons/file.tsx", 5);
-      // With limit of 5, available chars = 5 - 3 = 2
-      // Can't fit any directory parts
+      // With limit of 5, available chars = 5 - 1 = 4
+      // Can't fit any directory parts ("buttons" is 7 chars)
       expect(result).toEqual({
         filename: "file.tsx",
-        directory: "...",
+        directory: "…",
       });
     });
   });
@@ -104,11 +104,11 @@ describe("formatFilePath", () => {
         "node_modules/.pnpm/pkg.v1.0.0/src/index.js",
       );
       // "node_modules/.pnpm/pkg.v1.0.0/src" is 34 chars
-      // With 30 char limit, we have 27 chars after "..."
+      // With 30 char limit, we have 29 chars after the "…" ellipsis
       // ".pnpm/pkg.v1.0.0/src" is 20 chars, so it will fit
       expect(result).toEqual({
         filename: "index.js",
-        directory: ".../.pnpm/pkg.v1.0.0/src",
+        directory: "…/.pnpm/pkg.v1.0.0/src",
       });
     });
 
@@ -122,12 +122,12 @@ describe("formatFilePath", () => {
 
     it("should prioritize showing more recent directories", () => {
       const result = formatFilePath("a/b/c/d/e/f/g/h/i/file.txt", 15);
-      // With limit of 15, available chars = 15 - 3 = 12
-      // "i" = 1, "h/i" = 3, "g/h/i" = 5, "f/g/h/i" = 7, "e/f/g/h/i" = 9, "d/e/f/g/h/i" = 11
-      // So "d/e/f/g/h/i" (11 chars) will fit
+      // With limit of 15, available chars = 15 - 1 = 14
+      // "d/e/f/g/h/i" = 11 and "c/d/e/f/g/h/i" = 13 both fit; "b/c/d/e/f/g/h/i" = 15 is too big
+      // So "c/d/e/f/g/h/i" (13 chars) will fit
       expect(result).toEqual({
         filename: "file.txt",
-        directory: ".../d/e/f/g/h/i",
+        directory: "…/c/d/e/f/g/h/i",
       });
     });
 
