@@ -37,7 +37,6 @@ export function createInitialThreadViewModelState(
     threadChatId: snapshot.threadChatId,
     dbMessages: snapshot.dbMessages,
     queuedMessages: snapshot.queuedMessages,
-    threadStatus: snapshot.threadStatus,
     permissionMode: snapshot.permissionMode,
     hasCheckpoint: snapshot.hasCheckpoint,
     latestGitDiffTimestamp: snapshot.latestGitDiffTimestamp,
@@ -124,7 +123,7 @@ export function projectThreadViewModel(
     lifecycleMessages: state.lifecycleMessages,
     dbMessages: state.dbMessages,
     queuedMessages: state.queuedMessages,
-    threadStatus: state.threadStatus,
+    threadStatus: state.lifecycle.threadStatus,
     permissionMode: state.permissionMode,
     hasCheckpoint: state.hasCheckpoint,
     latestGitDiffTimestamp: state.latestGitDiffTimestamp,
@@ -156,9 +155,6 @@ function applySnapshot(
   const lifecycle = shouldPreserveLocalLifecycle
     ? state.lifecycle
     : snapshot.lifecycle;
-  const threadStatus = shouldPreserveLocalLifecycle
-    ? state.threadStatus
-    : snapshot.threadStatus;
   const lifecycleMessages = shouldPreserveLocalLifecycle
     ? state.lifecycleMessages
     : extractThreadLifecycleMessages(snapshot.uiMessages);
@@ -174,7 +170,6 @@ function applySnapshot(
       !shouldReplaceLocalState && state.hasOptimisticQueuedMessages
         ? state.queuedMessages
         : snapshot.queuedMessages,
-    threadStatus,
     permissionMode:
       transcriptMode === "replace-transcript" ||
       !state.hasOptimisticPermissionMode
@@ -237,7 +232,7 @@ function isSnapshotNoOp(
     state.threadChatId === snapshot.threadChatId &&
     state.dbMessages === snapshot.dbMessages &&
     state.queuedMessages === snapshot.queuedMessages &&
-    state.threadStatus === snapshot.threadStatus &&
+    state.lifecycle.threadStatus === snapshot.threadStatus &&
     state.permissionMode === snapshot.permissionMode &&
     state.hasCheckpoint === snapshot.hasCheckpoint &&
     state.latestGitDiffTimestamp === snapshot.latestGitDiffTimestamp &&
@@ -365,14 +360,13 @@ function applyAgUiEvent(
   }
 
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
-  const statusChanged = lifecycle.threadStatus !== state.threadStatus;
+  const statusChanged = lifecycle.threadStatus !== state.lifecycle.threadStatus;
   return {
     ...state,
     artifacts,
     meta,
     lifecycle,
     lifecycleMessages,
-    threadStatus: lifecycle.threadStatus,
     optimisticSubmission: statusChanged ? null : state.optimisticSubmission,
     seenEventKeys: tracked.seenEventKeys,
     seenEventOrder: tracked.seenEventOrder,
