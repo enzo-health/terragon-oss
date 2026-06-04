@@ -75,7 +75,7 @@ function MainMenuView({
           </div>
           <div className="px-1">
             <button
-              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground"
+              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
               onClick={onSelectAttachImages}
             >
               <Paperclip className="size-4" />
@@ -97,7 +97,7 @@ function MainMenuView({
           <div className="px-1">
             {typeahead && (
               <button
-                className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground"
+                className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
                 onClick={onSelectFiles}
               >
                 <AtSign className="size-4" />
@@ -105,7 +105,7 @@ function MainMenuView({
               </button>
             )}
             <button
-              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground"
+              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
               onClick={onSelectCommands}
             >
               <Slash className="size-4" />

@@ -36,12 +36,12 @@ export function GitHubSettings() {
         <div className="flex flex-col gap-4">
           <SettingsWithExternalLink
             label="Repository access"
-            description="Manage which GitHub repositories Terragon can access"
+            description="Manage which GitHub repositories Terragon can access."
             href={getGHAppInstallUrl()}
           />
           <SettingsWithExternalLink
             label="Environment settings"
-            description="Configure custom sandbox environments for each of your repositories"
+            description="Configure custom sandbox environments for each of your repositories."
             href="/environments"
           />
         </div>
@@ -49,12 +49,12 @@ export function GitHubSettings() {
 
       <SettingsSection
         label="Pull request defaults"
-        description="Configure how Terragon creates and manages pull requests"
+        description="Configure how Terragon creates and manages pull requests."
       >
         <div className="flex flex-col gap-4">
           <SettingsWithCTA
             label="Default pull request stage"
-            description="Set the default stage of pull requests Terragon creates"
+            description="Set the default stage of pull requests Terragon creates."
           >
             <PullRequestStageSetting />
           </SettingsWithCTA>
@@ -102,7 +102,7 @@ export function GitHubSettings() {
       {/* @-mention settings */}
       <SettingsSection
         label="@terragon-labs defaults"
-        description="Configure what happens when @terragon-labs is tagged on GitHub"
+        description="Configure what happens when @terragon-labs is tagged on GitHub."
       >
         <div className="flex flex-col gap-4">
           <SettingsCheckbox

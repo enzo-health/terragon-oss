@@ -56,7 +56,7 @@ const columns: ColumnDef<ThreadWithUser>[] = [
           {u.name}
         </Link>
       ) : (
-        "Unknown"
+        <span className="text-muted-foreground">Unknown</span>
       );
     },
   },
@@ -95,7 +95,11 @@ const columns: ColumnDef<ThreadWithUser>[] = [
   {
     accessorKey: "thread.sandboxProvider",
     header: "Sandbox Provider",
-    cell: ({ row }) => row.original.thread.sandboxProvider,
+    cell: ({ row }) => (
+      <span className="font-mono text-xs">
+        {row.original.thread.sandboxProvider}
+      </span>
+    ),
   },
   {
     accessorKey: "thread.createdAt",
@@ -119,7 +123,7 @@ const columns: ColumnDef<ThreadWithUser>[] = [
           repoFullName={t.githubRepoFullName}
         />
       ) : (
-        <span>No PR</span>
+        <span className="text-muted-foreground">No PR</span>
       );
     },
   },
@@ -127,10 +131,21 @@ const columns: ColumnDef<ThreadWithUser>[] = [
     id: "thread.errorMessage",
     header: "Error Message",
     cell: ({ row }) => {
-      return row.original.thread.threadChats
+      const message = row.original.thread.threadChats
         .map((chat) => chat.errorMessage)
         .filter(Boolean)
         .join(", ");
+      if (!message) {
+        return null;
+      }
+      return (
+        <span
+          className="block max-w-[320px] truncate text-error-strong"
+          title={message}
+        >
+          {message}
+        </span>
+      );
     },
   },
 ];

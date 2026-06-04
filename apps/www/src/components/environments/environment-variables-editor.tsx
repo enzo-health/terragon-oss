@@ -17,6 +17,7 @@ import {
 import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { parseEnvFile } from "@/lib/parse-env-file";
+import { toast } from "sonner";
 import isEqual from "fast-deep-equal";
 
 type EnvironmentVariable = {
@@ -167,7 +168,11 @@ export function EnvironmentVariablesEditor({
 
     // Show a message if there were duplicates
     if (duplicates.length > 0) {
-      alert(`Updated existing variables: ${duplicates.join(", ")}`);
+      toast.success(
+        `Updated ${duplicates.length} existing ${
+          duplicates.length === 1 ? "variable" : "variables"
+        }: ${duplicates.join(", ")}`,
+      );
     }
   };
 

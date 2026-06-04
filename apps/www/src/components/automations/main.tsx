@@ -154,7 +154,7 @@ function AutomationsList({
       {hasReachedLimit && (
         <Alert className="mb-3 bg-warning/10 text-warning border-none rounded-lg">
           <AlertCircle className="size-4" />
-          <AlertDescription className="text-warning">
+          <AlertDescription className="text-warning-strong">
             You have reached the active automation limit. To create another,
             disable or delete an existing active automation.
           </AlertDescription>

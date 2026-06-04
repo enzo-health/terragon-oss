@@ -256,7 +256,7 @@ export function SecondaryPanel({
         }
       >
         {!isMaximized && (
-          <div className="flex flex-col gap-[3px] opacity-30 transition-opacity duration-[var(--duration-quick)] group-hover/resize:opacity-70">
+          <div className="flex flex-col gap-[3px] opacity-40 transition-opacity duration-[var(--duration-quick)] group-hover/resize:opacity-70">
             <div className="h-px w-1 rounded-full bg-muted-foreground" />
             <div className="h-px w-1 rounded-full bg-muted-foreground" />
             <div className="h-px w-1 rounded-full bg-muted-foreground" />

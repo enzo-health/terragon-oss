@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RepoSelector } from "../repo-branch-selector";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
 
 export function PullRequestTriggerForm({
@@ -110,10 +110,10 @@ export function PullRequestTriggerForm({
               <FormLabel>Other authors</FormLabel>
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Security notice</AlertTitle>
                 <AlertDescription>
-                  <strong>Security Notice:</strong> Make sure you trust these
-                  authors. Their pull request contents will be read directly by
-                  the agent when the automation runs.
+                  Make sure you trust these authors. Their pull request contents
+                  will be read directly by the agent when the automation runs.
                 </AlertDescription>
               </Alert>
               <Input

@@ -124,7 +124,9 @@ const columns: ColumnDef<GitHubPR>[] = [
     header: "Base Ref",
     cell: ({ row }) => (
       <span className="font-mono block max-w-[120px] truncate">
-        {row.getValue("baseRef")}
+        {row.getValue("baseRef") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
       </span>
     ),
   },
@@ -132,14 +134,22 @@ const columns: ColumnDef<GitHubPR>[] = [
     accessorKey: "mergeableState",
     header: "Mergeable State",
     cell: ({ row }) => (
-      <span className="font-mono">{row.getValue("mergeableState")}</span>
+      <span className="font-mono">
+        {row.getValue("mergeableState") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
     ),
   },
   {
     accessorKey: "checksStatus",
     header: "Checks Status",
     cell: ({ row }) => (
-      <span className="font-mono">{row.getValue("checksStatus")}</span>
+      <span className="font-mono">
+        {row.getValue("checksStatus") ?? (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
     ),
   },
   {
@@ -278,7 +288,7 @@ export function AdminGithubAppTester() {
   return (
     <div className="max-w-4xl">
       <p className="text-muted-foreground mb-6">
-        Test leaving a comment on a GitHub issue or PR
+        Test leaving a comment on a GitHub issue or PR.
       </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

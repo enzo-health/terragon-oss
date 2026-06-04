@@ -43,7 +43,7 @@ export function ThreadListSectionHeader({
         )}
       />
       <span className="truncate">{title}</span>
-      <span className="text-muted-foreground/70 font-sans text-[10px] font-medium tabular-nums flex-shrink-0">
+      <span className="text-muted-foreground/70 font-sans text-micro font-medium tabular-nums flex-shrink-0">
         {numThreads}
       </span>
     </button>

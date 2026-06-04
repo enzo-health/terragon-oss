@@ -100,10 +100,7 @@ export const SendButton = memo(function SendButton({
       title={title}
       aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
-      className={cn(
-        "size-auto h-11 px-3 sm:h-8 sm:px-2 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
-        className,
-      )}
+      className={cn("size-auto h-11 px-3 sm:h-8 sm:px-2", className)}
       size="icon"
     >
       <SendActionIcon
@@ -177,10 +174,7 @@ export const SendComboButton = memo(function SendComboButton({
           }}
           title={title}
           disabled={isDisabled}
-          className={cn(
-            "h-8 px-2 pr-6 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] rounded-r-none group",
-            className,
-          )}
+          className={cn("h-8 px-2 pr-6 rounded-r-none group", className)}
           size="sm"
         >
           <SendActionIcon
@@ -198,7 +192,7 @@ export const SendComboButton = memo(function SendComboButton({
               )}
               size="sm"
             >
-              <ChevronDown className="size-3 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]" />
+              <ChevronDown className="size-3" />
             </Button>
           }
           title="Submit Options"

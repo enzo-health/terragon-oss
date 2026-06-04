@@ -512,7 +512,7 @@ function getResponseComponents(
     ol(props) {
       const children = getChildren(props);
       return (
-        <ol className="list-decimal pl-8 mb-2 text-foreground">{children}</ol>
+        <ol className="list-decimal pl-6 mb-2 text-foreground">{children}</ol>
       );
     },
     li(props) {

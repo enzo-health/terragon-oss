@@ -84,7 +84,7 @@ export const SlashCommandListContent = forwardRef<
                   onExecuteItem ? onExecuteItem(index) : onSelectItem(index)
                 }
                 className={cn(
-                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
+                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]",
                   "aria-disabled:pointer-events-none aria-disabled:opacity-50",
                   isSelected && "bg-accent text-accent-foreground",
                 )}
@@ -112,7 +112,7 @@ export const SlashCommandListContent = forwardRef<
         </ul>
       ) : (
         <div className="py-2 px-2 text-center text-sm text-muted-foreground">
-          No commands match that search
+          No commands found
         </div>
       )}
     </>

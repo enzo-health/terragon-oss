@@ -114,7 +114,7 @@ export function FileDiffWrapper({
       <div ref={sentinelRef} className="h-0" />
       <div
         className={cn(
-          "font-mono text-xs font-medium flex items-center justify-between cursor-pointer select-none sticky top-0 z-10 bg-card transition-colors p-3 gap-2 rounded-lg",
+          "font-mono text-xs font-medium flex items-center justify-between cursor-pointer select-none sticky top-0 z-10 bg-card p-3 gap-2 rounded-md",
           expanded && "rounded-b-none",
           isHeaderStuck && "rounded-t-none",
         )}
@@ -208,7 +208,7 @@ export function FileDiffWrapper({
       </div>
       {expanded &&
         (isImage ? (
-          <div className="bg-background overflow-hidden rounded-b-lg">
+          <div className="bg-background overflow-hidden rounded-b-md">
             <ImageDiffView
               fileName={parsedFile.fileName}
               changeType={parsedFile.changeType}
@@ -218,7 +218,7 @@ export function FileDiffWrapper({
             />
           </div>
         ) : (
-          <div className="bg-background overflow-hidden rounded-b-lg">
+          <div className="bg-background overflow-hidden rounded-b-md">
             <DiffRenderer<CommentWidgetData>
               patch={parsedFile.fullDiff}
               mode={effectiveMode === "split" ? "split" : "unified"}

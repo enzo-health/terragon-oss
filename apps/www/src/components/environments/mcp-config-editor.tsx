@@ -97,7 +97,7 @@ export function McpConfigEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="relative">
+      <div>
         <Textarea
           value={configText}
           onChange={handleTextChange}
@@ -108,15 +108,17 @@ export function McpConfigEditor({
           )}
           disabled={disabled}
         />
-        {error && (
-          <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-error">
-            <AlertCircle className="h-3 w-3" />
-            <span>{error}</span>
-          </div>
-        )}
+        <p className="min-h-4 mt-1 flex items-center gap-1 text-xs text-error">
+          {error && (
+            <>
+              <AlertCircle className="h-3 w-3" />
+              {error}
+            </>
+          )}
+        </p>
       </div>
 
-      <div className="flex items-center gap-2 mt-2">
+      <div className="flex items-center gap-2">
         <Button
           variant="default"
           size="sm"

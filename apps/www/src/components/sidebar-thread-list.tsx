@@ -129,7 +129,7 @@ function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
           )}
         />
         <span className="truncate">{repoName}</span>
-        <span className="ml-auto text-[10px] font-medium tabular-nums text-muted-foreground/60 flex-shrink-0">
+        <span className="ml-auto text-micro font-medium tabular-nums text-muted-foreground/70 flex-shrink-0">
           {threads.length}
         </span>
       </button>

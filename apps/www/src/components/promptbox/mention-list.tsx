@@ -27,7 +27,7 @@ export function formatFilePath(path: string, maxChars: number = 30) {
   }
 
   // Otherwise, truncate from the beginning and add ellipsis
-  const ellipsis = "...";
+  const ellipsis = "…";
   const availableChars = maxChars - ellipsis.length;
 
   // Edge case: if available chars is too small, just return ellipsis
@@ -157,7 +157,7 @@ export const MentionListContent = forwardRef<
               itemRefs.current[index] = el;
             }}
             className={cn(
-              "flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground",
+              "flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]",
               index === selectedIndex && "bg-accent text-accent-foreground",
             )}
             key={item.name}

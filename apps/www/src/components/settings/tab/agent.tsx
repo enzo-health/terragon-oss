@@ -53,7 +53,7 @@ export function AgentSettings() {
     <div className="flex flex-col gap-8">
       <SettingsSection
         label="Agent configuration"
-        description="Customize how the coding agent behaves across all your tasks"
+        description="Customize how the coding agent behaves across all your tasks."
       >
         <CustomSystemPromptSetting />
       </SettingsSection>
@@ -93,7 +93,7 @@ function AgentProvidersSection() {
     <div id="agent-providers">
       <SettingsSection
         label="Agent providers"
-        description="Connect provider accounts to power your coding agents"
+        description="Connect provider accounts to power your coding agents."
         cta={addCredentialCTA}
       >
         <CredentialsList />
@@ -277,7 +277,7 @@ function AgentAndModelsEnabledSection() {
     <div id="available-agents-and-models">
       <SettingsSection
         label="Available agents and models"
-        description="Choose which agents and models are available when you create a new task"
+        description="Choose which agents and models are available when you create a new task."
       >
         <div className="space-y-4">
           {allAgents.map((agent) => {

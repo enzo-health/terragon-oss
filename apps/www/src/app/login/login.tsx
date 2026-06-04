@@ -45,7 +45,7 @@ export default function Login({
       const result = (await response.json()) as DevLoginResponse;
       window.location.href = result.redirectTo ?? returnUrl;
     } catch {
-      setDevLoginError("Dev login didn't go through. Try again.");
+      setDevLoginError("Dev login didn’t go through. Try again.");
     } finally {
       setIsDevLoginLoading(false);
     }
@@ -54,17 +54,17 @@ export default function Login({
   const isLoading = isGithubLoading || isDevLoginLoading;
 
   return (
-    <div className="min-h-[100dvh] w-full bg-canvas flex items-center justify-center">
+    <div className="min-h-svh w-full bg-canvas flex items-center justify-center">
       <div className="flex w-full max-w-sm flex-col items-center justify-center p-6">
         <div className="w-full rounded-lg bg-raised p-8 shadow-card">
           <div className="flex flex-col items-center text-center gap-4">
             <Wordmark showLogo showText size="lg" />
             <div className="flex flex-col gap-1.5 pt-1">
               <h1 className="text-title font-semibold leading-tight text-strong">
-                Sign in
+                Continue to Terragon
               </h1>
               <p className="text-sm font-sans text-mid">
-                Welcome back. Continue to Terragon.
+                Sign in or create an account with GitHub.
               </p>
             </div>
           </div>

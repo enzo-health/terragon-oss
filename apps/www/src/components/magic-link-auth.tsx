@@ -66,17 +66,15 @@ export function MagicLinkAuth() {
 
   return (
     <form onSubmit={handleSubmit} className="w-full space-y-4">
-      <div className="space-y-2">
-        <Input
-          type="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={loading}
-          required
-          className="w-full"
-        />
-      </div>
+      <Input
+        type="email"
+        placeholder="Enter your email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={loading}
+        required
+        className="w-full"
+      />
       <Button type="submit" disabled={loading || !email} className="w-full">
         {loading ? (
           <>

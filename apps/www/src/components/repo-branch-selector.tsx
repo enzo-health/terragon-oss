@@ -242,7 +242,7 @@ function RepoBranchSelectorInner({
       )}
       <ResponsiveCombobox
         icon={<GitBranch className="size-4 shrink-0 hidden sm:block" />}
-        className={cn(branchSelectorClassName, "min-w-12")}
+        className={cn(branchSelectorClassName, "min-w-16")}
         key={selectedRepoFullName ?? "no-repo"}
         onLoadItems={handleLoadBranches}
         items={branchItems}

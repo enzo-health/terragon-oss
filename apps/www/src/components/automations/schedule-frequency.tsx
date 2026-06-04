@@ -133,7 +133,7 @@ export function ScheduleTriggerForm({
               }
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger size="sm">
               <SelectValue placeholder="Select frequency" />
             </SelectTrigger>
             <SelectContent>
@@ -330,7 +330,7 @@ export function ScheduleTriggerForm({
                 placeholder="e.g., 9, 12, 15, 18"
                 className="font-mono tabular-nums"
               />
-              <div className="min-h-4 text-xs">
+              <div className="min-h-5 text-xs">
                 {hoursInputError ? (
                   <span className="text-error">{hoursInputError}</span>
                 ) : (
@@ -365,7 +365,7 @@ export function ScheduleTriggerForm({
                   );
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-[color,background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
                   dayOfWeek === day.value
                     ? "bg-primary text-primary-foreground"
@@ -441,7 +441,7 @@ export function ScheduleTriggerForm({
                   }
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-[color,background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
                   selectedDays.includes(day.value)
                     ? "bg-primary text-primary-foreground"

@@ -56,7 +56,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   const isConnected = !!account.installation;
 
   return (
-    <div className="space-y-4 rounded-[1.25rem] bg-card text-card-foreground p-6 shadow-inset-edge">
+    <div className="space-y-4 rounded-xl border border-hairline-soft bg-canvas/40 p-4">
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-2 flex-1">
           <div className="flex items-center gap-2">
@@ -64,7 +64,9 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
             <span className="font-semibold">{account.slackTeamName}</span>
             <ConnectionStatusPill connected={isConnected} />
           </div>
-          <p className="text-xs text-mid">Workspace ID: {account.teamId}</p>
+          <p className="text-xs text-mid">
+            Workspace ID: <span className="font-mono">{account.teamId}</span>
+          </p>
         </div>
       </div>
 
@@ -131,7 +133,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               variant="link"
               className="text-mid font-normal underline px-0 hover:text-strong"
             >
-              {isDisconnecting ? "Disconnecting…" : "Disconnect"}
+              {isDisconnecting ? "Disconnecting…" : "Disconnect account"}
             </Button>
           </div>
         </>

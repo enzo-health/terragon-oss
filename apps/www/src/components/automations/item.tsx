@@ -182,7 +182,7 @@ function AutomationItemContents({
     case "pull_request": {
       const config = automation.triggerConfig as PullRequestTriggerConfig;
       triggerDescriptionParts.push(
-        `Pull Request in ${automation.repoFullName}`,
+        `Pull request in ${automation.repoFullName}`,
       );
       const triggerOnParts = [];
       if (config.on.open) {
@@ -231,7 +231,7 @@ function AutomationItemContents({
     case "github_mention": {
       const config = automation.triggerConfig as GitHubMentionTriggerConfig;
       triggerDescriptionParts.push(
-        `GitHub Mention in ${automation.repoFullName}`,
+        `GitHub mention in ${automation.repoFullName}`,
       );
       const filterParts = [];
       if (config.filter.includeBotMentions) {
@@ -265,7 +265,7 @@ function AutomationItemContents({
           aria-hidden="true"
           className={cn(
             "mr-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full",
-            automation.enabled ? "bg-success" : "bg-neutral",
+            automation.enabled ? "bg-success" : "bg-mid",
           )}
         />
         <span className="flex-shrink-0">
@@ -511,7 +511,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
               {runPullRequestMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Run now"
+                "Run on this PR"
               )}
             </Button>
           </div>
@@ -570,7 +570,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
               {runIssueMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Run now"
+                "Run on this issue"
               )}
             </Button>
           </div>

@@ -184,28 +184,11 @@ export function GitDiffView({
   if (!activeDiff) {
     return (
       <div ref={containerRef} className="flex flex-col h-full">
-        <div className="border-b">
-          <FilesChangedHeader
-            fileCount={headerStats.files}
-            viewMode={viewMode}
-            onViewModeChange={handleViewModeChange}
-            allExpanded={false}
-            onToggleAll={() => {}}
-            showFileTree={showFileTree}
-            onToggleFileTree={() => setShowFileTree(!showFileTree)}
-            additions={headerStats.additions}
-            deletions={headerStats.deletions}
-            isSmallScreen={isSmallScreen}
-            fileTreeId={fileTreeId}
-          />
-        </div>
-        <div className="flex-1">
-          <ArtifactWorkspaceState
-            variant="empty"
-            title="No changes yet"
-            description="File changes will appear here once the agent edits the repository."
-          />
-        </div>
+        <ArtifactWorkspaceState
+          variant="empty"
+          title="No changes yet"
+          description="File changes will appear here once the agent edits the repository."
+        />
       </div>
     );
   }

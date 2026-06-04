@@ -155,7 +155,7 @@ export function AppSidebar() {
 
         <SidebarGroup className="flex-1 min-h-0 overflow-hidden">
           <SidebarGroupLabel className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Sessions
+            Tasks
           </SidebarGroupLabel>
           <SidebarGroupContent className="overflow-y-auto">
             <Suspense fallback={<SidebarThreadListLoading />}>

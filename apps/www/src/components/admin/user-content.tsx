@@ -214,12 +214,7 @@ export function AdminUserContent({
       cell: ({ row }) => {
         const flag = row.original;
         return (
-          <span
-            className={cn(
-              "font-mono",
-              !flag.globalOverride && "text-muted-foreground/50",
-            )}
-          >
+          <span className={cn("font-mono", !flag.globalOverride && "text-mid")}>
             {JSON.stringify(flag.globalOverride)}
           </span>
         );

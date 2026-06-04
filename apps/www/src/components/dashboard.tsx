@@ -45,22 +45,20 @@ function DashboardLaunchStatus({
         <div className="relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
           <span
             aria-hidden
-            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            className="absolute inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
             style={{
               opacity: isOpening ? 0 : 1,
               transform: isOpening ? "scale(0.25)" : "scale(1)",
-              filter: isOpening ? "blur(4px)" : "blur(0px)",
             }}
           >
             <Loader2 className="size-3.5 animate-spin" />
           </span>
           <span
             aria-hidden
-            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            className="absolute inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
             style={{
               opacity: isOpening ? 1 : 0,
               transform: isOpening ? "scale(1)" : "scale(0.25)",
-              filter: isOpening ? "blur(0px)" : "blur(4px)",
             }}
           >
             <Check className="size-3.5" />

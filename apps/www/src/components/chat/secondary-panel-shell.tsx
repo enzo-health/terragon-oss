@@ -216,7 +216,7 @@ function ArtifactWorkspaceShell({
         <div className="flex items-center justify-between gap-2 px-3 h-10">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <h2
-              className="truncate text-[13px] font-medium text-foreground"
+              className="truncate min-w-0 text-[13px] font-medium text-foreground"
               title={headerTitle}
             >
               {headerTitle}
@@ -224,7 +224,7 @@ function ArtifactWorkspaceShell({
             {headerSummary && (
               <>
                 <span className="text-muted-foreground/30 shrink-0">·</span>
-                <span className="text-[11px] text-muted-foreground truncate shrink-0">
+                <span className="text-[11px] text-muted-foreground truncate">
                   {headerSummary}
                 </span>
               </>

@@ -26,7 +26,7 @@ function ListRecommendedTaskItem({
     <button
       type="button"
       onClick={() => onTaskSelect(task.prompt)}
-      className="group flex w-full items-center gap-2 rounded-lg px-4 py-3.5 text-left transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)] hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)] hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="flex-1 text-[14px] font-medium text-mid group-hover:text-strong">
         {task.label}

@@ -31,7 +31,7 @@ export function BranchPrefixSetting({
   return (
     <SettingsWithCTA
       label="Branch name prefix"
-      description="Prefix added to new branch names"
+      description="Prefix added to new branch names."
       direction="col"
     >
       <div className="flex items-center gap-2">

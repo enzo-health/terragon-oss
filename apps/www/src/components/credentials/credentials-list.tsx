@@ -43,12 +43,12 @@ function CredentialDeleteButton({
       <Button
         size="sm"
         variant="ghost"
-        className="size-8 p-0 opacity-50 hover:opacity-100"
+        className="size-8 p-0 text-muted-foreground hover:text-strong"
         onClick={() => setShowDeleteDialog(true)}
         disabled={deletePending}
         aria-label={isOAuth ? "Disconnect" : "Delete"}
       >
-        <Trash2 className="h-4 w-4 text-muted-foreground" />
+        <Trash2 className="h-4 w-4" />
       </Button>
       <DeleteConfirmationDialog
         open={showDeleteDialog}
@@ -57,11 +57,11 @@ function CredentialDeleteButton({
           onDelete();
           setShowDeleteDialog(false);
         }}
-        title={isOAuth ? "Disconnect Account" : "Delete Credential"}
+        title={isOAuth ? "Disconnect account" : "Delete credential"}
         description={
           isOAuth
-            ? `Are you sure you want to disconnect your ${agentName} account connection? This action cannot be undone.`
-            : `Are you sure you want to delete this ${agentName} credential? This action cannot be undone.`
+            ? `Disconnect your ${agentName} account? Tasks using it will fall back to another credential.`
+            : `Delete this ${agentName} API key? You can add it again later.`
         }
         confirmText={isOAuth ? "Disconnect" : "Delete"}
         isLoading={deletePending}
@@ -89,9 +89,9 @@ function CredentialsListItem({
         { "opacity-60": !credential.isActive },
       )}
     >
-      <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3">
+      <div className="grid grid-cols-[auto_1fr_auto_auto] items-start gap-3">
         {/* Icon column */}
-        <div className="flex items-start pt-1">
+        <div className="flex h-5 items-center">
           <AgentIcon agent={credential.agent} sessionId={null} />
         </div>
         {/* Text column */}
@@ -111,7 +111,7 @@ function CredentialsListItem({
                 {/* Claude OAuth - accountEmail */}
                 {"accountEmail" in credential.metadata &&
                   credential.metadata.accountEmail && (
-                    <span className="text-xs text-muted-foreground font-mono">
+                    <span className="text-xs text-muted-foreground">
                       {String(credential.metadata.accountEmail)}
                     </span>
                   )}
@@ -119,7 +119,7 @@ function CredentialsListItem({
                 {credential.agent === "codex" &&
                   "email" in credential.metadata &&
                   credential.metadata.email && (
-                    <span className="text-xs text-muted-foreground font-mono">
+                    <span className="text-xs text-muted-foreground">
                       {String(credential.metadata.email)}
                     </span>
                   )}
@@ -127,7 +127,7 @@ function CredentialsListItem({
             )}
         </div>
         {/* Switch column */}
-        <div className="flex items-start pt-0.5">
+        <div className="flex h-5 items-center">
           <Switch
             checked={credential.isActive}
             onCheckedChange={async (newChecked) => {
@@ -139,7 +139,7 @@ function CredentialsListItem({
           />
         </div>
         {/* Trash column */}
-        <div className="flex items-start pt-0.5">
+        <div className="flex h-5 items-center">
           <CredentialDeleteButton
             credential={credential}
             agent={credential.agent}
@@ -186,11 +186,11 @@ export function CredentialsList() {
   }
   if (allCredentials.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border p-8 text-center">
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-hairline-soft p-8 text-center">
         <KeyRound className="size-5 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium text-strong">No credentials yet</p>
         <p className="text-pretty text-xs text-muted-foreground">
-          Use “Add Credential” above to connect a provider account or API key.
+          Use “Add credential” above to connect a provider account or API key.
         </p>
       </div>
     );

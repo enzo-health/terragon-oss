@@ -78,10 +78,10 @@ export function SetupScriptOutput({
           <div
             key={index}
             className={cn(
-              "whitespace-pre-wrap break-all",
+              "whitespace-pre-wrap break-words",
               output.type === "stdout" && "text-on-dark",
               output.type === "stderr" && "text-error",
-              output.type === "error" && "text-error font-semibold",
+              output.type === "error" && "text-error",
             )}
             dangerouslySetInnerHTML={{
               __html: ansiToHtml(output.content, theme),
