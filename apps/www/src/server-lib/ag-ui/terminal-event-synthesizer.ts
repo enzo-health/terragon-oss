@@ -53,9 +53,9 @@ export function synthesizeTerminalEntry(params: {
       runId,
       daemonRunStatus: runContext.status,
       errorMessage: runContext.failureTerminalReason ?? null,
-      errorCode: deriveChatFailureThreadErrorType(
-        runContext.failureTerminalReason ?? null,
-      ),
+      errorCode: runContext.failureTerminalReason
+        ? deriveChatFailureThreadErrorType(runContext.failureTerminalReason)
+        : null,
     });
     return {
       hasTerminalEvent,
