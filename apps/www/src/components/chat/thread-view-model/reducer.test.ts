@@ -344,8 +344,7 @@ describe("ThreadViewModel reducer", () => {
     });
     expect(viewModel.dbMessages).toHaveLength(1);
     expect(viewModel.sidePanel.messages).toHaveLength(1);
-    expect(state.hasOptimisticUserSubmit).toBe(false);
-    expect(state.optimisticSubmission).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
   });
 
   it("no-ops a rejection whose clientSubmissionId does not match the pending submit", () => {

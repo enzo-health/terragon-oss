@@ -67,6 +67,10 @@ export type ThreadViewModel = {
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
   threadStatus: ThreadStatus | null;
+  // clientSubmissionId of the single in-flight optimistic submit, or null. Read
+  // by chat-ui's onAppendRejected to correlate a rollback once the onError
+  // payload carries the id (P4-B); replaces the separate ref then.
+  pendingClientSubmissionId: string | null;
   permissionMode: ThreadPageChat["permissionMode"];
   hasCheckpoint: boolean;
   latestGitDiffTimestamp: string | null;
@@ -154,14 +158,7 @@ export type ThreadViewModelState = {
   lifecycleMessages: UISystemMessage[];
   quarantine: ThreadViewQuarantineEntry[];
   hasLiveLifecycleEvents: boolean;
-  hasOptimisticUserSubmit: boolean;
-  hasOptimisticQueuedMessages: boolean;
-  hasOptimisticPermissionMode: boolean;
-  optimisticSubmission: {
-    clientSubmissionId: string;
-    message: DBUserMessage;
-    priorLifecycle: ThreadViewLifecycle;
-  } | null;
+  optimisticOverlay: OptimisticOverlay;
   seenEventKeys: Set<string>;
   seenEventOrder: string[];
 };
@@ -178,6 +175,29 @@ export type ThreadViewLifecycle = {
   runId: string | null;
   runStarted: boolean;
   threadChatUpdatedAt: Date | string | null;
+};
+
+export type OptimisticUserSubmitOverlay = {
+  clientSubmissionId: string;
+  message: DBUserMessage;
+  priorLifecycle: ThreadViewLifecycle;
+};
+
+export type OptimisticQueuedMessagesOverlay = {
+  queuedMessages: DBUserMessage[] | null;
+};
+
+export type OptimisticPermissionModeOverlay = {
+  permissionMode: ThreadPageChat["permissionMode"];
+};
+
+// One nullable slot per optimistic concern. The struct of three nulls is the
+// "no overlay" state. Slots coexist (a queued update rides on top of an
+// in-flight submit); a single-arm union could not represent that.
+export type OptimisticOverlay = {
+  userSubmit: OptimisticUserSubmitOverlay | null;
+  queuedMessages: OptimisticQueuedMessagesOverlay | null;
+  permissionMode: OptimisticPermissionModeOverlay | null;
 };
 
 export type ThreadViewQuarantineEntry = {
