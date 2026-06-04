@@ -35,12 +35,7 @@ import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import {
-  parseClaudeOAuthTokenRevokedMessage,
-  parseClaudeRateLimitMessage,
-  parseCodexRateLimitMessage,
-  parseContextWindowExhausted,
-} from "@/agent/msg/helpers";
+import { messagesIndicateRecoverableFailure } from "@/server-lib/daemon-event/message-parser";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
@@ -778,26 +773,14 @@ export async function POST(request: Request) {
       canonicalEvents: rawCanonicalEvents,
       deltas,
     });
-  // Some terminal results are RECOVERABLE and must defer to the message-based
-  // recovery path rather than terminate via the canonical fence: rate-limit
-  // (re-queue with a reattempt time), OAuth-token-revoked (refresh + retry), and
-  // prompt-too-long / context-exhausted (auto-compact + retry). The daemon
-  // canonicalizes all of these into a run-terminal that carries none of those
-  // signals, so detect them and drop the terminal; the recovery path then
-  // re-queues, or terminates itself (preserving the error classification) if
-  // recovery fails. Detection is pure; rate-limit reset-time parsing is
-  // timezone-dependent and stays server-side.
-  const isRecoverableResult = messages.some((message) => {
-    const isRateLimited =
-      runContext?.agent === "codex"
-        ? parseCodexRateLimitMessage(message)?.isRateLimited === true
-        : parseClaudeRateLimitMessage({ message, timezone })?.isRateLimited ===
-          true;
-    return (
-      isRateLimited ||
-      parseClaudeOAuthTokenRevokedMessage(message) ||
-      parseContextWindowExhausted(message)
-    );
+  // A terminal batch can still carry a RECOVERABLE failure (rate-limit,
+  // OAuth-revoked, prompt-too-long). When it does, drop the canonical
+  // run-terminal so the message-based recovery path can re-queue instead of
+  // fencing the run to a hard stop; recovery terminates itself if it fails.
+  const isRecoverableResult = messagesIndicateRecoverableFailure({
+    messages,
+    agent: runContext?.agent,
+    timezone,
   });
   const canonicalEvents =
     isRecoverableResult && canonicalEventsAfterDeltaFilter
@@ -810,9 +793,10 @@ export async function POST(request: Request) {
     : null;
 
   const canonicalTerminal = canonicalTerminalBeforePersistence;
-  // The canonical run-terminal is the sole completion authority. Daemons emit it
+  // The canonical run-terminal is the sole completion authority — daemons emit it
   // alongside any terminal message (deriveRunTerminalFromMessages in the daemon
-  // normalizer), so the server never sniffs raw messages for completion.
+  // normalizer). The server inspects raw messages only for recoverability above,
+  // never to decide completion itself.
   const daemonRunStatusFromMessages:
     | "processing"
     | "completed"

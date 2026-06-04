@@ -468,6 +468,18 @@ export function isDeltaStreamedAssistantMessage(
   );
 }
 
+/**
+ * The error string carried by an erroring `result` message, or null when none.
+ * The single source of truth for reading that field off the `ClaudeMessage`
+ * union, shared by the daemon's terminal mapping (deriveRunTerminalFromMessages)
+ * and the server's terminal error-info derivation.
+ */
+export function resultErrorMessage(message: ClaudeMessage): string | null {
+  return "error" in message && typeof message.error === "string"
+    ? message.error
+    : null;
+}
+
 export type DaemonEventAPIBody = {
   threadId: string;
   threadChatId: string;

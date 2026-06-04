@@ -9,7 +9,11 @@ import {
   AIModelSchema,
 } from "@terragon/agent/types";
 import { readBoolean, readString, toRecord } from "./json-read";
-import { type ClaudeMessage, type DaemonTransportMode } from "./shared";
+import {
+  type ClaudeMessage,
+  type DaemonTransportMode,
+  resultErrorMessage,
+} from "./shared";
 
 function stringifyCanonicalToolResult(value: unknown): string {
   if (typeof value === "string") {
@@ -31,13 +35,10 @@ export type CanonicalRunTerminal = {
 };
 
 /**
- * Mirror of the server's `deriveRunStatusFromMessages` mapping
- * (`apps/www/src/server-lib/daemon-event/message-parser.ts`): a `result` with
- * `is_error` is `failed`, a successful `result` is `completed`, `custom-stop`
- * is `stopped`, and `custom-error` is `failed`. Pulling the mapping up here lets
- * the daemon emit the canonical run-terminal directly, so the server no longer
- * has to re-derive status from the legacy message shapes for rebundled daemons.
- * Returns null when the batch carries no terminal message.
+ * The canonical message→terminal mapping, owned here so the daemon emits the
+ * run-terminal directly: a `result` with `is_error` is `failed`, a successful
+ * `result` is `completed`, `custom-stop` is `stopped`, and `custom-error` is
+ * `failed`. Returns null when the batch carries no terminal message.
  */
 export function deriveRunTerminalFromMessages(
   messages: ClaudeMessage[],
@@ -54,11 +55,7 @@ export function deriveRunTerminalFromMessages(
     }
     if (message.type === "result") {
       if (message.is_error) {
-        const errorMessage =
-          "error" in message && typeof message.error === "string"
-            ? message.error
-            : null;
-        return { status: "failed", errorMessage };
+        return { status: "failed", errorMessage: resultErrorMessage(message) };
       }
       return { status: "completed", errorMessage: null };
     }
