@@ -17,6 +17,7 @@ import React, {
   useState,
 } from "react";
 import {
+  isAgentRunLive,
   isAgentStoppable,
   isAgentWorking,
   isPreSandboxStatus,
@@ -128,7 +129,7 @@ export function getThreadPromptPlaceholder(params: {
   if (shouldShowPreSandboxPlaceholder({ status, sandboxId, runStarted })) {
     return getBootingPlaceholder(bootingSubstatus, status);
   }
-  if (status !== null && isAgentWorking(status)) {
+  if (status !== null && isAgentRunLive(status)) {
     return WORKING_QUEUE_PLACEHOLDER;
   }
   return "Describe a task — @ to reference files, / for commands";
@@ -206,6 +207,7 @@ export const ThreadPromptBox = React.forwardRef<
   const showStopButton =
     props.threadId &&
     props.status &&
+    isAgentRunLive(props.status) &&
     isAgentStoppable(props.status) &&
     (!isWorking || editor?.isEmpty);
 

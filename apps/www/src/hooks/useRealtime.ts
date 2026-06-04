@@ -127,6 +127,7 @@ export function useRealtimeBase({
   channel,
   matches,
   onMessage,
+  onClose,
   debounceMs,
   disconnectOnDismount,
   trackReadyState = false,
@@ -136,6 +137,7 @@ export function useRealtimeBase({
   debounceMs: number;
   matches: (message: BroadcastMessage) => boolean;
   onMessage: (message: BroadcastMessage) => void;
+  onClose?: () => void;
   disconnectOnDismount: boolean;
   trackReadyState?: boolean;
 }) {
@@ -154,9 +156,11 @@ export function useRealtimeBase({
   // removing/re-adding the socket listener on every render.
   const matchesRef = useRef(matches);
   const onMessageRef = useRef(onMessage);
+  const onCloseRef = useRef(onClose);
   useLayoutEffect(() => {
     matchesRef.current = matches;
     onMessageRef.current = onMessage;
+    onCloseRef.current = onClose;
   });
 
   const debouncedOnMessage = useDebouncedCallback(
@@ -189,6 +193,15 @@ export function useRealtimeBase({
       socket.removeEventListener("message", onMessageWrapper);
     };
   }, [socket, onMessageWrapper]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleClose = () => onCloseRef.current?.();
+    socket.addEventListener("close", handleClose);
+    return () => {
+      socket.removeEventListener("close", handleClose);
+    };
+  }, [socket]);
 
   useEffect(() => {
     if (!socket || !trackReadyState) {
@@ -233,11 +246,13 @@ export function useRealtimeBase({
 export function useRealtimeUser({
   matches,
   onMessage,
+  onClose,
   debounceMs = 1000,
   trackReadyState = false,
 }: {
   matches: (message: BroadcastUserMessage) => boolean;
   onMessage: (message: BroadcastUserMessage) => void;
+  onClose?: () => void;
   debounceMs?: number;
   trackReadyState?: boolean;
 }) {
@@ -257,6 +272,7 @@ export function useRealtimeUser({
         onMessage(message);
       }
     },
+    onClose,
     disconnectOnDismount: false,
     trackReadyState,
   });
@@ -275,9 +291,11 @@ export type BroadcastThreadMatchThread = (
 export function useRealtimeThreadMatch({
   matchThread,
   onThreadChange,
+  onClose,
 }: {
   matchThread: BroadcastThreadMatchThread;
   onThreadChange: (patches: BroadcastThreadPatch[]) => void;
+  onClose?: () => void;
 }) {
   useRealtimeUser({
     debounceMs: 0,
@@ -294,6 +312,7 @@ export function useRealtimeThreadMatch({
         onThreadChange(patches);
       }
     },
+    onClose,
   });
 }
 

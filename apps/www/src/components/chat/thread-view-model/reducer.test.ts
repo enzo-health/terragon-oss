@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { type BaseEvent, EventType } from "@ag-ui/core";
-import type { DBMessage, DBUserMessage } from "@terragon/shared";
+import type { DBMessage, DBUserMessage, ThreadStatus } from "@terragon/shared";
 import {
   buildRepoFileArtifactId,
   buildRepoTreeArtifactId,
@@ -12,6 +12,7 @@ import { toUIMessages } from "../toUIMessages";
 import { createThreadViewSidecarEventProjector } from "../use-thread-view-model";
 import {
   createInitialThreadViewModelState,
+  OPTIMISTIC_SUBMIT_TTL_MS,
   projectThreadViewModel,
   threadViewModelReducer,
 } from "./reducer";
@@ -314,6 +315,160 @@ describe("ThreadViewModel reducer", () => {
     viewModel = projectThreadViewModel(state);
     expect(viewModel.threadStatus).toBe("working");
     expect(viewModel.lifecycle.threadStatus).toBe("working");
+  });
+
+  it("lets an authoritative RUN_FINISHED override and clear the optimistic latch", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-terminal-1",
+        at: 1_000,
+      },
+    );
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
+
+    state = threadViewModelReducer(state, {
+      type: "ag-ui.event",
+      event: { type: EventType.RUN_FINISHED } as BaseEvent,
+    });
+    expect(projectThreadViewModel(state).threadStatus).toBe("complete");
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+
+    // With the optimistic latch cleared, an authoritative reconcile yields
+    // straight to the snapshot's DB status — no stale optimistic status remains.
+    state = threadViewModelReducer(state, {
+      type: "server.refetch-reconciled",
+      snapshot: snapshotWithMessages([userMessage("hi")], { status: "error" }),
+    });
+    expect(projectThreadViewModel(state).threadStatus).toBe("error");
+  });
+
+  it("lets an authoritative terminal thread.status_changed clear the optimistic latch", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-terminal-2",
+        at: 1_000,
+      },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "ag-ui.event",
+      event: {
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: "stopped" },
+      } as BaseEvent,
+    });
+
+    expect(projectThreadViewModel(state).threadStatus).toBe("stopped");
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+  });
+
+  it("reverts an unconfirmed optimistic latch to the terminal snapshot status after the TTL", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-ttl-1",
+        at: 1_000,
+      },
+    );
+    expect(projectThreadViewModel(state).threadStatus).toBe("booting");
+
+    // Within the TTL: a stale-complete snapshot.hydrated does NOT revert.
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")], {
+        status: "complete",
+      }),
+      at: 1_000 + OPTIMISTIC_SUBMIT_TTL_MS,
+    });
+    expect(projectThreadViewModel(state).threadStatus).toBe("booting");
+
+    // Past the TTL with a terminal DB status: revert to the authoritative status.
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")], {
+        status: "complete",
+      }),
+      at: 1_000 + OPTIMISTIC_SUBMIT_TTL_MS + 1,
+    });
+    const viewModel = projectThreadViewModel(state);
+    expect(viewModel.threadStatus).toBe("complete");
+    expect(viewModel.lifecycle.threadStatus).toBe("complete");
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+    expect(state.optimisticOverlay.userSubmit).toBeNull();
+  });
+
+  it("does not revert a slow-to-boot optimistic latch when the snapshot DB status is still live", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-boot-1",
+        at: 1_000,
+      },
+    );
+
+    // Well past the TTL, but the DB confirms a live `booting` — keep the latch.
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")], {
+        status: "booting",
+      }),
+      at: 1_000 + OPTIMISTIC_SUBMIT_TTL_MS * 10,
+    });
+
+    expect(projectThreadViewModel(state).threadStatus).toBe("booting");
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
+    expect(state.optimisticOverlay.userSubmit?.pendingSince).toBe(1_000);
+  });
+
+  it("does not revert the optimistic latch on a stale-complete snapshot.hydrated with no timestamp", () => {
+    let state = threadViewModelReducer(
+      createInitialThreadViewModelState(
+        snapshotWithMessages([userMessage("hi")]),
+      ),
+      {
+        type: "optimistic.user-submitted",
+        message: userMessage("next"),
+        optimisticStatus: "booting",
+        clientSubmissionId: "sub-no-at",
+        at: 1_000,
+      },
+    );
+
+    state = threadViewModelReducer(state, {
+      type: "snapshot.hydrated",
+      snapshot: snapshotWithMessages([userMessage("hi")], {
+        status: "complete",
+      }),
+    });
+
+    expect(projectThreadViewModel(state).threadStatus).toBe("booting");
+    expect(state.optimisticOverlay.userSubmit).not.toBeNull();
   });
 
   it("reverts the optimistic submit on rejection and clears the optimistic flag", () => {
@@ -1404,12 +1559,13 @@ function snapshotWithMessages(
       ThreadViewSnapshot,
       "artifactThread" | "githubSummary" | "permissionMode"
     >
-  > = {},
+  > & { status?: ThreadStatus } = {},
 ): ThreadViewSnapshot {
   return createThreadViewSnapshot({
     threadChat: threadPageChat({
       messages: dbMessages,
       permissionMode: overrides.permissionMode,
+      status: overrides.status,
     }),
     agent: "claudeCode",
     source: "collection",
@@ -1449,11 +1605,13 @@ function threadPageChat({
   projectedMessages = messages,
   isCanonicalProjection = false,
   permissionMode = "allowAll",
+  status = "complete",
 }: {
   messages: DBMessage[];
   projectedMessages?: DBMessage[];
   isCanonicalProjection?: boolean;
   permissionMode?: ThreadPageChat["permissionMode"];
+  status?: ThreadStatus;
 }): ThreadPageChat {
   return {
     id: "chat-1",
@@ -1464,7 +1622,7 @@ function threadPageChat({
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
     agent: "claudeCode",
     agentVersion: 1,
-    status: "complete",
+    status,
     projectedMessages,
     isCanonicalProjection,
     queuedMessages: null,

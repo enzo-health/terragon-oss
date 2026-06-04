@@ -83,16 +83,32 @@ function render(ui: ReactElement): void {
   });
 }
 
-function RealtimeHost({ channel }: { channel: string }): null {
+function RealtimeHost({
+  channel,
+  onClose,
+}: {
+  channel: string;
+  onClose?: () => void;
+}): null {
   useRealtimeBase({
     party: "main",
     channel,
     matches: () => false,
     onMessage: () => {},
+    onClose,
     debounceMs: 0,
     disconnectOnDismount: true,
   });
   return null;
+}
+
+// Drive the socket's real "close" listeners — the ones useRealtimeBase actually
+// registers — instead of asserting on a replaced hook, so the close → onClose wiring
+// and its cleanup are exercised end to end.
+function fireClose(socket: (typeof partySocketInstances)[number]): void {
+  act(() => {
+    socket.listeners.get("close")?.forEach((listener) => listener());
+  });
 }
 
 beforeEach(() => {
@@ -122,5 +138,31 @@ describe("useRealtimeBase", () => {
       "user:unknown",
       "user:real",
     ]);
+  });
+
+  it("invokes onClose when the realtime socket emits close", () => {
+    const onClose = vi.fn();
+    render(createElement(RealtimeHost, { channel: "user:real", onClose }));
+    const socket = partySocketInstances[0]!;
+
+    fireClose(socket);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("detaches the close listener when the host unmounts", () => {
+    const onClose = vi.fn();
+    render(createElement(RealtimeHost, { channel: "user:real", onClose }));
+    const socket = partySocketInstances[0]!;
+
+    fireClose(socket);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Unmount the host (replace the tree) so its effect cleanup runs; a later close
+    // must not re-fire onClose, proving removeEventListener detached the handler.
+    render(createElement("div"));
+    fireClose(socket);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

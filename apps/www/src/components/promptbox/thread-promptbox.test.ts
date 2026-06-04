@@ -81,4 +81,21 @@ describe("getThreadPromptPlaceholder", () => {
       }),
     ).toBe(WORKING_QUEUE_PLACEHOLDER);
   });
+
+  it("drops the queue copy once the agent turn is done (post-turn finishing states)", () => {
+    for (const status of [
+      "working-done",
+      "checkpointing",
+      "working-error",
+    ] as const) {
+      expect(
+        getThreadPromptPlaceholder({
+          bootingSubstatus: null,
+          status,
+          sandboxId: "sandbox-1",
+          runStarted: true,
+        }),
+      ).toBe("Describe a task — @ to reference files, / for commands");
+    }
+  });
 });

@@ -1,3 +1,4 @@
+import { EventType } from "@ag-ui/core";
 import { ThreadChatInsert, ThreadInsert, ThreadStatus } from "@terragon/shared";
 import { publishBroadcastUserMessage } from "@terragon/shared/broadcast-server";
 import { markThreadChatAsUnread } from "@terragon/shared/model/thread-read-status";
@@ -8,6 +9,7 @@ import {
   updateThreadChatStatusAtomic,
 } from "@terragon/shared/model/threads";
 import { db } from "@/lib/db";
+import { broadcastAgUiEventEphemeral } from "@/server-lib/ag-ui-publisher";
 import { ThreadError } from "./error";
 import { handleTransition, ThreadEvent } from "./machine";
 
@@ -87,6 +89,23 @@ export async function updateThreadChatWithTransition({
     if (!!updatedThreadOrUndefined) {
       didUpdateStatus = true;
     }
+  }
+  if (didUpdateStatus && updatedStatus) {
+    void broadcastAgUiEventEphemeral({
+      threadChatId,
+      event: {
+        type: EventType.CUSTOM,
+        name: "thread.status_changed",
+        value: { status: updatedStatus },
+      },
+    }).catch((err) => {
+      console.error("[update-status] thread.status_changed broadcast failed", {
+        threadId,
+        threadChatId,
+        status: updatedStatus,
+        error: err,
+      });
+    });
   }
   if (updates) {
     await updateThread({

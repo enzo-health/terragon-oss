@@ -1331,24 +1331,6 @@ export async function getStalledThreadChats({
   return threadChats;
 }
 
-export async function stopStalledThreadChats({
-  db,
-  threadChatIds,
-}: {
-  db: DB;
-  threadChatIds: string[];
-}) {
-  await db
-    .update(schema.threadChat)
-    .set({
-      status: "complete",
-      errorMessage: "request-timeout",
-      queuedMessages: [],
-    })
-    .where(inArray(schema.threadChat.id, threadChatIds))
-    .returning();
-}
-
 export async function hasOtherUnarchivedThreadsWithSamePR({
   db,
   threadId,

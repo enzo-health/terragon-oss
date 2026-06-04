@@ -3,7 +3,10 @@ import {
   ThreadStatus,
   ThreadQueuedStatus,
 } from "@terragon/shared";
-import { isPrimaryChatLiveThreadStatus } from "@terragon/shared/model/thread-lifecycle-policy";
+import {
+  isAgentRunLiveThreadStatus,
+  isPrimaryChatLiveThreadStatus,
+} from "@terragon/shared/model/thread-lifecycle-policy";
 
 /** Type guard: true when the thread is waiting in a queue before sandbox boot. */
 export function isQueuedStatus(
@@ -56,6 +59,15 @@ export function isPreSandboxStatus(status: ThreadStatus): boolean {
 
 export function isAgentWorking(status: ThreadStatus) {
   return isPrimaryChatLiveThreadStatus(status);
+}
+
+/**
+ * True while the agent turn is actively producing output. Use for composer display
+ * (stop button, placeholder); use `isAgentWorking` for send-vs-queue routing so a
+ * follow-up still queues during the post-turn checkpoint instead of racing it.
+ */
+export function isAgentRunLive(status: ThreadStatus) {
+  return isAgentRunLiveThreadStatus(status);
 }
 
 export function isAgentStoppable(status: ThreadStatus) {

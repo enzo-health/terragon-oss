@@ -6,6 +6,8 @@ import {
   KNOWN_ACP_SESSION_UPDATE_TYPES,
   normalizeAcpPermissionRequest,
   parseAcpPermissionRequest,
+  buildAcpTerminalResultMessage,
+  readAcpStopReason,
 } from "./acp-adapter";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -460,6 +462,48 @@ describe("parseAcpLineToClaudeMessages", () => {
       expect(result[0]!.result).toBe("end_turn");
       expect(result[0]!.session_id).toBe("fallback-id");
     }
+  });
+
+  it("reads stopReason from a trusted session/prompt POST result", () => {
+    expect(readAcpStopReason({ stopReason: "end_turn" })).toBe("end_turn");
+    expect(readAcpStopReason({ stopReason: "max_tokens" })).toBe("max_tokens");
+  });
+
+  it("returns null when a POST result carries no terminal stopReason", () => {
+    // Empty body (postEnvelope returns {} for a blank response), missing field,
+    // and non-string values must NOT be treated as a turn-end.
+    expect(readAcpStopReason(undefined)).toBeNull();
+    expect(readAcpStopReason(null)).toBeNull();
+    expect(readAcpStopReason({})).toBeNull();
+    expect(readAcpStopReason({ stopReason: 1 })).toBeNull();
+    expect(readAcpStopReason("end_turn")).toBeNull();
+  });
+
+  it("POST-response terminal matches the id-validated SSE terminal exactly", () => {
+    // The fix lets the daemon synthesize a terminal from the trusted POST
+    // response without id-gating. It MUST produce the identical ClaudeMessage as
+    // the SSE-echoed path so completion is transport-agnostic.
+    const stopReason =
+      readAcpStopReason({ stopReason: "end_turn" }) ?? "unreachable";
+    const fromPost = buildAcpTerminalResultMessage(stopReason, "session-xyz");
+
+    const sseLine = JSON.stringify({
+      id: 3,
+      jsonrpc: "2.0",
+      result: { stopReason: "end_turn" },
+    });
+    const fromSse = parseAcpLineToClaudeMessages(
+      sseLine,
+      "session-xyz",
+      undefined,
+      {
+        allowedTerminalResponseIds: new Set<unknown>([3]),
+      },
+    );
+
+    expect(fromSse).toHaveLength(1);
+    expect(fromPost).toEqual(fromSse[0]);
+    expect(fromPost.type).toBe("result");
   });
 
   it("uses fallback sessionId when none provided", () => {

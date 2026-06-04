@@ -1,4 +1,4 @@
-import { ClaudeMessage } from "@terragon/daemon/shared";
+import { ClaudeMessage, resultErrorMessage } from "@terragon/daemon/shared";
 import {
   classifyDaemonTerminalErrorCategory,
   hashRuntimeFailureMessage,
@@ -50,12 +50,8 @@ export function deriveDaemonTerminalErrorInfo(messages: ClaudeMessage[]): {
       };
     }
     if (message.type === "result" && message.is_error) {
-      const errorMessage =
-        "error" in message && typeof message.error === "string"
-          ? message.error
-          : null;
       return {
-        errorMessage,
+        errorMessage: resultErrorMessage(message),
         errorCategory: "daemon_result_error",
       };
     }
@@ -64,6 +60,38 @@ export function deriveDaemonTerminalErrorInfo(messages: ClaudeMessage[]): {
     errorMessage: null,
     errorCategory: "unknown",
   };
+}
+
+/**
+ * True when a terminal batch carries a RECOVERABLE failure that must defer to the
+ * message-based recovery path rather than terminate via the canonical fence:
+ * rate-limit (re-queue with a reattempt time), OAuth-token-revoked (refresh +
+ * retry), or prompt-too-long / context-exhausted (auto-compact + retry). The
+ * daemon canonicalizes all of these into a plain run-terminal that carries none
+ * of those signals, so the server inspects the raw messages for them here.
+ * Detection only; rate-limit reset-time parsing stays at the recovery call site.
+ */
+export function messagesIndicateRecoverableFailure({
+  messages,
+  agent,
+  timezone,
+}: {
+  messages: ClaudeMessage[];
+  agent: string | undefined;
+  timezone: string;
+}): boolean {
+  return messages.some((message) => {
+    const isRateLimited =
+      agent === "codex"
+        ? parseCodexRateLimitMessage(message)?.isRateLimited === true
+        : parseClaudeRateLimitMessage({ message, timezone })?.isRateLimited ===
+          true;
+    return (
+      isRateLimited ||
+      parseClaudeOAuthTokenRevokedMessage(message) ||
+      parseContextWindowExhausted(message)
+    );
+  });
 }
 
 export function buildRunContextFailureUpdates(params: {

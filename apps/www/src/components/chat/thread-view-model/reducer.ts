@@ -1,8 +1,13 @@
 import { type BaseEvent } from "@ag-ui/core";
+import type { ThreadStatus } from "@terragon/shared";
 import {
   createRepoFileArtifactDescriptor,
   createRepoTreeArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
+import {
+  isPrimaryChatLiveThreadStatus,
+  isTerminalThreadStatus,
+} from "@terragon/shared/model/thread-lifecycle-policy";
 import { getAgUiEventDedupeKey, trackSeenAgUiEventKey } from "./ag-ui-adapter";
 import {
   getArtifactReferenceDescriptor,
@@ -76,7 +81,14 @@ export function threadViewModelReducer(
 ): ThreadViewModelState {
   switch (event.type) {
     case "snapshot.hydrated":
-      return applySnapshot(state, event.snapshot, "preserve-active-transcript");
+      return applySnapshot(
+        state,
+        event.snapshot,
+        "preserve-active-transcript",
+        {
+          at: event.at,
+        },
+      );
     case "server.refetch-reconciled":
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
@@ -159,22 +171,64 @@ export function projectThreadViewModel(
   };
 }
 
+/**
+ * Statuses where the run is definitively over. DB status is the single client
+ * liveness authority: a snapshot carrying one of these is authoritative-terminal
+ * and, once the local optimistic latch is past its fresh-grace TTL, wins over it.
+ */
+/**
+ * Client-side TTL for an unconfirmed optimistic "started" latch. A fresh
+ * optimistic submit holds the snappy overlay for this window even against a
+ * stale-cached terminal snapshot. Once the latch has gone unconfirmed past the
+ * window — no live lifecycle event and a non-live (terminal/idle) snapshot —
+ * the authoritative DB status reverts the UI so it cannot wedge on `working`.
+ * A genuine `booting`/`working` DB status is live and never reverts, so a
+ * slow-to-boot run is not prematurely de-latched.
+ */
+export const OPTIMISTIC_SUBMIT_TTL_MS = 15_000;
+
+function isTerminalStatus(status: ThreadStatus | null): boolean {
+  return status !== null && isTerminalThreadStatus(status);
+}
+
+function isLiveThreadStatus(status: ThreadStatus | null): boolean {
+  return status !== null && isPrimaryChatLiveThreadStatus(status);
+}
+
 function applySnapshot(
   state: ThreadViewModelState,
   snapshot: ThreadViewSnapshot,
   transcriptMode: "preserve-active-transcript" | "replace-transcript",
+  options: { at?: number } = {},
 ): ThreadViewModelState {
   if (isSnapshotNoOp(state, snapshot, transcriptMode)) {
     return state;
   }
 
   const shouldReplaceLocalState = transcriptMode === "replace-transcript";
-  const overlay = shouldReplaceLocalState
-    ? EMPTY_OPTIMISTIC_OVERLAY
-    : state.optimisticOverlay;
+  // DB status is authoritative. An optimistic "started" latch that has gone
+  // unconfirmed past the TTL against a non-live snapshot yields to the snapshot's
+  // DB status (typically terminal) so the UI cannot wedge on `working`. The TTL
+  // grace protects a just-submitted follow-up from a stale-cached terminal
+  // snapshot reflecting the previous turn.
+  const optimisticLatchIsStale =
+    state.optimisticOverlay.userSubmit?.pendingSince != null &&
+    options.at !== undefined &&
+    !isLiveThreadStatus(snapshot.threadStatus) &&
+    options.at - state.optimisticOverlay.userSubmit.pendingSince >
+      OPTIMISTIC_SUBMIT_TTL_MS;
+  const shouldYieldToAuthoritative =
+    !shouldReplaceLocalState &&
+    optimisticLatchIsStale &&
+    isTerminalStatus(snapshot.threadStatus);
+  const overlay =
+    shouldReplaceLocalState || shouldYieldToAuthoritative
+      ? EMPTY_OPTIMISTIC_OVERLAY
+      : state.optimisticOverlay;
   const preserveOptimisticUser = overlay.userSubmit !== null;
   const preserveLocalLifecycle =
     !shouldReplaceLocalState &&
+    !shouldYieldToAuthoritative &&
     (state.hasLiveLifecycleEvents || preserveOptimisticUser);
 
   return {
@@ -209,9 +263,10 @@ function applySnapshot(
         ? [...state.quarantine, ...snapshot.quarantine]
         : state.quarantine,
     optimisticOverlay: overlay,
-    hasLiveLifecycleEvents: shouldReplaceLocalState
-      ? false
-      : state.hasLiveLifecycleEvents,
+    hasLiveLifecycleEvents:
+      shouldReplaceLocalState || shouldYieldToAuthoritative
+        ? false
+        : state.hasLiveLifecycleEvents,
   };
 }
 
@@ -363,6 +418,10 @@ function applyAgUiEvent(
 
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   const statusChanged = lifecycle.threadStatus !== state.lifecycle.threadStatus;
+  // An authoritative terminal lifecycle event (RUN_FINISHED / RUN_ERROR / a
+  // terminal thread.status_changed) ends the turn and changes status, so the
+  // optimistic latch is dropped here too — a later snapshot.hydrated cannot
+  // resurrect the stale optimistic status.
   const optimisticOverlay =
     statusChanged && state.optimisticOverlay.userSubmit !== null
       ? { ...state.optimisticOverlay, userSubmit: null }

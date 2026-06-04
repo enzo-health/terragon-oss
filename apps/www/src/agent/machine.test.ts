@@ -73,6 +73,31 @@ describe("threadMachine", () => {
     expect(actor.getSnapshot().value).toBe("complete");
   });
 
+  it("checkpoint failure in working-done completes instead of stranding", () => {
+    // A thrown checkpoint surfaces system.error via the shared withThreadChat
+    // catch. If the error fires while still in working-done (e.g. the
+    // system.checkpoint transition itself failed), the thread must complete
+    // rather than strand in this primaryChatLive state.
+    const actor = createActor(threadMachine);
+    actor.start();
+    actor.send({ type: "system.boot" });
+    actor.send({ type: "assistant.message_done" });
+    expect(actor.getSnapshot().value).toBe("working-done");
+    actor.send({ type: "system.error" });
+    expect(actor.getSnapshot().value).toBe("complete");
+  });
+
+  it("checkpoint failure in working-error completes instead of stranding", () => {
+    const actor = createActor(threadMachine);
+    actor.start();
+    actor.send({ type: "system.boot" });
+    actor.send({ type: "assistant.message" });
+    actor.send({ type: "assistant.message_error" });
+    expect(actor.getSnapshot().value).toBe("working-error");
+    actor.send({ type: "system.error" });
+    expect(actor.getSnapshot().value).toBe("complete");
+  });
+
   it("stop while booting", () => {
     const actor = createActor(threadMachine);
     actor.start();

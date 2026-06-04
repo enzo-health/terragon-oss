@@ -7,10 +7,12 @@ import {
 import { AIAgent } from "@terragon/agent/types";
 import {
   AcpToolCallTracker,
+  buildAcpTerminalResultMessage,
   coalesceAssistantTextMessages,
   createAcpPermissionRequestMessage,
   normalizeAcpPermissionRequest,
   parseAcpLineToClaudeMessages,
+  readAcpStopReason,
 } from "./acp-adapter";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
@@ -434,6 +436,16 @@ type DaemonEventRunState = {
   acpServerId: string | null;
   acpSessionId: string | null;
   canonicalRunStartedEmitted: boolean;
+  /**
+   * Per-run idempotency guard for the single canonical run-terminal event.
+   * All terminal signals — ACP POST result / SSE echo, Codex WS turn-complete,
+   * the legacy NDJSON `result` message, and the idle watchdog — converge on the
+   * same buffer that drains through `buildCanonicalEventsForBatch`, so flipping
+   * this once the normalizer emits the terminal makes that builder the single
+   * `finalizeTurn` choke point: exactly one run-terminal per run, no matter how
+   * many terminal messages arrive. Committed on ack alongside the seq cursor.
+   */
+  canonicalTerminalEmitted: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
@@ -443,6 +455,7 @@ type DaemonEventRunState = {
     canonicalEvents: CanonicalEvent[];
     nextCanonicalSeqAfterBatch: number;
     canonicalRunStartedEmittedAfterBatch: boolean;
+    canonicalTerminalEmittedAfterBatch: boolean;
   } | null;
 };
 
@@ -951,6 +964,7 @@ export class TerragonDaemon {
       acpServerId: input.acpServerId ?? null,
       acpSessionId: input.acpSessionId ?? null,
       canonicalRunStartedEmitted: false,
+      canonicalTerminalEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -2470,6 +2484,12 @@ export class TerragonDaemon {
       if (!chunk.trim()) {
         return;
       }
+      // Any non-empty SSE chunk is stream liveness — including tool-call progress
+      // events the Codex parser coalesces into zero ClaudeMessages. Reset the
+      // idle clock here (not only when a message is applied) so a long silent
+      // tool call is never force-failed, while a truly dead stream still times
+      // out via ACP_SSE_INACTIVITY_TIMEOUT_MS.
+      lastAcpMessageAtMs = Date.now();
       let eventName = "message";
       const dataLines: string[] = [];
       for (const line of chunk.split("\n")) {
@@ -2939,27 +2959,45 @@ export class TerragonDaemon {
         },
         noTimeout: true,
         signal: promptPostAbortController.signal,
-      }).catch((err: unknown) => {
-        // POST failures are non-fatal: SSE terminal event is sole completion signal
-        if (!promptPostAbortController.signal.aborted) {
-          if (
-            !sawAssistantOrUserMessage &&
-            isRecoverableAcpPromptPostFailure(err)
-          ) {
-            recoverablePromptPostError =
-              err instanceof Error ? err : new Error(getErrorMessage(err));
-            resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
-            return;
+      })
+        .then((response) => {
+          // The session/prompt JSON-RPC result carries stopReason — the
+          // authoritative end-of-turn signal. The SSE echo is still raced as a
+          // fast-path, but proxies/LBs may kill the long-lived POST and some ACP
+          // servers return stopReason only here (never re-emit it over SSE).
+          // Treat this trusted direct response as terminal so completion never
+          // hinges solely on the SSE echo. Unlike the SSE path this needs no
+          // id-gating: the POST response is, by construction, the reply to our
+          // own activePromptRequestId.
+          if (promptPostAbortController.signal.aborted) return;
+          if (sawTerminalEventFromStream) return;
+          const stopReason = readAcpStopReason(response.result);
+          if (stopReason === null) return;
+          applyAcpMessages([
+            buildAcpTerminalResultMessage(stopReason, sessionId),
+          ]);
+        })
+        .catch((err: unknown) => {
+          // POST failures are non-fatal: SSE terminal event is sole completion signal
+          if (!promptPostAbortController.signal.aborted) {
+            if (
+              !sawAssistantOrUserMessage &&
+              isRecoverableAcpPromptPostFailure(err)
+            ) {
+              recoverablePromptPostError =
+                err instanceof Error ? err : new Error(getErrorMessage(err));
+              resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
+              return;
+            }
+            this.runtime.logger.warn(
+              "ACP session/prompt POST failed (non-fatal)",
+              {
+                threadChatId: input.threadChatId,
+                error: formatError(err),
+              },
+            );
           }
-          this.runtime.logger.warn(
-            "ACP session/prompt POST failed (non-fatal)",
-            {
-              threadChatId: input.threadChatId,
-              error: formatError(err),
-            },
-          );
-        }
-      });
+        });
 
       // Await SSE terminal event OR prolonged SSE inactivity
       let inactivityTimer: ReturnType<typeof setInterval> | undefined;
@@ -2993,77 +3031,8 @@ export class TerragonDaemon {
         );
       }
 
-      // Polling fallback: if SSE failed but agent may have completed, check status.
-      // The /status endpoint may not exist on all ACP servers — failures are expected and harmless.
-      if (!sawTerminalEventFromStream && circuitBreakerTripped) {
-        for (let pollAttempt = 0; pollAttempt < 5; pollAttempt++) {
-          const pollDelay = Math.min(1_000 * 2 ** pollAttempt, 16_000);
-          await new Promise<void>((resolve) => setTimeout(resolve, pollDelay));
-          try {
-            const statusUrl = `${createUrl(false)}/status`;
-            const statusResponse = await fetch(statusUrl, {
-              method: "GET",
-              headers: { Accept: "application/json" },
-              signal: AbortSignal.timeout(10_000),
-            });
-            if (statusResponse.ok) {
-              const statusBody = (await statusResponse.json()) as Record<
-                string,
-                unknown
-              >;
-              if (
-                statusBody &&
-                typeof statusBody === "object" &&
-                statusBody.completed
-              ) {
-                this.runtime.logger.info(
-                  "ACP polling fallback: agent completed despite SSE failure",
-                  {
-                    threadChatId: input.threadChatId,
-                    pollAttempt,
-                    serverId,
-                  },
-                );
-                // Construct a success result from the status response
-                this.addMessageToBuffer({
-                  agent: input.agent,
-                  message: {
-                    type: "result",
-                    subtype: "success",
-                    total_cost_usd: 0,
-                    duration_ms: this.getProcessDurationMs(input.threadChatId),
-                    duration_api_ms: this.getProcessDurationMs(
-                      input.threadChatId,
-                    ),
-                    is_error: false,
-                    num_turns: 1,
-                    result:
-                      typeof statusBody.stopReason === "string"
-                        ? statusBody.stopReason
-                        : "acp_poll_complete",
-                    session_id: sessionId,
-                  },
-                  threadId: input.threadId,
-                  threadChatId: input.threadChatId,
-                  token: input.token,
-                });
-                sawTerminalEventFromStream = true; // skip the error branch below
-                break;
-              }
-            }
-          } catch {
-            // Poll failed — expected if server doesn't support /status endpoint
-            this.runtime.logger.debug("ACP polling fallback attempt failed", {
-              threadChatId: input.threadChatId,
-              pollAttempt,
-            });
-          }
-        }
-      }
-
       if (sawTerminalEventFromStream) {
-        // SSE delivered the terminal event (or polling recovered it) — already buffered.
-        // Nothing more to do.
+        // SSE delivered the terminal event — already buffered. Nothing more to do.
       } else if (completionReason === "timeout") {
         this.addMessageToBuffer({
           agent: input.agent,
@@ -3283,6 +3252,7 @@ export class TerragonDaemon {
       acpServerId: null,
       acpSessionId: null,
       canonicalRunStartedEmitted: false,
+      canonicalTerminalEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -3336,6 +3306,7 @@ export class TerragonDaemon {
       protocolVersion: runState.protocolVersion,
       nextCanonicalSeq: runState.nextCanonicalSeq,
       canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
+      canonicalTerminalEmitted: runState.canonicalTerminalEmitted,
       threadId,
       threadChatId,
       messages,
@@ -3352,6 +3323,8 @@ export class TerragonDaemon {
       nextCanonicalSeqAfterBatch: canonicalBatch.nextCanonicalSeqAfterBatch,
       canonicalRunStartedEmittedAfterBatch:
         canonicalBatch.canonicalRunStartedEmittedAfterBatch,
+      canonicalTerminalEmittedAfterBatch:
+        canonicalBatch.canonicalTerminalEmittedAfterBatch,
     };
     this.daemonEventRunStates.set(threadChatId, runState);
 
@@ -3406,6 +3379,8 @@ export class TerragonDaemon {
       runState.pendingEnvelope.nextCanonicalSeqAfterBatch;
     runState.canonicalRunStartedEmitted =
       runState.pendingEnvelope.canonicalRunStartedEmittedAfterBatch;
+    runState.canonicalTerminalEmitted =
+      runState.pendingEnvelope.canonicalTerminalEmittedAfterBatch;
     runState.pendingEnvelope = null;
     this.daemonEventRunStates.set(threadChatId, runState);
     this.maybeCleanupDaemonEventRunState(threadChatId);

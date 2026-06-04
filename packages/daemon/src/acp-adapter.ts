@@ -848,6 +848,43 @@ export function coalesceAssistantTextMessages(
   return result;
 }
 
+/**
+ * Extract a terminal `stopReason` from a `session/prompt` JSON-RPC result value.
+ * The POST response is the trusted direct reply to our own request, so unlike the
+ * SSE path it needs no id-gating. Returns null when there is no terminal stopReason
+ * (e.g. an empty `{}` body or a non-success result).
+ */
+export function readAcpStopReason(result: unknown): string | null {
+  if (typeof result !== "object" || result === null) {
+    return null;
+  }
+  const stopReason = (result as { stopReason?: unknown }).stopReason;
+  return typeof stopReason === "string" ? stopReason : null;
+}
+
+/**
+ * Build the terminal `result` ClaudeMessage that marks an ACP turn complete.
+ * The stopReason can arrive two ways: echoed over SSE (id-validated below) or as
+ * the trusted `session/prompt` POST response. Both produce the identical message,
+ * so completion never hinges on a single transport.
+ */
+export function buildAcpTerminalResultMessage(
+  stopReason: string,
+  sessionId: string,
+): ClaudeMessage {
+  return {
+    type: "result",
+    subtype: "success",
+    total_cost_usd: 0,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    is_error: false,
+    num_turns: 0,
+    result: stopReason,
+    session_id: sessionId,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -887,17 +924,7 @@ export function parseAcpLineToClaudeMessages(
       return [];
     }
     return [
-      {
-        type: "result",
-        subtype: "success",
-        total_cost_usd: 0,
-        duration_ms: 0,
-        duration_api_ms: 0,
-        is_error: false,
-        num_turns: 0,
-        result: resultObj.stopReason,
-        session_id: fallbackSessionId,
-      },
+      buildAcpTerminalResultMessage(resultObj.stopReason, fallbackSessionId),
     ];
   }
 

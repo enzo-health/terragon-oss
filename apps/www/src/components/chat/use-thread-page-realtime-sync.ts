@@ -70,5 +70,19 @@ export function useThreadPageRealtimeSync({
     [queryClient],
   );
 
-  useRealtimeThreadMatch({ matchThread, onThreadChange });
+  // On realtime stream close we may have missed the run's terminal patch
+  // (status flip / thread.status_changed). Re-derive thread status from the DB
+  // by invalidating the shell query so a missing terminal self-corrects rather
+  // than wedging the UI on a stale `working`.
+  const onStreamClose = useCallback(() => {
+    queryClient.invalidateQueries({
+      queryKey: threadQueryKeys.shell(threadId),
+    });
+  }, [queryClient, threadId]);
+
+  useRealtimeThreadMatch({
+    matchThread,
+    onThreadChange,
+    onClose: onStreamClose,
+  });
 }
