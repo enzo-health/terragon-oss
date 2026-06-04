@@ -6,8 +6,8 @@
  * resume policy resolves to `idle-finalized` / `clear`, and the resume stream
  * never opens — the UI is frozen until a manual refresh.
  *
- * The fix (behind the `instantOptimisticSubmit` flag): the optimistic submit is
- * hoisted above the composer routing fork and flips the reducer to `booting`.
+ * The fix: the optimistic submit is hoisted above the composer routing fork so
+ * it fires on the runtime.append path too, flipping the reducer to `booting`.
  * `booting` is in PRIMARY_CHAT_LIVE_THREAD_STATUSES, so `isAgentWorking` goes
  * true on the same commit and the resume policy resolves to `active-resume` /
  * `apply-history-last-seq` — opening the stream with no refresh.
@@ -15,9 +15,8 @@
  * This test drives the production seam directly — the real reducer, the real
  * `isAgentWorking` predicate, and the real `resolveRuntimeResumePolicy` — rather
  * than mounting the full TipTap composer under jsdom. It is pure: no jsdom, no
- * network, no feature-flag mock (the flag only decides whether the flip fires;
- * here we exercise the flip's downstream effect, which is what no single
- * assertion holds today).
+ * network — it exercises the flip's downstream effect, which is what no single
+ * assertion holds today.
  */
 
 import type { DBMessage, DBUserMessage } from "@terragon/shared";

@@ -89,31 +89,21 @@ export const ChatPromptBox = memo(function ChatPromptBox({
 }: ChatPromptBoxProps) {
   const chatAgent = ensureAgent(agent);
   const showContextUsageChip = useFeatureFlag("contextUsageChip");
-  const instantOptimisticSubmit = useFeatureFlag("instantOptimisticSubmit");
 
   const { publish } = useThreadIntent();
 
   const handleSubmit = useCallback<HandleSubmit>(
-    async ({ userMessage, clientSubmissionId }) => {
+    async ({ userMessage }) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
         return;
       }
       forceScrollToBottom();
       setError(null);
-      // Optimistically add the message to the thread. When the
-      // instantOptimisticSubmit flag is ON, this flip is hoisted into
-      // routeComposerSubmit (so it also fires on the runtime.append path);
-      // firing it here too would double-apply on the fallback path, so skip it.
+      // The optimistic flip is hoisted into routeComposerSubmit, which fires it
+      // on every non-queue route before this fallback runs, so this path only
+      // publishes the message.
       const isClearContext = plainText.trim() === "/clear";
-      const optimisticStatus = isClearContext ? "complete" : "booting";
-      if (!instantOptimisticSubmit) {
-        onOptimisticUserSubmit(
-          userMessage,
-          optimisticStatus,
-          clientSubmissionId,
-        );
-      }
       try {
         await publish({
           type: "send-message",
@@ -129,26 +119,14 @@ export const ChatPromptBox = memo(function ChatPromptBox({
         await refetch();
       }
     },
-    [
-      threadId,
-      threadChatId,
-      refetch,
-      setError,
-      forceScrollToBottom,
-      onOptimisticUserSubmit,
-      instantOptimisticSubmit,
-      publish,
-    ],
+    [threadId, threadChatId, refetch, setError, forceScrollToBottom, publish],
   );
 
-  // Hoisted optimistic flip for the runtime path, gated by the flag. undefined
-  // when OFF so routeComposerSubmit behaves exactly as today. The /clear ->
-  // 'complete' status special-case lives here so the router stays
-  // status-agnostic.
-  const optimisticSubmit = useMemo<ComposerOptimisticSubmit | undefined>(() => {
-    if (!instantOptimisticSubmit) {
-      return undefined;
-    }
+  // The optimistic flip (booting + optimistic user bubble) hoisted above the
+  // composer routing fork so it fires on the runtime.append path too, opening
+  // the resume stream without a refresh. The /clear -> 'complete' status
+  // special-case lives here so the router stays status-agnostic.
+  const optimisticSubmit = useMemo<ComposerOptimisticSubmit>(() => {
     return ({ userMessage, clientSubmissionId }) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
@@ -162,12 +140,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
         : "booting";
       onOptimisticUserSubmit(userMessage, optimisticStatus, clientSubmissionId);
     };
-  }, [
-    instantOptimisticSubmit,
-    forceScrollToBottom,
-    setError,
-    onOptimisticUserSubmit,
-  ]);
+  }, [forceScrollToBottom, setError, onOptimisticUserSubmit]);
 
   const handleStop = useCallback(async () => {
     try {
