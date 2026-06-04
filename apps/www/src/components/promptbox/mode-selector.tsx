@@ -111,7 +111,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
                       <ModeIcon className="h-2.5 w-2.5 text-inherit" />
                       {config.label}
                     </span>
-                    <span className="text-xs text-muted-foreground/60">
+                    <span className="text-xs text-muted-foreground">
                       {config.description}
                     </span>
                   </div>
@@ -143,7 +143,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
                 <FileCode className="h-2.5 w-2.5 text-inherit" />
                 Execute
               </span>
-              <span className="text-xs text-muted-foreground/60">
+              <span className="text-xs text-muted-foreground">
                 Implement immediately
               </span>
             </span>
@@ -154,7 +154,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
                 <NotebookPen className="h-2.5 w-2.5 text-inherit" />
                 Plan
               </span>
-              <span className="text-xs text-muted-foreground/60">
+              <span className="text-xs text-muted-foreground">
                 Approve before making changes
               </span>
             </span>

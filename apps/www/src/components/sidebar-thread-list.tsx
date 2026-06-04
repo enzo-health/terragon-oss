@@ -2,7 +2,7 @@
 
 import type { ThreadInfo } from "@terragon/shared/db/types";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ChevronRight, EllipsisVerticalIcon, LoaderCircle } from "lucide-react";
+import { ChevronRight, EllipsisVerticalIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +14,7 @@ import { useThreadInfoList } from "@/hooks/use-thread-info-list";
 import { sortThreadsUpdatedAt } from "@/lib/thread-sorting";
 import { cn } from "@/lib/utils";
 import { ThreadMenuDropdown } from "./thread-menu-dropdown";
+import { SidebarThreadListLoading } from "./sidebar-thread-list-skeleton";
 import { ThreadStatusIndicator } from "./thread-status";
 import { Button } from "./ui/button";
 
@@ -47,16 +48,19 @@ export function SidebarThreadList() {
     }));
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col h-full items-center justify-center py-8">
-        <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <SidebarThreadListLoading />;
   }
   if (isError) {
     return (
-      <div className="flex flex-col h-full items-center justify-center gap-2 py-8">
+      <div className="flex flex-col items-center justify-center gap-2 px-3 py-8 text-center">
         <p className="text-xs text-muted-foreground">Failed to load tasks.</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </Button>
       </div>
     );
   }
@@ -159,7 +163,7 @@ function SidebarThreadItem({ thread, isActive }: SidebarThreadItemProps) {
       className={cn(
         "group/thread relative flex items-center rounded-md text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         isActive
-          ? "bg-sidebar-accent text-sidebar-primary-foreground font-medium"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium before:absolute before:left-0 before:top-1/2 before:h-4 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-sidebar-primary before:content-['']"
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
         isOptimistic && "opacity-60",
       )}

@@ -25,7 +25,7 @@ export function GitHubMentionTriggerForm({
   const includeBotMentions = value.filter.includeBotMentions ?? false;
 
   return (
-    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-inset-edge">
       <div className="space-y-2">
         <FormLabel>Repository</FormLabel>
         <RepoSelector

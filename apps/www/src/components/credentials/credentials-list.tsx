@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Trash2 } from "lucide-react";
+import { KeyRound, Trash2 } from "lucide-react";
 import { useAtomValue } from "jotai";
 import {
   useCredentials,
@@ -173,16 +173,23 @@ export function CredentialsList() {
 
   if (!agentProviderCredentials) {
     return (
-      <div className="p-6 text-center">
-        <p className="text-sm text-muted-foreground">Loading credentials...</p>
+      <div className="space-y-2">
+        {[0, 1].map((i) => (
+          <div
+            key={i}
+            className="h-14 rounded-md bg-card shadow-inset-edge animate-pulse"
+          />
+        ))}
       </div>
     );
   }
   if (allCredentials.length === 0) {
     return (
-      <div className="p-6 text-center border border-dashed border-border rounded-md">
-        <p className="text-sm text-muted-foreground">
-          No credentials added yet.
+      <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border p-8 text-center">
+        <KeyRound className="size-5 text-muted-foreground" aria-hidden />
+        <p className="text-sm font-medium text-strong">No credentials yet</p>
+        <p className="text-pretty text-xs text-muted-foreground">
+          Use “Add Credential” above to connect an agent provider API key.
         </p>
       </div>
     );

@@ -382,7 +382,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Weekly active users by cohort age:
             </div>
-            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-inset-edge">
               <ChartContainer
                 config={activeUsersChartConfig}
                 className="h-64 w-full"
@@ -416,7 +416,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               User retention by cohort age:
             </div>
-            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-inset-edge">
               <ChartContainer
                 config={retentionChartConfig}
                 className="h-64 w-full"
@@ -499,7 +499,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly active users by cohort age:
             </div>
-            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-inset-edge">
               <ChartContainer
                 config={monthlyActiveUsersChartConfig}
                 className="h-64 w-full"
@@ -533,7 +533,7 @@ export function AdminUsersList({
             <div className="text-sm font-semibold mb-3">
               Monthly user retention by cohort age:
             </div>
-            <div className="bg-card rounded-[1.25rem] p-6 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+            <div className="bg-card rounded-[1.25rem] p-6 shadow-inset-edge">
               <ChartContainer
                 config={monthlyRetentionChartConfig}
                 className="h-64 w-full"

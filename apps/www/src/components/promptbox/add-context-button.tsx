@@ -228,7 +228,7 @@ function MentionListView({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search files and folders..."
-            className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
           />
         </div>
       )}
@@ -241,7 +241,7 @@ function MentionListView({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search files and folders..."
-            className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground px-3 py-2 border rounded-md"
+            className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground px-3 py-2 border rounded-md"
           />
         </div>
       )}
@@ -386,7 +386,7 @@ function SlashCommandView({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search commands..."
-            className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
           />
         </div>
       )}
@@ -399,7 +399,7 @@ function SlashCommandView({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search commands..."
-            className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground px-3 py-2 border rounded-md"
+            className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground px-3 py-2 border rounded-md"
           />
         </div>
       )}
