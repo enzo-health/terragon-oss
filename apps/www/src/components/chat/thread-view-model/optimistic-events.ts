@@ -90,12 +90,14 @@ export function applyOptimisticUserSubmit(
       ...state.sidePanel,
       messages: [...state.sidePanel.messages, event.message],
     },
-    optimisticSubmission: {
-      clientSubmissionId: event.clientSubmissionId,
-      message: event.message,
-      priorLifecycle,
+    optimisticOverlay: {
+      ...state.optimisticOverlay,
+      userSubmit: {
+        clientSubmissionId: event.clientSubmissionId,
+        message: event.message,
+        priorLifecycle,
+      },
     },
-    hasOptimisticUserSubmit: true,
   };
 }
 
@@ -103,7 +105,7 @@ export function applyOptimisticUserSubmitRejected(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submit-rejected" }>,
 ): ThreadViewModelState {
-  const pending = state.optimisticSubmission;
+  const pending = state.optimisticOverlay.userSubmit;
   if (!pending || pending.clientSubmissionId !== event.clientSubmissionId) {
     return state;
   }
@@ -120,7 +122,9 @@ export function applyOptimisticUserSubmitRejected(
       ...state.sidePanel,
       messages: state.sidePanel.messages.filter((m) => !matchesPending(m)),
     },
-    optimisticSubmission: null,
-    hasOptimisticUserSubmit: false,
+    optimisticOverlay: {
+      ...state.optimisticOverlay,
+      userSubmit: null,
+    },
   };
 }

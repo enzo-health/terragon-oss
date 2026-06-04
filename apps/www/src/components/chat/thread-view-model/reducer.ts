@@ -23,11 +23,26 @@ import {
 } from "./thread-view-model-lifecycle-events";
 import { quarantineNativeRuntimeEvent } from "./thread-view-model-runtime-events";
 import type {
+  OptimisticOverlay,
   ThreadViewEvent,
   ThreadViewModel,
   ThreadViewModelState,
   ThreadViewSnapshot,
 } from "./types";
+
+const EMPTY_OPTIMISTIC_OVERLAY: OptimisticOverlay = {
+  userSubmit: null,
+  queuedMessages: null,
+  permissionMode: null,
+};
+
+function hasAnyOptimisticOverlay(overlay: OptimisticOverlay): boolean {
+  return (
+    overlay.userSubmit !== null ||
+    overlay.queuedMessages !== null ||
+    overlay.permissionMode !== null
+  );
+}
 
 export function createInitialThreadViewModelState(
   snapshot: ThreadViewSnapshot,
@@ -49,10 +64,7 @@ export function createInitialThreadViewModelState(
     lifecycleMessages: extractThreadLifecycleMessages(snapshot.uiMessages),
     quarantine: snapshot.quarantine,
     hasLiveLifecycleEvents: false,
-    hasOptimisticUserSubmit: false,
-    hasOptimisticQueuedMessages: false,
-    hasOptimisticPermissionMode: false,
-    optimisticSubmission: null,
+    optimisticOverlay: EMPTY_OPTIMISTIC_OVERLAY,
     seenEventKeys: new Set(),
     seenEventOrder: [],
   };
@@ -75,17 +87,25 @@ export function threadViewModelReducer(
       return applyOptimisticUserSubmit(state, event);
     case "optimistic.user-submit-rejected":
       return applyOptimisticUserSubmitRejected(state, event);
-    case "optimistic.queued-messages-updated":
+    case "optimistic.queued-messages-updated": {
+      const queuedMessages = event.messages.length > 0 ? event.messages : null;
       return {
         ...state,
-        queuedMessages: event.messages.length > 0 ? event.messages : null,
-        hasOptimisticQueuedMessages: true,
+        queuedMessages,
+        optimisticOverlay: {
+          ...state.optimisticOverlay,
+          queuedMessages: { queuedMessages },
+        },
       };
+    }
     case "optimistic.permission-mode-updated":
       return {
         ...state,
         permissionMode: event.permissionMode,
-        hasOptimisticPermissionMode: true,
+        optimisticOverlay: {
+          ...state.optimisticOverlay,
+          permissionMode: { permissionMode: event.permissionMode },
+        },
       };
     case "repo-file.opened":
       return {
@@ -124,6 +144,8 @@ export function projectThreadViewModel(
     dbMessages: state.dbMessages,
     queuedMessages: state.queuedMessages,
     threadStatus: state.lifecycle.threadStatus,
+    pendingClientSubmissionId:
+      state.optimisticOverlay.userSubmit?.clientSubmissionId ?? null,
     permissionMode: state.permissionMode,
     hasCheckpoint: state.hasCheckpoint,
     latestGitDiffTimestamp: state.latestGitDiffTimestamp,
@@ -147,34 +169,27 @@ function applySnapshot(
   }
 
   const shouldReplaceLocalState = transcriptMode === "replace-transcript";
-  const shouldPreserveOptimisticUser =
-    !shouldReplaceLocalState && state.hasOptimisticUserSubmit;
-  const shouldPreserveLocalLifecycle =
+  const overlay = shouldReplaceLocalState
+    ? EMPTY_OPTIMISTIC_OVERLAY
+    : state.optimisticOverlay;
+  const preserveOptimisticUser = overlay.userSubmit !== null;
+  const preserveLocalLifecycle =
     !shouldReplaceLocalState &&
-    (state.hasLiveLifecycleEvents || state.hasOptimisticUserSubmit);
-  const lifecycle = shouldPreserveLocalLifecycle
-    ? state.lifecycle
-    : snapshot.lifecycle;
-  const lifecycleMessages = shouldPreserveLocalLifecycle
-    ? state.lifecycleMessages
-    : extractThreadLifecycleMessages(snapshot.uiMessages);
+    (state.hasLiveLifecycleEvents || preserveOptimisticUser);
 
   return {
     ...state,
     threadId: snapshot.threadId,
     threadChatId: snapshot.threadChatId,
-    dbMessages: shouldPreserveOptimisticUser
-      ? state.dbMessages
-      : snapshot.dbMessages,
+    dbMessages: preserveOptimisticUser ? state.dbMessages : snapshot.dbMessages,
     queuedMessages:
-      !shouldReplaceLocalState && state.hasOptimisticQueuedMessages
-        ? state.queuedMessages
+      overlay.queuedMessages !== null
+        ? overlay.queuedMessages.queuedMessages
         : snapshot.queuedMessages,
     permissionMode:
-      transcriptMode === "replace-transcript" ||
-      !state.hasOptimisticPermissionMode
-        ? snapshot.permissionMode
-        : state.permissionMode,
+      overlay.permissionMode !== null
+        ? overlay.permissionMode.permissionMode
+        : snapshot.permissionMode,
     hasCheckpoint: snapshot.hasCheckpoint,
     latestGitDiffTimestamp: snapshot.latestGitDiffTimestamp,
     artifactThread: snapshot.artifactThread,
@@ -182,29 +197,18 @@ function applySnapshot(
       state.artifacts,
       snapshot.artifacts,
     ),
-    sidePanel: shouldPreserveOptimisticUser
-      ? state.sidePanel
-      : snapshot.sidePanel,
+    sidePanel: preserveOptimisticUser ? state.sidePanel : snapshot.sidePanel,
     meta: mergeMetaSnapshot(state.meta, snapshot.meta),
     githubSummary: snapshot.githubSummary,
-    lifecycle,
-    lifecycleMessages,
+    lifecycle: preserveLocalLifecycle ? state.lifecycle : snapshot.lifecycle,
+    lifecycleMessages: preserveLocalLifecycle
+      ? state.lifecycleMessages
+      : extractThreadLifecycleMessages(snapshot.uiMessages),
     quarantine:
       snapshot.quarantine.length > 0
         ? [...state.quarantine, ...snapshot.quarantine]
         : state.quarantine,
-    hasOptimisticUserSubmit: shouldReplaceLocalState
-      ? false
-      : state.hasOptimisticUserSubmit,
-    optimisticSubmission: shouldReplaceLocalState
-      ? null
-      : state.optimisticSubmission,
-    hasOptimisticQueuedMessages: shouldReplaceLocalState
-      ? false
-      : state.hasOptimisticQueuedMessages,
-    hasOptimisticPermissionMode: shouldReplaceLocalState
-      ? false
-      : state.hasOptimisticPermissionMode,
+    optimisticOverlay: overlay,
     hasLiveLifecycleEvents: shouldReplaceLocalState
       ? false
       : state.hasLiveLifecycleEvents,
@@ -219,9 +223,7 @@ function isSnapshotNoOp(
   if (
     transcriptMode === "replace-transcript" ||
     state.hasLiveLifecycleEvents ||
-    state.hasOptimisticUserSubmit ||
-    state.hasOptimisticQueuedMessages ||
-    state.hasOptimisticPermissionMode ||
+    hasAnyOptimisticOverlay(state.optimisticOverlay) ||
     snapshot.quarantine.length > 0
   ) {
     return false;
@@ -361,13 +363,17 @@ function applyAgUiEvent(
 
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   const statusChanged = lifecycle.threadStatus !== state.lifecycle.threadStatus;
+  const optimisticOverlay =
+    statusChanged && state.optimisticOverlay.userSubmit !== null
+      ? { ...state.optimisticOverlay, userSubmit: null }
+      : state.optimisticOverlay;
   return {
     ...state,
     artifacts,
     meta,
     lifecycle,
     lifecycleMessages,
-    optimisticSubmission: statusChanged ? null : state.optimisticSubmission,
+    optimisticOverlay,
     seenEventKeys: tracked.seenEventKeys,
     seenEventOrder: tracked.seenEventOrder,
     hasLiveLifecycleEvents:
