@@ -21,6 +21,7 @@ import {
   touchThreadChatUpdatedAt,
   updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
+import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
 import {
   classifyDaemonTerminalErrorCategory,
   type DaemonTerminalErrorCategory,
@@ -36,13 +37,13 @@ import {
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type DaemonTokenAuthContext,
   type DaemonTokenProvider,
   getDaemonTokenAuthContextOrNull,
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
-import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { db } from "@/lib/db";
 import {
   type AgUiPublishRow,
@@ -51,26 +52,26 @@ import {
   metaEventsToAgUiEvents,
 } from "@/server-lib/ag-ui-publisher";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
-import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import {
   buildCanonicalRunTerminalEvent,
   buildPreLegacyAgUiCommitPlan,
+  type CanonicalPersistenceSummary,
   commitPreLegacyAgUiEvents,
   commitTerminalAgUiEvents,
-  type CanonicalPersistenceSummary,
   type DaemonEventEnvelopeV2,
   filterCanonicalEventsForDeltaCoexistence,
   findCanonicalEventContextMismatch,
   findCanonicalRunTerminalEvent,
   splitCanonicalEventsForCommit,
 } from "@/server-lib/daemon-event/event-commit";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import {
   buildFailedTerminalErrorMetadata,
   buildTerminalLifecyclePolicy,
   resolveTerminalStatusForTransition,
   shouldQueueTerminalCheckpoint,
 } from "@/server-lib/daemon-event/run-completion";
+import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
+import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -966,7 +967,9 @@ export async function POST(request: Request) {
       threadChatId,
       status: daemonRunStatusFromMessages,
       errorMessage: daemonTerminalErrorInfo.errorMessage,
-      errorCode: daemonTerminalErrorInfo.errorCategory,
+      errorCode: deriveChatFailureThreadErrorType(
+        daemonTerminalErrorInfo.errorMessage,
+      ),
       headShaAtCompletion: effectiveHeadShaAtCompletion,
     });
     terminalCanonicalEventsForPersistence = [synthesizedTerminal];
