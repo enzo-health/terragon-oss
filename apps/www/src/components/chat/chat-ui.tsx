@@ -163,9 +163,6 @@ function ChatUIContent() {
   );
   const platform = usePlatform();
   const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
-  const serverAuthoritativeSubscriptionEnabled = useFeatureFlag(
-    "serverAuthoritativeSubscription",
-  );
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
@@ -566,7 +563,6 @@ function ChatUIContent() {
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
-      serverAuthoritativeSubscriptionEnabled,
       toolProps,
       lastUsedModel,
       handleOpenArtifact,
@@ -582,7 +578,6 @@ function ChatUIContent() {
       onOpenRepoTree,
       activeRepoFilePath,
       isAgentCurrentlyWorking,
-      serverAuthoritativeSubscriptionEnabled,
       lastUsedModel,
       loadAgUiHistoryMessages,
       queuedMessages,

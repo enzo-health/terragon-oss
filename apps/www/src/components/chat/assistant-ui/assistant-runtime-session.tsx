@@ -131,12 +131,6 @@ export type AssistantRuntimeSessionProps = {
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   chatAgent: AIAgent;
   isAgentWorking: boolean;
-  /**
-   * When true, the resume policy may use the server-computed `runActive` flag
-   * (captured from the most recent history load) as the primary liveness
-   * signal. When false, the policy uses `isAgentWorking` only.
-   */
-  serverAuthoritativeSubscriptionEnabled?: boolean;
   threadId: string;
   threadChatId?: string;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
@@ -160,7 +154,6 @@ export function AssistantRuntimeSession({
   loadAgUiHistoryMessages,
   chatAgent,
   isAgentWorking,
-  serverAuthoritativeSubscriptionEnabled = false,
   threadId,
   threadChatId,
   setReplayCursor,
@@ -192,8 +185,8 @@ export function AssistantRuntimeSession({
   const runtimeErrorCode =
     runtimeErrorState?.agent === agent ? runtimeErrorState.code : null;
   // Server-authoritative run liveness captured from the most recent history
-  // load. `undefined` until the first load resolves (or when the flag is off),
-  // which makes the resume policy fall back to `isAgentWorking`.
+  // load. `undefined` until the first load resolves, which makes the resume
+  // policy fall back to `isAgentWorking`.
   const [serverRunActive, setServerRunActive] = useState<boolean | undefined>(
     undefined,
   );
@@ -201,19 +194,11 @@ export function AssistantRuntimeSession({
     () =>
       resolveRuntimeResumePolicy({
         isAgentWorking,
-        serverRunActive: serverAuthoritativeSubscriptionEnabled
-          ? serverRunActive
-          : undefined,
+        serverRunActive,
         threadChatId,
         retryNonce: runtimeRecoveryNonce,
       }),
-    [
-      isAgentWorking,
-      serverAuthoritativeSubscriptionEnabled,
-      serverRunActive,
-      threadChatId,
-      runtimeRecoveryNonce,
-    ],
+    [isAgentWorking, serverRunActive, threadChatId, runtimeRecoveryNonce],
   );
 
   const handleLocalRuntimeRetry = useCallback(async () => {
