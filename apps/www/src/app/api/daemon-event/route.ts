@@ -36,8 +36,10 @@ import {
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
 import {
+  parseClaudeOAuthTokenRevokedMessage,
   parseClaudeRateLimitMessage,
   parseCodexRateLimitMessage,
+  parseContextWindowExhausted,
 } from "@/agent/msg/helpers";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import {
@@ -776,19 +778,29 @@ export async function POST(request: Request) {
       canonicalEvents: rawCanonicalEvents,
       deltas,
     });
-  // The daemon canonicalizes every terminal message into a run-terminal, but a
-  // rate-limit result must RE-QUEUE (queued-agent-rate-limit with a reattempt
-  // time), not terminate. The canonical terminal carries no rate-limit signal,
-  // so detect it and drop the terminal here; the message-based recovery path then
-  // re-queues. Reset-time parsing is timezone-dependent and lives server-side.
-  const isRecoverableRateLimit = messages.some((message) =>
-    runContext?.agent === "codex"
-      ? parseCodexRateLimitMessage(message)?.isRateLimited === true
-      : parseClaudeRateLimitMessage({ message, timezone })?.isRateLimited ===
-        true,
-  );
+  // Some terminal results are RECOVERABLE and must defer to the message-based
+  // recovery path rather than terminate via the canonical fence: rate-limit
+  // (re-queue with a reattempt time), OAuth-token-revoked (refresh + retry), and
+  // prompt-too-long / context-exhausted (auto-compact + retry). The daemon
+  // canonicalizes all of these into a run-terminal that carries none of those
+  // signals, so detect them and drop the terminal; the recovery path then
+  // re-queues, or terminates itself (preserving the error classification) if
+  // recovery fails. Detection is pure; rate-limit reset-time parsing is
+  // timezone-dependent and stays server-side.
+  const isRecoverableResult = messages.some((message) => {
+    const isRateLimited =
+      runContext?.agent === "codex"
+        ? parseCodexRateLimitMessage(message)?.isRateLimited === true
+        : parseClaudeRateLimitMessage({ message, timezone })?.isRateLimited ===
+          true;
+    return (
+      isRateLimited ||
+      parseClaudeOAuthTokenRevokedMessage(message) ||
+      parseContextWindowExhausted(message)
+    );
+  });
   const canonicalEvents =
-    isRecoverableRateLimit && canonicalEventsAfterDeltaFilter
+    isRecoverableResult && canonicalEventsAfterDeltaFilter
       ? canonicalEventsAfterDeltaFilter.filter(
           (event) => event.type !== "run-terminal",
         )

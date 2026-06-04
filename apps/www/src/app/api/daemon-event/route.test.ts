@@ -725,6 +725,48 @@ describe("daemon-event route", () => {
     );
   });
 
+  it("defers an OAuth-token-revoked result to the recovery path", async () => {
+    // OAuth-token-revoked is recoverable (refresh + retry). The route drops the
+    // canonical terminal and defers; the recovery path retries or terminates.
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: true,
+            num_turns: 1,
+            result: "OAuth token revoked",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "oauth-terminal",
+            seq: 10,
+            status: "failed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "oauth-terminal",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
+    expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+    );
+  });
+
   it("fails closed when runtime-session run-context columns are unavailable", async () => {
     vi.mocked(getDaemonEventDbPreflight).mockResolvedValueOnce({
       agentEventLogReady: true,
@@ -3812,7 +3854,12 @@ describe("daemon-event route", () => {
       );
     });
 
-    it("preserves prompt-too-long classification in fenced terminal failures", async () => {
+    it("defers a context-exhausted result to the recovery path", async () => {
+      // A context-length-exceeded result is recoverable (auto-compact + retry).
+      // The route drops the canonical terminal and defers to the message-based
+      // recovery path, which compacts and re-queues or terminates itself with the
+      // prompt-too-long classification preserved. The canonical fence must NOT
+      // fire here, or it would terminate the run before recovery is attempted.
       const response = await POST(
         createDaemonRequest({
           threadId: "thread-1",
@@ -3842,13 +3889,10 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(updateThreadChatTerminalMetadataIfTerminal).toHaveBeenCalledWith(
-        expect.objectContaining({
-          updates: expect.objectContaining({
-            errorMessage: "prompt-too-long",
-            errorMessageInfo: null,
-          }),
-        }),
+      expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
+      expect(updateThreadChatTerminalMetadataIfTerminal).not.toHaveBeenCalled();
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ deferTerminalTransitionToRoute: false }),
       );
     });
 
