@@ -34,7 +34,7 @@ export function AttachedFiles({
             {file.fileType === "image" ? (
               <button
                 onClick={() => setExpandedImageId(file.id)}
-                className="relative block cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-150 active:scale-[0.98]"
+                className="relative block cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-[var(--duration-quick)] ease-[var(--ease-standard)] active:scale-[0.98]"
                 type="button"
                 aria-label={`View attached image: ${file.fileName ?? "image"}`}
               >
@@ -44,7 +44,7 @@ export function AttachedFiles({
                   }
                   alt="Attached image"
                   className={cn(
-                    "max-w-20 max-h-20 object-cover rounded transition-opacity",
+                    "max-w-20 max-h-20 object-cover rounded transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
                     file.uploadStatus === "failed"
                       ? "opacity-70 border-destructive border-2"
                       : "image-outline",
@@ -65,7 +65,7 @@ export function AttachedFiles({
             ) : (
               <div
                 className={cn(
-                  "relative flex flex-col items-center justify-center w-20 h-20 rounded border bg-muted/50 transition-opacity",
+                  "relative flex flex-col items-center justify-center w-20 h-20 rounded border bg-muted/50 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
                   file.uploadStatus === "pending" ||
                     file.uploadStatus === "uploading"
                     ? "opacity-50"
@@ -91,7 +91,7 @@ export function AttachedFiles({
             <button
               onClick={() => onRemoveFile(file.id)}
               className={cn(
-                "absolute -top-2 -right-2 bg-accent text-accent-foreground rounded-full transition-opacity z-10",
+                "absolute -top-2 -right-2 bg-accent text-accent-foreground rounded-full transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] z-10",
                 isTouchDevice
                   ? "opacity-100 p-1.5"
                   : "opacity-0 group-hover:opacity-100 p-1",
@@ -106,7 +106,7 @@ export function AttachedFiles({
             </button>
             {/* Error tooltip */}
             {file.uploadStatus === "failed" && (
-              <div className="absolute bottom-full mb-1 px-2 py-1 -left-2 bg-destructive text-destructive-foreground text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <div className="absolute bottom-full mb-1 px-2 py-1 -left-2 bg-destructive text-destructive-foreground text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] pointer-events-none">
                 Failed to upload
               </div>
             )}

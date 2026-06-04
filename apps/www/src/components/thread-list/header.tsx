@@ -80,7 +80,7 @@ export function ThreadListHeader({
     <div
       className={cn(
         "px-2.5 flex items-center justify-between min-h-8",
-        "animate-in fade-in duration-300",
+        "animate-in fade-in duration-[var(--duration-slow)]",
         className,
       )}
     >
@@ -94,7 +94,7 @@ export function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-fit px-2 hover:bg-accent rounded-md group flex items-center gap-1.5 transition-colors duration-200"
+                className="h-7 w-fit px-2 hover:bg-accent rounded-md group flex items-center gap-1.5 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
                 title="Filter tasks"
               >
                 {viewFilter === "active" ? (
@@ -105,7 +105,7 @@ export function ThreadListHeader({
                 <span className="text-xs font-sans font-medium text-muted-foreground">
                   {viewFilter === "active" ? "Inbox" : "Archived"}
                 </span>
-                <ChevronDown className="size-3 text-muted-foreground group-hover:text-foreground transition-colors" />
+                <ChevronDown className="size-3 text-muted-foreground group-hover:text-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]" />
               </Button>
             }
             title="Tasks Filter"
@@ -119,7 +119,7 @@ export function ThreadListHeader({
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7 hover:bg-accent rounded-md group flex items-center justify-center transition-colors duration-200"
+                className="size-7 hover:bg-accent rounded-md group flex items-center justify-center transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
                 title="Group tasks by"
               >
                 <SlidersHorizontal className="size-3.5 text-muted-foreground" />

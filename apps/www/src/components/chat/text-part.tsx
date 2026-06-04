@@ -401,7 +401,7 @@ function CollapsibleCodeBlockOverlay({
   return (
     <div
       className={cn(
-        "absolute right-0 bottom-0 left-0 z-10 flex items-end justify-center transition-opacity",
+        "absolute right-0 bottom-0 left-0 z-10 flex items-end justify-center transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
         !isExpanded && "pointer-events-none",
       )}
       style={!isExpanded ? { height: `${LINE_HEIGHT_PX * 4}px` } : undefined}
@@ -412,7 +412,7 @@ function CollapsibleCodeBlockOverlay({
       <button
         type="button"
         onClick={onToggle}
-        className="pointer-events-auto relative z-20 mb-1 cursor-pointer rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="pointer-events-auto relative z-20 mb-1 cursor-pointer rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground shadow-sm transition-[background-color,color,scale] duration-[var(--duration-quick)] ease-[var(--ease-standard)] hover:bg-muted hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {isExpanded ? "Show less" : `Show ${hiddenLines} more lines`}
       </button>

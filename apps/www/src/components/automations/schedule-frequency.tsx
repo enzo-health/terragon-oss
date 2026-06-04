@@ -21,6 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { ScheduleTriggerConfig } from "@terragon/shared/automations";
 import { MAX_HOURS_SCHEDULE_AUTOMATIONS } from "@terragon/shared/automations/cron";
 
@@ -91,7 +93,7 @@ export function ScheduleTriggerForm({
   return (
     <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-inset-edge">
       <div className="space-y-2">
-        <FormLabel>Schedule Frequency</FormLabel>
+        <FormLabel>Schedule frequency</FormLabel>
         <div className="flex flex-col sm:flex-row gap-2">
           <Select
             value={frequency}
@@ -131,7 +133,7 @@ export function ScheduleTriggerForm({
               }
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger size="sm">
               <SelectValue placeholder="Select frequency" />
             </SelectTrigger>
             <SelectContent>
@@ -144,7 +146,7 @@ export function ScheduleTriggerForm({
               <SelectItem value="weekly">Weekly</SelectItem>
               <SelectItem value="monthly">Monthly</SelectItem>
               <SelectItem value="weekdays">Weekdays only</SelectItem>
-              <SelectItem value="custom-weekly">Custom Weekly</SelectItem>
+              <SelectItem value="custom-weekly">Custom weekly</SelectItem>
             </SelectContent>
           </Select>
           {frequency !== "5-minutely" && !showMultipleHoursInput && (
@@ -173,7 +175,7 @@ export function ScheduleTriggerForm({
                 }
               }}
               placeholder="Select time"
-              searchPlaceholder="Search time..."
+              searchPlaceholder="Search time…"
               emptyText="No time found"
               disabled={false}
               className="max-w-[150px]"
@@ -198,7 +200,7 @@ export function ScheduleTriggerForm({
                 }
               }}
               placeholder="Select minutes"
-              searchPlaceholder="Search minutes..."
+              searchPlaceholder="Search minutes…"
               emptyText="No minutes found"
               disableSearch={true}
               disabled={false}
@@ -215,15 +217,13 @@ export function ScheduleTriggerForm({
       {frequency !== "5-minutely" && (
         <div className="space-y-2">
           <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
+            <Checkbox
               id="multiple-hours"
               checked={showMultipleHoursInput}
-              disabled={false}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setShowMultipleHoursInput(checked);
-                if (!checked) {
+              onCheckedChange={(checked) => {
+                const isChecked = checked === true;
+                setShowMultipleHoursInput(isChecked);
+                if (!isChecked) {
                   // Keep only the first hour
                   const firstHour = hours[0] ?? "9";
                   const newHours = [firstHour];
@@ -248,14 +248,10 @@ export function ScheduleTriggerForm({
                   );
                 }
               }}
-              className="h-4 w-4 rounded border-border"
             />
-            <label
-              htmlFor="multiple-hours"
-              className="text-sm flex items-center gap-2 cursor-pointer"
-            >
-              <span>Multiple times per day</span>
-            </label>
+            <Label htmlFor="multiple-hours" className="text-sm font-normal">
+              Multiple times per day
+            </Label>
           </div>
           {showMultipleHoursInput && (
             <div className="space-y-2 pl-6">
@@ -331,17 +327,19 @@ export function ScheduleTriggerForm({
                     selectedDays,
                   );
                 }}
-                placeholder="e.g. 9, 12, 15, 18"
+                placeholder="e.g., 9, 12, 15, 18"
                 className="font-mono tabular-nums"
               />
-              {hoursInputError ? (
-                <div className="text-xs text-error">{hoursInputError}</div>
-              ) : (
-                <div className="text-xs text-muted-foreground">
-                  Enter up to {MAX_HOURS_SCHEDULE_AUTOMATIONS} hours (0-23)
-                  separated by commas
-                </div>
-              )}
+              <div className="min-h-5 text-xs">
+                {hoursInputError ? (
+                  <span className="text-error">{hoursInputError}</span>
+                ) : (
+                  <span className="text-muted-foreground">
+                    Enter up to {MAX_HOURS_SCHEDULE_AUTOMATIONS} hours (0–23)
+                    separated by commas
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -349,7 +347,7 @@ export function ScheduleTriggerForm({
 
       {frequency === "weekly" && (
         <div className="space-y-2">
-          <FormLabel>Select Day</FormLabel>
+          <FormLabel>Select day</FormLabel>
           <div className="flex gap-1">
             {DAYS_OF_WEEK.map((day) => (
               <button
@@ -367,9 +365,8 @@ export function ScheduleTriggerForm({
                   );
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-[color,background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   dayOfWeek === day.value
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",
@@ -384,7 +381,7 @@ export function ScheduleTriggerForm({
 
       {frequency === "monthly" && (
         <div className="space-y-2">
-          <FormLabel>Day of Month</FormLabel>
+          <FormLabel>Day of month</FormLabel>
           <Input
             type="number"
             min="1"
@@ -402,7 +399,7 @@ export function ScheduleTriggerForm({
                 selectedDays,
               );
             }}
-            placeholder="Enter day (1-31)"
+            placeholder="Enter day (1–31)"
             className="w-[100px] tabular-nums"
           />
         </div>
@@ -410,7 +407,7 @@ export function ScheduleTriggerForm({
 
       {(frequency === "custom-weekly" || frequency === "weekdays") && (
         <div className="space-y-2">
-          <FormLabel>Select Days</FormLabel>
+          <FormLabel>Select days</FormLabel>
           <div className="flex gap-1">
             {DAYS_OF_WEEK.map((day) => (
               <button
@@ -444,9 +441,8 @@ export function ScheduleTriggerForm({
                   }
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-[color,background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   selectedDays.includes(day.value)
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",
@@ -459,7 +455,7 @@ export function ScheduleTriggerForm({
         </div>
       )}
 
-      <div className="space-y-1.5 rounded-xl bg-card px-3 py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.05)]">
+      <div className="space-y-1.5 rounded-xl bg-card px-3 py-2.5 shadow-inset-edge">
         <div className="text-sm text-muted-foreground">
           <span className="font-medium text-foreground">Schedule: </span>
           {getCronDescription(value.cron)}
@@ -519,7 +515,7 @@ export function TimezoneSelector({
       }}
       disabled={false}
       placeholder="Select timezone"
-      searchPlaceholder="Search timezones..."
+      searchPlaceholder="Search timezones…"
       emptyText="No timezone found"
     />
   );

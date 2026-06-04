@@ -75,7 +75,7 @@ function MainMenuView({
           </div>
           <div className="px-1">
             <button
-              className="flex items-center gap-3 w-full text-left px-3 py-2 text-sm rounded hover:bg-accent hover:text-accent-foreground"
+              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
               onClick={onSelectAttachImages}
             >
               <Paperclip className="size-4" />
@@ -97,19 +97,19 @@ function MainMenuView({
           <div className="px-1">
             {typeahead && (
               <button
-                className="flex items-center gap-3 w-full text-left px-3 py-2 text-sm rounded hover:bg-accent hover:text-accent-foreground"
+                className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
                 onClick={onSelectFiles}
               >
                 <AtSign className="size-4" />
-                <span>Files and Folders</span>
+                <span>Files and folders</span>
               </button>
             )}
             <button
-              className="flex items-center gap-3 w-full text-left px-3 py-2 text-sm rounded hover:bg-accent hover:text-accent-foreground"
+              className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground active:bg-accent/80 outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]"
               onClick={onSelectCommands}
             >
               <Slash className="size-4" />
-              <span>Slash Commands</span>
+              <span>Slash commands</span>
             </button>
           </div>
         </>
@@ -227,7 +227,7 @@ function MentionListView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search files and folders..."
+            placeholder="Search files and folders…"
             className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
           />
         </div>
@@ -240,7 +240,7 @@ function MentionListView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search files and folders..."
+            placeholder="Search files and folders…"
             className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground px-3 py-2 border rounded-md"
           />
         </div>
@@ -326,7 +326,7 @@ function SlashCommandView({
           ...filtered,
           {
             name: "__loading__",
-            description: "Loading custom commands...",
+            description: "Loading custom commands…",
             isLoading: true,
           },
         ]
@@ -385,7 +385,7 @@ function SlashCommandView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search commands..."
+            placeholder="Search commands…"
             className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
           />
         </div>
@@ -398,7 +398,7 @@ function SlashCommandView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search commands..."
+            placeholder="Search commands…"
             className="w-full text-sm bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground px-3 py-2 border rounded-md"
           />
         </div>
@@ -525,10 +525,10 @@ export function AddContextButton({
               )}
               <DrawerTitle>
                 {view === "menu"
-                  ? "Add Context"
+                  ? "Add context"
                   : view === "files"
-                    ? "Files and Folders"
-                    : "Slash Commands"}
+                    ? "Files and folders"
+                    : "Slash commands"}
               </DrawerTitle>
             </div>
           </DrawerHeader>
@@ -553,7 +553,7 @@ export function AddContextButton({
         </PopoverTrigger>
         <PopoverContent
           className={cn(
-            "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden p-0 transition-[width] duration-200",
+            "z-50 bg-popover text-popover-foreground shadow-md rounded-md border overflow-hidden p-0",
             view === "menu" ? "w-[200px]" : "w-[320px]",
           )}
           sideOffset={5}

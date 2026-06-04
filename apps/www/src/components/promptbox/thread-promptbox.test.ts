@@ -8,37 +8,37 @@ import {
 describe("getBootingPlaceholder", () => {
   it("maps each sandbox boot stage to a specific prompt placeholder", () => {
     expect(getBootingPlaceholder("provisioning", "booting")).toBe(
-      "Provisioning machine...",
+      "Provisioning machine…",
     );
     expect(getBootingPlaceholder("provisioning-done", "booting")).toBe(
-      "Provisioning machine...",
+      "Provisioning machine…",
     );
     expect(getBootingPlaceholder("cloning-repo", "booting")).toBe(
-      "Cloning repository...",
+      "Cloning repository…",
     );
     expect(getBootingPlaceholder("installing-agent", "booting")).toBe(
-      "Installing agent...",
+      "Installing agent…",
     );
     expect(getBootingPlaceholder("running-setup-script", "booting")).toBe(
-      "Configuring environment...",
+      "Configuring environment…",
     );
     expect(getBootingPlaceholder("booting-done", "booting")).toBe(
-      "Waiting for assistant to start...",
+      "Waiting for assistant to start…",
     );
   });
 
   it("falls back to status-aware labels when substatus is missing", () => {
     expect(getBootingPlaceholder(null, "booting")).toBe(
-      "Waiting for assistant to start...",
+      "Waiting for assistant to start…",
     );
     expect(getBootingPlaceholder(undefined, "queued")).toBe(
-      "Waiting in queue...",
+      "Waiting in queue…",
     );
     expect(getBootingPlaceholder(undefined, "queued-blocked")).toBe(
-      "Waiting in queue...",
+      "Waiting in queue…",
     );
     expect(getBootingPlaceholder(undefined, null)).toBe(
-      "Sandbox is provisioning...",
+      "Sandbox is provisioning…",
     );
   });
 });

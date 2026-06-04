@@ -19,7 +19,7 @@ export function SettingsCheckbox({
   onCheckedChange,
 }: SettingsCheckboxProps) {
   return (
-    <Label className="group/row flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-canvas/70">
+    <Label className="flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-canvas/70">
       <Checkbox
         checked={value}
         onCheckedChange={onCheckedChange}

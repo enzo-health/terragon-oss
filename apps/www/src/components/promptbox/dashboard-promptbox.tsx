@@ -78,9 +78,9 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const placeholderText = useMemo(() => {
     if (placeholder != null) return placeholder;
     if (!repoFullName || !branchName) {
-      return "Select a repository and branch to start...";
+      return "Pick a repo and branch to start a task…";
     }
-    return "Type your message here... Use @ to mention files (Enter to send)";
+    return "Describe a task — @ to reference files, Enter to send";
   }, [placeholder, repoFullName, branchName]);
 
   const wrappedHandleSubmit: UsePromptBoxHandleSubmit = useCallback(

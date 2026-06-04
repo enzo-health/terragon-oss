@@ -20,7 +20,7 @@ interface UsageChartProps {
 
 const threadsChartConfig = {
   threads: {
-    label: "Threads",
+    label: "Tasks",
     color: "var(--coral)",
   },
 } satisfies ChartConfig;
@@ -62,7 +62,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
         <header className="flex flex-col gap-0.5">
           <h4 className="text-sm font-medium text-foreground">Tasks created</h4>
           <p className="text-xs text-muted-foreground">
-            Per day, in your timezone.
+            Tasks you created each day, in your timezone.
           </p>
         </header>
         <ChartContainer
@@ -80,22 +80,25 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
               tickLine={false}
               tickMargin={10}
               axisLine={false}
+              minTickGap={24}
             />
             <YAxis
               tickLine={false}
               axisLine={false}
               tickFormatter={(value) => `${value}`}
               domain={[0, (dataMax: number) => Math.max(5, dataMax)]}
+              allowDecimals={false}
             />
             <ChartTooltip
               content={
-                <ChartTooltipContent
-                  labelFormatter={(value) => value}
-                  formatter={(value) => `${value} threads`}
-                />
+                <ChartTooltipContent labelFormatter={(value) => value} />
               }
             />
-            <Bar dataKey="threads" fill="var(--color-threads)" radius={4} />
+            <Bar
+              dataKey="threads"
+              fill="var(--color-threads)"
+              radius={[4, 4, 0, 0]}
+            />
           </BarChart>
         </ChartContainer>
       </section>
@@ -104,7 +107,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
         <header className="flex flex-col gap-0.5">
           <h4 className="text-sm font-medium text-foreground">PRs merged</h4>
           <p className="text-xs text-muted-foreground">
-            Per day, in your timezone.
+            Pull requests merged each day, in your timezone.
           </p>
         </header>
         <ChartContainer
@@ -122,22 +125,21 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
               tickLine={false}
               tickMargin={10}
               axisLine={false}
+              minTickGap={24}
             />
             <YAxis
               tickLine={false}
               axisLine={false}
               tickFormatter={(value) => `${value}`}
               domain={[0, (dataMax: number) => Math.max(5, dataMax)]}
+              allowDecimals={false}
             />
             <ChartTooltip
               content={
-                <ChartTooltipContent
-                  labelFormatter={(value) => value}
-                  formatter={(value) => `${value} PRs`}
-                />
+                <ChartTooltipContent labelFormatter={(value) => value} />
               }
             />
-            <Bar dataKey="prs" fill="var(--color-prs)" radius={4} />
+            <Bar dataKey="prs" fill="var(--color-prs)" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ChartContainer>
       </section>

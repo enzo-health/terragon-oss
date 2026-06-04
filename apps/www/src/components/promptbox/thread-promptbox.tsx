@@ -73,18 +73,18 @@ export function getBootingPlaceholder(
   switch (bootingSubstatus) {
     case "provisioning":
     case "provisioning-done":
-      return "Provisioning machine...";
+      return "Provisioning machine…";
     case "cloning-repo":
-      return "Cloning repository...";
+      return "Cloning repository…";
     case "installing-agent":
-      return "Installing agent...";
+      return "Installing agent…";
     case "running-setup-script":
-      return "Configuring environment...";
+      return "Configuring environment…";
     case "booting-done":
-      return "Waiting for assistant to start...";
+      return "Waiting for assistant to start…";
     default:
       if (status === "booting") {
-        return "Waiting for assistant to start...";
+        return "Waiting for assistant to start…";
       }
       if (
         status === "queued" ||
@@ -93,9 +93,9 @@ export function getBootingPlaceholder(
         status === "queued-tasks-concurrency" ||
         status === "queued-agent-rate-limit"
       ) {
-        return "Waiting in queue...";
+        return "Waiting in queue…";
       }
-      return "Sandbox is provisioning...";
+      return "Sandbox is provisioning…";
   }
 }
 
@@ -131,7 +131,7 @@ export function getThreadPromptPlaceholder(params: {
   if (status !== null && isAgentWorking(status)) {
     return WORKING_QUEUE_PLACEHOLDER;
   }
-  return "Type your message here...";
+  return "Describe a task — @ to reference files, / for commands";
 }
 
 export const ThreadPromptBox = React.forwardRef<

@@ -69,7 +69,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
             aria-haspopup="dialog"
           >
             <span className="flex items-center gap-1">
-              <Icon className="h-2.5 w-2.5 text-inherit" />
+              <Icon className="size-3.5 text-inherit" />
             </span>
           </Button>
         </DrawerTrigger>
@@ -108,7 +108,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
                   />
                   <div className="flex flex-col gap-1">
                     <span className="text-sm text-foreground/90 flex items-center gap-1">
-                      <ModeIcon className="h-2.5 w-2.5 text-inherit" />
+                      <ModeIcon className="size-3.5 text-inherit" />
                       {config.label}
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -131,7 +131,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
         >
           <SelectValue asChild>
             <span className="flex items-center gap-1">
-              <Icon className="h-2.5 w-2.5 text-inherit" />
+              <Icon className="size-3.5 text-inherit" />
               <span className="hidden sm:inline">{currentConfig.label}</span>
             </span>
           </SelectValue>
@@ -140,7 +140,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
           <SelectItem value="allowAll">
             <span className="flex flex-col items-start">
               <span className="text-sm text-foreground/90 flex items-center gap-1">
-                <FileCode className="h-2.5 w-2.5 text-inherit" />
+                <FileCode className="size-3.5 text-inherit" />
                 Execute
               </span>
               <span className="text-xs text-muted-foreground">
@@ -151,7 +151,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
           <SelectItem value="plan">
             <span className="flex flex-col items-start">
               <span className="text-sm text-foreground/90 flex items-center gap-1">
-                <NotebookPen className="h-2.5 w-2.5 text-inherit" />
+                <NotebookPen className="size-3.5 text-inherit" />
                 Plan
               </span>
               <span className="text-xs text-muted-foreground">

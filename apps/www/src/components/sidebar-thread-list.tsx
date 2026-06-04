@@ -72,7 +72,7 @@ export function SidebarThreadList() {
           No tasks yet
         </p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground text-pretty">
-          Create one from the dashboard to get started.
+          Start one with New Task above.
         </p>
       </div>
     );
@@ -129,7 +129,7 @@ function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
           )}
         />
         <span className="truncate">{repoName}</span>
-        <span className="ml-auto text-[10px] font-medium tabular-nums text-muted-foreground/60 flex-shrink-0">
+        <span className="ml-auto text-micro font-medium tabular-nums text-muted-foreground/70 flex-shrink-0">
           {threads.length}
         </span>
       </button>
@@ -163,7 +163,7 @@ function SidebarThreadItem({ thread, isActive }: SidebarThreadItemProps) {
       className={cn(
         "group/thread relative flex items-center rounded-md text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium before:absolute before:left-0 before:top-1/2 before:h-4 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-sidebar-primary before:content-['']"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-sidebar-primary before:content-['']"
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
         isOptimistic && "opacity-60",
       )}

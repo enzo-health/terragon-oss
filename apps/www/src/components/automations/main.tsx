@@ -154,7 +154,7 @@ function AutomationsList({
       {hasReachedLimit && (
         <Alert className="mb-3 bg-warning/10 text-warning border-none rounded-lg">
           <AlertCircle className="size-4" />
-          <AlertDescription className="text-warning">
+          <AlertDescription className="text-warning-strong">
             You have reached the active automation limit. To create another,
             disable or delete an existing active automation.
           </AlertDescription>
@@ -179,7 +179,7 @@ function AutomationsList({
             </Link>
           </div>
           <div className="flex flex-col gap-2">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-8 bg-canvas z-9 py-1">
+            <h3 className="text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground sticky top-8 bg-canvas z-10 py-1">
               Suggested automations
             </h3>
             <RecommendedAutomations

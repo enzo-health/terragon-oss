@@ -89,10 +89,10 @@ export function AdminEnvironmentContent({
                               <span className="font-mono text-xs">
                                 {envVar.key}
                               </span>
-                              <span className="font-mono text-xs text-mid-text">
+                              <span className="font-mono text-xs text-mid">
                                 =
                               </span>
-                              <span className="font-mono text-xs text-mid-text">
+                              <span className="font-mono text-xs text-mid">
                                 [ENCRYPTED]
                               </span>
                             </div>

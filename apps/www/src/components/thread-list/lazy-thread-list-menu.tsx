@@ -53,7 +53,7 @@ export function LazyThreadListMenu({
       aria-label="Thread options"
       className="w-fit px-1 hover:bg-transparent cursor-pointer"
     >
-      <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
+      <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]" />
     </Button>
   );
 
@@ -69,7 +69,7 @@ export function LazyThreadListMenu({
         onClick={activateMenuFromClick}
         onKeyDown={activateMenuFromKeyboard}
       >
-        <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors" />
+        <EllipsisVerticalIcon className="size-4 text-muted-foreground hover:text-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]" />
       </Button>
     );
   }

@@ -10,9 +10,9 @@ import {
 } from "@/components/ui/card";
 import { createCliApiToken } from "@/server-actions/cli-api-token";
 import { CodeClickToCopy } from "@/components/ui/code";
-import { Loader2, Terminal } from "lucide-react";
+import { Check, Loader2, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Wordmark } from "../shared/wordmark";
+import { WordmarkLogo } from "../shared/wordmark";
 import { unwrapResult } from "@/lib/server-actions";
 
 type Status = "initial" | "loading" | "success" | "error";
@@ -61,12 +61,12 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
             <div className="mx-auto relative mb-4 flex w-fit items-center justify-center rounded-full bg-coral/10 p-4">
               <Terminal className="size-8 text-coral" />
               <div className="absolute flex items-center justify-center -bottom-2 -right-2 p-1.5 bg-canvas rounded-full">
-                <Wordmark showText={false} />
+                <WordmarkLogo size="md" />
               </div>
             </div>
             <CardTitle>Authorize CLI</CardTitle>
             <CardDescription>
-              Click the button below to authenticate this CLI client
+              Click the button below to authenticate this CLI client.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -89,10 +89,10 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-svh items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin text-mid" />
-            <p className="text-center text-lg">Authorizing the CLI client</p>
+            <Loader2 className="mb-4 size-8 animate-spin text-coral" />
+            <p className="text-center text-lg">Connecting to the CLI</p>
             <p className="mt-2 text-center text-sm text-mid">
-              Connecting to CLI...
+              This only takes a moment.
             </p>
           </CardContent>
         </Card>
@@ -106,19 +106,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
-              <svg
-                className="h-6 w-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
+              <Check className="size-6" />
             </div>
             <p className="text-center text-lg font-semibold">
               Successfully authenticated
@@ -137,19 +125,13 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
     <div className="flex min-h-svh items-center justify-center p-4 w-full">
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>
-            Copy the API key below and paste it into your CLI
-          </CardTitle>
+          <CardTitle>Finish authentication manually</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <div className="rounded-xl bg-sunken p-4 text-center truncate cursor-pointer">
-              <CodeClickToCopy
-                text={apiKey}
-                className="break-all text-sm truncate"
-              />
-            </div>
-          </div>
+          <CodeClickToCopy
+            text={apiKey}
+            className="flex w-full justify-center break-all text-sm"
+          />
           <div className="text-sm text-mid">
             <p className="mb-1 font-semibold text-strong">
               To complete authentication

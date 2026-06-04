@@ -153,7 +153,7 @@ function createAutomationFormSchema() {
           },
           {
             message:
-              "Bot usernames must end with [bot]. Eg. sentry-io[bot], copilot[bot]",
+              "Bot usernames must end with [bot], e.g. sentry-io[bot], copilot[bot]",
             path: ["config"],
           },
         ),
@@ -575,10 +575,7 @@ export function AutomationEditorDialogContent({
             />
           </div>
           <DialogFooter className="px-4 pt-4 border-t border-hairline-strong">
-            <Button
-              type="submit"
-              className="rounded-full active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-coral/50"
-            >
+            <Button type="submit" className="rounded-full">
               {ctaLabel}
             </Button>
           </DialogFooter>

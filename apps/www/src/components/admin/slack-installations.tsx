@@ -43,8 +43,8 @@ export function AdminSlackInstallations({
           <span
             className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
               isActive
-                ? "bg-[var(--success)]/10 text-[var(--success)]"
-                : "bg-[var(--mid-text,var(--muted-foreground))]/10 text-[var(--mid-text,var(--muted-foreground))]"
+                ? "bg-success/10 text-success-strong"
+                : "bg-mid/10 text-mid"
             }`}
           >
             {isActive ? "Active" : "Inactive"}

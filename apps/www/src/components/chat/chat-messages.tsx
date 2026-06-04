@@ -97,7 +97,7 @@ function getStatusMessage({
         <p>
           Assistant is working{" "}
           {!isTouchDevice && (
-            <span className="font-mono text-xs text-muted-foreground/70 inline-block">
+            <span className="font-mono text-xs text-muted-foreground inline-block">
               (esc to interrupt)
             </span>
           )}
@@ -134,10 +134,10 @@ export function PassiveWaitFooter({
   reason?: string | null;
 }) {
   return (
-    <div className="flex flex-col gap-0.5 px-2 text-muted-foreground/70 text-sm">
+    <div className="flex flex-col gap-0.5 px-2 text-muted-foreground text-sm">
       <span>{message}</span>
       {reason ? (
-        <span className="text-muted-foreground/70 text-xs">{reason}</span>
+        <span className="text-muted-foreground text-xs">{reason}</span>
       ) : null}
     </div>
   );

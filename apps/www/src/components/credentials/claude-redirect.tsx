@@ -50,7 +50,7 @@ export function ClaudeRedirect({ type }: { type: AuthType }) {
         window.location.href = result.data.url.toString();
       } catch (error) {
         console.error("OAuth redirect error:", error);
-        setError("An error occurred during OAuth redirect");
+        setError("Close this window and retry from Settings.");
 
         // Notify parent window of error
         if (window.opener) {
@@ -76,16 +76,18 @@ export function ClaudeRedirect({ type }: { type: AuthType }) {
       <div className="text-center">
         {error ? (
           <>
-            <h1 className="text-xl font-semibold text-error mb-2">Error</h1>
+            <h1 className="text-xl font-semibold text-error-strong mb-2">
+              Couldn’t reach Claude
+            </h1>
             <p className="text-muted-foreground">{error}</p>
             <p className="text-sm text-muted-foreground mt-2">
-              This window will close automatically...
+              This window will close automatically…
             </p>
           </>
         ) : (
           <>
             <h1 className="text-xl font-semibold mb-2">
-              Redirecting to Claude...
+              Redirecting to Claude…
             </h1>
             <p className="text-muted-foreground">
               Please wait while we redirect you to authenticate.

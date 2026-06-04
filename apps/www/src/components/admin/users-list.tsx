@@ -190,7 +190,11 @@ export function AdminUsersList({
       accessorKey: "onboardingCompleted",
       header: "Onboarding Completed",
       cell: ({ row }) => {
-        return row.getValue("onboardingCompleted") ? "Yes" : "No";
+        return (
+          <span className="font-mono text-xs">
+            {row.getValue("onboardingCompleted") ? "Yes" : "No"}
+          </span>
+        );
       },
     },
     {
@@ -209,14 +213,16 @@ export function AdminUsersList({
       accessorKey: "numThreads",
       header: "Total Threads (All Time)",
       cell: ({ row }) => (
-        <span className="tabular-nums">{row.getValue("numThreads")}</span>
+        <span className="tabular-nums text-xs">
+          {row.getValue("numThreads")}
+        </span>
       ),
     },
     {
       accessorKey: "threadsCreatedPastDay",
       header: "Total Threads (Last Day)",
       cell: ({ row }) => (
-        <span className="tabular-nums">
+        <span className="tabular-nums text-xs">
           {row.getValue("threadsCreatedPastDay")}
         </span>
       ),
@@ -225,7 +231,7 @@ export function AdminUsersList({
       accessorKey: "threadsCreatedPastWeek",
       header: "Total Threads (Last Week)",
       cell: ({ row }) => (
-        <span className="tabular-nums">
+        <span className="tabular-nums text-xs">
           {row.getValue("threadsCreatedPastWeek")}
         </span>
       ),
@@ -238,17 +244,17 @@ export function AdminUsersList({
         return (
           <div className="flex gap-2">
             {u.role && (
-              <span className="text-[11px] bg-info/10 text-info px-2.5 py-0.5 rounded-full">
+              <span className="text-[11px] bg-info/10 text-info-strong px-2.5 py-0.5 rounded-full">
                 {u.role}
               </span>
             )}
             {u.banned && (
-              <span className="text-[11px] bg-error/10 text-error px-2.5 py-0.5 rounded-full">
+              <span className="text-[11px] bg-error/10 text-error-strong px-2.5 py-0.5 rounded-full">
                 Banned
               </span>
             )}
             {u.shadowBanned && (
-              <span className="text-[11px] bg-warning/10 text-warning px-2.5 py-0.5 rounded-full">
+              <span className="text-[11px] bg-warning/10 text-warning-strong px-2.5 py-0.5 rounded-full">
                 Shadow Ban
               </span>
             )}
@@ -643,19 +649,17 @@ function AdminUserBigNumber({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <dt className="text-[11px] uppercase tracking-[0.06em] text-mid-text">
-        {label}
-      </dt>
+      <dt className="text-xs uppercase tracking-[0.06em] text-mid">{label}</dt>
       <dd
         className={cn(
           "text-2xl font-semibold tabular-nums",
-          accent ? "text-coral" : "text-strong-text",
+          accent ? "text-coral" : "text-strong",
         )}
       >
         {value}
       </dd>
       {description && (
-        <p className="text-xs text-mid-text leading-snug">{description}</p>
+        <p className="text-xs text-mid leading-snug">{description}</p>
       )}
     </div>
   );

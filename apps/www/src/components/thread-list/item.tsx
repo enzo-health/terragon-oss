@@ -136,7 +136,6 @@ export function ThreadListItem({
       <div
         className={cn(
           "relative group",
-          "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isSelected && "ring-2 ring-primary/30 rounded-md",
         )}
         style={itemStyle}
@@ -147,7 +146,7 @@ export function ThreadListItem({
           aria-disabled={isOptimisticThread}
           tabIndex={isOptimisticThread ? -1 : undefined}
           className={cn(
-            "block rounded-md transition-[background-color,border-color,box-shadow] duration-200 ease-out px-2 py-1 relative pr-8 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            "block rounded-md transition-[background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] px-2 py-1 relative pr-8 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             isActive && !isSelectionMode
               ? "bg-primary/[0.06] border-transparent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-primary before:content-['']"
               : "hover:bg-accent/60 border-transparent",
@@ -209,7 +208,7 @@ export function ThreadListItem({
               )}
             </div>
             <div className="flex items-center justify-between gap-2.5">
-              <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
+              <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0 tabular-nums">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}
@@ -265,7 +264,7 @@ export function ThreadListItem({
         {!isSelectionMode && (
           <div
             className={cn(
-              "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+              "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] group-hover:opacity-100 focus-within:opacity-100",
               isMenuOpen
                 ? "opacity-100"
                 : "opacity-100 sm:opacity-0 focus-within:opacity-100",

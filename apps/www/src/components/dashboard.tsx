@@ -17,7 +17,7 @@ import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
 import { useCreateThreadMutation } from "@/queries/thread-mutations";
-import { Check, Loader2, Rocket } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 
 type LaunchState =
@@ -45,22 +45,20 @@ function DashboardLaunchStatus({
         <div className="relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
           <span
             aria-hidden
-            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            className="absolute inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
             style={{
               opacity: isOpening ? 0 : 1,
               transform: isOpening ? "scale(0.25)" : "scale(1)",
-              filter: isOpening ? "blur(4px)" : "blur(0px)",
             }}
           >
             <Loader2 className="size-3.5 animate-spin" />
           </span>
           <span
             aria-hidden
-            className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
+            className="absolute inline-flex transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
             style={{
               opacity: isOpening ? 1 : 0,
               transform: isOpening ? "scale(1)" : "scale(0.25)",
-              filter: isOpening ? "blur(0px)" : "blur(4px)",
             }}
           >
             <Check className="size-3.5" />
@@ -75,10 +73,6 @@ function DashboardLaunchStatus({
               <p className="text-sm font-medium text-foreground text-balance">
                 {state.title}
               </p>
-              <span
-                className="size-1.5 rounded-full bg-coral/70 transition-opacity duration-[var(--duration-base)]"
-                style={{ opacity: isOpening ? 0 : 1 }}
-              />
             </div>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground text-pretty">
               {state.detail}
@@ -171,7 +165,6 @@ export function Dashboard({
       });
       if (scheduleAt) {
         toast.success("Task scheduled.", {
-          icon: <Rocket className="size-4" />,
           duration: 2000,
         });
         push(taskHref);
@@ -222,11 +215,11 @@ export function Dashboard({
       )}
     >
       <div className="flex flex-col gap-3">
-        <h1 className="font-display text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
+        <h1 className="font-display text-3xl sm:text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
           What would you like to build?
         </h1>
         <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
-          Describe a task and I&apos;ll get to work.
+          Describe what you want changed, and the agent runs it in a sandbox.
         </p>
       </div>
 
