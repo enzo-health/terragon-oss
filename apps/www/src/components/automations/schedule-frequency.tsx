@@ -89,7 +89,7 @@ export function ScheduleTriggerForm({
     accessTier: tier,
   });
   return (
-    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)]">
+    <div className="space-y-4 rounded-2xl bg-canvas p-4 shadow-inset-edge">
       <div className="space-y-2">
         <FormLabel>Schedule Frequency</FormLabel>
         <div className="flex flex-col sm:flex-row gap-2">
@@ -367,7 +367,7 @@ export function ScheduleTriggerForm({
                   );
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-all active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   dayOfWeek === day.value
@@ -444,7 +444,7 @@ export function ScheduleTriggerForm({
                   }
                 }}
                 className={cn(
-                  "h-10 w-10 rounded-full text-sm font-medium transition-all active:scale-[0.98]",
+                  "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   selectedDays.includes(day.value)

@@ -4,7 +4,7 @@ import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { useQuery } from "@tanstack/react-query";
 import { BreadcrumbItem } from "@/contexts/page-header";
 import { automationDetailQueryOptions } from "@/queries/automation-queries";
-import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AutomationItem } from "./item";
 import { useState } from "react";
 import { EditAutomationDialog } from "./edit-dialog";
@@ -45,17 +45,21 @@ export function AutomationContent({ automationId }: { automationId: string }) {
   });
   if (isLoading) {
     return (
-      <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="size-4 animate-spin" />
+      <div className="flex flex-col gap-6">
+        <div className="h-24 rounded-lg bg-card shadow-inset-edge animate-pulse" />
+        <div className="h-9 w-40 rounded-md bg-muted animate-pulse" />
       </div>
     );
   }
   if (error || !automation) {
     return (
-      <div className="flex h-full w-full items-center justify-center">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3">
         <p className="text-sm text-muted-foreground">
           Error loading automation. Please try again.
         </p>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     );
   }

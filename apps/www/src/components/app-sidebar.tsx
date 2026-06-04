@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { headerClassName } from "./shared/header";
+import { SidebarThreadListLoading } from "./sidebar-thread-list-skeleton";
 import { Wordmark, WordmarkLogo } from "./shared/wordmark";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -67,18 +68,6 @@ function useIsClient() {
     subscribeToClientSnapshot,
     getClientSnapshot,
     getServerSnapshot,
-  );
-}
-
-// Loading fallback — used in the Suspense boundary inside the sidebar
-function SidebarThreadListLoading() {
-  return (
-    <div className="flex flex-col gap-2 p-3">
-      <div className="h-3 w-20 rounded bg-muted animate-pulse" />
-      <div className="h-8 rounded-md bg-muted/70 animate-pulse" />
-      <div className="h-8 rounded-md bg-muted/50 animate-pulse" />
-      <div className="h-8 rounded-md bg-muted/40 animate-pulse" />
-    </div>
   );
 }
 

@@ -97,7 +97,7 @@ export function AutomationItem({
           }
         }}
         className={cn(
-          "group flex flex-col rounded-lg bg-card transition-colors py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.075)] hover:bg-sunken",
+          "group flex flex-col rounded-lg bg-card transition-colors py-2.5 shadow-inset-edge hover:bg-sunken",
           verbose && "!cursor-default",
         )}
       >

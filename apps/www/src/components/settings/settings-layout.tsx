@@ -3,8 +3,10 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useSetAtom } from "jotai";
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { useRealtimeUser } from "@/hooks/useRealtime";
+import { userSettingsRefetchAtom } from "@/atoms/user";
 
 interface NavItem {
   href: string;
@@ -17,9 +19,10 @@ export function SettingsLayout({ children }: { children: React.ReactNode }) {
   const daytonaOptionsForSandboxProviderEnabled = useFeatureFlag(
     "daytonaOptionsForSandboxProvider",
   );
+  const refetchUserSettings = useSetAtom(userSettingsRefetchAtom);
   useRealtimeUser({
     matches: (message) => !!message.data.userSettings,
-    onMessage: () => window.location.reload(),
+    onMessage: () => refetchUserSettings(),
   });
   const navItems: NavItem[] = [
     {

@@ -102,7 +102,6 @@ export const SendButton = memo(function SendButton({
       disabled={disabled || isSubmitting || isProcessingAudio}
       className={cn(
         "size-auto h-11 px-3 sm:h-8 sm:px-2 transition-[background-color,box-shadow,scale,opacity] duration-200 active:scale-[0.98]",
-        isSubmitting && "animate-pulse-subtle",
         className,
       )}
       size="icon"
@@ -170,12 +169,7 @@ export const SendComboButton = memo(function SendComboButton({
 
   return (
     <>
-      <div
-        className={cn(
-          "relative inline-flex",
-          isSubmitting && "animate-pulse-subtle",
-        )}
-      >
+      <div className="relative inline-flex">
         <Button
           onClick={(event) => {
             event.preventDefault();

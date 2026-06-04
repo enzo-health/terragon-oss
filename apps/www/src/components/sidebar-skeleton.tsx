@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function SidebarSkeleton() {
   return (
-    <div className="flex h-full w-[280px] flex-col border-r bg-background p-4">
+    <div className="flex h-full w-56 flex-col bg-app-background p-4">
       {/* Header skeleton */}
       <div className="flex items-center justify-between mb-6">
         <Skeleton className="h-8 w-24" />
