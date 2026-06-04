@@ -140,12 +140,6 @@ export const featureFlagsDefinitions = {
     description:
       "Enables in-repo file preview: clicking links/file references that point to files inside the sandboxed repo opens a preview in the artifacts panel instead of navigating away (source files via the Pierre diff/code renderer, .md/.mdx via the streamdown markdown renderer). When disabled, links keep the existing new-tab behavior. NOTE: scoping this to the Bonaparte healthcare monorepo is an operational admin toggle (global default off, enabled per-user or globally via the admin overrides) — the flag system has NO per-repo mechanism, and this feature ships NO repo allowlist enforcement in code. Repo gating is operational, not code-enforced.",
   },
-  instantOptimisticSubmit: {
-    defaultValue: false,
-    enabledForPreview: false,
-    description:
-      "Makes chat follow-ups update the UI instantly: hoists the optimistic submit (booting flip + optimistic user bubble) above the composer routing fork so it also fires on the runtime.append path, opening the resume stream without a refresh. When off, optimistic submit only fires on the legacy fallback path (current behavior). Umbrella gate for the full instant-update seam; do not enable for any cohort until rollback + id-stamping ship behind it and the empirical onError-reachability integration gate passes.",
-  },
 } as const satisfies Record<string, FeatureFlagDefinition>;
 
 export type FeatureFlagName = keyof typeof featureFlagsDefinitions;
