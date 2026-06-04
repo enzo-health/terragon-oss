@@ -11,7 +11,7 @@ export function ConnectionStatusPill({ connected }: { connected: boolean }) {
         connected ? "bg-success/10 text-success-strong" : "text-mid",
       )}
     >
-      {connected ? "Connected" : "Not Connected"}
+      {connected ? "Connected" : "Not connected"}
     </span>
   );
 }

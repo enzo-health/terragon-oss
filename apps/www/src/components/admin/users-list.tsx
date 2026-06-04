@@ -190,7 +190,11 @@ export function AdminUsersList({
       accessorKey: "onboardingCompleted",
       header: "Onboarding Completed",
       cell: ({ row }) => {
-        return row.getValue("onboardingCompleted") ? "Yes" : "No";
+        return (
+          <span className="font-mono text-xs">
+            {row.getValue("onboardingCompleted") ? "Yes" : "No"}
+          </span>
+        );
       },
     },
     {
@@ -209,14 +213,16 @@ export function AdminUsersList({
       accessorKey: "numThreads",
       header: "Total Threads (All Time)",
       cell: ({ row }) => (
-        <span className="tabular-nums">{row.getValue("numThreads")}</span>
+        <span className="tabular-nums text-xs">
+          {row.getValue("numThreads")}
+        </span>
       ),
     },
     {
       accessorKey: "threadsCreatedPastDay",
       header: "Total Threads (Last Day)",
       cell: ({ row }) => (
-        <span className="tabular-nums">
+        <span className="tabular-nums text-xs">
           {row.getValue("threadsCreatedPastDay")}
         </span>
       ),
@@ -225,7 +231,7 @@ export function AdminUsersList({
       accessorKey: "threadsCreatedPastWeek",
       header: "Total Threads (Last Week)",
       cell: ({ row }) => (
-        <span className="tabular-nums">
+        <span className="tabular-nums text-xs">
           {row.getValue("threadsCreatedPastWeek")}
         </span>
       ),

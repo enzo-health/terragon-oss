@@ -76,7 +76,7 @@ export function ClaudeRedirect({ type }: { type: AuthType }) {
       <div className="text-center">
         {error ? (
           <>
-            <h1 className="text-xl font-semibold text-error mb-2">
+            <h1 className="text-xl font-semibold text-error-strong mb-2">
               Couldn’t reach Claude
             </h1>
             <p className="text-muted-foreground">{error}</p>

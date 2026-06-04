@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 
 const examples = [
-  "Give me a high-level overview of the codebase...",
-  "Analyze test coverage gaps and implement missing unit tests...",
-  "Build a REST API endpoint with proper error handling and validation...",
-  "Add a new feature that allows users to...",
+  "Give me a high-level overview of the codebase…",
+  "Analyze test coverage gaps and implement missing unit tests…",
+  "Build a REST API endpoint with proper error handling and validation…",
+  "Add a new feature that allows users to…",
 ];
 
 export function useTypewriterEffect(isEnabled: boolean) {

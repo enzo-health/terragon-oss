@@ -70,7 +70,7 @@ export function UserSearch({
     <>
       <div className="relative">
         <Search
-          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-mid-text"
+          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-mid"
           aria-hidden
         />
         <Input

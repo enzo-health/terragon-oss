@@ -62,7 +62,7 @@ export function AdminThreadIdInput() {
   const router = useRouter();
   return (
     <EntityIdInput
-      placeholder="Enter Thread ID..."
+      placeholder="Enter Thread ID…"
       onSubmit={(threadId) => {
         router.push(`/internal/admin/thread/${threadId}`);
       }}

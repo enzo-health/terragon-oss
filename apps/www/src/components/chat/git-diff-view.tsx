@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { FileTreeItem } from "./git-diff-file-tree-item";
 import { FileDiffWrapper } from "./git-diff-file-wrapper";
 import { FilesChangedHeader } from "./git-diff-files-changed-header";
+import { ArtifactWorkspaceState } from "./secondary-panel-state";
 import type { GitDiffViewProps } from "./git-diff-view.types";
 import {
   buildFileTree,
@@ -198,8 +199,12 @@ export function GitDiffView({
             fileTreeId={fileTreeId}
           />
         </div>
-        <div className="flex items-center justify-center text-muted-foreground/50 py-8">
-          No changes
+        <div className="flex-1">
+          <ArtifactWorkspaceState
+            variant="empty"
+            title="No changes yet"
+            description="File changes will appear here once the agent edits the repository."
+          />
         </div>
       </div>
     );
@@ -223,8 +228,12 @@ export function GitDiffView({
             fileTreeId={fileTreeId}
           />
         </div>
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          No diff data available
+        <div className="flex-1">
+          <ArtifactWorkspaceState
+            variant="empty"
+            title="No diff to display"
+            description="This diff could not be parsed, or it contains no readable changes."
+          />
         </div>
       </div>
     );

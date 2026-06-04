@@ -245,9 +245,9 @@ export function EnvironmentVariablesEditor({
                         "border-error/60 focus-visible:ring-error/40",
                     )}
                   />
-                  {errors[index] && (
-                    <p className="text-xs text-error mt-1">{errors[index]}</p>
-                  )}
+                  <p className="min-h-4 text-xs text-error mt-1">
+                    {errors[index]}
+                  </p>
                 </div>
                 <div className="flex-1 relative">
                   <Input
@@ -370,7 +370,7 @@ NODE_ENV=production`}
             handleRemove(deleteConfirmIndex);
           }
         }}
-        title="Delete Environment Variable"
+        title="Delete environment variable"
         description={
           deleteConfirmIndex !== null && localVariables[deleteConfirmIndex]?.key
             ? `Are you sure you want to delete the environment variable "${localVariables[deleteConfirmIndex].key}"? This action cannot be undone.`

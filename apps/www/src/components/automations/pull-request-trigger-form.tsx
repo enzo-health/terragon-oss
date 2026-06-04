@@ -145,7 +145,11 @@ export function PullRequestTriggerForm({
           </div>
         </div>
       </div>
-      {errorMessage && <p className="text-sm text-error">{errorMessage}</p>}
+      <div className="min-h-5 text-sm">
+        {errorMessage ? (
+          <span className="text-error">{errorMessage}</span>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -79,11 +79,12 @@ export const SlashCommandListContent = forwardRef<
                 role="option"
                 aria-selected={isSelected}
                 aria-disabled={item.isLoading || undefined}
+                onMouseEnter={() => onSelectItem(index)}
                 onClick={() =>
                   onExecuteItem ? onExecuteItem(index) : onSelectItem(index)
                 }
                 className={cn(
-                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
+                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
                   "aria-disabled:pointer-events-none aria-disabled:opacity-50",
                   isSelected && "bg-accent text-accent-foreground",
                 )}
@@ -93,7 +94,7 @@ export const SlashCommandListContent = forwardRef<
                     <div className="flex items-center gap-2 py-0.5">
                       <Loader2 className="size-3 animate-spin text-muted-foreground" />
                       <span className="text-xs text-muted-foreground italic">
-                        Loading repository commands...
+                        Loading repository commands…
                       </span>
                     </div>
                   ) : (
@@ -111,7 +112,7 @@ export const SlashCommandListContent = forwardRef<
         </ul>
       ) : (
         <div className="py-2 px-2 text-center text-sm text-muted-foreground">
-          No matching commands
+          No commands match that search
         </div>
       )}
     </>

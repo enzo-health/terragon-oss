@@ -41,7 +41,7 @@ export function FilesChangedHeader({
           {fileCount} file{fileCount !== 1 ? "s" : ""}
         </span>
         {(additions > 0 || deletions > 0) && (
-          <div className="flex items-center gap-1.5 text-[11px] font-medium flex-shrink-0">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium flex-shrink-0 tabular-nums">
             {additions > 0 && (
               <span className="text-[var(--diff-added-fg)]">+{additions}</span>
             )}

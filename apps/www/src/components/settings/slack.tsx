@@ -76,14 +76,14 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
           </p>
           <Button size="sm" onClick={handleInstallApp}>
             <Slack className="h-4 w-4" />
-            Install Slack App
+            Install Slack app
           </Button>
         </div>
       ) : (
         <>
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="space-y-1">
-              <Label className="text-sm">Default Repository</Label>
+              <Label className="text-sm">Default repository</Label>
               <RepoSelector
                 selectedRepoFullName={defaultRepo}
                 onChange={(repoFullName) => {
@@ -101,7 +101,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-sm">Default Model</Label>
+              <Label className="text-sm">Default model</Label>
               <ModelSelector
                 className="border-solid p-2 text-foreground bg-raised"
                 forcedAgent={null}
@@ -174,7 +174,7 @@ export function SlackAccountSettings({
             <Slack className="h-4 w-4" />
             {getSlackOAuthUrlMutation.isPending
               ? "Connecting…"
-              : "Connect Slack Workspace"}
+              : "Connect Slack workspace"}
           </Button>
         </div>
       </div>

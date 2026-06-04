@@ -106,16 +106,16 @@ function LinearWorkspacePanel({
               </span>
               <ConnectionStatusPill connected={isActive} />
               {!isActive && (
-                <span className="rounded-full bg-warning/10 px-2.5 py-0.5 font-mono text-xs text-warning-strong">
+                <span className="rounded-full bg-warning/10 px-2.5 py-0.5 text-xs text-warning-strong">
                   Action needed
                 </span>
               )}
             </div>
-            <p className="text-xs text-mid tabular-nums">
+            <p className="text-xs text-mid">
               Organization ID: {installation.organizationId}
             </p>
             {installation.createdAt && (
-              <p className="text-xs text-mid tabular-nums">
+              <p className="text-xs text-mid">
                 Installed:{" "}
                 {new Date(installation.createdAt).toLocaleDateString()}
               </p>
@@ -213,7 +213,7 @@ function LinearAccountItem({
             <span className="font-semibold">{account.linearUserName}</span>
             <ConnectionStatusPill connected={true} />
           </div>
-          <p className="text-xs text-mid tabular-nums">
+          <p className="text-xs text-mid">
             Organization ID: {account.organizationId}
           </p>
           <p className="text-xs text-mid">{account.linearUserEmail}</p>
@@ -222,7 +222,7 @@ function LinearAccountItem({
 
       <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap">
         <div className="space-y-1">
-          <Label className="text-sm">Default Repository</Label>
+          <Label className="text-sm">Default repository</Label>
           <RepoSelector
             selectedRepoFullName={defaultRepo}
             onChange={(repoFullName) => {
@@ -240,7 +240,7 @@ function LinearAccountItem({
           />
         </div>
         <div className="space-y-1">
-          <Label className="text-sm">Default Model</Label>
+          <Label className="text-sm">Default model</Label>
           <ModelSelector
             className="border-solid p-2 text-foreground bg-raised"
             forcedAgent={null}

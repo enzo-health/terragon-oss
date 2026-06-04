@@ -46,7 +46,7 @@ export function DeleteEnvironmentButton({
         onClick={() => setShowDialog(true)}
         disabled={isPending}
       >
-        Delete Environment
+        Delete environment
       </Button>
       <DeleteConfirmationDialog
         open={showDialog}
@@ -56,7 +56,7 @@ export function DeleteEnvironmentButton({
           }
         }}
         onConfirm={handleDelete}
-        title="Delete Environment"
+        title="Delete environment"
         description={`Are you sure you want to delete the environment for ${repoFullName}? This action cannot be undone.`}
         confirmText={isPending ? "Deleting…" : "Delete"}
         isLoading={isPending}

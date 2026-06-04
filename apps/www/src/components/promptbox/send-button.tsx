@@ -24,7 +24,7 @@ function getLabel({
   isTouchDevice: boolean;
 }) {
   if (isSubmitting) {
-    return "Submitting...";
+    return "Submitting…";
   }
   return isSmallScreen || isTouchDevice ? "Submit" : "Submit (Enter)";
 }
@@ -198,7 +198,7 @@ export const SendComboButton = memo(function SendComboButton({
               )}
               size="sm"
             >
-              <ChevronDown className={cn("size-3 transition-transform")} />
+              <ChevronDown className="size-3 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]" />
             </Button>
           }
           title="Submit Options"

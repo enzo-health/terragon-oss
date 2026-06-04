@@ -72,7 +72,7 @@ export function SidebarThreadList() {
           No tasks yet
         </p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground text-pretty">
-          Your tasks appear here.
+          Start one with New Task above.
         </p>
       </div>
     );

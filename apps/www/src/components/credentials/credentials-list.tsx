@@ -43,7 +43,7 @@ function CredentialDeleteButton({
       <Button
         size="sm"
         variant="ghost"
-        className="size-5 p-2 opacity-50 hover:opacity-100"
+        className="size-8 p-0 opacity-50 hover:opacity-100"
         onClick={() => setShowDeleteDialog(true)}
         disabled={deletePending}
         aria-label={isOAuth ? "Disconnect" : "Delete"}
@@ -84,9 +84,10 @@ function CredentialsListItem({
   const toggleActiveMutation = useToggleActiveCredentialMutation();
   return (
     <div
-      className={cn("p-3 bg-muted/50 rounded-lg border border-border", {
-        "opacity-50": !credential.isActive,
-      })}
+      className={cn(
+        "rounded-xl border border-hairline-soft bg-canvas/40 p-4 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+        { "opacity-60": !credential.isActive },
+      )}
     >
       <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3">
         {/* Icon column */}
@@ -110,7 +111,7 @@ function CredentialsListItem({
                 {/* Claude OAuth - accountEmail */}
                 {"accountEmail" in credential.metadata &&
                   credential.metadata.accountEmail && (
-                    <span className="text-xs text-muted-foreground font-mono tabular-nums">
+                    <span className="text-xs text-muted-foreground font-mono">
                       {String(credential.metadata.accountEmail)}
                     </span>
                   )}
@@ -118,7 +119,7 @@ function CredentialsListItem({
                 {credential.agent === "codex" &&
                   "email" in credential.metadata &&
                   credential.metadata.email && (
-                    <span className="text-xs text-muted-foreground font-mono tabular-nums">
+                    <span className="text-xs text-muted-foreground font-mono">
                       {String(credential.metadata.email)}
                     </span>
                   )}
@@ -177,7 +178,7 @@ export function CredentialsList() {
         {[0, 1].map((i) => (
           <div
             key={i}
-            className="h-14 rounded-md bg-card shadow-inset-edge animate-pulse"
+            className="h-[68px] rounded-xl border border-hairline-soft bg-canvas/40 animate-pulse"
           />
         ))}
       </div>
@@ -189,7 +190,7 @@ export function CredentialsList() {
         <KeyRound className="size-5 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium text-strong">No credentials yet</p>
         <p className="text-pretty text-xs text-muted-foreground">
-          Use “Add Credential” above to connect an agent provider API key.
+          Use “Add Credential” above to connect a provider account or API key.
         </p>
       </div>
     );

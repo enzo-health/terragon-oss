@@ -17,7 +17,7 @@ import { RecommendedTasks } from "./recommended-tasks";
 import { useAtomValue } from "jotai";
 import { selectedModelAtom } from "@/atoms/user-flags";
 import { useCreateThreadMutation } from "@/queries/thread-mutations";
-import { Check, Loader2, Rocket } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 
 type LaunchState =
@@ -167,7 +167,6 @@ export function Dashboard({
       });
       if (scheduleAt) {
         toast.success("Task scheduled.", {
-          icon: <Rocket className="size-4" />,
           duration: 2000,
         });
         push(taskHref);
@@ -222,7 +221,7 @@ export function Dashboard({
           What would you like to build?
         </h1>
         <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
-          Describe a task and I’ll get to work.
+          Describe what you want changed, and the agent runs it in a sandbox.
         </p>
       </div>
 

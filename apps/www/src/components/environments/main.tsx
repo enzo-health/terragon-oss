@@ -380,7 +380,10 @@ function SnapshotSection({
                 currentSnapshot.status !== "building" && (
                   <span className="text-xs text-mid tabular-nums">
                     Built{" "}
-                    {new Date(currentSnapshot.builtAt).toLocaleDateString()}
+                    {new Date(currentSnapshot.builtAt).toLocaleDateString(
+                      undefined,
+                      { year: "numeric", month: "short", day: "numeric" },
+                    )}
                   </span>
                 )}
             </div>

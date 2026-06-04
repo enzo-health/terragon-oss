@@ -89,13 +89,13 @@ export function CreateEnvironmentButton() {
         size="sm"
       >
         <Plus className="h-4 w-4 mr-1" />
-        Create Environment
+        Create environment
       </Button>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Create Environment</DialogTitle>
+            <DialogTitle>Create environment</DialogTitle>
             <DialogDescription>
               Select a GitHub repository to create an environment for. This will
               allow you to configure environment variables, MCP servers, and
@@ -214,7 +214,7 @@ export function CreateEnvironmentButton() {
               >
                 {createEnvironmentMutation.isPending
                   ? "Creating…"
-                  : "Create Environment"}
+                  : "Create environment"}
               </Button>
             </div>
           </div>

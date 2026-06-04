@@ -32,8 +32,8 @@ export function EmptyThreadList({
           {queryFilters.archived ? "No archived tasks" : "No tasks yet"}
         </span>
         {!queryFilters.archived && (
-          <span className="text-xs text-muted-foreground">
-            Your tasks appear here.
+          <span className="text-xs text-muted-foreground text-pretty">
+            Start a task to kick off a coding agent — it&rsquo;ll show up here.
           </span>
         )}
       </div>

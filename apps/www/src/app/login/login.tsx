@@ -80,22 +80,22 @@ export default function Login({
               {isGithubLoading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Signing in
+                  Signing in…
                 </>
               ) : (
                 <>
                   <Image
                     src="https://cdn.terragonlabs.com/github-mark-Z5SF.svg"
                     alt="GitHub"
-                    width={20}
-                    height={20}
+                    width={18}
+                    height={18}
                     className="absolute left-4 hidden dark:block"
                   />
                   <Image
                     src="https://cdn.terragonlabs.com/github-mark-white-Ue4J.svg"
                     alt="GitHub"
-                    width={20}
-                    height={20}
+                    width={18}
+                    height={18}
                     className="absolute left-4 block dark:hidden"
                   />
                   Continue with GitHub
@@ -113,7 +113,7 @@ export default function Login({
                 {isDevLoginLoading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Signing in
+                    Signing in…
                   </>
                 ) : (
                   "Dev login"

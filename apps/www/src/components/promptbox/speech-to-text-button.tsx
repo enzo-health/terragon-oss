@@ -160,7 +160,7 @@ export const SpeechToTextButton = memo(function SpeechToTextButton({
       type="button"
       title={
         isProcessing
-          ? "Processing audio..."
+          ? "Processing audio…"
           : isRecording
             ? "Stop recording"
             : "Start voice input"

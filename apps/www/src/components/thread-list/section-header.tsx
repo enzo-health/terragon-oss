@@ -29,7 +29,7 @@ export function ThreadListSectionHeader({
     <button
       type="button"
       className={cn(
-        "group w-full py-1.5 md:py-1 text-micro font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors sticky top-0 z-10 bg-sidebar pl-2 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
+        "group w-full py-1.5 md:py-1 text-micro font-semibold text-muted-foreground flex items-center gap-1.5 min-w-0 cursor-pointer select-none hover:text-foreground transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] sticky top-0 z-10 bg-sidebar pl-2 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:rounded-sm focus-visible:outline-none",
         className,
       )}
       onClick={onToggle}
@@ -38,7 +38,7 @@ export function ThreadListSectionHeader({
     >
       <ChevronRight
         className={cn(
-          "size-3 flex-shrink-0 text-muted-foreground transition-transform duration-200 ease-[var(--ease-standard)]",
+          "size-3 flex-shrink-0 text-muted-foreground transition-transform duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
           !isCollapsed && "rotate-90",
         )}
       />

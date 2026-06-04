@@ -86,6 +86,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
               axisLine={false}
               tickFormatter={(value) => `${value}`}
               domain={[0, (dataMax: number) => Math.max(5, dataMax)]}
+              allowDecimals={false}
             />
             <ChartTooltip
               content={
@@ -125,6 +126,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
               axisLine={false}
               tickFormatter={(value) => `${value}`}
               domain={[0, (dataMax: number) => Math.max(5, dataMax)]}
+              allowDecimals={false}
             />
             <ChartTooltip
               content={

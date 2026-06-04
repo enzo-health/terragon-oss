@@ -443,7 +443,7 @@ export function AdminUserContent({
                         onClick={handleTopUpCredits}
                         disabled={isTopUpPending}
                       >
-                        {isTopUpPending ? "Adding..." : "Add Credits"}
+                        {isTopUpPending ? "Adding…" : "Add Credits"}
                       </Button>
                     </div>
                     <span className="text-xs text-muted-foreground">
@@ -533,7 +533,7 @@ export function AdminUserContent({
                                 }
                               >
                                 {refreshClaudeCredentialsMutation.isPending
-                                  ? "Refreshing..."
+                                  ? "Refreshing…"
                                   : "Refresh"}
                               </Button>
                               <span className="text-xs text-muted-foreground">
@@ -589,7 +589,7 @@ export function AdminUserContent({
                                 }
                               >
                                 {refreshCodexCredentialsMutation.isPending
-                                  ? "Refreshing..."
+                                  ? "Refreshing…"
                                   : "Refresh"}
                               </Button>
                               <span className="text-xs text-muted-foreground">

@@ -122,12 +122,12 @@ function InstallProgressBar({
         {total === undefined ? (
           // Indeterminate: pulse the filled portion to signal ongoing activity
           <span>
-            <span className="animate-pulse text-primary/70">{filledChars}</span>
+            <span className="animate-pulse text-primary">{filledChars}</span>
             <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         ) : (
           <span>
-            <span className="text-primary/70">{filledChars}</span>
+            <span className="text-primary">{filledChars}</span>
             <span className="text-muted-foreground/60">{emptyChars}</span>
           </span>
         )}{" "}

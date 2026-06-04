@@ -421,9 +421,11 @@ function CodeBlockPre(props: unknown) {
 
   return (
     <div className="group/code relative my-3">
-      <div className="absolute top-2 left-3 z-10 text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-wider">
-        {language ?? "code"}
-      </div>
+      {language ? (
+        <div className="absolute top-2 left-3 z-10 text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-wider">
+          {language}
+        </div>
+      ) : null}
       <pre
         {...rest}
         className={cn(

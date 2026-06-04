@@ -85,7 +85,7 @@ function AgentProvidersSection() {
       onClick={() => setSelectProviderOpen(true)}
     >
       <Plus className="h-4 w-4" />
-      Add Credential
+      Add credential
     </Button>
   );
 
@@ -167,7 +167,7 @@ function SelectProviderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Credential</DialogTitle>
+          <DialogTitle>Add credential</DialogTitle>
           <DialogDescription>
             Choose which agent provider you’d like to add credentials for.
           </DialogDescription>
@@ -226,7 +226,7 @@ function CustomSystemPromptSetting() {
           size="sm"
           className="self-start transition-[transform,opacity,background-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-[0.96]"
         >
-          {isSaving ? "Saving…" : "Save Changes"}
+          {isSaving ? "Saving…" : "Save changes"}
         </Button>
       </div>
     </SettingsWithCTA>
@@ -376,7 +376,7 @@ function ModelItem({
     <label
       htmlFor={`model-${model}`}
       className={cn(
-        "group/model flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+        "flex min-h-10 cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 -mx-2 transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         agentEnabled ? "hover:bg-canvas/70" : "cursor-not-allowed opacity-60",
         !isEnabled && agentEnabled && "opacity-70",
       )}

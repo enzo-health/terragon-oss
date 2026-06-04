@@ -123,7 +123,7 @@ const columns: ColumnDef<GitHubPR>[] = [
     accessorKey: "baseRef",
     header: "Base Ref",
     cell: ({ row }) => (
-      <span className="font-mono tabular-nums block max-w-[120px] truncate">
+      <span className="font-mono block max-w-[120px] truncate">
         {row.getValue("baseRef")}
       </span>
     ),
@@ -132,18 +132,14 @@ const columns: ColumnDef<GitHubPR>[] = [
     accessorKey: "mergeableState",
     header: "Mergeable State",
     cell: ({ row }) => (
-      <span className="font-mono tabular-nums">
-        {row.getValue("mergeableState")}
-      </span>
+      <span className="font-mono">{row.getValue("mergeableState")}</span>
     ),
   },
   {
     accessorKey: "checksStatus",
     header: "Checks Status",
     cell: ({ row }) => (
-      <span className="font-mono tabular-nums">
-        {row.getValue("checksStatus")}
-      </span>
+      <span className="font-mono">{row.getValue("checksStatus")}</span>
     ),
   },
   {

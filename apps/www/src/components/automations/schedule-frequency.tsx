@@ -21,6 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { ScheduleTriggerConfig } from "@terragon/shared/automations";
 import { MAX_HOURS_SCHEDULE_AUTOMATIONS } from "@terragon/shared/automations/cron";
 
@@ -215,15 +217,13 @@ export function ScheduleTriggerForm({
       {frequency !== "5-minutely" && (
         <div className="space-y-2">
           <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
+            <Checkbox
               id="multiple-hours"
               checked={showMultipleHoursInput}
-              disabled={false}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setShowMultipleHoursInput(checked);
-                if (!checked) {
+              onCheckedChange={(checked) => {
+                const isChecked = checked === true;
+                setShowMultipleHoursInput(isChecked);
+                if (!isChecked) {
                   // Keep only the first hour
                   const firstHour = hours[0] ?? "9";
                   const newHours = [firstHour];
@@ -248,14 +248,10 @@ export function ScheduleTriggerForm({
                   );
                 }
               }}
-              className="h-4 w-4 rounded border-border"
             />
-            <label
-              htmlFor="multiple-hours"
-              className="text-sm flex items-center gap-2 cursor-pointer"
-            >
-              <span>Multiple times per day</span>
-            </label>
+            <Label htmlFor="multiple-hours" className="text-sm font-normal">
+              Multiple times per day
+            </Label>
           </div>
           {showMultipleHoursInput && (
             <div className="space-y-2 pl-6">
@@ -331,17 +327,19 @@ export function ScheduleTriggerForm({
                     selectedDays,
                   );
                 }}
-                placeholder="e.g. 9, 12, 15, 18"
+                placeholder="e.g., 9, 12, 15, 18"
                 className="font-mono tabular-nums"
               />
-              {hoursInputError ? (
-                <div className="text-xs text-error">{hoursInputError}</div>
-              ) : (
-                <div className="text-xs text-muted-foreground">
-                  Enter up to {MAX_HOURS_SCHEDULE_AUTOMATIONS} hours (0–23)
-                  separated by commas
-                </div>
-              )}
+              <div className="min-h-4 text-xs">
+                {hoursInputError ? (
+                  <span className="text-error">{hoursInputError}</span>
+                ) : (
+                  <span className="text-muted-foreground">
+                    Enter up to {MAX_HOURS_SCHEDULE_AUTOMATIONS} hours (0–23)
+                    separated by commas
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -369,7 +367,6 @@ export function ScheduleTriggerForm({
                 className={cn(
                   "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   dayOfWeek === day.value
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",
@@ -446,7 +443,6 @@ export function ScheduleTriggerForm({
                 className={cn(
                   "h-10 w-10 rounded-full text-sm font-medium transition-colors active:scale-[0.98]",
                   "hover:bg-accent hover:text-accent-foreground",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/50",
                   selectedDays.includes(day.value)
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground",

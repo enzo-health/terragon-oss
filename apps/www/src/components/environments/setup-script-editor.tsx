@@ -337,7 +337,7 @@ export function SetupScriptEditor({
               <strong className="text-strong font-medium">
                 Repository script:
               </strong>{" "}
-              the terragon-setup.sh file on your repository's main branch (used
+              the terragon-setup.sh file on your repository’s main branch (used
               when no environment script exists).
             </li>
             <li>

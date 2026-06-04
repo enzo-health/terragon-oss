@@ -467,7 +467,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
+            className="h-fit py-1 text-xs rounded-full"
             onClick={() => {
               setPrPopoverOpen(true);
             }}
@@ -493,6 +493,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             <Button
               size="sm"
               variant="outline"
+              className="rounded-full"
               onClick={async () => {
                 const prNumberInt = parseInt(prNumber);
                 if (!prNumberInt) {
@@ -525,7 +526,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
+            className="h-fit py-1 text-xs rounded-full"
             onClick={() => {
               setIssuePopoverOpen(true);
             }}
@@ -551,6 +552,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
             <Button
               size="sm"
               variant="outline"
+              className="rounded-full"
               onClick={async () => {
                 const issueNumberInt = parseInt(issueNumber);
                 if (!issueNumberInt) {
@@ -584,7 +586,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
         await runMutation.mutateAsync(automation.id);
       }}
       aria-label="Run automation"
-      className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
+      className="h-fit py-1 text-xs rounded-full"
       disabled={runMutation.isPending}
     >
       Run now

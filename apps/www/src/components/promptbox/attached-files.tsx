@@ -34,7 +34,7 @@ export function AttachedFiles({
             {file.fileType === "image" ? (
               <button
                 onClick={() => setExpandedImageId(file.id)}
-                className="relative block cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-150 active:scale-[0.98]"
+                className="relative block cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-[scale] duration-[var(--duration-quick)] ease-[var(--ease-standard)] active:scale-[0.98]"
                 type="button"
                 aria-label={`View attached image: ${file.fileName ?? "image"}`}
               >

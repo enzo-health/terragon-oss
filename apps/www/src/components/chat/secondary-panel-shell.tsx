@@ -290,7 +290,7 @@ function ArtifactWorkspaceShell({
                     "px-3 py-1.5 text-[11px] font-medium transition-colors border-b-2",
                     isActive
                       ? "text-foreground border-foreground"
-                      : "text-muted-foreground border-transparent hover:text-foreground",
+                      : "text-muted-foreground border-foreground/0 hover:text-foreground",
                   )}
                   onClick={() => onActiveArtifactChange(artifact.id)}
                   onKeyDown={handleTabKeyDown}

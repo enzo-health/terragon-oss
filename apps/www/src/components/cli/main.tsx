@@ -66,7 +66,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
             </div>
             <CardTitle>Authorize CLI</CardTitle>
             <CardDescription>
-              Click the button below to authenticate this CLI client
+              Click the button below to authenticate this CLI client.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -89,7 +89,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
       <div className="flex min-h-svh items-center justify-center p-4 w-full">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin text-mid" />
+            <Loader2 className="mb-4 h-8 w-8 animate-spin text-coral" />
             <p className="text-center text-lg">Authorizing the CLI client</p>
             <p className="mt-2 text-center text-sm text-mid">
               Connecting to CLI…
@@ -125,9 +125,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
     <div className="flex min-h-svh items-center justify-center p-4 w-full">
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>
-            Copy the API key below and paste it into your CLI
-          </CardTitle>
+          <CardTitle>Finish authentication manually</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>

@@ -138,10 +138,12 @@ function AddApiKeyDialog({
               className="pr-10"
             />
             <Button
-              size="sm"
+              type="button"
+              size="icon"
               variant="ghost"
+              aria-label={showApiKey ? "Hide API key" : "Show API key"}
               onClick={() => setShowApiKey(!showApiKey)}
-              className="absolute right-0 top-0 h-full px-3"
+              className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
             >
               {showApiKey ? (
                 <EyeOff className="h-4 w-4" />
@@ -373,10 +375,12 @@ export function AddClaudeCredentialDialog({
                   className="pr-10"
                 />
                 <Button
-                  size="sm"
+                  type="button"
+                  size="icon"
                   variant="ghost"
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-0 top-0 h-full px-3"
+                  className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
                 >
                   {showApiKey ? (
                     <EyeOff className="h-4 w-4" />
@@ -553,10 +557,12 @@ export function AddCodexCredentialDialog({
                   className="pr-10"
                 />
                 <Button
-                  size="sm"
+                  type="button"
+                  size="icon"
                   variant="ghost"
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-0 top-0 h-full px-3"
+                  className="absolute right-1 top-1/2 size-9 -translate-y-1/2 text-mid"
                 >
                   {showApiKey ? (
                     <EyeOff className="h-4 w-4" />

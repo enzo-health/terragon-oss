@@ -23,14 +23,13 @@ export function SandboxSettings() {
   }
   return (
     <div className="flex flex-col gap-8">
-      {/* Sandbox Configuration */}
       <SettingsSection
         label="Sandbox configuration"
         description="Configure how code is executed in isolated environments"
       >
         <div className="flex flex-col gap-4">
           <SettingsWithCTA
-            label="Sandbox Provider"
+            label="Sandbox provider"
             description="Choose the sandbox provider for running code"
           >
             <SandboxProviderSelector />
@@ -38,7 +37,7 @@ export function SandboxSettings() {
         </div>
         {largeSandboxSizeEnabled && (
           <SettingsWithCTA
-            label="Sandbox Size"
+            label="Sandbox size"
             description="Choose the size of the sandbox for running code"
           >
             <SandboxSizeSelector />
