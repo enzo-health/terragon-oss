@@ -28,14 +28,6 @@ export function killProcessGroup(
 /**
  * Common spawn options for command execution
  */
-export interface SpawnCommandOptions {
-  env: Record<string, string | undefined>;
-  onStdoutLine?: (line: string) => void;
-  onStderr?: (line: string) => void;
-  onError?: (error: any) => void;
-  onClose?: (code: number | null) => void;
-}
-
 export interface IdleWatchdog {
   reset: () => void;
   clear: () => void;

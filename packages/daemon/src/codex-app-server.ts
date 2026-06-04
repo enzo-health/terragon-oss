@@ -42,13 +42,6 @@ export function dumpRawNotification(
   }
 }
 
-export type JsonRpcRequestEnvelope = {
-  jsonrpc: "2.0";
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-};
-
 export type JsonRpcResponseEnvelope = {
   jsonrpc?: string;
   id: number;

@@ -164,32 +164,6 @@ export function findCanonicalRunTerminalEvent(
   return null;
 }
 
-export function buildCanonicalRunTerminalEvent(params: {
-  envelope: DaemonEventEnvelopeV2;
-  threadId: string;
-  threadChatId: string;
-  status: "completed" | "failed" | "stopped";
-  errorMessage: string | null;
-  errorCode: string | null;
-  headShaAtCompletion: string | null;
-}): CanonicalEventsPayload[number] {
-  return {
-    payloadVersion: 2,
-    eventId: params.envelope.eventId,
-    runId: params.envelope.runId,
-    threadId: params.threadId,
-    threadChatId: params.threadChatId,
-    seq: params.envelope.seq,
-    timestamp: new Date().toISOString(),
-    category: "operational",
-    type: "run-terminal",
-    status: params.status,
-    errorMessage: params.errorMessage,
-    errorCode: params.errorCode,
-    headShaAtCompletion: params.headShaAtCompletion,
-  };
-}
-
 export function splitCanonicalEventsForCommit(
   canonicalEvents: CanonicalEventsPayload | null,
 ): {
