@@ -135,7 +135,8 @@ export type ThreadViewModelState = {
   threadChatId: string;
   dbMessages: DBMessage[];
   queuedMessages: DBUserMessage[] | null;
-  threadStatus: ThreadStatus | null;
+  // Status lives only on `lifecycle.threadStatus`. The public ThreadViewModel
+  // exposes a top-level `threadStatus` derived from it in projectThreadViewModel.
   permissionMode: ThreadPageChat["permissionMode"];
   hasCheckpoint: boolean;
   latestGitDiffTimestamp: string | null;
@@ -159,7 +160,6 @@ export type ThreadViewModelState = {
   optimisticSubmission: {
     clientSubmissionId: string;
     message: DBUserMessage;
-    priorThreadStatus: ThreadStatus | null;
     priorLifecycle: ThreadViewLifecycle;
   } | null;
   seenEventKeys: Set<string>;

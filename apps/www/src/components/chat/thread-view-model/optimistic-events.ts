@@ -82,7 +82,6 @@ export function applyOptimisticUserSubmit(
   state: ThreadViewModelState,
   event: Extract<ThreadViewEvent, { type: "optimistic.user-submitted" }>,
 ): ThreadViewModelState {
-  const priorThreadStatus = state.threadStatus;
   const priorLifecycle = state.lifecycle;
   return {
     ...setThreadStatus(state, event.optimisticStatus),
@@ -94,7 +93,6 @@ export function applyOptimisticUserSubmit(
     optimisticSubmission: {
       clientSubmissionId: event.clientSubmissionId,
       message: event.message,
-      priorThreadStatus,
       priorLifecycle,
     },
     hasOptimisticUserSubmit: true,
@@ -109,11 +107,7 @@ export function applyOptimisticUserSubmitRejected(
   if (!pending || pending.clientSubmissionId !== event.clientSubmissionId) {
     return state;
   }
-  const restored = restoreThreadStatus(
-    state,
-    pending.priorThreadStatus,
-    pending.priorLifecycle,
-  );
+  const restored = restoreThreadStatus(state, pending.priorLifecycle);
   const matchesPending = (m: (typeof state.dbMessages)[number]): boolean =>
     m === pending.message ||
     (m.type === "user" &&

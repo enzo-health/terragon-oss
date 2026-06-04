@@ -367,21 +367,19 @@ describe("ThreadViewModel reducer", () => {
     expect(after).toBe(before);
   });
 
-  it("keeps the two status fields in agreement across submit/reject/run events", () => {
+  it("projects threadStatus from lifecycle across submit/reject/run events", () => {
     let state = createInitialThreadViewModelState(
       snapshotWithMessages([userMessage("hi")]),
     );
-    const assertAgree = () => {
-      expect(state.threadStatus).toBe(state.lifecycle.threadStatus);
-    };
-    assertAgree();
+    const projectedStatus = () => projectThreadViewModel(state).threadStatus;
+    expect(projectedStatus()).toBe(state.lifecycle.threadStatus);
     state = threadViewModelReducer(state, {
       type: "optimistic.user-submitted",
       message: userMessage("go"),
       optimisticStatus: "booting",
       clientSubmissionId: "sub-inv-1",
     });
-    assertAgree();
+    expect(projectedStatus()).toBe("booting");
     state = threadViewModelReducer(state, {
       type: "ag-ui.event",
       event: {
@@ -390,12 +388,12 @@ describe("ThreadViewModel reducer", () => {
         value: { status: "working" },
       } as BaseEvent,
     });
-    assertAgree();
+    expect(projectedStatus()).toBe("working");
     state = threadViewModelReducer(state, {
       type: "optimistic.user-submit-rejected",
       clientSubmissionId: "sub-inv-1",
     });
-    assertAgree();
+    expect(projectedStatus()).toBe(state.lifecycle.threadStatus);
   });
 
   it("preserves optimistic permission mode across hydration until durable reconciliation", () => {
