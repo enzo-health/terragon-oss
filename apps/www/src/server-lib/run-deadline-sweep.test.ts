@@ -8,6 +8,11 @@ const updateStatusMocks = vi.hoisted(() => ({
   updateThreadChatWithTransition: vi.fn(),
 }));
 
+const sandboxMocks = vi.hoisted(() => ({
+  setActiveThreadChat: vi.fn(),
+  maybeHibernateSandboxById: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => ({
   db: { label: "db" },
 }));
@@ -19,6 +24,14 @@ vi.mock("@terragon/shared/model/threads", () => ({
 vi.mock("@/agent/update-status", () => ({
   updateThreadChatWithTransition:
     updateStatusMocks.updateThreadChatWithTransition,
+}));
+
+vi.mock("@/agent/sandbox-resource", () => ({
+  setActiveThreadChat: sandboxMocks.setActiveThreadChat,
+}));
+
+vi.mock("@/agent/sandbox", () => ({
+  maybeHibernateSandboxById: sandboxMocks.maybeHibernateSandboxById,
 }));
 
 import { db } from "@/lib/db";
@@ -48,6 +61,8 @@ describe("runDeadlineSweep", () => {
       didUpdateStatus: true,
       updatedStatus: "complete",
     });
+    sandboxMocks.setActiveThreadChat.mockResolvedValue(undefined);
+    sandboxMocks.maybeHibernateSandboxById.mockResolvedValue(undefined);
   });
 
   describe("selection", () => {
