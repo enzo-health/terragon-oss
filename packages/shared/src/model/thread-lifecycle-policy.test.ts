@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ThreadStatus } from "../db/types";
 import {
   getFollowUpQueueBlockReason,
+  isAgentRunLiveThreadStatus,
   isConcurrencyActiveThreadStatus,
   isPrimaryChatLiveThreadStatus,
   shouldProcessQueuedFollowUpImmediately,
@@ -49,6 +50,31 @@ describe("thread lifecycle policy", () => {
       "working-done",
       "checkpointing",
     ]);
+  });
+
+  it("treats post-turn finishing states as not run-live (composer presents idle)", () => {
+    // run-live = primaryChatLive minus the post-turn finishing states, so the
+    // composer drops its stop button and "queue when done" placeholder once the
+    // agent's turn is over even though the sandbox is still busy (checkpoint).
+    expect(ALL_THREAD_STATUSES.filter(isAgentRunLiveThreadStatus)).toEqual([
+      "queued",
+      "queued-blocked",
+      "queued-sandbox-creation-rate-limit",
+      "queued-tasks-concurrency",
+      "queued-agent-rate-limit",
+      "booting",
+      "working",
+      "stopping",
+    ]);
+    for (const status of [
+      "working-done",
+      "working-error",
+      "working-stopped",
+      "checkpointing",
+    ] as const) {
+      expect(isPrimaryChatLiveThreadStatus(status)).toBe(true);
+      expect(isAgentRunLiveThreadStatus(status)).toBe(false);
+    }
   });
 
   it("only dispatches queued follow-ups immediately from idle terminal states", () => {

@@ -6,11 +6,13 @@ Status: W1–W5 landed. The canonical `run-terminal` is the **sole** completion 
 `requires-v2-envelope` 409 + legacy terminal synthesis) is DELETED, and the ACP `/status`
 poll is removed (`4ce35469`). Per the no-backwards-compatibility decision, un-rebundled
 daemons that emit only the legacy message are no longer completed by the route — the
-`run-deadline-sweep` backstops them. **W6 (free the composer during git checkpoint) is the
-one remaining piece and is NOT done**: it requires moving checkpoint to a runId-leased
-post-terminal effect, because freeing the composer makes a follow-up start a new run that
-races the in-flight git checkpoint (a data-corruption race, not a compat concern). That
-needs integration-harness verification. Branch: `fix/acp-streaming-followups`.
+`run-deadline-sweep` backstops them. **W6 done** as a display-facet split (not the literal `primaryChatLive` flip, which would
+make follow-ups SEND into a running checkpoint — a git race). New `isAgentRunLiveThreadStatus`
+= `primaryChatLive` minus the post-turn finishing states (working-done/working-error/
+working-stopped/checkpointing); it drives only composer DISPLAY (placeholder + stop button)
+so the composer presents idle at turn-done. Routing and server guards stay on
+`primaryChatLive`, so follow-ups still queue during checkpoint and render via the existing
+optimistic path — no race. Branch: `fix/acp-streaming-followups`.
 
 ## Thesis
 

@@ -144,6 +144,30 @@ export function isPrimaryChatLiveThreadStatus(status: ThreadStatus): boolean {
   return THREAD_LIFECYCLE_POLICY[status].primaryChatLive;
 }
 
+// Post-turn finishing states: the agent's turn has ended (output complete) but the
+// thread is still occupied wrapping up (checkpoint/PR, error/stop cleanup). They are
+// primaryChatLive (the sandbox is busy, follow-ups still queue) but the composer
+// should present as idle — no stop button, normal placeholder — since the agent is
+// no longer producing output.
+const AGENT_TURN_FINISHED_STATUSES = new Set<ThreadStatus>([
+  "working-done",
+  "working-error",
+  "working-stopped",
+  "checkpointing",
+]);
+
+/**
+ * True while the agent's turn is actively producing output. Drives composer
+ * *display* (stop button, placeholder) — NOT routing or concurrency, which stay on
+ * `primaryChatLive` so follow-ups still queue safely during checkpoint.
+ */
+export function isAgentRunLiveThreadStatus(status: ThreadStatus): boolean {
+  return (
+    THREAD_LIFECYCLE_POLICY[status].primaryChatLive &&
+    !AGENT_TURN_FINISHED_STATUSES.has(status)
+  );
+}
+
 export function shouldProcessQueuedFollowUpImmediately(
   status: ThreadStatus,
 ): boolean {
