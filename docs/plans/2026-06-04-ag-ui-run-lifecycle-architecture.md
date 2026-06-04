@@ -34,7 +34,7 @@ A missing terminal degrades to a synthesized `timeout` terminal in minutes — a
 
 - `OperationalRunTerminalEvent` schema (`packages/agent/src/canonical-events.ts:72`).
 - Server consumer prefers it: `findCanonicalRunTerminalEvent` /
-  `buildCanonicalRunTerminalEvent` / `splitCanonicalEventsForCommit` (event-commit.ts);
+  `splitCanonicalEventsForCommit` (event-commit.ts);
   `route.ts:848` reads `canonicalTerminal` before falling back to message-sniffing.
 - Client reducer already handles `RUN_FINISHED` / `RUN_ERROR` / `CUSTOM
 thread.status_changed` (`thread-view-model-lifecycle-events.ts:130-176`).
@@ -85,12 +85,16 @@ write. This makes a correct DB `complete` reach the client even if `RUN_FINISHED
 
 ### W2 — Temporal-style deadline sweep (fixes existing sandboxes)
 
-New fast cron `api/internal/cron/run-deadline-sweep` (1-2 min). Reuse
-`getStalledThreadChats` with a short cutoff (~10-15 min). For each stuck run, drive a fenced
-`run-terminal{failed, reason:"timeout"}` through the same terminal path
-(`completeAgentRunContextTerminal` + `updateThreadChatWithTransition`) so all layers
-converge on one projection. Keep the hourly `stopStalledThreadChats` as a coarse safety net
-(it also hibernates sandboxes). Idempotent on runId.
+New fast cron `api/internal/cron/run-deadline-sweep` (~15 min cutoff). Reuse
+`getStalledThreadChats`. For each stuck run: drive a terminal `system.error` transition via
+`updateThreadChatWithTransition` (which fires the `thread.status_changed` broadcast so the
+composer de-latches), close the run-context through the fenced
+`completeAgentRunContextTerminal` (so a late daemon event can't be accepted as live), then
+release the sandbox via `setActiveThreadChat` + `maybeHibernateSandboxById` — so all layers
+converge on one projection. The sweep is the sole stalled-thread-chat authority (the old
+hourly `stopStalledThreadChats` bulk-UPDATE was removed); the hourly cron keeps only
+thread-level `stopStalledThreads` + booting recovery. Idempotent: `system.error` is a no-op
+on already-terminal rows, and the fenced terminal is keyed to the runId.
 
 ### W3 — client de-latches from the local promise
 
