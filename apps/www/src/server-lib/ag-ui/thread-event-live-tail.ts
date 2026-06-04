@@ -7,6 +7,7 @@ import {
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
 import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
+import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   isTerminalRunEventType,
   type ReplayEntry,
@@ -49,6 +50,18 @@ export async function replayDurableEventsAfterCursor(params: {
       afterSeq: sse.lastDeliveredSeq ?? undefined,
     });
   } catch (error) {
+    recordAgentTraceSpan({
+      traceId: sse.resolvedRunId ?? threadChatId,
+      name: "server.agui.live_tail.replay_failed",
+      attributes: {
+        threadId,
+        threadChatId,
+        runId: sse.resolvedRunId,
+        afterSeq: sse.lastDeliveredSeq,
+        errorName: error instanceof Error ? error.name : "unknown",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    });
     console.warn(
       "[ag-ui] durable catch-up replay failed during live-tail; continuing",
       { threadId, threadChatId, runId: sse.resolvedRunId },
@@ -128,6 +141,21 @@ export async function reconcileActiveRunFromDurable(params: {
     await replayDurableEventsAfterCursor({ db, sse, threadId, threadChatId });
     return sse.closed;
   } catch (error) {
+    const swallowed = cause ?? error;
+    recordAgentTraceSpan({
+      traceId: runId,
+      name: "server.agui.live_tail.run_lookup_failed",
+      attributes: {
+        lookup: "run_context",
+        phase,
+        threadId,
+        threadChatId,
+        runId,
+        errorName: swallowed instanceof Error ? swallowed.name : "unknown",
+        errorMessage:
+          swallowed instanceof Error ? swallowed.message : String(swallowed),
+      },
+    });
     console.warn(
       "[ag-ui] durable run status check failed during live-tail; continuing",
       { phase, threadId, threadChatId, runId },
@@ -151,6 +179,18 @@ export async function discoverRunFromDurableLog(params: {
       threadChatId,
     });
   } catch (error) {
+    recordAgentTraceSpan({
+      traceId: sse.resolvedRunId ?? threadChatId,
+      name: "server.agui.live_tail.run_lookup_failed",
+      attributes: {
+        lookup: "latest_run",
+        threadId,
+        threadChatId,
+        resolvedRunId: sse.resolvedRunId,
+        errorName: error instanceof Error ? error.name : "unknown",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    });
     console.warn(
       "[ag-ui] latest-run discovery failed during empty live-tail; continuing",
       { threadId, threadChatId },

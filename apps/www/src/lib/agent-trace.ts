@@ -18,7 +18,9 @@ export type AgentTraceSpanName =
   | "server.agui.redis.published"
   | "server.agui.sse.opened"
   | "server.agui.sse.first_frame"
-  | "server.agui.sse.closed";
+  | "server.agui.sse.closed"
+  | "server.agui.live_tail.replay_failed"
+  | "server.agui.live_tail.run_lookup_failed";
 
 export type AgentTraceSpan = {
   schemaVersion: 1;
