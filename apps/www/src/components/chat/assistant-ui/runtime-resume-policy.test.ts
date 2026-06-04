@@ -37,4 +37,45 @@ describe("resolveRuntimeResumePolicy", () => {
       }).historyLoadKey,
     ).toBe("chat-1:active:retry-2");
   });
+
+  it("server-active overrides a stale-idle client signal (deadlock defused)", () => {
+    const policy = resolveRuntimeResumePolicy({
+      isAgentWorking: false,
+      serverRunActive: true,
+      threadChatId: "chat-1",
+    });
+    expect(policy.historyMode).toBe("active-resume");
+    expect(policy.replayCursorAction).toBe("apply-history-last-seq");
+    expect(policy.historyLoadKey).toBe("chat-1:active");
+  });
+
+  it("server-inactive does not force a stream closed while the client is optimistically working", () => {
+    const policy = resolveRuntimeResumePolicy({
+      isAgentWorking: true,
+      serverRunActive: false,
+      threadChatId: "chat-1",
+    });
+    expect(policy.historyMode).toBe("active-resume");
+    expect(policy.replayCursorAction).toBe("apply-history-last-seq");
+  });
+
+  it("both signals idle resolves to a closed stream", () => {
+    const policy = resolveRuntimeResumePolicy({
+      isAgentWorking: false,
+      serverRunActive: false,
+      threadChatId: "chat-1",
+    });
+    expect(policy.historyMode).toBe("idle-finalized");
+    expect(policy.replayCursorAction).toBe("clear");
+  });
+
+  it("undefined serverRunActive falls back to isAgentWorking (flag off = legacy)", () => {
+    expect(
+      resolveRuntimeResumePolicy({
+        isAgentWorking: false,
+        serverRunActive: undefined,
+        threadChatId: "chat-1",
+      }).historyMode,
+    ).toBe("idle-finalized");
+  });
 });

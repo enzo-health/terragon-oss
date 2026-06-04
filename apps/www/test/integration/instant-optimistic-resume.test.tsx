@@ -144,6 +144,36 @@ describe("instant optimistic resume seam", () => {
     expect(policy.replayCursorAction).toBe("apply-history-last-seq");
   });
 
+  it("server-authoritative runActive opens the stream when isAgentWorking is stale-false (deadlock class)", () => {
+    // The deadlock class P2 targets: the client status projection is idle
+    // (isAgentWorking=false) but the server's durable run context reports a
+    // live run (runActive=true). Without the server signal the resume policy
+    // resolves idle-finalized/clear and no SSE opens. With it, the policy
+    // resolves active-resume/apply-history-last-seq and the stream opens.
+    const state = createInitialThreadViewModelState(
+      idleSnapshot([userMessage("hi")]),
+    );
+    const status = projectThreadViewModel(state).lifecycle.threadStatus;
+    const working = deriveIsAgentWorking(status);
+    expect(working).toBe(false);
+
+    const deadlockedPolicy = resolveRuntimeResumePolicy({
+      isAgentWorking: working,
+      threadChatId: "chat-xyz",
+    });
+    expect(deadlockedPolicy.historyMode).toBe("idle-finalized");
+
+    const serverAuthoritativePolicy = resolveRuntimeResumePolicy({
+      isAgentWorking: working,
+      serverRunActive: true,
+      threadChatId: "chat-xyz",
+    });
+    expect(serverAuthoritativePolicy.historyMode).toBe("active-resume");
+    expect(serverAuthoritativePolicy.replayCursorAction).toBe(
+      "apply-history-last-seq",
+    );
+  });
+
   it("a rejection reverts isAgentWorking back to the closed-stream baseline", () => {
     let state = threadViewModelReducer(
       createInitialThreadViewModelState(idleSnapshot([userMessage("hi")])),
