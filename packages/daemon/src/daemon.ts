@@ -7,10 +7,12 @@ import {
 import { AIAgent } from "@terragon/agent/types";
 import {
   AcpToolCallTracker,
+  buildAcpTerminalResultMessage,
   coalesceAssistantTextMessages,
   createAcpPermissionRequestMessage,
   normalizeAcpPermissionRequest,
   parseAcpLineToClaudeMessages,
+  readAcpStopReason,
 } from "./acp-adapter";
 import { tryParseAcpAsCodexEvent } from "./acp-codex-adapter";
 import { AgentFrontmatterReader } from "./agent-frontmatter";
@@ -2939,27 +2941,45 @@ export class TerragonDaemon {
         },
         noTimeout: true,
         signal: promptPostAbortController.signal,
-      }).catch((err: unknown) => {
-        // POST failures are non-fatal: SSE terminal event is sole completion signal
-        if (!promptPostAbortController.signal.aborted) {
-          if (
-            !sawAssistantOrUserMessage &&
-            isRecoverableAcpPromptPostFailure(err)
-          ) {
-            recoverablePromptPostError =
-              err instanceof Error ? err : new Error(getErrorMessage(err));
-            resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
-            return;
+      })
+        .then((response) => {
+          // The session/prompt JSON-RPC result carries stopReason — the
+          // authoritative end-of-turn signal. The SSE echo is still raced as a
+          // fast-path, but proxies/LBs may kill the long-lived POST and some ACP
+          // servers return stopReason only here (never re-emit it over SSE).
+          // Treat this trusted direct response as terminal so completion never
+          // hinges solely on the SSE echo. Unlike the SSE path this needs no
+          // id-gating: the POST response is, by construction, the reply to our
+          // own activePromptRequestId.
+          if (promptPostAbortController.signal.aborted) return;
+          if (sawTerminalEventFromStream) return;
+          const stopReason = readAcpStopReason(response.result);
+          if (stopReason === null) return;
+          applyAcpMessages([
+            buildAcpTerminalResultMessage(stopReason, sessionId),
+          ]);
+        })
+        .catch((err: unknown) => {
+          // POST failures are non-fatal: SSE terminal event is sole completion signal
+          if (!promptPostAbortController.signal.aborted) {
+            if (
+              !sawAssistantOrUserMessage &&
+              isRecoverableAcpPromptPostFailure(err)
+            ) {
+              recoverablePromptPostError =
+                err instanceof Error ? err : new Error(getErrorMessage(err));
+              resolveRecoverablePromptPostFailure?.(recoverablePromptPostError);
+              return;
+            }
+            this.runtime.logger.warn(
+              "ACP session/prompt POST failed (non-fatal)",
+              {
+                threadChatId: input.threadChatId,
+                error: formatError(err),
+              },
+            );
           }
-          this.runtime.logger.warn(
-            "ACP session/prompt POST failed (non-fatal)",
-            {
-              threadChatId: input.threadChatId,
-              error: formatError(err),
-            },
-          );
-        }
-      });
+        });
 
       // Await SSE terminal event OR prolonged SSE inactivity
       let inactivityTimer: ReturnType<typeof setInterval> | undefined;

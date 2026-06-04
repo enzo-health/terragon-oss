@@ -124,12 +124,17 @@ export const machine = createMachine({
       on: {
         "user.message": "working",
         "system.checkpoint": "checkpointing",
+        // An error during the checkpoint flow (e.g. the system.checkpoint
+        // transition itself fails before reaching `checkpointing`) must not
+        // strand this primaryChatLive state. `checkpointing` already handles it.
+        "system.error": "complete",
       },
     },
     "working-error": {
       on: {
         "user.message": "working",
         "system.checkpoint": "checkpointing",
+        "system.error": "complete",
       },
     },
     checkpointing: {
