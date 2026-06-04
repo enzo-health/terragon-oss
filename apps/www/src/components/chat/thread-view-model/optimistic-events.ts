@@ -8,16 +8,19 @@ export function createOptimisticUserSubmittedEvent({
   message,
   optimisticStatus,
   clientSubmissionId,
+  at = Date.now(),
 }: {
   message: DBUserMessage;
   optimisticStatus: ThreadStatus;
   clientSubmissionId: string;
+  at?: number;
 }): ThreadViewEvent {
   return {
     type: "optimistic.user-submitted",
     message: { ...message, clientSubmissionId },
     optimisticStatus,
     clientSubmissionId,
+    at,
   };
 }
 
@@ -98,6 +101,7 @@ export function applyOptimisticUserSubmit(
       priorLifecycle,
     },
     hasOptimisticUserSubmit: true,
+    optimisticPendingSince: event.at ?? null,
   };
 }
 
@@ -128,5 +132,6 @@ export function applyOptimisticUserSubmitRejected(
     },
     optimisticSubmission: null,
     hasOptimisticUserSubmit: false,
+    optimisticPendingSince: null,
   };
 }

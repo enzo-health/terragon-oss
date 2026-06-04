@@ -845,6 +845,10 @@ export async function POST(request: Request) {
     : null;
 
   const canonicalTerminal = canonicalTerminalBeforePersistence;
+  // The canonical run-terminal is the authoritative completion signal. The
+  // message-sniffing path is a back-compat shim only for un-rebundled daemons
+  // (shipped in the sandbox image) that still emit the legacy `result` message
+  // and no run-terminal — keep it until those sandboxes drain.
   const daemonRunStatusFromMessages = canonicalTerminal
     ? canonicalTerminal.status
     : deriveRunStatusFromMessages(messages);

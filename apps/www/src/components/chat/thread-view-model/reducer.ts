@@ -1,8 +1,10 @@
 import { type BaseEvent } from "@ag-ui/core";
+import type { ThreadStatus } from "@terragon/shared";
 import {
   createRepoFileArtifactDescriptor,
   createRepoTreeArtifactDescriptor,
 } from "@terragon/shared/db/artifact-descriptors";
+import { isPrimaryChatLiveThreadStatus } from "@terragon/shared/model/thread-lifecycle-policy";
 import { getAgUiEventDedupeKey, trackSeenAgUiEventKey } from "./ag-ui-adapter";
 import {
   getArtifactReferenceDescriptor,
@@ -53,6 +55,7 @@ export function createInitialThreadViewModelState(
     hasOptimisticUserSubmit: false,
     hasOptimisticQueuedMessages: false,
     hasOptimisticPermissionMode: false,
+    optimisticPendingSince: null,
     optimisticSubmission: null,
     seenEventKeys: new Set(),
     seenEventOrder: [],
@@ -65,7 +68,14 @@ export function threadViewModelReducer(
 ): ThreadViewModelState {
   switch (event.type) {
     case "snapshot.hydrated":
-      return applySnapshot(state, event.snapshot, "preserve-active-transcript");
+      return applySnapshot(
+        state,
+        event.snapshot,
+        "preserve-active-transcript",
+        {
+          at: event.at,
+        },
+      );
     case "server.refetch-reconciled":
       return applySnapshot(state, event.snapshot, "replace-transcript");
     case "ag-ui.event":
@@ -138,21 +148,73 @@ export function projectThreadViewModel(
   };
 }
 
+/**
+ * Statuses where the run is definitively over. DB status is the single client
+ * liveness authority: a snapshot carrying one of these is authoritative-terminal
+ * and, once the local optimistic latch is past its fresh-grace TTL, wins over it.
+ */
+const TERMINAL_THREAD_STATUSES = new Set<ThreadStatus>([
+  "complete",
+  "error",
+  "stopped",
+]);
+
+/**
+ * Client-side TTL for an unconfirmed optimistic "started" latch. A fresh
+ * optimistic submit holds the snappy overlay for this window even against a
+ * stale-cached terminal snapshot. Once the latch has gone unconfirmed past the
+ * window — no live lifecycle event and a non-live (terminal/idle) snapshot —
+ * the authoritative DB status reverts the UI so it cannot wedge on `working`.
+ * A genuine `booting`/`working` DB status is live and never reverts, so a
+ * slow-to-boot run is not prematurely de-latched.
+ */
+export const OPTIMISTIC_SUBMIT_TTL_MS = 15_000;
+
+function isTerminalThreadStatus(status: ThreadStatus | null): boolean {
+  return status !== null && TERMINAL_THREAD_STATUSES.has(status);
+}
+
+function isLiveThreadStatus(status: ThreadStatus | null): boolean {
+  return status !== null && isPrimaryChatLiveThreadStatus(status);
+}
+
 function applySnapshot(
   state: ThreadViewModelState,
   snapshot: ThreadViewSnapshot,
   transcriptMode: "preserve-active-transcript" | "replace-transcript",
+  options: { at?: number } = {},
 ): ThreadViewModelState {
   if (isSnapshotNoOp(state, snapshot, transcriptMode)) {
     return state;
   }
 
   const shouldReplaceLocalState = transcriptMode === "replace-transcript";
+
+  // DB status is authoritative. An optimistic "started" latch that has gone
+  // unconfirmed past the fresh-grace TTL against a non-live snapshot yields to
+  // the snapshot's DB status (typically terminal) so the UI cannot wedge on
+  // `working`. The TTL grace protects a just-submitted follow-up from a
+  // stale-cached terminal snapshot reflecting the previous turn.
+  const optimisticLatchIsStale =
+    state.optimisticPendingSince !== null &&
+    options.at !== undefined &&
+    !isLiveThreadStatus(snapshot.threadStatus) &&
+    options.at - state.optimisticPendingSince > OPTIMISTIC_SUBMIT_TTL_MS;
+  const shouldYieldToAuthoritative =
+    !shouldReplaceLocalState &&
+    optimisticLatchIsStale &&
+    isTerminalThreadStatus(snapshot.threadStatus);
+
   const shouldPreserveOptimisticUser =
-    !shouldReplaceLocalState && state.hasOptimisticUserSubmit;
+    !shouldReplaceLocalState &&
+    !shouldYieldToAuthoritative &&
+    state.hasOptimisticUserSubmit;
   const shouldPreserveLocalLifecycle =
     !shouldReplaceLocalState &&
+    !shouldYieldToAuthoritative &&
     (state.hasLiveLifecycleEvents || state.hasOptimisticUserSubmit);
+  const shouldClearLocalLatch =
+    shouldReplaceLocalState || shouldYieldToAuthoritative;
   const lifecycle = shouldPreserveLocalLifecycle
     ? state.lifecycle
     : snapshot.lifecycle;
@@ -198,10 +260,13 @@ function applySnapshot(
       snapshot.quarantine.length > 0
         ? [...state.quarantine, ...snapshot.quarantine]
         : state.quarantine,
-    hasOptimisticUserSubmit: shouldReplaceLocalState
+    hasOptimisticUserSubmit: shouldClearLocalLatch
       ? false
       : state.hasOptimisticUserSubmit,
-    optimisticSubmission: shouldReplaceLocalState
+    optimisticPendingSince: shouldClearLocalLatch
+      ? null
+      : state.optimisticPendingSince,
+    optimisticSubmission: shouldClearLocalLatch
       ? null
       : state.optimisticSubmission,
     hasOptimisticQueuedMessages: shouldReplaceLocalState
@@ -210,7 +275,7 @@ function applySnapshot(
     hasOptimisticPermissionMode: shouldReplaceLocalState
       ? false
       : state.hasOptimisticPermissionMode,
-    hasLiveLifecycleEvents: shouldReplaceLocalState
+    hasLiveLifecycleEvents: shouldClearLocalLatch
       ? false
       : state.hasLiveLifecycleEvents,
   };
@@ -366,6 +431,10 @@ function applyAgUiEvent(
 
   const tracked = trackDedupeKeyIfNeeded(state, dedupeKey);
   const statusChanged = lifecycle.threadStatus !== state.threadStatus;
+  // An authoritative terminal lifecycle event (RUN_FINISHED / RUN_ERROR / a
+  // terminal thread.status_changed) ends the turn: drop the optimistic latch so
+  // a later snapshot.hydrated cannot resurrect the stale optimistic status.
+  const reachedTerminal = isTerminalThreadStatus(lifecycle.threadStatus);
   return {
     ...state,
     artifacts,
@@ -373,7 +442,14 @@ function applyAgUiEvent(
     lifecycle,
     lifecycleMessages,
     threadStatus: lifecycle.threadStatus,
-    optimisticSubmission: statusChanged ? null : state.optimisticSubmission,
+    optimisticSubmission:
+      statusChanged || reachedTerminal ? null : state.optimisticSubmission,
+    hasOptimisticUserSubmit: reachedTerminal
+      ? false
+      : state.hasOptimisticUserSubmit,
+    optimisticPendingSince: reachedTerminal
+      ? null
+      : state.optimisticPendingSince,
     seenEventKeys: tracked.seenEventKeys,
     seenEventOrder: tracked.seenEventOrder,
     hasLiveLifecycleEvents:

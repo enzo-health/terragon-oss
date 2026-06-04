@@ -436,6 +436,16 @@ type DaemonEventRunState = {
   acpServerId: string | null;
   acpSessionId: string | null;
   canonicalRunStartedEmitted: boolean;
+  /**
+   * Per-run idempotency guard for the single canonical run-terminal event.
+   * All terminal signals — ACP POST result / SSE echo, Codex WS turn-complete,
+   * the legacy NDJSON `result` message, and the idle watchdog — converge on the
+   * same buffer that drains through `buildCanonicalEventsForBatch`, so flipping
+   * this once the normalizer emits the terminal makes that builder the single
+   * `finalizeTurn` choke point: exactly one run-terminal per run, no matter how
+   * many terminal messages arrive. Committed on ack alongside the seq cursor.
+   */
+  canonicalTerminalEmitted: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
@@ -445,6 +455,7 @@ type DaemonEventRunState = {
     canonicalEvents: CanonicalEvent[];
     nextCanonicalSeqAfterBatch: number;
     canonicalRunStartedEmittedAfterBatch: boolean;
+    canonicalTerminalEmittedAfterBatch: boolean;
   } | null;
 };
 
@@ -953,6 +964,7 @@ export class TerragonDaemon {
       acpServerId: input.acpServerId ?? null,
       acpSessionId: input.acpSessionId ?? null,
       canonicalRunStartedEmitted: false,
+      canonicalTerminalEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -2472,6 +2484,12 @@ export class TerragonDaemon {
       if (!chunk.trim()) {
         return;
       }
+      // Any non-empty SSE chunk is stream liveness — including tool-call progress
+      // events the Codex parser coalesces into zero ClaudeMessages. Reset the
+      // idle clock here (not only when a message is applied) so a long silent
+      // tool call is never force-failed, while a truly dead stream still times
+      // out via ACP_SSE_INACTIVITY_TIMEOUT_MS.
+      lastAcpMessageAtMs = Date.now();
       let eventName = "message";
       const dataLines: string[] = [];
       for (const line of chunk.split("\n")) {
@@ -3303,6 +3321,7 @@ export class TerragonDaemon {
       acpServerId: null,
       acpSessionId: null,
       canonicalRunStartedEmitted: false,
+      canonicalTerminalEmitted: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -3356,6 +3375,7 @@ export class TerragonDaemon {
       protocolVersion: runState.protocolVersion,
       nextCanonicalSeq: runState.nextCanonicalSeq,
       canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
+      canonicalTerminalEmitted: runState.canonicalTerminalEmitted,
       threadId,
       threadChatId,
       messages,
@@ -3372,6 +3392,8 @@ export class TerragonDaemon {
       nextCanonicalSeqAfterBatch: canonicalBatch.nextCanonicalSeqAfterBatch,
       canonicalRunStartedEmittedAfterBatch:
         canonicalBatch.canonicalRunStartedEmittedAfterBatch,
+      canonicalTerminalEmittedAfterBatch:
+        canonicalBatch.canonicalTerminalEmittedAfterBatch,
     };
     this.daemonEventRunStates.set(threadChatId, runState);
 
@@ -3426,6 +3448,8 @@ export class TerragonDaemon {
       runState.pendingEnvelope.nextCanonicalSeqAfterBatch;
     runState.canonicalRunStartedEmitted =
       runState.pendingEnvelope.canonicalRunStartedEmittedAfterBatch;
+    runState.canonicalTerminalEmitted =
+      runState.pendingEnvelope.canonicalTerminalEmittedAfterBatch;
     runState.pendingEnvelope = null;
     this.daemonEventRunStates.set(threadChatId, runState);
     this.maybeCleanupDaemonEventRunState(threadChatId);

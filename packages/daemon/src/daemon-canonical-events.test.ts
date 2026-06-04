@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { CanonicalEventSchema } from "@terragon/agent/canonical-events";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildCanonicalEventsForBatch,
   type BuildCanonicalEventsParams,
+  deriveRunTerminalFromMessages,
   getMessageFingerprint,
 } from "./daemon-canonical-events";
 import type { ClaudeMessage } from "./shared";
@@ -21,6 +23,7 @@ function baseParams(
     protocolVersion: 2,
     nextCanonicalSeq: 0,
     canonicalRunStartedEmitted: false,
+    canonicalTerminalEmitted: false,
     threadId: "thread-1",
     threadChatId: "thread-chat-1",
     messages: [],
@@ -282,6 +285,190 @@ describe("buildCanonicalEventsForBatch", () => {
         reason: "missing_tool_use_identity",
       }),
     );
+  });
+
+  it("emits a completed run-terminal as the last event for a success result", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 4,
+        messages: [
+          {
+            type: "assistant",
+            message: { role: "assistant", content: "All done" },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        seq: 4,
+        type: "assistant-message",
+        content: "All done",
+      }),
+      expect.objectContaining({
+        eventId: canonicalEventId("run-1", 5),
+        seq: 5,
+        category: "operational",
+        type: "run-terminal",
+        status: "completed",
+      }),
+    ]);
+    const terminal = result.canonicalEvents.at(-1)!;
+    expect("errorMessage" in terminal).toBe(false);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(6);
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+    expect(CanonicalEventSchema.parse(terminal)).toMatchObject({
+      type: "run-terminal",
+      status: "completed",
+    });
+  });
+
+  it("maps an is_error result to a failed run-terminal carrying error text", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            is_error: true,
+            subtype: "error_during_execution",
+            duration_ms: 5,
+            num_turns: 1,
+            error: "boom",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "run-terminal",
+        status: "failed",
+        errorMessage: "boom",
+      }),
+    ]);
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+
+  it("maps custom-stop to a stopped run-terminal", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        messages: [{ type: "custom-stop", session_id: null, duration_ms: 3 }],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({ type: "run-terminal", status: "stopped" }),
+    ]);
+    expect(result.canonicalEvents.at(-1)).not.toHaveProperty("errorMessage");
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+
+  it("maps custom-error to a failed run-terminal with its error_info", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "custom-error",
+            session_id: null,
+            duration_ms: 3,
+            error_info: "agent crashed",
+          },
+        ],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "run-terminal",
+        status: "failed",
+        errorMessage: "agent crashed",
+      }),
+    ]);
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+
+  it("does not emit a second run-terminal once one was already emitted", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        canonicalTerminalEmitted: true,
+        nextCanonicalSeq: 9,
+        messages: [{ type: "custom-stop", session_id: null, duration_ms: 1 }],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([]);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(9);
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+
+  it("places the run-terminal after a run-started in a single terminal batch", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    expect(result.canonicalEvents.map((event) => event.type)).toEqual([
+      "run-started",
+      "run-terminal",
+    ]);
+    expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
+    expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+});
+
+describe("deriveRunTerminalFromMessages", () => {
+  it("returns null when no terminal message is present", () => {
+    expect(
+      deriveRunTerminalFromMessages([
+        {
+          type: "assistant",
+          message: { role: "assistant", content: "hi" },
+          parent_tool_use_id: null,
+          session_id: "session-1",
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("prefers the first terminal message in the batch", () => {
+    expect(
+      deriveRunTerminalFromMessages([
+        { type: "custom-stop", session_id: null, duration_ms: 1 },
+        {
+          type: "custom-error",
+          session_id: null,
+          duration_ms: 1,
+          error_info: "later",
+        },
+      ]),
+    ).toEqual({ status: "stopped", errorMessage: null });
   });
 });
 

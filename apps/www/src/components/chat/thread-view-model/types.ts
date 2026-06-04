@@ -88,6 +88,7 @@ export type ThreadViewEvent =
   | {
       type: "snapshot.hydrated";
       snapshot: ThreadViewSnapshot;
+      at?: number;
     }
   | {
       type: "ag-ui.event";
@@ -102,6 +103,14 @@ export type ThreadViewEvent =
       message: DBUserMessage;
       optimisticStatus: ThreadStatus;
       clientSubmissionId: string;
+      /**
+       * Monotonic dispatch timestamp used to age the optimistic latch out via
+       * {@link OPTIMISTIC_SUBMIT_TTL_MS}. Optional so callers that don't care
+       * about the TTL (e.g. direct unit-test dispatches) can omit it; when
+       * absent the latch has no TTL and self-corrects only on an authoritative
+       * terminal event or an explicit reconcile.
+       */
+      at?: number;
     }
   | {
       type: "optimistic.user-submit-rejected";
@@ -156,6 +165,15 @@ export type ThreadViewModelState = {
   hasOptimisticUserSubmit: boolean;
   hasOptimisticQueuedMessages: boolean;
   hasOptimisticPermissionMode: boolean;
+  /**
+   * Monotonic timestamp (`event.at`) of when the optimistic user-submit latch
+   * began. Used to revert an unconfirmed optimistic "started" latch to the
+   * snapshot's DB status once it exceeds {@link OPTIMISTIC_SUBMIT_TTL_MS}. Null
+   * when no optimistic submit is latched. The reducer never reads the clock;
+   * staleness is computed from a timestamp carried on the hydrating snapshot
+   * event.
+   */
+  optimisticPendingSince: number | null;
   optimisticSubmission: {
     clientSubmissionId: string;
     message: DBUserMessage;

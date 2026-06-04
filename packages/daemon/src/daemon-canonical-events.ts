@@ -25,6 +25,47 @@ function stringifyCanonicalToolResult(value: unknown): string {
   }
 }
 
+export type CanonicalRunTerminal = {
+  status: "completed" | "failed" | "stopped";
+  errorMessage: string | null;
+};
+
+/**
+ * Mirror of the server's `deriveRunStatusFromMessages` mapping
+ * (`apps/www/src/server-lib/daemon-event/message-parser.ts`): a `result` with
+ * `is_error` is `failed`, a successful `result` is `completed`, `custom-stop`
+ * is `stopped`, and `custom-error` is `failed`. Pulling the mapping up here lets
+ * the daemon emit the canonical run-terminal directly, so the server no longer
+ * has to re-derive status from the legacy message shapes for rebundled daemons.
+ * Returns null when the batch carries no terminal message.
+ */
+export function deriveRunTerminalFromMessages(
+  messages: ClaudeMessage[],
+): CanonicalRunTerminal | null {
+  for (const message of messages) {
+    if (message.type === "custom-stop") {
+      return { status: "stopped", errorMessage: null };
+    }
+    if (message.type === "custom-error") {
+      return {
+        status: "failed",
+        errorMessage: message.error_info ?? null,
+      };
+    }
+    if (message.type === "result") {
+      if (message.is_error) {
+        const errorMessage =
+          "error" in message && typeof message.error === "string"
+            ? message.error
+            : null;
+        return { status: "failed", errorMessage };
+      }
+      return { status: "completed", errorMessage: null };
+    }
+  }
+  return null;
+}
+
 export function getMessageFingerprint(messages: ClaudeMessage[]): string {
   return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
 }
@@ -91,6 +132,7 @@ export type BuildCanonicalEventsParams = {
   protocolVersion: number;
   nextCanonicalSeq: number;
   canonicalRunStartedEmitted: boolean;
+  canonicalTerminalEmitted: boolean;
   threadId: string;
   threadChatId: string;
   messages: ClaudeMessage[];
@@ -107,6 +149,7 @@ export type BuildCanonicalEventsResult = {
   canonicalEvents: CanonicalEvent[];
   nextCanonicalSeqAfterBatch: number;
   canonicalRunStartedEmittedAfterBatch: boolean;
+  canonicalTerminalEmittedAfterBatch: boolean;
 };
 
 export function buildCanonicalEventsForBatch(
@@ -128,6 +171,7 @@ export function buildCanonicalEventsForBatch(
       canonicalEvents: [],
       nextCanonicalSeqAfterBatch: params.nextCanonicalSeq,
       canonicalRunStartedEmittedAfterBatch: params.canonicalRunStartedEmitted,
+      canonicalTerminalEmittedAfterBatch: params.canonicalTerminalEmitted,
     };
   }
 
@@ -135,6 +179,7 @@ export function buildCanonicalEventsForBatch(
   const events: CanonicalEvent[] = [];
   let nextCanonicalSeq = params.nextCanonicalSeq;
   let canonicalRunStartedEmitted = params.canonicalRunStartedEmitted;
+  let canonicalTerminalEmitted = params.canonicalTerminalEmitted;
   const allocateBaseEvent = (): CanonicalBaseEvent => {
     const baseEvent = allocateCanonicalBaseEvent({
       runId,
@@ -301,9 +346,27 @@ export function buildCanonicalEventsForBatch(
     }
   }
 
+  if (!canonicalTerminalEmitted) {
+    const terminal = deriveRunTerminalFromMessages(messages);
+    if (terminal) {
+      const baseEvent = allocateBaseEvent();
+      events.push({
+        ...baseEvent,
+        category: "operational",
+        type: "run-terminal",
+        status: terminal.status,
+        ...(terminal.errorMessage !== null
+          ? { errorMessage: terminal.errorMessage }
+          : {}),
+      });
+      canonicalTerminalEmitted = true;
+    }
+  }
+
   return {
     canonicalEvents: events,
     nextCanonicalSeqAfterBatch: nextCanonicalSeq,
     canonicalRunStartedEmittedAfterBatch: canonicalRunStartedEmitted,
+    canonicalTerminalEmittedAfterBatch: canonicalTerminalEmitted,
   };
 }

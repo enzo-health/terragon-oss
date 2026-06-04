@@ -17,6 +17,7 @@ let registeredOnThreadChange:
   | null = null;
 let registeredMatchThread: ((patch: BroadcastThreadPatch) => boolean) | null =
   null;
+let registeredOnClose: (() => void) | null = null;
 
 vi.mock("@/collections/thread-shell-collection", () => ({
   applyShellPatchToCollection: (patch: BroadcastThreadPatch) =>
@@ -30,12 +31,15 @@ vi.mock("@/hooks/useRealtime", () => ({
   useRealtimeThreadMatch: ({
     matchThread,
     onThreadChange,
+    onClose,
   }: {
     matchThread: (patch: BroadcastThreadPatch) => boolean;
     onThreadChange: (patches: BroadcastThreadPatch[]) => void;
+    onClose?: () => void;
   }) => {
     registeredMatchThread = matchThread;
     registeredOnThreadChange = onThreadChange;
+    registeredOnClose = onClose ?? null;
   },
 }));
 
@@ -74,6 +78,7 @@ beforeEach(() => {
   applyChatPatch.mockImplementation(() => ({ shouldInvalidate: false }));
   registeredOnThreadChange = null;
   registeredMatchThread = null;
+  registeredOnClose = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -144,6 +149,20 @@ describe("useThreadPageRealtimeSync", () => {
     expect(keys).toContainEqual(["threads", "shell", "thread-a"]);
     expect(keys).toContainEqual(["threads", "chat", "thread-a", "chat-1"]);
     expect(keys).toContainEqual(["threads", "diff", "thread-a"]);
+  });
+
+  it("re-derives thread status from the DB when the realtime stream closes", () => {
+    render(createElement(HookHost, { threadId: "thread-a" }));
+    expect(registeredOnClose).toBeTruthy();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    act(() => registeredOnClose!());
+
+    expect(invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryKey: ["threads", "shell", "thread-a"],
+      }),
+    );
   });
 
   it("dedupes repeated invalidations within one realtime batch", () => {

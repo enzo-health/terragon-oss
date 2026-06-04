@@ -104,7 +104,7 @@ export function useThreadViewModel({
   );
 
   useEffect(() => {
-    dispatch({ type: "snapshot.hydrated", snapshot });
+    dispatch({ type: "snapshot.hydrated", snapshot, at: Date.now() });
   }, [snapshot]);
 
   const viewModel = useMemo(() => {
