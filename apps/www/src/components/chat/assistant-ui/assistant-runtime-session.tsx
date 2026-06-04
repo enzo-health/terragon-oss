@@ -131,6 +131,12 @@ export type AssistantRuntimeSessionProps = {
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   chatAgent: AIAgent;
   isAgentWorking: boolean;
+  /**
+   * When true, the resume policy may use the server-computed `runActive` flag
+   * (captured from the most recent history load) as the primary liveness
+   * signal. When false, the policy uses `isAgentWorking` only.
+   */
+  serverAuthoritativeSubscriptionEnabled?: boolean;
   threadId: string;
   threadChatId?: string;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
@@ -154,6 +160,7 @@ export function AssistantRuntimeSession({
   loadAgUiHistoryMessages,
   chatAgent,
   isAgentWorking,
+  serverAuthoritativeSubscriptionEnabled = false,
   threadId,
   threadChatId,
   setReplayCursor,
@@ -184,14 +191,29 @@ export function AssistantRuntimeSession({
     runtimeErrorState?.agent === agent ? runtimeErrorState.message : null;
   const runtimeErrorCode =
     runtimeErrorState?.agent === agent ? runtimeErrorState.code : null;
+  // Server-authoritative run liveness captured from the most recent history
+  // load. `undefined` until the first load resolves (or when the flag is off),
+  // which makes the resume policy fall back to `isAgentWorking`.
+  const [serverRunActive, setServerRunActive] = useState<boolean | undefined>(
+    undefined,
+  );
   const runtimeResumePolicy = useMemo(
     () =>
       resolveRuntimeResumePolicy({
         isAgentWorking,
+        serverRunActive: serverAuthoritativeSubscriptionEnabled
+          ? serverRunActive
+          : undefined,
         threadChatId,
         retryNonce: runtimeRecoveryNonce,
       }),
-    [isAgentWorking, threadChatId, runtimeRecoveryNonce],
+    [
+      isAgentWorking,
+      serverAuthoritativeSubscriptionEnabled,
+      serverRunActive,
+      threadChatId,
+      runtimeRecoveryNonce,
+    ],
   );
 
   const handleLocalRuntimeRetry = useCallback(async () => {
@@ -203,6 +225,9 @@ export function AssistantRuntimeSession({
   const loadHistoryMessages = useCallback(async () => {
     try {
       const history = await loadAgUiHistoryMessages();
+      // Capture server-authoritative liveness for the resume policy. `undefined`
+      // (server did not report) leaves the policy on the isAgentWorking fallback.
+      setServerRunActive(history.runActive);
       if (runtimeResumePolicy.replayCursorAction === "apply-history-last-seq") {
         setReplayCursor(
           history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
