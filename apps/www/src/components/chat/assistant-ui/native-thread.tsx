@@ -219,7 +219,7 @@ const messageTextFromParts = (parts: readonly MessageContentPart[]): string => {
 };
 
 const NATIVE_ACTION_BTN =
-  "flex items-center justify-center min-h-[32px] min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:opacity-70 transition-[opacity,color,scale] duration-150 active:scale-[0.98] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
+  "flex items-center justify-center min-h-[32px] min-w-[32px] px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring";
 
 const NativeMessageActions = ({ align }: { align: "start" | "end" }) => {
   const messageId = useAuiState((state) => state.message.id);

@@ -50,7 +50,7 @@ export function CreateAutomationButton({
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <AutomationEditorDialogContent
           automation={null}
-          title="Create Automation"
+          title="Create automation"
           ctaLabel="Create"
           initialValues={initialValues}
           onSubmit={async (values) => {

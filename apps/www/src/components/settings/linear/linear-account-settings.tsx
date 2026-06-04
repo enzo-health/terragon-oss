@@ -84,7 +84,7 @@ function LinearWorkspacePanel({
           >
             <SquareKanban className="h-4 w-4" />
             {installUrlMutation.isPending
-              ? "Redirecting..."
+              ? "Redirecting…"
               : "Install Linear Agent"}
           </Button>
         </div>
@@ -106,16 +106,16 @@ function LinearWorkspacePanel({
               </span>
               <ConnectionStatusPill connected={isActive} />
               {!isActive && (
-                <span className="rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
-                  Reauth needed
+                <span className="rounded-full bg-warning/10 px-2.5 py-0.5 font-mono text-xs text-warning-strong">
+                  Action needed
                 </span>
               )}
             </div>
-            <p className="text-xs text-mid">
+            <p className="text-xs text-mid tabular-nums">
               Organization ID: {installation.organizationId}
             </p>
             {installation.createdAt && (
-              <p className="text-xs text-mid">
+              <p className="text-xs text-mid tabular-nums">
                 Installed:{" "}
                 {new Date(installation.createdAt).toLocaleDateString()}
               </p>
@@ -136,7 +136,7 @@ function LinearWorkspacePanel({
             >
               <SquareKanban className="h-4 w-4" />
               {installUrlMutation.isPending
-                ? "Redirecting..."
+                ? "Redirecting…"
                 : "Reinstall Agent"}
             </Button>
           </div>
@@ -151,7 +151,7 @@ function LinearWorkspacePanel({
                   disabled={uninstallMutation.isPending}
                   size="sm"
                   variant="link"
-                  className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
+                  className="text-mid font-normal underline px-0 hover:text-strong"
                 >
                   Uninstall workspace
                 </Button>
@@ -213,7 +213,7 @@ function LinearAccountItem({
             <span className="font-semibold">{account.linearUserName}</span>
             <ConnectionStatusPill connected={true} />
           </div>
-          <p className="text-xs text-mid">
+          <p className="text-xs text-mid tabular-nums">
             Organization ID: {account.organizationId}
           </p>
           <p className="text-xs text-mid">{account.linearUserEmail}</p>
@@ -275,10 +275,10 @@ function LinearAccountItem({
                 disabled={disconnectMutation.isPending}
                 size="sm"
                 variant="link"
-                className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
+                className="text-mid font-normal underline px-0 hover:text-strong"
               >
                 {disconnectMutation.isPending
-                  ? "Disconnecting..."
+                  ? "Disconnecting…"
                   : "Disconnect my account"}
               </Button>
             </TooltipTrigger>
@@ -336,7 +336,7 @@ function LinearConnectButton() {
       <div className="flex">
         <Button size="sm" onClick={handleConnect} disabled={busy}>
           <SquareKanban className="h-4 w-4" />
-          {busy ? "Redirecting..." : "Connect Linear Account"}
+          {busy ? "Redirecting…" : "Connect Linear Account"}
         </Button>
       </div>
     </div>

@@ -16,7 +16,7 @@ export function EditAutomationDialog({
   return (
     <Dialog open={!!automation} onOpenChange={onClose}>
       <AutomationEditorDialogContent
-        title="Edit Automation"
+        title="Edit automation"
         automation={automation}
         initialValues={null}
         ctaLabel="Save"

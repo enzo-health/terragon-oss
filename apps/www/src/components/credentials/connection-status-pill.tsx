@@ -7,8 +7,8 @@ export function ConnectionStatusPill({ connected }: { connected: boolean }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full font-mono text-xs px-2.5 py-0.5",
-        connected ? "bg-success/10 text-success" : "text-mid",
+        "inline-flex items-center rounded-full text-xs px-2.5 py-0.5",
+        connected ? "bg-success/10 text-success-strong" : "text-mid",
       )}
     >
       {connected ? "Connected" : "Not Connected"}

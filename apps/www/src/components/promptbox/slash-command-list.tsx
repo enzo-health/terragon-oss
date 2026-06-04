@@ -6,6 +6,7 @@ import React, {
   useRef,
 } from "react";
 import { SuggestionProps } from "@tiptap/suggestion";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AIModel, AIAgentSlashCommand } from "@terragon/agent/types";
 
@@ -81,9 +82,8 @@ export const SlashCommandListContent = forwardRef<
                 onClick={() =>
                   onExecuteItem ? onExecuteItem(index) : onSelectItem(index)
                 }
-                onMouseEnter={() => onSelectItem(index)}
                 className={cn(
-                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
+                  "relative flex cursor-default select-none items-start gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
                   "aria-disabled:pointer-events-none aria-disabled:opacity-50",
                   isSelected && "bg-accent text-accent-foreground",
                 )}
@@ -91,7 +91,7 @@ export const SlashCommandListContent = forwardRef<
                 <div className="flex flex-col gap-0.5">
                   {item.isLoading ? (
                     <div className="flex items-center gap-2 py-0.5">
-                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-transparent" />
+                      <Loader2 className="size-3 animate-spin text-muted-foreground" />
                       <span className="text-xs text-muted-foreground italic">
                         Loading repository commands...
                       </span>

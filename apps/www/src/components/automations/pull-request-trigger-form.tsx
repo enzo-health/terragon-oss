@@ -140,7 +140,7 @@ export function PullRequestTriggerForm({
               }
             />
             <Label htmlFor="autoArchive" className="text-sm font-normal">
-              Archive task when agent completes
+              Auto-archive task when agent completes
             </Label>
           </div>
         </div>

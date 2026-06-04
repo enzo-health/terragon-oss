@@ -20,7 +20,7 @@ interface UsageChartProps {
 
 const threadsChartConfig = {
   threads: {
-    label: "Threads",
+    label: "Tasks",
     color: "var(--coral)",
   },
 } satisfies ChartConfig;
@@ -89,10 +89,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
             />
             <ChartTooltip
               content={
-                <ChartTooltipContent
-                  labelFormatter={(value) => value}
-                  formatter={(value) => `${value} threads`}
-                />
+                <ChartTooltipContent labelFormatter={(value) => value} />
               }
             />
             <Bar dataKey="threads" fill="var(--color-threads)" radius={4} />
@@ -131,10 +128,7 @@ export function UsageChart({ dailyStats }: UsageChartProps) {
             />
             <ChartTooltip
               content={
-                <ChartTooltipContent
-                  labelFormatter={(value) => value}
-                  formatter={(value) => `${value} PRs`}
-                />
+                <ChartTooltipContent labelFormatter={(value) => value} />
               }
             />
             <Bar dataKey="prs" fill="var(--color-prs)" radius={4} />

@@ -65,7 +65,7 @@ export function ToolTrigger({
         strokeLinejoin="round"
         aria-hidden
         className={cn(
-          "ml-auto size-4 shrink-0 transition-transform duration-200",
+          "ml-auto size-4 shrink-0 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
           "group-data-open/tool:rotate-90",
         )}
       >
@@ -156,7 +156,7 @@ export function ToolContent({
       className={cn(
         "overflow-hidden",
         "h-(--collapsible-panel-height)",
-        "transition-[height] duration-150 ease-out",
+        "transition-[height] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
         "data-starting-style:h-0 data-ending-style:h-0",
         className,
       )}

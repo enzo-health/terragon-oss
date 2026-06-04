@@ -117,7 +117,7 @@ export const MentionListContent = forwardRef<
     if (selectedItem) {
       selectedItem.scrollIntoView({
         block: "nearest",
-        behavior: "smooth",
+        behavior: "auto",
       });
     }
   }, [selectedIndex]);
@@ -148,7 +148,7 @@ export const MentionListContent = forwardRef<
       {isLoadingFiles ? (
         <div className="text-sm text-muted-foreground px-2 py-1.5 flex items-center gap-2">
           <Loader2 className="size-4 animate-spin" />
-          Loading repository files...
+          Loading files…
         </div>
       ) : items.length ? (
         items.map((item, index) => (
@@ -157,7 +157,7 @@ export const MentionListContent = forwardRef<
               itemRefs.current[index] = el;
             }}
             className={cn(
-              "flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent hover:text-accent-foreground",
+              "flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground",
               index === selectedIndex && "bg-accent text-accent-foreground",
             )}
             key={item.name}
@@ -195,10 +195,10 @@ export const MentionListContent = forwardRef<
       ) : (
         <div className="text-sm text-muted-foreground px-2 py-1.5">
           {queryForCurrentResults !== query
-            ? "Loading files..."
+            ? "Loading files…"
             : query
               ? "No files found"
-              : "Loading files..."}
+              : "Type to search files and folders"}
         </div>
       )}
     </>

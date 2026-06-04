@@ -171,10 +171,10 @@ function BannerForm({
                 <div
                   className={`rounded-full px-4 py-2 text-center text-sm font-medium ${
                     formData.variant === "default"
-                      ? "bg-info/10 text-info"
+                      ? "bg-info/10 text-info-strong"
                       : formData.variant === "warning"
-                        ? "bg-warning/10 text-warning"
-                        : "bg-error/10 text-error"
+                        ? "bg-warning/10 text-warning-strong"
+                        : "bg-error/10 text-error-strong"
                   }`}
                 >
                   {formData.message}

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/card";
 import { createCliApiToken } from "@/server-actions/cli-api-token";
 import { CodeClickToCopy } from "@/components/ui/code";
-import { Loader2, Terminal } from "lucide-react";
+import { Check, Loader2, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "../shared/wordmark";
 import { unwrapResult } from "@/lib/server-actions";
@@ -92,7 +92,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
             <Loader2 className="mb-4 h-8 w-8 animate-spin text-mid" />
             <p className="text-center text-lg">Authorizing the CLI client</p>
             <p className="mt-2 text-center text-sm text-mid">
-              Connecting to CLI...
+              Connecting to CLI…
             </p>
           </CardContent>
         </Card>
@@ -106,19 +106,7 @@ export function CLIAuth({ cliPort }: { cliPort: number }) {
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center justify-center py-12">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
-              <svg
-                className="h-6 w-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
+              <Check className="size-6" />
             </div>
             <p className="text-center text-lg font-semibold">
               Successfully authenticated

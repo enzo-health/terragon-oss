@@ -315,7 +315,7 @@ function AutomationItemContents({
             </div>
           )}
           {promptText.length > 0 && (
-            <div className="mt-2 rounded-xl bg-canvas px-3 py-2.5 shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.05)]">
+            <div className="mt-2 rounded-xl bg-canvas px-3 py-2.5 shadow-inset-edge">
               <pre className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap font-sans">
                 {promptText}
               </pre>
@@ -467,7 +467,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
+            className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
             onClick={() => {
               setPrPopoverOpen(true);
             }}
@@ -525,7 +525,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-fit py-1 text-xs rounded-full active:scale-[0.98]"
+            className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
             onClick={() => {
               setIssuePopoverOpen(true);
             }}
@@ -584,7 +584,7 @@ function AutomationRunButton({ automation }: { automation: Automation }) {
         await runMutation.mutateAsync(automation.id);
       }}
       aria-label="Run automation"
-      className="h-fit py-1 text-xs"
+      className="h-fit py-1 text-xs rounded-full active:scale-[0.98] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]"
       disabled={runMutation.isPending}
     >
       Run now

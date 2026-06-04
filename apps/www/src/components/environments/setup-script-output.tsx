@@ -51,7 +51,7 @@ export function SetupScriptOutput({
     return null;
   }
   return (
-    <div className="relative rounded-xl bg-surface-dark font-mono text-[13px] leading-[1.5] overflow-auto max-h-[500px] tabular-nums">
+    <div className="relative rounded-xl bg-surface-dark font-mono text-[13px] leading-[1.5] overflow-auto max-h-[500px]">
       {outputs.length > 0 && (
         <Button
           onClick={handleCopy}

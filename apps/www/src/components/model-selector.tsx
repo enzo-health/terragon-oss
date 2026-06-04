@@ -230,7 +230,7 @@ function ModelSelectorInner({
             {agentGroups.map((group) => {
               return (
                 <div key={group.agent} className="space-y-2">
-                  <p className="text-[11px] font-medium text-mid uppercase tracking-[0.06em]">
+                  <p className="text-[12px] font-medium text-mid uppercase tracking-[0.13em]">
                     {group.label}
                   </p>
                   <div className="space-y-1">
@@ -244,7 +244,7 @@ function ModelSelectorInner({
                           <label
                             key={model}
                             htmlFor={checkboxId}
-                            className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors"
+                            className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                           >
                             <Checkbox
                               id={checkboxId}
@@ -267,7 +267,7 @@ function ModelSelectorInner({
                             setSelectedModel({ model });
                             setIsDrawerOpen(false);
                           }}
-                          className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors"
+                          className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                         >
                           <Check
                             className={cn(

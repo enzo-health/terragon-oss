@@ -60,9 +60,9 @@ function RepoSelectorInner({
   );
   const emptyRepoText = useCallback((didSearch: boolean) => {
     if (!didSearch) {
-      return "Add a repo to get started.";
+      return "Add a repo to get started";
     }
-    return "No repositories found.";
+    return "No repositories found";
   }, []);
   const handleRepoChange = useCallback(
     (newRepoFullName: string) => {
@@ -86,11 +86,11 @@ function RepoSelectorInner({
       actionItems={actionItems}
       value={displayRepoFullName ?? null}
       setValue={handleRepoChange}
-      placeholder="Select a Repo"
+      placeholder="Select a repo"
       searchPlaceholder="Search repositories"
       emptyText={emptyRepoText}
       isLoading={isLoadingRepos}
-      loadingText="Loading repositories..."
+      loadingText="Loading repositories…"
       disabled={false}
       variant="outline"
     />
@@ -163,9 +163,9 @@ function RepoBranchSelectorInner({
   );
   const emptyRepoText = useCallback((didSearch: boolean) => {
     if (!didSearch) {
-      return "Add a repo to get started.";
+      return "Add a repo to get started";
     }
-    return "No repositories found.";
+    return "No repositories found";
   }, []);
   const handleRepoChange = useCallback(
     (newRepoFullName: string) => {
@@ -231,24 +231,24 @@ function RepoBranchSelectorInner({
           actionItems={actionItems}
           value={displayRepoFullName ?? null}
           setValue={handleRepoChange}
-          placeholder="Select a Repo"
+          placeholder="Select a repo"
           searchPlaceholder="Search repositories"
           emptyText={emptyRepoText}
           isLoading={isLoadingRepos}
-          loadingText="Loading repositories..."
+          loadingText="Loading repositories…"
           disabled={false}
-          className={cn(repoSelectorClassName, "shrink-1")}
+          className={cn(repoSelectorClassName, "min-w-0")}
         />
       )}
       <ResponsiveCombobox
         icon={<GitBranch className="size-4 shrink-0 hidden sm:block" />}
-        className={cn(branchSelectorClassName, "shrink-1 min-w-[50px]")}
+        className={cn(branchSelectorClassName, "min-w-12")}
         key={selectedRepoFullName ?? "no-repo"}
         onLoadItems={handleLoadBranches}
         items={branchItems}
         value={displaySelectedBranch ?? null}
         setValue={handleBranchChange}
-        placeholder="Select a Branch"
+        placeholder="Select a branch"
         searchPlaceholder="Search branches"
         emptyText="No branches found"
         isLoading={isLoadingBranches}

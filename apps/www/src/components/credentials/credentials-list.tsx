@@ -99,7 +99,7 @@ function CredentialsListItem({
             <span className="text-sm font-medium truncate">
               {credential.agentName}
             </span>
-            <Badge variant="outline" className="text-xs">
+            <Badge variant="outline">
               {credential.type === "api-key" ? "API Key" : "Account"}
             </Badge>
           </div>
@@ -110,7 +110,7 @@ function CredentialsListItem({
                 {/* Claude OAuth - accountEmail */}
                 {"accountEmail" in credential.metadata &&
                   credential.metadata.accountEmail && (
-                    <span className="text-xs text-muted-foreground font-mono">
+                    <span className="text-xs text-muted-foreground font-mono tabular-nums">
                       {String(credential.metadata.accountEmail)}
                     </span>
                   )}
@@ -118,7 +118,7 @@ function CredentialsListItem({
                 {credential.agent === "codex" &&
                   "email" in credential.metadata &&
                   credential.metadata.email && (
-                    <span className="text-xs text-muted-foreground font-mono">
+                    <span className="text-xs text-muted-foreground font-mono tabular-nums">
                       {String(credential.metadata.email)}
                     </span>
                   )}

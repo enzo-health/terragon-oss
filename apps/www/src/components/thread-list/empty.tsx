@@ -33,7 +33,7 @@ export function EmptyThreadList({
         </span>
         {!queryFilters.archived && (
           <span className="text-xs text-muted-foreground">
-            Tasks you create will show up here.
+            Your tasks appear here.
           </span>
         )}
       </div>

@@ -428,9 +428,7 @@ export function AdminUserContent({
                   <TableCell className="flex flex-col items-start gap-2">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm text-mid-text font-mono">
-                          $
-                        </span>
+                        <span className="text-sm text-mid font-mono">$</span>
                         <Input
                           type="number"
                           step="0.01"

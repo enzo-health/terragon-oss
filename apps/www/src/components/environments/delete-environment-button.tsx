@@ -58,7 +58,7 @@ export function DeleteEnvironmentButton({
         onConfirm={handleDelete}
         title="Delete Environment"
         description={`Are you sure you want to delete the environment for ${repoFullName}? This action cannot be undone.`}
-        confirmText={isPending ? "Deleting..." : "Delete"}
+        confirmText={isPending ? "Deleting…" : "Delete"}
         isLoading={isPending}
       />
     </>

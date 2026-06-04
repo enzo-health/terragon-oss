@@ -45,7 +45,7 @@ export default function Login({
       const result = (await response.json()) as DevLoginResponse;
       window.location.href = result.redirectTo ?? returnUrl;
     } catch {
-      setDevLoginError("Dev login failed");
+      setDevLoginError("Dev login didn't go through. Try again.");
     } finally {
       setIsDevLoginLoading(false);
     }
@@ -73,7 +73,7 @@ export default function Login({
             <Button
               variant="default"
               size="lg"
-              className="relative h-10 w-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
+              className="relative h-10 w-full font-sans font-medium"
               onClick={handleGithubSignIn}
               disabled={isLoading}
             >
@@ -106,7 +106,7 @@ export default function Login({
               <Button
                 variant="outline"
                 size="lg"
-                className="h-10 w-full font-sans font-medium active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring/50 transition-transform"
+                className="h-10 w-full font-sans font-medium"
                 onClick={handleDevLogin}
                 disabled={isLoading}
               >
@@ -116,17 +116,20 @@ export default function Login({
                     Signing in
                   </>
                 ) : (
-                  "Dev Login"
+                  "Dev login"
                 )}
               </Button>
             ) : null}
             {devLoginError ? (
-              <p className="text-sm text-center text-destructive font-sans">
+              <p
+                role="alert"
+                className="text-sm text-center text-error-strong font-sans"
+              >
                 {devLoginError}
               </p>
             ) : null}
-            <p className="text-micro text-center text-mid font-sans tracking-[0.06em] uppercase">
-              Secure authentication via GitHub
+            <p className="text-micro text-center text-mid font-sans">
+              We request repo access to run agents on your code.
             </p>
           </div>
         </div>

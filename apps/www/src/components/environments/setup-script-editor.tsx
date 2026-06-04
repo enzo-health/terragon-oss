@@ -181,7 +181,7 @@ export function SetupScriptEditor({
         <div className="flex items-start justify-between">
           <div className="flex flex-col gap-1">
             <h2 className="text-base font-semibold text-strong">
-              Setup Script Editor
+              Setup script editor
             </h2>
             <p className="text-sm text-mid">
               {scriptSource === "environment"
@@ -224,7 +224,7 @@ export function SetupScriptEditor({
               {isSaving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  Saving...
+                  Saving…
                 </>
               ) : (
                 <>
@@ -242,7 +242,7 @@ export function SetupScriptEditor({
               {isRunning ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  Running...
+                  Running…
                 </>
               ) : (
                 <>
@@ -287,7 +287,7 @@ export function SetupScriptEditor({
               value={scriptValue}
               onChange={(e) => setScriptValue(e.target.value)}
               placeholder="Enter your setup script here…"
-              className="font-mono text-[13px] leading-[1.5] tabular-nums min-h-[400px] resize-y rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
+              className="font-mono text-[13px] leading-[1.5] min-h-[400px] resize-y rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
               disabled={isRunning}
             />
           </div>
@@ -341,9 +341,9 @@ export function SetupScriptEditor({
               when no environment script exists).
             </li>
             <li>
-              Click "Test" to run the script in a fresh sandbox without saving.
+              Use Test to run the script in a fresh sandbox without saving.
             </li>
-            <li>"Save" stores the script for this environment only.</li>
+            <li>Save stores the script for this environment only.</li>
           </ul>
         </div>
       </div>

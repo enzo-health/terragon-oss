@@ -264,11 +264,14 @@ export function BootChecklist({
 
               {/* Step label */}
               <span
-                className={cn("flex-1 text-sm transition-colors duration-200", {
-                  "text-foreground font-medium": isActive,
-                  "text-muted-foreground": isCompleted,
-                  "text-muted-foreground opacity-40": isPending,
-                })}
+                className={cn(
+                  "flex-1 text-sm transition-colors duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+                  {
+                    "text-foreground font-medium": isActive,
+                    "text-muted-foreground": isCompleted,
+                    "text-muted-foreground opacity-40": isPending,
+                  },
+                )}
               >
                 {step.label}
               </span>

@@ -32,7 +32,7 @@ export function GitHubSettings() {
   return (
     <div className="flex flex-col gap-8">
       {/* Repository Configuration */}
-      <SettingsSection label="Repository Configuration">
+      <SettingsSection label="Repository configuration">
         <div className="flex flex-col gap-4">
           <SettingsWithExternalLink
             label="Repository access"
@@ -48,7 +48,7 @@ export function GitHubSettings() {
       </SettingsSection>
 
       <SettingsSection
-        label="Pull Request Defaults"
+        label="Pull request defaults"
         description="Configure how Terragon creates and manages pull requests"
       >
         <div className="flex flex-col gap-4">
@@ -101,7 +101,7 @@ export function GitHubSettings() {
 
       {/* @-mention settings */}
       <SettingsSection
-        label="@terragon-labs Defaults"
+        label="@terragon-labs defaults"
         description="Configure what happens when @terragon-labs is tagged on GitHub"
       >
         <div className="flex flex-col gap-4">

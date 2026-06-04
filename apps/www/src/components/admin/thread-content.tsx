@@ -268,7 +268,7 @@ export function AdminThreadContent({
                               {threadOrNull.githubRepoFullName}
                             </span>
                             <Link
-                              className="underline text-xs text-mid-text"
+                              className="underline text-xs text-mid"
                               href={`/internal/admin/environment?id=${threadOrNull.id}`}
                             >
                               (Environment)

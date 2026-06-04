@@ -133,7 +133,7 @@ export function FileDiffWrapper({
         <div className="flex items-center min-w-0 gap-2">
           <ChevronRight
             className={cn(
-              "w-4 h-4 flex-shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)]",
+              "w-4 h-4 flex-shrink-0 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
               expanded && "rotate-90",
             )}
           />
@@ -168,18 +168,18 @@ export function FileDiffWrapper({
           {showLineCounts ? (
             <>
               {parsedFile.additions > 0 && (
-                <span className="text-[var(--diff-added-fg)] text-xs font-medium">
+                <span className="text-[var(--diff-added-fg)] text-xs font-medium tabular-nums">
                   +{parsedFile.additions}
                 </span>
               )}
               {parsedFile.deletions > 0 && (
-                <span className="text-[var(--diff-removed-fg)] text-xs font-medium">
+                <span className="text-[var(--diff-removed-fg)] text-xs font-medium tabular-nums">
                   -{parsedFile.deletions}
                 </span>
               )}
             </>
           ) : isImage ? (
-            <span className="text-xs font-medium">
+            <span className="text-xs font-medium tabular-nums">
               {parsedFile.changeType === "added" ? (
                 <span className="text-[var(--diff-added-fg)]">
                   {parsedFile.newFileSize !== undefined

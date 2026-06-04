@@ -182,7 +182,7 @@ export function EnvironmentVariablesEditor({
           className="flex-1"
         >
           <Plus className="h-4 w-4 mr-2" />
-          Add Variable
+          Add variable
         </Button>
         <Button
           type="button"
@@ -216,7 +216,7 @@ export function EnvironmentVariablesEditor({
                     placeholder="KEY"
                     value={key}
                     disabled={true}
-                    className="font-mono text-sm tabular-nums"
+                    className="font-mono text-sm"
                   />
                 </div>
               ))}
@@ -240,7 +240,7 @@ export function EnvironmentVariablesEditor({
                     onChange={(e) => handleKeyChange(index, e.target.value)}
                     disabled={disabled}
                     className={cn(
-                      "font-mono text-sm tabular-nums",
+                      "font-mono text-sm",
                       errors[index] &&
                         "border-error/60 focus-visible:ring-error/40",
                     )}
@@ -256,7 +256,7 @@ export function EnvironmentVariablesEditor({
                     value={variable.value}
                     onChange={(e) => handleValueChange(index, e.target.value)}
                     disabled={disabled}
-                    className="font-mono text-sm tabular-nums pr-10"
+                    className="font-mono text-sm pr-10"
                   />
                   <Button
                     type="button"
@@ -307,14 +307,14 @@ export function EnvironmentVariablesEditor({
             localVariables.some((v) => !v.key.trim())
           }
         >
-          Save Environment Variables
+          Save
         </Button>
       </div>
 
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
         <DialogContent className="sm:max-w-2xl max-h-[90dvh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Import from .env File</DialogTitle>
+            <DialogTitle>Import from .env file</DialogTitle>
             <DialogDescription>
               Paste your .env file content below. Existing variables with the
               same key will be updated.
@@ -332,7 +332,7 @@ export function EnvironmentVariablesEditor({
 DATABASE_URL=postgresql://user:pass@localhost/db
 API_KEY=your-api-key-here
 NODE_ENV=production`}
-              className="min-h-[300px] max-h-[400px] font-mono text-[13px] leading-[1.5] tabular-nums overflow-auto whitespace-pre resize-none rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
+              className="min-h-[300px] max-h-[400px] font-mono text-[13px] leading-[1.5] overflow-auto whitespace-pre resize-none rounded-xl border-0 ring-0 bg-surface-dark text-on-dark caret-coral placeholder:text-on-dark-soft focus-visible:ring-2 focus-visible:ring-coral/50"
             />
 
             {importErrors.length > 0 && (
@@ -356,7 +356,7 @@ NODE_ENV=production`}
               Cancel
             </Button>
             <Button onClick={handleImport} disabled={!envContent.trim()}>
-              Import Variables
+              Import variables
             </Button>
           </DialogFooter>
         </DialogContent>

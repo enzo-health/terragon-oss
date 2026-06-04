@@ -75,10 +75,6 @@ function DashboardLaunchStatus({
               <p className="text-sm font-medium text-foreground text-balance">
                 {state.title}
               </p>
-              <span
-                className="size-1.5 rounded-full bg-coral/70 transition-opacity duration-[var(--duration-base)]"
-                style={{ opacity: isOpening ? 0 : 1 }}
-              />
             </div>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground text-pretty">
               {state.detail}
@@ -222,11 +218,11 @@ export function Dashboard({
       )}
     >
       <div className="flex flex-col gap-3">
-        <h1 className="font-display text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
+        <h1 className="font-display text-3xl sm:text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
           What would you like to build?
         </h1>
         <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
-          Describe a task and I&apos;ll get to work.
+          Describe a task and I’ll get to work.
         </p>
       </div>
 

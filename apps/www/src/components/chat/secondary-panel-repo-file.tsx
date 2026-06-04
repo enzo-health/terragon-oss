@@ -99,7 +99,7 @@ function RepoDirectoryListing({
                 <Icon
                   className={cn(
                     "size-4 shrink-0",
-                    row.isDir ? "text-sky-500" : "text-muted-foreground",
+                    row.isDir ? "text-foreground" : "text-muted-foreground",
                   )}
                 />
               )}

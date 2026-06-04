@@ -52,7 +52,7 @@ export function AgentSettings() {
   return (
     <div className="flex flex-col gap-8">
       <SettingsSection
-        label="Agent Configuration"
+        label="Agent configuration"
         description="Customize how the coding agent behaves across all your tasks"
       >
         <CustomSystemPromptSetting />
@@ -92,7 +92,7 @@ function AgentProvidersSection() {
   return (
     <div id="agent-providers">
       <SettingsSection
-        label="Agent Providers"
+        label="Agent providers"
         description="Connect provider accounts to power your coding agents"
         cta={addCredentialCTA}
       >
@@ -169,7 +169,7 @@ function SelectProviderDialog({
         <DialogHeader>
           <DialogTitle>Add Credential</DialogTitle>
           <DialogDescription>
-            Choose which agent provider you'd like to add credentials for.
+            Choose which agent provider you’d like to add credentials for.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-4">
@@ -177,7 +177,7 @@ function SelectProviderDialog({
             <Button
               key={agent}
               variant="outline"
-              className="w-full justify-start flex items-center gap-2 px-4 h-fit"
+              className="w-full flex items-center h-11 justify-start gap-2 py-2 pl-3 pr-4"
               onClick={() => onSelect(agent)}
             >
               <AgentIcon agent={agent} sessionId={null} />
@@ -212,12 +212,12 @@ function CustomSystemPromptSetting() {
     }
   };
   return (
-    <SettingsWithCTA label="Custom System Prompt" direction="col">
+    <SettingsWithCTA label="Custom system prompt" direction="col">
       <div className="flex flex-col gap-3 w-full">
         <Textarea
           value={customSystemPrompt}
           onChange={(e) => handleChange(e.target.value)}
-          placeholder="Eg. Always use descriptive variable names..."
+          placeholder="e.g. Always use descriptive variable names…"
           className="min-h-48 rounded-xl"
         />
         <Button
@@ -276,7 +276,7 @@ function AgentAndModelsEnabledSection() {
   return (
     <div id="available-agents-and-models">
       <SettingsSection
-        label="Available Agents & Models"
+        label="Available agents and models"
         description="Choose which agents and models are available when you create a new task"
       >
         <div className="space-y-4">

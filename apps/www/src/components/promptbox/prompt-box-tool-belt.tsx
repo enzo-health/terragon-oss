@@ -8,7 +8,6 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { toast } from "sonner";
 import {
   createNewBranchCookieAtom,
   disableGitCheckpointingCookieAtom,
@@ -102,11 +101,7 @@ export function PromptBoxToolBelt({
           type="button"
           title="Skip archiving the current task"
           onClick={() => {
-            const newValue = !skipArchiveValue;
-            onSkipArchiveChange?.(newValue);
-            toast.success(
-              newValue ? "Skip archiving enabled" : "Skip archiving disabled",
-            );
+            onSkipArchiveChange?.(!skipArchiveValue);
           }}
         >
           <ArchiveIcon className="h-4 w-4" isOff={skipArchiveValue} />

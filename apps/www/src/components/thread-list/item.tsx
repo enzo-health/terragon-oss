@@ -136,7 +136,6 @@ export function ThreadListItem({
       <div
         className={cn(
           "relative group",
-          "animate-in fade-in slide-in-from-top-2 duration-300 ease-out",
           isSelected && "ring-2 ring-primary/30 rounded-md",
         )}
         style={itemStyle}
@@ -209,7 +208,7 @@ export function ThreadListItem({
               )}
             </div>
             <div className="flex items-center justify-between gap-2.5">
-              <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0">
+              <div className="flex items-center gap-1.5 text-micro text-muted-foreground min-w-0 tabular-nums">
                 <span
                   className="flex-shrink-0"
                   title={new Date(thread.updatedAt).toLocaleString()}

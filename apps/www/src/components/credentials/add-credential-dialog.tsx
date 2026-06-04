@@ -156,7 +156,7 @@ function AddApiKeyDialog({
             onClick={handleSubmit}
             disabled={!apiKey || saveApiKeyMutation.isPending}
           >
-            {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+            {saveApiKeyMutation.isPending ? "Adding…" : "Add Credential"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -319,7 +319,7 @@ export function AddClaudeCredentialDialog({
           <DialogTitle>Claude</DialogTitle>
           <DialogDescription>
             {mode === null
-              ? "Choose how you'd like to add credentials for Claude."
+              ? "Choose how you’d like to add credentials for Claude."
               : mode === "api-key"
                 ? "Add a new API key for Claude."
                 : "Connect your Claude account."}
@@ -338,7 +338,7 @@ export function AddClaudeCredentialDialog({
                 disabled={loading}
               >
                 {loading && authType === "account-link"
-                  ? "Opening..."
+                  ? "Opening…"
                   : "Connect Claude account"}
               </Button>
               <Button
@@ -415,7 +415,7 @@ export function AddClaudeCredentialDialog({
               onClick={handleSubmit}
               disabled={!apiKey || saveApiKeyMutation.isPending}
             >
-              {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+              {saveApiKeyMutation.isPending ? "Adding…" : "Add Credential"}
             </Button>
           )}
           {mode === "account-link" && codeVerifier && (
@@ -423,7 +423,7 @@ export function AddClaudeCredentialDialog({
               onClick={handleExchangeCode}
               disabled={!authCode || exchangeCodeMutation.isPending}
             >
-              {exchangeCodeMutation.isPending ? "Connecting..." : "Connect"}
+              {exchangeCodeMutation.isPending ? "Connecting…" : "Connect"}
             </Button>
           )}
         </DialogFooter>
@@ -505,7 +505,7 @@ export function AddCodexCredentialDialog({
           <DialogTitle>Codex</DialogTitle>
           <DialogDescription>
             {mode === null
-              ? "Choose how you'd like to add credentials for Codex."
+              ? "Choose how you’d like to add credentials for Codex."
               : mode === "api-key"
                 ? "Add a new API key for Codex."
                 : "Connect your ChatGPT account."}
@@ -621,7 +621,7 @@ cat ~/.codex/auth.json | pbcopy`}</code>
               onClick={handleSubmit}
               disabled={!apiKey || saveApiKeyMutation.isPending}
             >
-              {saveApiKeyMutation.isPending ? "Adding..." : "Add Credential"}
+              {saveApiKeyMutation.isPending ? "Adding…" : "Add Credential"}
             </Button>
           )}
           {mode === "account-link" && (
@@ -629,7 +629,7 @@ cat ~/.codex/auth.json | pbcopy`}</code>
               onClick={handleSaveCodexAuth}
               disabled={saveCodexMutation.isPending}
             >
-              {saveCodexMutation.isPending ? "Connecting..." : "Connect"}
+              {saveCodexMutation.isPending ? "Connecting…" : "Connect"}
             </Button>
           )}
         </DialogFooter>

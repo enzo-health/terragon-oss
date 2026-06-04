@@ -129,9 +129,9 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
               disabled={isDisconnecting}
               size="sm"
               variant="link"
-              className="text-mid font-normal underline px-0 opacity-70 hover:opacity-100"
+              className="text-mid font-normal underline px-0 hover:text-strong"
             >
-              {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+              {isDisconnecting ? "Disconnecting…" : "Disconnect"}
             </Button>
           </div>
         </>
@@ -173,7 +173,7 @@ export function SlackAccountSettings({
           >
             <Slack className="h-4 w-4" />
             {getSlackOAuthUrlMutation.isPending
-              ? "Connecting..."
+              ? "Connecting…"
               : "Connect Slack Workspace"}
           </Button>
         </div>
@@ -189,12 +189,13 @@ export function SlackAccountSettings({
       <div className="flex">
         <Button
           variant="link"
+          size="sm"
           onClick={handleConnect}
           disabled={getSlackOAuthUrlMutation.isPending}
-          className="underline cursor-pointer"
+          className="text-mid font-normal underline px-0 hover:text-strong"
         >
           {getSlackOAuthUrlMutation.isPending
-            ? "Connecting..."
+            ? "Connecting…"
             : "Connect another workspace"}
         </Button>
       </div>
