@@ -1,6 +1,6 @@
 import {
-  EventType,
   type BaseEvent,
+  EventType,
   type ReasoningMessageEndEvent,
   type ReasoningMessageStartEvent,
   type TextMessageEndEvent,
@@ -15,18 +15,37 @@ import {
   mapRunFinishedToAgui,
   serializeAgUiEvent,
 } from "@terragon/agent/ag-ui-mapper";
-import type { DBAgentMessagePart } from "@terragon/shared";
 import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
+import type { DBAgentMessagePart } from "@terragon/shared";
+import type { DB } from "@terragon/shared/db";
 import {
-  agUiStreamKey,
   type AgUiEventEnvelope,
+  agUiStreamKey,
   appendAgUiEventRows,
   peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
-import type { DB } from "@terragon/shared/db";
-import { isLocalRedisHttpMode, redis } from "@/lib/redis";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
+import { isLocalRedisHttpMode, redis } from "@/lib/redis";
+
+// Bound the per-thread-chat Redis stream so live-tail buffers can't grow without
+// limit. Trimming is approximate (~) so it stays cheap on the publish hot path;
+// a client that falls behind the trimmed window recovers via DB replay-from-seq
+// (the authoritative log), so this is a soft cap, not a delivery guarantee.
+// EXPIRE-on-publish reclaims streams for thread chats that go idle.
+const AGUI_STREAM_MAXLEN = 1000;
+const AGUI_STREAM_TTL_SECONDS = 60 * 60;
+const AGUI_XADD_TRIM = {
+  trim: { type: "MAXLEN", threshold: AGUI_STREAM_MAXLEN, comparison: "~" },
+} as const;
+
+function refreshStreamTtl(streamKey: string): void {
+  // Best-effort: a TTL refresh must never break publishing. Guard the call
+  // itself (not just the promise) so a missing/throwing client is a no-op.
+  try {
+    void redis.expire(streamKey, AGUI_STREAM_TTL_SECONDS)?.catch?.(() => {});
+  } catch {}
+}
 
 /**
  * Shape of a single AG-UI event to be persisted + streamed.
@@ -316,10 +335,11 @@ async function publishAgUiEventsBatch({
 
   const pipeline = redis.pipeline();
   for (const { data } of publishPayloads) {
-    pipeline.xadd(streamKey, "*", data);
+    pipeline.xadd(streamKey, "*", data, AGUI_XADD_TRIM);
   }
   try {
     const results = await pipeline.exec({ keepErrors: true });
+    refreshStreamTtl(streamKey);
     const failedResultIndex = findPipelineErrorIndex(results);
     if (failedResultIndex !== null) {
       logAgUiRedisPublishFailure({
@@ -365,7 +385,7 @@ async function publishAgUiEventsIndividually({
   for (let i = 0; i < publishPayloads.length; i++) {
     const { event, data } = publishPayloads[i]!;
     try {
-      await redis.xadd(streamKey, "*", data);
+      await redis.xadd(streamKey, "*", data, AGUI_XADD_TRIM);
       publishedCount += 1;
     } catch (err) {
       logAgUiRedisPublishFailure({
@@ -379,6 +399,9 @@ async function publishAgUiEventsIndividually({
       });
       break;
     }
+  }
+  if (publishedCount > 0) {
+    refreshStreamTtl(streamKey);
   }
   return publishedCount;
 }
@@ -484,9 +507,13 @@ export async function broadcastAgUiEventEphemeral(params: {
 }): Promise<void> {
   const streamKey = agUiStreamKey(params.threadChatId);
   try {
-    await redis.xadd(streamKey, "*", {
-      event: serializeAgUiEvent(params.event),
-    });
+    await redis.xadd(
+      streamKey,
+      "*",
+      { event: serializeAgUiEvent(params.event) },
+      AGUI_XADD_TRIM,
+    );
+    refreshStreamTtl(streamKey);
   } catch (err) {
     console.error("[ag-ui-publisher] ephemeral XADD failed", {
       threadChatId: params.threadChatId,
