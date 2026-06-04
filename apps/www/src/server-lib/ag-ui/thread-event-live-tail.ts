@@ -124,9 +124,9 @@ export async function reconcileActiveRunFromDurable(params: {
         runId,
         daemonRunStatus: runContext.status,
         errorMessage: runContext.failureTerminalReason ?? null,
-        errorCode: deriveChatFailureThreadErrorType(
-          runContext.failureTerminalReason ?? null,
-        ),
+        errorCode: runContext.failureTerminalReason
+          ? deriveChatFailureThreadErrorType(runContext.failureTerminalReason)
+          : null,
       });
       if (!sse.emitAgUiEvent(terminalEvent, null)) {
         return true;
