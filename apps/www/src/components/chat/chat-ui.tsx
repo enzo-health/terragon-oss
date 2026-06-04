@@ -496,11 +496,19 @@ function ChatUIContent() {
       if (!clientSubmissionId) {
         return;
       }
+      // Consume the pending id regardless so a later error can't reuse it.
       pendingClientSubmissionIdRef.current = null;
-      dispatch(createOptimisticUserSubmitRejectedEvent({ clientSubmissionId }));
-      if (rejection.kind === "lock-held") {
-        void reconcileActiveChatFromServer();
+      // Only revert on lock-held: that is an unambiguous append rejection — the
+      // server refused the run, so the message was never accepted. A generic
+      // runtime error may instead be a later stream/resume failure AFTER the
+      // message was persisted, and a destructive revert would delete a real
+      // message. Leave those to server reconciliation; the error banner still
+      // surfaces them.
+      if (rejection.kind !== "lock-held") {
+        return;
       }
+      dispatch(createOptimisticUserSubmitRejectedEvent({ clientSubmissionId }));
+      void reconcileActiveChatFromServer();
     },
     [dispatch, reconcileActiveChatFromServer],
   );
