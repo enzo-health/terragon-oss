@@ -285,12 +285,6 @@ function ChatUIContent() {
   });
 
   const dispatch = threadViewModel.dispatchThreadViewEvent;
-  // Single-in-flight correlation for optimistic-submit rollback. The runtime
-  // onError path carries no clientSubmissionId, so we stash the latest pending
-  // id here and read it back in onAppendRejected. The reducer also keys its
-  // stash off the authoritative status change. v1 supports one submit in
-  // flight; multi-submit is a tracked non-goal.
-  const pendingClientSubmissionIdRef = useRef<string | null>(null);
   const onOptimisticPermissionModeUpdate = useCallback(
     (mode: "allowAll" | "plan") =>
       dispatch(createOptimisticPermissionModeUpdatedEvent(mode)),
@@ -472,7 +466,6 @@ function ChatUIContent() {
       optimisticStatus: ThreadStatus,
       clientSubmissionId: string,
     ) => {
-      pendingClientSubmissionIdRef.current = clientSubmissionId;
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
@@ -496,16 +489,16 @@ function ChatUIContent() {
       clientSubmissionId: string | null;
     }) => {
       // Prefer the id carried on the error payload (the typed onError seam);
-      // fall back to the single-in-flight ref when the runtime did not carry one
-      // (older/unpatched runtime path). The ref deletion is a tracked follow-up
-      // once the carried id is proven on a live runtime.
+      // fall back to the reducer's single-in-flight projection when the runtime
+      // did not carry one (older/unpatched runtime path). The rejection fires
+      // only from the async runtime error path, so the optimistic dispatch has
+      // already flushed and the projection reflects the in-flight submit.
       const clientSubmissionId =
-        rejection.clientSubmissionId ?? pendingClientSubmissionIdRef.current;
+        rejection.clientSubmissionId ??
+        threadViewModel.pendingClientSubmissionId;
       if (!clientSubmissionId) {
         return;
       }
-      // Consume the pending id regardless so a later error can't reuse it.
-      pendingClientSubmissionIdRef.current = null;
       // Only revert on lock-held: that is an unambiguous append rejection — the
       // server refused the run, so the message was never accepted. A generic
       // runtime error may instead be a later stream/resume failure AFTER the
@@ -518,7 +511,11 @@ function ChatUIContent() {
       dispatch(createOptimisticUserSubmitRejectedEvent({ clientSubmissionId }));
       void reconcileActiveChatFromServer();
     },
-    [dispatch, reconcileActiveChatFromServer],
+    [
+      dispatch,
+      reconcileActiveChatFromServer,
+      threadViewModel.pendingClientSubmissionId,
+    ],
   );
 
   // Group props by concern so `<ChatUILayout/>` sees a stable ~7-prop signature
