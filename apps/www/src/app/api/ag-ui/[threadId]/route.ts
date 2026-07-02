@@ -52,7 +52,10 @@ import {
   reconcileActiveRunFromDurable,
   replayDurableEventsAfterCursor,
 } from "@/server-lib/ag-ui/thread-event-live-tail";
-import { projectThreadHistory } from "@/server-lib/ag-ui/thread-history-projector";
+import {
+  buildDurableThreadHistory,
+  finalizeThreadHistoryProjection,
+} from "@/server-lib/ag-ui/thread-history-projector";
 import { authorizeAgUiThreadChat } from "./authorize-thread-chat";
 
 export const runtime = "nodejs";
@@ -98,51 +101,52 @@ export async function GET(
     );
   }
 
-  // Verify BOTH that the thread belongs to the session user AND that the
-  // threadChatId belongs to that same thread. Without the join a caller
-  // who owns thread-A could pass threadChatId pointing at someone else's
-  // chat. Return 404 on mismatch to avoid leaking existence.
-  const ownership = await authorizeAgUiThreadChat({
-    threadId,
-    threadChatId,
-    userId: session.user.id,
-  });
+  const userId = session.user.id;
+
+  if (request.nextUrl.searchParams.get("history") === "messages") {
+    const [ownershipResult, durableResult] = await Promise.allSettled([
+      authorizeAgUiThreadChat({ threadId, threadChatId, userId }),
+      buildDurableThreadHistory({ threadChatId, userId }),
+    ]);
+    if (ownershipResult.status === "rejected") {
+      throw ownershipResult.reason;
+    }
+    const ownership = ownershipResult.value;
+    if (ownership === null) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (durableResult.status === "rejected") {
+      throw durableResult.reason;
+    }
+    return NextResponse.json(
+      finalizeThreadHistoryProjection({
+        durable: durableResult.value,
+        dbMessages: ownership.messages,
+      }),
+    );
+  }
+
+  const streamKey = agUiStreamKey(threadChatId);
+
+  const [ownership, initialLastId, initialResolvedRunId] = await Promise.all([
+    authorizeAgUiThreadChat({ threadId, threadChatId, userId }),
+    captureStreamCursor(streamKey),
+    resolveEffectiveRunId({
+      runIdParam,
+      replayCursorSeq,
+      isGetMethod: request.method === "GET",
+      threadChatId,
+      threadId,
+    }),
+  ]);
 
   if (ownership === null) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (request.nextUrl.searchParams.get("history") === "messages") {
-    const projection = await projectThreadHistory({
-      threadChatId,
-      userId: session.user.id,
-      dbMessages: ownership.messages,
-    });
-    return NextResponse.json(projection);
-  }
-
   if (isSyntheticBenchmarkRequest(request)) {
     return agUiSseResponse(buildSyntheticBenchmarkStream({ threadId }));
   }
-
-  const streamKey = agUiStreamKey(threadChatId);
-
-  // Capture the live-tail cursor BEFORE the DB replay so in-flight events
-  // published during the replay query window are not lost. This preserves
-  // the at-least-once contract: client will receive all events for the run
-  // (via DB replay) plus any new stream entries from this cursor onward.
-  // Some duplicates are acceptable — AG-UI is designed to de-dupe by event
-  // identity on the client.
-  const initialLastId = await captureStreamCursor(streamKey);
-
-  // Resolve the effective runId for the SSE stream.
-  const initialResolvedRunId = await resolveEffectiveRunId({
-    runIdParam,
-    replayCursorSeq,
-    isGetMethod: request.method === "GET",
-    threadChatId,
-    threadId,
-  });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

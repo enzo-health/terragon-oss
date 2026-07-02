@@ -12,11 +12,23 @@ import {
   type ReplayEntry,
   toReplayEntriesWithoutTerminalFilter,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
+import type { DurableAgUiHistoryItem } from "@/server-lib/ag-ui-side-effect-messages";
 import { mergeMissingDbUserMessagesIntoHistory } from "@/server-lib/ag-ui/ag-ui-user-message-backfill";
 import { getDurableAgUiHistoryItemsFromEvents } from "@/server-lib/ag-ui/durable-history-builder";
 
 export type ThreadHistoryProjection = {
   messages: unknown[];
+  lastSeq: number;
+  lastCursor?: {
+    seq: number;
+    projectionIndex: number;
+  };
+  runActive: boolean;
+  activeRunId: string | null;
+};
+
+export type DurableThreadHistory = {
+  historyItems: DurableAgUiHistoryItem[];
   lastSeq: number;
   lastCursor?: {
     seq: number;
@@ -102,12 +114,11 @@ async function resolveServerRunLiveness(params: {
   }
 }
 
-export async function projectThreadHistory(params: {
+export async function buildDurableThreadHistory(params: {
   threadChatId: string;
   userId: string;
-  dbMessages: readonly DBMessage[];
-}): Promise<ThreadHistoryProjection> {
-  const { threadChatId, userId, dbMessages } = params;
+}): Promise<DurableThreadHistory> {
+  const { threadChatId, userId } = params;
 
   // Stage 1: durable envelope log. It doubles as the source of the latest
   // runId, replacing the former standalone getLatestRunIdForThreadChat scan.
@@ -131,17 +142,13 @@ export async function projectThreadHistory(params: {
   );
   const historyEvents = historyEntries.map((entry: ReplayEntry) => entry.event);
   const history = getDurableAgUiHistoryItemsFromEvents(historyEvents);
-  const messages = mergeMissingDbUserMessagesIntoHistory({
-    historyItems: history.items,
-    dbMessages,
-  });
   const includedCursor =
     history.lastSeqOffset >= 0
       ? historyEntries[history.lastSeqOffset]
       : undefined;
 
   return {
-    messages,
+    historyItems: history.items,
     lastSeq: includedCursor?.seq ?? -1,
     lastCursor:
       includedCursor?.seq != null &&
@@ -154,4 +161,37 @@ export async function projectThreadHistory(params: {
     runActive: liveness.runActive,
     activeRunId: liveness.activeRunId,
   };
+}
+
+export function finalizeThreadHistoryProjection(params: {
+  durable: DurableThreadHistory;
+  dbMessages: readonly DBMessage[];
+}): ThreadHistoryProjection {
+  const { durable, dbMessages } = params;
+  const messages = mergeMissingDbUserMessagesIntoHistory({
+    historyItems: durable.historyItems,
+    dbMessages,
+  });
+  return {
+    messages,
+    lastSeq: durable.lastSeq,
+    lastCursor: durable.lastCursor,
+    runActive: durable.runActive,
+    activeRunId: durable.activeRunId,
+  };
+}
+
+export async function projectThreadHistory(params: {
+  threadChatId: string;
+  userId: string;
+  dbMessages: readonly DBMessage[];
+}): Promise<ThreadHistoryProjection> {
+  const durable = await buildDurableThreadHistory({
+    threadChatId: params.threadChatId,
+    userId: params.userId,
+  });
+  return finalizeThreadHistoryProjection({
+    durable,
+    dbMessages: params.dbMessages,
+  });
 }
