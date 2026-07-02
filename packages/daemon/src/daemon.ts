@@ -61,6 +61,7 @@ import {
   runtimeAdapterUnsupportedOperationToMessage,
   writeToUnixSocket,
 } from "./runtime";
+import { DEFAULT_OUTBOX_JOURNAL_DIR, OutboxJournal } from "./outbox-journal";
 import { sanitizeRepoSkillFiles } from "./sanitize-skills";
 import {
   ClaudeMessage,
@@ -560,6 +561,13 @@ export class TerragonDaemon {
 
   private featureFlags: FeatureFlags = {} as FeatureFlags;
   private agentFrontmatterReader: AgentFrontmatterReader;
+  /**
+   * Append-only disk journal for the outbound buffer. Closes the only
+   * unrecoverable-loss window: events buffered but not yet server-acked when the
+   * process dies. Best-effort and fully guarded — journal I/O never breaks the
+   * live flush path.
+   */
+  private outboxJournal: OutboxJournal;
 
   constructor({
     messageFlushDelay = 16,
@@ -568,6 +576,7 @@ export class TerragonDaemon {
     runtime,
     retryConfig = DEFAULT_RETRY_CONFIG,
     mcpConfigPath,
+    outboxJournal,
   }: {
     messageFlushDelay?: number;
     messageHandleDelay?: number;
@@ -575,6 +584,7 @@ export class TerragonDaemon {
     runtime: IDaemonRuntime;
     retryConfig?: RetryConfig;
     mcpConfigPath?: string;
+    outboxJournal?: OutboxJournal;
   }) {
     this.startTime = performance.now();
     this.runtime = runtime;
@@ -584,6 +594,19 @@ export class TerragonDaemon {
     this.retryConfig = retryConfig;
     this.mcpConfigPath = mcpConfigPath;
     this.agentFrontmatterReader = new AgentFrontmatterReader(runtime);
+    // Kill-switch: TERRAGON_DAEMON_OUTBOX_JOURNAL=0 disables the journal.
+    // Auto-disable under the test runner unless a journal is injected, so the
+    // suite stays hermetic (no shared /tmp files, no replay cross-talk).
+    this.outboxJournal =
+      outboxJournal ??
+      new OutboxJournal({
+        dir:
+          process.env.TERRAGON_DAEMON_OUTBOX_DIR ?? DEFAULT_OUTBOX_JOURNAL_DIR,
+        enabled:
+          process.env.TERRAGON_DAEMON_OUTBOX_JOURNAL !== "0" &&
+          !process.env.VITEST,
+        logger: this.runtime.logger,
+      });
 
     // Load feature flags from environment variable if available
     const envFeatureFlags = process.env.TERRAGON_FEATURE_FLAGS;
@@ -634,6 +657,10 @@ export class TerragonDaemon {
 
     // Load agent frontmatter
     await this.agentFrontmatterReader.loadAgents();
+
+    // Recover any events the previous process buffered but never got acked,
+    // before accepting new work so recovered events precede new runs.
+    await this.replayOutboxJournal();
 
     // Start listening to the unix socket
     await this.runtime.listenToUnixSocket(
@@ -4659,7 +4686,9 @@ export class TerragonDaemon {
             ...(deltas.length > 0 ? { deltas } : {}),
             ...(metaEvents.length > 0 ? { metaEvents } : {}),
           };
+          this.journalOutboundEvent(tailPayload, tailToken);
           await this.runtime.serverPost(tailPayload, tailToken);
+          this.journalOutboundAck(tailPayload);
         } catch (error) {
           if (!isNonRetryableAuthError(error)) {
             this.deltaBuffer = [...keptDeltaEntries, ...this.deltaBuffer];
@@ -4800,6 +4829,120 @@ export class TerragonDaemon {
   }
 
   /**
+   * A daemon-event body is worth journaling only if it carries v2 envelope
+   * identity (so replay reproduces the same `(runId, eventId)` the server
+   * dedupes on) AND recoverable content. Empty heartbeats are skipped.
+   */
+  private isJournalableOutboundBody(
+    body: DaemonEventAPIBody,
+  ): body is DaemonEventAPIBody & {
+    runId: string;
+    eventId: string;
+    seq: number;
+  } {
+    if (typeof body.runId !== "string" || body.runId.length === 0) {
+      return false;
+    }
+    if (typeof body.eventId !== "string" || body.eventId.length === 0) {
+      return false;
+    }
+    if (typeof body.seq !== "number") {
+      return false;
+    }
+    return (
+      (Array.isArray(body.messages) && body.messages.length > 0) ||
+      (Array.isArray(body.deltas) && body.deltas.length > 0) ||
+      (Array.isArray(body.metaEvents) && body.metaEvents.length > 0)
+    );
+  }
+
+  private journalOutboundEvent(body: DaemonEventAPIBody, token: string): void {
+    if (!this.isJournalableOutboundBody(body)) {
+      return;
+    }
+    this.outboxJournal.recordEvent({
+      threadChatId: body.threadChatId,
+      runId: body.runId,
+      eventId: body.eventId,
+      seq: body.seq,
+      token,
+      body,
+    });
+  }
+
+  private journalOutboundAck(body: DaemonEventAPIBody): void {
+    if (!this.isJournalableOutboundBody(body)) {
+      return;
+    }
+    this.outboxJournal.recordAck({
+      threadChatId: body.threadChatId,
+      runId: body.runId,
+      eventId: body.eventId,
+      seq: body.seq,
+    });
+  }
+
+  /**
+   * On boot, re-POST any journaled events the server never acked before the
+   * previous process died, preserving per-thread order. Verbatim re-POST keeps
+   * the original identity + token, so the server's `(runId, eventId)` dedupe and
+   * terminal CAS make redelivery idempotent. Runs before the unix socket starts
+   * accepting new work so recovered events precede any new run for that thread.
+   */
+  private async replayOutboxJournal(): Promise<void> {
+    let unacked: Awaited<ReturnType<OutboxJournal["loadUnacked"]>>;
+    try {
+      unacked = await this.outboxJournal.loadUnacked();
+    } catch (error) {
+      this.runtime.logger.error(
+        "Outbox journal replay: load failed; skipping recovery",
+        { error: formatError(error) },
+      );
+      return;
+    }
+    if (unacked.length === 0) {
+      return;
+    }
+    this.runtime.logger.info(
+      "Outbox journal replay: re-sending unacked events",
+      { eventCount: unacked.length },
+    );
+    for (const record of unacked) {
+      try {
+        await this.runtime.serverPost(record.body, record.token);
+        this.outboxJournal.recordAck({
+          threadChatId: record.threadChatId,
+          runId: record.runId,
+          eventId: record.eventId,
+          seq: record.seq,
+        });
+      } catch (error) {
+        if (isNonRetryableAuthError(error)) {
+          // Token died with the previous process (expired/invalid) — the event
+          // is undeliverable; tombstone it so it does not replay forever.
+          this.outboxJournal.recordAck({
+            threadChatId: record.threadChatId,
+            runId: record.runId,
+            eventId: record.eventId,
+            seq: record.seq,
+          });
+          this.runtime.logger.warn(
+            "Outbox journal replay: dropping event (non-retryable auth)",
+            { eventId: record.eventId, error: formatError(error) },
+          );
+        } else {
+          // Leave it journaled; a later boot retries. Never block startup.
+          this.runtime.logger.warn(
+            "Outbox journal replay: re-send failed; will retry next boot",
+            { eventId: record.eventId, error: formatError(error) },
+          );
+        }
+      }
+    }
+    await this.outboxJournal.flush();
+  }
+
+  /**
    * Send an array of messages to the API endpoint
    */
   private async sendMessagesToAPI({
@@ -4915,7 +5058,9 @@ export class TerragonDaemon {
           : {}),
       };
 
+      this.journalOutboundEvent(payload, token);
       await this.runtime.serverPost(payload, token);
+      this.journalOutboundAck(payload);
       if (envelopeV2) {
         this.markDaemonEventEnvelopeDelivered({
           threadChatId,
@@ -5044,6 +5189,8 @@ export class TerragonDaemon {
     // Wait for any in-progress per-thread flushes to settle before final flush
     await Promise.allSettled([...this.threadFlushChains.values()]);
     await this.flushMessageBuffer();
+    // Clean shutdown: drain pending journal writes and compact acked entries.
+    await this.outboxJournal.shutdown();
     // Send a kill message to the unix socket to flush our blocking listeners.
     await writeToUnixSocket({
       unixSocketPath: this.runtime.unixSocketPath,
