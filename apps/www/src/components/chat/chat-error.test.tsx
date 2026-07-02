@@ -1,3 +1,4 @@
+import type { ThreadErrorType } from "@terragon/shared";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -83,4 +84,52 @@ describe("ChatError sandbox error rendering", () => {
     expect(html).toContain("Context window full");
     expect(html).not.toContain('title="Retry"');
   });
+});
+
+// Every ThreadErrorType must render its own specific header, never the generic
+// UnknownChatError fallback. Typing the header map as `Record<ThreadErrorType,
+// _>` makes adding a union member a compile error here — the test-side twin of
+// the `never` exhaustiveness check in chat-error.tsx. Substrings avoid rendered
+// apostrophe escaping (e.g. "Couldn't" -> "Couldn&#x27;t").
+describe("ChatError renders a specific header for every ThreadErrorType", () => {
+  const noopRetry = async () => {};
+
+  const HEADER_BY_ERROR_TYPE: Record<ThreadErrorType, string> = {
+    "request-timeout": "Request timed out",
+    "no-user-message": "No user message found",
+    "unknown-error": "Something went wrong",
+    "sandbox-not-found": "connect to sandbox",
+    "sandbox-creation-failed": "start sandbox",
+    "sandbox-resume-failed": "resume sandbox",
+    "missing-gemini-credentials": "Gemini API key required",
+    "missing-amp-credentials": "Amp API key required",
+    "chatgpt-sub-required": "ChatGPT account required",
+    "invalid-codex-credentials": "OpenAI credentials expired",
+    "invalid-claude-credentials": "Claude credentials expired",
+    "agent-not-responding": "Agent did not respond",
+    "agent-generic-error": "Agent exited with an error",
+    "git-checkpoint-diff-failed": "Git checkpoint failed",
+    "git-checkpoint-push-failed": "Git push failed",
+    "setup-script-failed": "terragon-setup.sh failed",
+    "prompt-too-long": "Context window full",
+    "queue-limit-exceeded": "Task queue limit reached",
+  };
+
+  for (const [errorType, header] of Object.entries(HEADER_BY_ERROR_TYPE)) {
+    it(`renders the specific header for ${errorType}`, () => {
+      const html = renderToStaticMarkup(
+        <ChatError
+          status="error"
+          errorType={errorType}
+          errorInfo="detail"
+          handleRetry={noopRetry}
+          isReadOnly={false}
+        />,
+      );
+      expect(html).toContain(header);
+      // Never the generic fallback headers from UnknownChatError.
+      expect(html).not.toContain("An error occurred");
+      expect(html).not.toContain("An unexpected error occurred");
+    });
+  }
 });

@@ -89,13 +89,27 @@ function readNonEmptyString(value: unknown): string | null {
 
 /**
  * Split a non-transient runtime error into a typed payload. The runtime types
- * `onError` as `(error: Error) => void`, but extra fields ride along on the raw
- * error object when present (`code` from `@ag-ui/core` RunErrorEvent, and a
- * `clientSubmissionId` echoed by the pinned react-ag-ui patch from the run
- * config). Both are read defensively, so an unpatched runtime simply yields
- * `clientSubmissionId: null` / `transport` — today's behavior.
+ * `onError` as `(error: Error) => void`, which loses the structured
+ * `RunErrorEvent.code`. Three sources feed the classification, in priority order:
+ *
+ * 1. `capturedTypedCode` — the `code` from the AG-UI `RUN_ERROR` event captured
+ *    by an `onRunErrorEvent` subscriber (see `assistant-runtime-session.tsx`).
+ *    This is the typed happy path: `RunErrorEvent.code` reaches us intact
+ *    instead of being flattened onto an `Error`.
+ * 2. `error.code` cast — the defensive fallback for transport errors that expose
+ *    a `code` on the error object without a correlated `RUN_ERROR` event (e.g.
+ *    the react-ag-ui subscriber re-dispatching an aborted run).
+ * 3. message regex — lifecycle/lock detection below, which classifies by *kind*
+ *    rather than by code and covers errors that never carried a code at all.
+ *
+ * `clientSubmissionId` is echoed by the pinned react-ag-ui patch from the run
+ * config and read defensively; an unpatched runtime simply yields
+ * `clientSubmissionId: null`.
  */
-export function extractRuntimeErrorPayload(error: Error): RuntimeErrorPayload {
+export function extractRuntimeErrorPayload(
+  error: Error,
+  capturedTypedCode?: string | null,
+): RuntimeErrorPayload {
   if (isTransientRunLifecycleError(error)) {
     return { kind: "transient-lifecycle" };
   }
@@ -105,7 +119,9 @@ export function extractRuntimeErrorPayload(error: Error): RuntimeErrorPayload {
   if (/Run already in progress/i.test(info)) {
     return { kind: "lock-held", clientSubmissionId };
   }
-  const code = asThreadErrorType(readNonEmptyString(bag.code));
+  const code =
+    asThreadErrorType(readNonEmptyString(capturedTypedCode)) ??
+    asThreadErrorType(readNonEmptyString(bag.code));
   if (code !== null) {
     return { kind: "run-failure", code, clientSubmissionId, info };
   }

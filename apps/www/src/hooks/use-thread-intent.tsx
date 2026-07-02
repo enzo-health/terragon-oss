@@ -10,6 +10,9 @@ export type ThreadIntent =
       threadId: string;
       threadChatId: string;
       message: DBUserMessage;
+      // Threaded from the composer's routeComposerSubmit so this fallback path
+      // shares the AG-UI append path's per-submission idempotency dedupe.
+      clientSubmissionId?: string | null;
     }
   | {
       type: "queue-message";

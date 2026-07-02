@@ -1,6 +1,7 @@
 "use client";
 
 import type { HttpAgent } from "@ag-ui/client";
+import type { RunErrorEvent } from "@ag-ui/core";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   type UseAgUiRuntimeOptions,
@@ -8,7 +9,8 @@ import {
 } from "@assistant-ui/react-ag-ui";
 import type { AIAgent } from "@terragon/agent/types";
 import type { ThreadErrorType } from "@terragon/shared";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useAgUiRunEvents } from "@/hooks/use-ag-ui-run-events";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { createAssistantHistoryHydrationAdapter } from "../assistant-history-hydration-adapter";
@@ -175,6 +177,25 @@ export function AssistantRuntimeSession({
     code: ThreadErrorType | null;
   } | null>(null);
   const [runtimeRecoveryNonce, setRuntimeRecoveryNonce] = useState(0);
+  // Typed `RUN_ERROR.code` captured straight off the AG-UI event, before the
+  // runtime flattens it into a bare `Error` for `onError`. `onRunErrorEvent`
+  // fires during event dispatch, ahead of the run's rejection, so this ref is
+  // populated by the time `handleRuntimeError` runs. Correlated by message and
+  // consumed once so a stale code can't attach to a later unrelated error.
+  const lastRunErrorRef = useRef<{
+    code: string | null;
+    message: string;
+  } | null>(null);
+  const captureRunError = useCallback((event: RunErrorEvent) => {
+    lastRunErrorRef.current = {
+      code:
+        typeof event.code === "string" && event.code.length > 0
+          ? event.code
+          : null,
+      message: event.message,
+    };
+  }, []);
+  useAgUiRunEvents(agent, undefined, captureRunError);
   const historyLoadError =
     historyLoadErrorState?.agent === agent &&
     historyLoadErrorState.loadAgUiHistoryMessages === loadAgUiHistoryMessages
@@ -250,7 +271,13 @@ export function AssistantRuntimeSession({
         });
         return;
       }
-      const payload = extractRuntimeErrorPayload(error);
+      const captured = lastRunErrorRef.current;
+      lastRunErrorRef.current = null;
+      const capturedTypedCode =
+        captured !== null && captured.message === error.message
+          ? captured.code
+          : null;
+      const payload = extractRuntimeErrorPayload(error, capturedTypedCode);
       // A `RUN_STARTED`-while-active race (and the symmetric post-finish tail
       // race) is a benign client-side lifecycle hiccup — the run is still
       // streaming, nothing failed. Swallow it; real failures still surface.

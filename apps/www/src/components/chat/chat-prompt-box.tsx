@@ -93,7 +93,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   const { publish } = useThreadIntent();
 
   const handleSubmit = useCallback<HandleSubmit>(
-    async ({ userMessage }) => {
+    async ({ userMessage, clientSubmissionId }) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
         return;
@@ -102,7 +102,8 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       setError(null);
       // The optimistic flip is hoisted into routeComposerSubmit, which fires it
       // on every non-queue route before this fallback runs, so this path only
-      // publishes the message.
+      // publishes the message. clientSubmissionId is threaded through so the
+      // followUp fallback shares the append path's per-submission dedupe.
       const isClearContext = plainText.trim() === "/clear";
       try {
         await publish({
@@ -110,6 +111,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
           threadId,
           threadChatId,
           message: userMessage,
+          clientSubmissionId,
         });
       } catch {
         await refetch();
