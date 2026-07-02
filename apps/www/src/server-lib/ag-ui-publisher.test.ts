@@ -14,18 +14,22 @@ import { eq } from "drizzle-orm";
 // test: prove persist + XADD actually work end-to-end.
 const redisMocks = vi.hoisted(() => ({
   xadd: vi.fn(),
+  expire: vi.fn(),
   isLocalRedisHttpMode: vi.fn(),
   pipeline: vi.fn(),
   pipelineXadd: vi.fn(),
+  pipelineExpire: vi.fn(),
   pipelineExec: vi.fn(),
 }));
 
 const redisPipeline = {
   xadd: redisMocks.pipelineXadd,
+  expire: redisMocks.pipelineExpire,
   exec: redisMocks.pipelineExec,
 };
 redisMocks.pipeline.mockReturnValue(redisPipeline);
 redisMocks.pipelineXadd.mockReturnValue(redisPipeline);
+redisMocks.pipelineExpire.mockReturnValue(redisPipeline);
 
 vi.mock("@/lib/redis", () => ({
   isLocalRedisHttpMode: redisMocks.isLocalRedisHttpMode,
@@ -109,6 +113,7 @@ describe("ag-ui-publisher", () => {
     redisMocks.xadd.mockResolvedValue("1-0");
     redisMocks.pipeline.mockReturnValue(redisPipeline);
     redisMocks.pipelineXadd.mockReturnValue(redisPipeline);
+    redisMocks.pipelineExpire.mockReturnValue(redisPipeline);
     redisMocks.pipelineExec.mockResolvedValue([]);
   });
 
@@ -1012,7 +1017,7 @@ describe("ag-ui-publisher", () => {
   // -------------------------------------------------------------------
 
   describe("broadcastAgUiEventEphemeral", () => {
-    it("XADDs a single event to the stream key without DB persistence", async () => {
+    it("XADDs a single event plus a TTL refresh through one pipeline", async () => {
       const event = {
         type: EventType.RUN_FINISHED,
         timestamp: Date.now(),
@@ -1025,16 +1030,23 @@ describe("ag-ui-publisher", () => {
         event,
       });
 
-      expect(redisMocks.xadd).toHaveBeenCalledTimes(1);
-      const [streamKey, id, data] = redisMocks.xadd.mock.calls[0]!;
+      // One pipeline (XADD + EXPIRE), one exec — a single Upstash round trip.
+      expect(redisMocks.xadd).not.toHaveBeenCalled();
+      expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(1);
+      expect(redisMocks.pipelineExpire).toHaveBeenCalledTimes(1);
+      expect(redisMocks.pipelineExec).toHaveBeenCalledTimes(1);
+      const [streamKey, id, data] = redisMocks.pipelineXadd.mock.calls[0]!;
       expect(streamKey).toBe("agui:thread:tc-ephemeral");
       expect(id).toBe("*");
       const parsed = JSON.parse((data as { event: string }).event);
       expect(parsed.type).toBe(EventType.RUN_FINISHED);
+      expect(redisMocks.pipelineExpire.mock.calls[0]![0]).toBe(
+        "agui:thread:tc-ephemeral",
+      );
     });
 
-    it("logs error without crashing on XADD failure", async () => {
-      redisMocks.xadd.mockRejectedValueOnce(new Error("redis timeout"));
+    it("logs error without crashing on pipeline failure", async () => {
+      redisMocks.pipelineExec.mockRejectedValueOnce(new Error("redis timeout"));
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       try {

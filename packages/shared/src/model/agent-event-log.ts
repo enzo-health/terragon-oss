@@ -1426,13 +1426,25 @@ export async function getRunMaxSeq({
  * Implementation: `pg_advisory_xact_lock(hashtext(key), 0)`, same idiom as
  * `retryGitCommitAndPush` in checkpoint-thread-internal.ts. The 32-bit hash
  * collision risk merely serializes two unrelated thread chats for one tx.
+ *
+ * ## Single round-trip + lock-before-read ordering
+ * The lock and the `MAX(seq)` read are folded into ONE statement so a token
+ * delta pays one DB round trip here instead of two. Ordering is load-bearing:
+ * the naive `SELECT pg_advisory_xact_lock(...), MAX(seq) FROM ael` is UNSAFE —
+ * an Aggregate node scans all rows to compute MAX first, then calls the lock
+ * function during final projection, so the counter is read before the lock is
+ * held. A JOIN against the lock CTE is also unsafe (a hash join may scan
+ * `agent_event_log` before touching the lock CTE). This form puts the lock
+ * CTE as the SOLE FROM relation and reads MAX(seq) as a target-list scalar
+ * subquery: SQL evaluates FROM (lock acquired) before target-list projection
+ * (MAX read), so the read provably happens under the lock.
  */
 export async function peekNextThreadChatSeqLocked({
   tx,
   threadChatId,
   count,
 }: {
-  tx: Pick<DB, "execute" | "select">;
+  tx: Pick<DB, "execute">;
   threadChatId: string;
   count: number;
 }): Promise<number> {
@@ -1441,17 +1453,20 @@ export async function peekNextThreadChatSeqLocked({
       `peekNextThreadChatSeqLocked: count must be >= 1 (got ${count})`,
     );
   }
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${`agent_event_log:thread_chat_seq:${threadChatId}`}), 0)`,
-  );
-  const [row] = await tx
-    .select({
-      maxSeq: sql<string | null>`MAX(${schema.agentEventLog.seq})`,
-    })
-    .from(schema.agentEventLog)
-    .where(eq(schema.agentEventLog.threadChatId, threadChatId));
-  const nextSeq = row?.maxSeq == null ? 0 : Number(row.maxSeq) + 1;
-  return nextSeq;
+  const lockKey = `agent_event_log:thread_chat_seq:${threadChatId}`;
+  const result = await tx.execute<{ max_seq: string | null }>(sql`
+    WITH locked AS MATERIALIZED (
+      SELECT pg_advisory_xact_lock(hashtext(${lockKey}), 0)
+    )
+    SELECT (
+      SELECT MAX(${schema.agentEventLog.seq})
+      FROM ${schema.agentEventLog}
+      WHERE ${schema.agentEventLog.threadChatId} = ${threadChatId}
+    ) AS max_seq
+    FROM locked
+  `);
+  const maxSeq = result.rows[0]?.max_seq ?? null;
+  return maxSeq == null ? 0 : Number(maxSeq) + 1;
 }
 
 type AppendAgUiEventRowLegacy = {
