@@ -466,6 +466,15 @@ type DaemonEventRunState = {
    * many terminal messages arrive. Committed on ack alongside the seq cursor.
    */
   canonicalTerminalEmitted: boolean;
+  /**
+   * Flipped true the first time this run enqueues a text/thinking delta. It
+   * tells `buildCanonicalEventsForBatch` that assistant text/thinking is already
+   * the delta stream's single persisted representation, so the canonical builder
+   * emits no duplicate `assistant-message` events for it. Owned here by the
+   * delta pipeline; replaces the removed per-message `_codexItemId` /
+   * `_claudeStreamedBlockIndices` flags.
+   */
+  streamedAssistantText: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
@@ -1050,6 +1059,7 @@ export class TerragonDaemon {
       acpSessionId: input.acpSessionId ?? null,
       canonicalRunStartedEmitted: false,
       canonicalTerminalEmitted: false,
+      streamedAssistantText: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -2518,7 +2528,7 @@ export class TerragonDaemon {
         } else if (message.type === "assistant" && message.message?.content) {
           const content = message.message.content;
           if (Array.isArray(content)) {
-            const streamedBlockIndices: number[] = [];
+            let streamedBlockCount = 0;
             let shouldSplitAfterAssistant = false;
             for (
               let blockIndex = 0;
@@ -2530,7 +2540,7 @@ export class TerragonDaemon {
                 continue;
               }
               if (block.type === "text" && block.text) {
-                streamedBlockIndices.push(blockIndex);
+                streamedBlockCount += 1;
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
@@ -2541,7 +2551,7 @@ export class TerragonDaemon {
                   text: block.text,
                 });
               } else if (block.type === "thinking" && block.thinking) {
-                streamedBlockIndices.push(blockIndex);
+                streamedBlockCount += 1;
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
@@ -2555,13 +2565,7 @@ export class TerragonDaemon {
                 shouldSplitAfterAssistant = true;
               }
             }
-            if (streamedBlockIndices.length > 0) {
-              message._claudeStreamedBlockIndices = streamedBlockIndices;
-            }
-            if (
-              shouldSplitAfterAssistant ||
-              streamedBlockIndices.length === 0
-            ) {
+            if (shouldSplitAfterAssistant || streamedBlockCount === 0) {
               deltaMessageId = randomUUID();
             }
           }
@@ -3445,6 +3449,7 @@ export class TerragonDaemon {
       acpSessionId: null,
       canonicalRunStartedEmitted: false,
       canonicalTerminalEmitted: false,
+      streamedAssistantText: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -3499,6 +3504,7 @@ export class TerragonDaemon {
       nextCanonicalSeq: runState.nextCanonicalSeq,
       canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
       canonicalTerminalEmitted: runState.canonicalTerminalEmitted,
+      streamedAssistantText: runState.streamedAssistantText,
       threadId,
       threadChatId,
       messages,
@@ -4348,6 +4354,13 @@ export class TerragonDaemon {
     const runState = this.getOrCreateDaemonEventRunState(entry.threadChatId);
     const deltaSeq = runState.nextDeltaSeq;
     runState.nextDeltaSeq += 1;
+    // Text/thinking deltas make this run's assistant text the delta stream's
+    // single representation, so the canonical builder suppresses its duplicate
+    // `assistant-message` events (see DaemonEventRunState.streamedAssistantText).
+    // Tool-output deltas stream into a tool card and don't affect this.
+    if (entry.kind === "text" || entry.kind === "thinking") {
+      runState.streamedAssistantText = true;
+    }
     this.deltaBuffer.push({
       ...entry,
       deltaSeq,

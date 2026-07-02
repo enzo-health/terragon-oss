@@ -105,13 +105,34 @@ function createRichPartMessage(): DaemonEventAPIBody["messages"][number] {
 }
 
 describe("daemon runtime event commit planning", () => {
-  it("drops canonical assistant messages when deltas own the stream", () => {
+  it("drops canonical assistant messages when text/thinking deltas own the stream", () => {
     const filtered = filterCanonicalEventsForDeltaCoexistence({
       canonicalEvents: [createAssistantMessageEvent(), createRunStartedEvent()],
       deltas: [createDelta()],
     });
 
     expect(filtered?.map((event) => event.type)).toEqual(["run-started"]);
+  });
+
+  it("keeps canonical assistant messages when only tool-output deltas are present", () => {
+    const filtered = filterCanonicalEventsForDeltaCoexistence({
+      canonicalEvents: [createAssistantMessageEvent(), createRunStartedEvent()],
+      deltas: [
+        {
+          messageId: "tool-1",
+          partIndex: 0,
+          deltaSeq: 1,
+          kind: "tool-output",
+          text: "stdout chunk",
+          toolCallId: "tool-1",
+        },
+      ],
+    });
+
+    expect(filtered?.map((event) => event.type)).toEqual([
+      "assistant-message",
+      "run-started",
+    ]);
   });
 
   it("builds a single pre-legacy commit plan for canonical, delta, and rich rows", () => {

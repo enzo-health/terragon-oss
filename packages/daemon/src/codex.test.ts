@@ -60,9 +60,6 @@ describe("parseCodexLine", () => {
       },
       parent_tool_use_id: null,
       session_id: "",
-      // Tags the source item id so the server skips the duplicate rich-part
-      // REASONING event (the delta stream owns this reasoning text).
-      _codexItemId: "item_0",
     });
   });
 
@@ -82,9 +79,6 @@ describe("parseCodexLine", () => {
       },
       parent_tool_use_id: null,
       session_id: "",
-      // Tags the source Codex item id so the canonical-event builder skips a
-      // duplicate `assistant-message` event (the delta stream owns this text).
-      _codexItemId: "item_1",
     });
   });
 

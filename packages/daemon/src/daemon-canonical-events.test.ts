@@ -24,6 +24,7 @@ function baseParams(
     nextCanonicalSeq: 0,
     canonicalRunStartedEmitted: false,
     canonicalTerminalEmitted: false,
+    streamedAssistantText: false,
     threadId: "thread-1",
     threadChatId: "thread-chat-1",
     timezone: "UTC",
@@ -150,9 +151,10 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
   });
 
-  it("suppresses the assistant-message when _codexItemId is set", () => {
+  it("suppresses assistant text when the run streamed it as deltas", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
+        streamedAssistantText: true,
         messages: [
           {
             type: "assistant",
@@ -162,7 +164,6 @@ describe("buildCanonicalEventsForBatch", () => {
             },
             parent_tool_use_id: null,
             session_id: "session-1",
-            _codexItemId: "msg_abc123",
           },
         ],
       }),
@@ -174,28 +175,41 @@ describe("buildCanonicalEventsForBatch", () => {
     expect(result.nextCanonicalSeqAfterBatch).toBe(1);
   });
 
-  it("suppresses ACP text blocks already streamed as daemon deltas", () => {
+  it("suppresses text blocks in mixed messages but keeps tool_use", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
+        canonicalRunStartedEmitted: true,
+        streamedAssistantText: true,
         messages: [
           {
             type: "assistant",
             message: {
               role: "assistant",
-              content: [{ type: "text", text: "Streamed over ACP" }],
+              content: [
+                { type: "text", text: "Streamed over ACP" },
+                {
+                  type: "tool_use",
+                  id: "tool-call-1",
+                  name: "bash",
+                  input: { command: "pwd" },
+                },
+              ],
             },
             parent_tool_use_id: null,
             session_id: "session-1",
-            _claudeStreamedBlockIndices: [0],
           },
         ],
       }),
     );
 
+    // Text is delta-owned and suppressed; the tool_use still needs a canonical
+    // event.
     expect(result.canonicalEvents).toEqual([
-      expect.objectContaining({ type: "run-started" }),
+      expect.objectContaining({
+        type: "tool-call-start",
+        toolCallId: "tool-call-1",
+      }),
     ]);
-    expect(result.nextCanonicalSeqAfterBatch).toBe(1);
   });
 
   it("emits tool-call-start and tool-call-result events", () => {

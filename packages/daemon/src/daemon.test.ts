@@ -441,7 +441,6 @@ describe("daemon", () => {
         },
         parent_tool_use_id: null,
         session_id: "session-1",
-        _claudeStreamedBlockIndices: [0],
       },
     ];
     const sendMessagesToAPI = Reflect.get(daemon, "sendMessagesToAPI");
@@ -833,6 +832,15 @@ describe("daemon", () => {
       initializeDaemonEventRunStateForNewRun: (params: {
         input: DaemonMessageClaude;
       }) => void;
+      enqueueDelta: (entry: {
+        threadId: string;
+        threadChatId: string;
+        token: string;
+        messageId: string;
+        partIndex: number;
+        kind: "text" | "thinking" | "tool-output";
+        text: string;
+      }) => void;
       sendMessagesToAPI: (input: {
         messages: ClaudeMessage[];
         entryCount: number;
@@ -853,6 +861,18 @@ describe("daemon", () => {
     };
     internals.initializeDaemonEventRunStateForNewRun({ input: canonicalInput });
 
+    // Stream the text as a delta first — this flips the run's
+    // `streamedAssistantText`, which is what suppresses the duplicate canonical.
+    internals.enqueueDelta({
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+      token: canonicalInput.token,
+      messageId: "msg_abc123",
+      partIndex: 0,
+      kind: "text",
+      text: "Streamed via deltas",
+    });
+
     await internals.sendMessagesToAPI({
       messages: [
         {
@@ -863,9 +883,6 @@ describe("daemon", () => {
           },
           parent_tool_use_id: null,
           session_id: "session-1",
-          // Tagged: the daemon already streamed this text as deltas under the
-          // Codex item id, so the canonical event would be a duplicate.
-          _codexItemId: "msg_abc123",
         },
       ],
       entryCount: 1,

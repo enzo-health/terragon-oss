@@ -328,14 +328,6 @@ export class ClaudeCodeParser {
   private readonly partialJsonByToolUseId = new Map<string, string>();
 
   /**
-   * Block indices that were streamed as text/thinking deltas.
-   * Used to annotate the final `assistant` message so the canonical-event
-   * builder can skip content that the delta stream already owns, preventing
-   * duplicate transcript messages (W-ID.3).
-   */
-  private readonly streamedBlockIndices = new Set<number>();
-
-  /**
    * Parse a single raw NDJSON line emitted by `claude --output-format stream-json`.
    *
    * Returns an empty result (all arrays empty) when the line is unrecognised
@@ -421,7 +413,6 @@ export class ClaudeCodeParser {
           if (deltaType === "text_delta") {
             const text = delta["text"] as string | undefined;
             if (text) {
-              this.streamedBlockIndices.add(blockIndex);
               result.deltas.push({
                 messageId: `block:${blockIndex}`,
                 partIndex: blockIndex,
@@ -456,7 +447,6 @@ export class ClaudeCodeParser {
           if (deltaType === "thinking_delta") {
             const thinking = delta["thinking"] as string | undefined;
             if (thinking) {
-              this.streamedBlockIndices.add(blockIndex);
               result.deltas.push({
                 messageId: `block:${blockIndex}`,
                 partIndex: blockIndex,
@@ -562,19 +552,6 @@ export class ClaudeCodeParser {
           }
         }
         result.messages.push(obj as unknown as ClaudeMessage);
-        // W-ID.3: Annotate the assistant message with the set of content
-        // block indices whose text/thinking was already streamed as deltas.
-        // The canonical-event builder uses this to skip those blocks,
-        // preventing duplicate transcript messages.
-        const assistantMsg = result.messages[result.messages.length - 1]!;
-        if (
-          assistantMsg.type === "assistant" &&
-          this.streamedBlockIndices.size > 0
-        ) {
-          (assistantMsg as any)._claudeStreamedBlockIndices = [
-            ...this.streamedBlockIndices,
-          ].sort((a, b) => a - b);
-        }
         break;
       }
 

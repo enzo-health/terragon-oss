@@ -42,9 +42,9 @@ export type CodexNotificationDecision =
 /**
  * Codex item types whose text is streamed live as deltas and persisted under
  * the item id. On `item.completed` any tail the deltas missed is flushed under
- * the same id; the canonical/rich-part representation is then suppressed via
- * the `_codexItemId` skip in the canonical-event builder. `agent_message`
- * streams as "text", `reasoning` as "thinking".
+ * the same id; the run's `streamedAssistantText` flag then makes the canonical-
+ * event builder suppress the duplicate `assistant-message` representation.
+ * `agent_message` streams as "text", `reasoning` as "thinking".
  */
 function codexStreamedTextChannel(
   context: CodexNotificationContext,
@@ -277,11 +277,11 @@ export function routeCodexNotification({
   // flush any tail the live deltas missed under the SAME item id, so the delta
   // stream holds the complete text even when a message completes without prior
   // `item.updated` deltas. We do NOT return: the event falls through to
-  // parseCodexLine so the DBAgentMessage is still persisted. That parsed message
-  // carries `_codexItemId`, so its canonical / rich-part representation is
-  // suppressed — the delta stream is the single persisted/replayed copy, and a
-  // second one under a fresh id is exactly what stacked identical text in the
-  // transcript.
+  // parseCodexLine so the DBAgentMessage is still persisted. Because the run has
+  // streamed this text as deltas, its `streamedAssistantText` flag makes the
+  // canonical builder suppress the duplicate `assistant-message` — the delta
+  // stream is the single persisted/replayed copy, and a second one under a fresh
+  // id is exactly what stacked identical text in the transcript.
   if (threadEvent.type === "item.completed" && threadEvent.item) {
     const item = toRecord(threadEvent.item);
     const channel = item

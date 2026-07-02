@@ -109,6 +109,21 @@ export function emptyCanonicalPersistenceSummary(): CanonicalPersistenceSummary 
   };
 }
 
+/**
+ * BACK-COMPAT GUARD — delete in Wave 4 with the `messages[]` channel.
+ *
+ * Daemon bundles predating K1a (deltas-as-canonical) emit BOTH a streaming
+ * text/thinking delta AND an un-suppressed `assistant-message` canonical event
+ * for the same content. Persisting both double-renders the text in the
+ * transcript. Current daemons (>= K1a) suppress the `assistant-message` at the
+ * source via the run's `streamedAssistantText` flag, so they never send both —
+ * this filter is a no-op for them. It exists only for long-lived sandboxes still
+ * running a pre-#205 daemon bundle (the `daemonDeltasToAgUiRows` + canonical
+ * builder both shipped in #153; per-message suppression only landed in #205),
+ * which have no flags to key on, so we key on the presence of text/thinking
+ * deltas. Tool-output deltas are ignored: they never coexist with an
+ * `assistant-message` for the same content.
+ */
 export function filterCanonicalEventsForDeltaCoexistence(params: {
   canonicalEvents: CanonicalEventsPayload | null;
   deltas: DaemonDeltasPayload | null | undefined;
@@ -117,7 +132,9 @@ export function filterCanonicalEventsForDeltaCoexistence(params: {
   if (!canonicalEvents || canonicalEvents.length === 0) {
     return canonicalEvents;
   }
-  if (!deltas || deltas.length === 0) {
+  const hasTextOrThinkingDeltas =
+    deltas?.some((delta) => delta.kind !== "tool-output") ?? false;
+  if (!hasTextOrThinkingDeltas) {
     return canonicalEvents;
   }
 
@@ -413,14 +430,6 @@ function buildRichPartRows(params: {
   const timestamp = new Date();
   let messageIndex = 0;
   for (const claudeMessage of params.messages) {
-    const isCodexDeltaStreamed =
-      claudeMessage.type === "assistant" &&
-      claudeMessage._codexItemId !== undefined;
-    const claudeStreamedBlockSet = new Set<number>(
-      claudeMessage.type === "assistant"
-        ? (claudeMessage._claudeStreamedBlockIndices ?? [])
-        : [],
-    );
     const dbMsgs: DBMessage[] = toDBMessage(claudeMessage);
     for (const dbMsg of dbMsgs) {
       const currentIndex = messageIndex;
@@ -436,22 +445,18 @@ function buildRichPartRows(params: {
         continue;
       }
       if (dbMsg.type !== "agent") continue;
-      if (isCodexDeltaStreamed) continue;
-      const filteredParts =
-        claudeStreamedBlockSet.size > 0
-          ? dbMsg.parts.filter(
-              (part, idx) =>
-                !(
-                  (part.type === "text" || part.type === "thinking") &&
-                  claudeStreamedBlockSet.has(idx)
-                ),
-            )
-          : dbMsg.parts;
-      const hasRichParts = filteredParts.some((part) => part.type !== "text");
-      if (!hasRichParts) continue;
+      // Assistant text and thinking are the delta stream's single persisted
+      // representation (delta rows carry them), so the rich-part channel emits
+      // only the parts canonical events / deltas don't cover — diff, terminal,
+      // plan, image, audio, ... . Excluding text/thinking here is what stops the
+      // double-render the removed coexistence flags used to guard against.
+      const richParts = dbMsg.parts.filter(
+        (part) => part.type !== "text" && part.type !== "thinking",
+      );
+      if (richParts.length === 0) continue;
       richPartInputs.push({
         messageId: `${params.envelopeV2.eventId}:msg:${currentIndex}`,
-        parts: filteredParts,
+        parts: richParts,
       });
     }
   }

@@ -1446,7 +1446,7 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("emits AG-UI rich-part events for assistant messages with thinking blocks", async () => {
+  it("emits rich-part events for genuine rich parts and excludes delta-owned text/thinking", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1456,6 +1456,8 @@ describe("daemon-event route", () => {
         runId: "run-1",
         seq: 1,
         messages: [
+          // Text/thinking are the delta stream's — they must NOT reach the
+          // rich-part channel.
           {
             type: "assistant",
             message: {
@@ -1468,15 +1470,27 @@ describe("daemon-event route", () => {
             session_id: "s-1",
             parent_tool_use_id: null,
           },
+          // A genuine rich part (plan) still needs a rich-part row.
+          {
+            type: "acp-plan",
+            session_id: "s-1",
+            entries: [
+              {
+                id: "step-1",
+                content: "Run tests",
+                priority: "medium",
+                status: "pending",
+              },
+            ],
+          },
         ],
         timezone: "UTC",
       }),
     );
 
     expect(response.status).toBe(200);
-    // dbAgentMessagePartsToAgUiRows receives one rich assistant message with
-    // a stable messageId derived from the envelope's eventId + the running
-    // dbMessage index.
+    // Exactly one rich-part input: the plan. The thinking/text message produces
+    // no rich parts (delta-owned), so it is skipped entirely.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).toHaveBeenCalledTimes(1);
@@ -1486,14 +1500,17 @@ describe("daemon-event route", () => {
     ];
     const inputs = call[0];
     expect(inputs).toHaveLength(1);
+    // messageId derives from the envelope eventId + the running dbMessage index;
+    // the plan is the second message (index 1) so text/thinking still consume an
+    // index slot.
     expect(inputs[0]!.messageId).toMatch(/^event-rich-1:msg:\d+$/);
-    // Parts should include the thinking block; the text block is retained in
-    // the DBAgentMessage parts array but the mapper itself skips pure text.
     const partTypes = inputs[0]!.parts.map((p) => p.type);
-    expect(partTypes).toContain("thinking");
+    expect(partTypes).toContain("plan");
+    expect(partTypes).not.toContain("thinking");
+    expect(partTypes).not.toContain("text");
   });
 
-  it("skips rich-part events for Codex messages already streamed as deltas", async () => {
+  it("skips rich-part events for Codex reasoning that streams as thinking deltas", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1517,8 +1534,6 @@ describe("daemon-event route", () => {
             },
             session_id: "s-1",
             parent_tool_use_id: null,
-            // Already streamed + persisted as thinking deltas under this id.
-            _codexItemId: "msg_reasoning_1",
           },
         ],
         timezone: "UTC",
@@ -1526,13 +1541,14 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The delta stream owns this reasoning; no duplicate rich-part emission.
+    // Thinking is the delta stream's representation; the rich-part channel never
+    // emits text/thinking, so no duplicate rich-part rows here.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();
   });
 
-  it("filters delta-streamed text/thinking blocks for Claude messages with _claudeStreamedBlockIndices", async () => {
+  it("keeps text/thinking parts out of the rich-part channel, tool_use is separate", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1559,8 +1575,6 @@ describe("daemon-event route", () => {
             },
             session_id: "s-1",
             parent_tool_use_id: null,
-            // Blocks 0 and 1 (thinking + text) were already streamed as deltas.
-            _claudeStreamedBlockIndices: [0, 1],
           },
         ],
         timezone: "UTC",
@@ -1568,10 +1582,10 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The DBAgentMessage's text/thinking parts are all delta-streamed,
-    // leaving no rich parts. The DBToolCall is a separate message type
-    // (not "agent") so it doesn't go through the rich-part path.
-    // No rich-part emission should occur.
+    // The DBAgentMessage's text/thinking parts are the delta stream's, leaving
+    // no rich parts. The DBToolCall is a separate message type (not "agent") so
+    // it doesn't go through the rich-part path. No rich-part emission should
+    // occur.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();

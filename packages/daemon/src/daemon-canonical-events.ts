@@ -139,6 +139,17 @@ export type BuildCanonicalEventsParams = {
   nextCanonicalSeq: number;
   canonicalRunStartedEmitted: boolean;
   canonicalTerminalEmitted: boolean;
+  /**
+   * True once the run's delta pipeline has streamed any assistant text/thinking
+   * as durable deltas. When set, this batch's assistant text/thinking blocks are
+   * already the single persisted representation (delta rows under the streaming
+   * message id), so the builder emits NO `assistant-message` event for them —
+   * a duplicate would stack identical text in the transcript. Owned by the
+   * daemon's per-run state and flipped in `enqueueDelta`; tool_use / tool_result
+   * blocks and the run-terminal are still emitted. This replaces the removed
+   * per-message `_codexItemId` / `_claudeStreamedBlockIndices` flags.
+   */
+  streamedAssistantText: boolean;
   threadId: string;
   threadChatId: string;
   /**
@@ -174,6 +185,7 @@ export function buildCanonicalEventsForBatch(
     model,
     transportMode,
     protocolVersion,
+    streamedAssistantText,
     threadId,
     threadChatId,
     messages,
@@ -236,23 +248,17 @@ export function buildCanonicalEventsForBatch(
   const canonicalModel = toCanonicalModelOrNull(model);
   for (const message of messages) {
     if (message.type === "assistant") {
-      // A Codex agent_message whose text already streamed as deltas under
-      // `_codexItemId` is represented solely by that delta stream; skipping
-      // the whole message is safe because Codex delta-streamed messages
-      // carry only text/thinking blocks (never tool_use).
-      if (message._codexItemId !== undefined) {
-        continue;
-      }
-      // W-ID.3: For Claude/ACP messages with `_claudeStreamedBlockIndices`,
-      // skip only the text/thinking blocks at those indices. Tool-use blocks
-      // and un-streamed text blocks still need canonical events.
-      const streamedBlockSet = new Set<number>(
-        message._claudeStreamedBlockIndices ?? [],
-      );
+      // When the run's delta pipeline is streaming assistant text/thinking,
+      // those blocks are the single persisted representation (delta rows under
+      // the streaming message id). Emit no `assistant-message` event for them —
+      // only tool_use / tool_result blocks (and the run-terminal) still need
+      // canonical events. Every active streaming transport (ACP, Codex
+      // app-server, legacy Claude stream-json) streams every text/thinking
+      // block, so suppressing all of them matches what the deltas already own.
       const content = message.message.content;
       if (typeof content === "string") {
-        // String content maps to block index 0. If that was streamed, skip.
-        if (streamedBlockSet.has(0)) {
+        // String content maps to a single text block.
+        if (streamedAssistantText) {
           continue;
         }
         if (content.length === 0) {
@@ -280,8 +286,8 @@ export function buildCanonicalEventsForBatch(
         const blockRecord = toRecord(block);
         const blockType = readString(blockRecord, "type");
         if (blockType === "text" || blockType === "thinking") {
-          // Skip this block if its text/thinking was already delta-streamed.
-          if (streamedBlockSet.has(blockIndex)) {
+          // Skip text/thinking when the delta pipeline already owns them.
+          if (streamedAssistantText) {
             continue;
           }
           const text =
