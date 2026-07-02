@@ -452,23 +452,6 @@ export type DaemonDelta = {
 };
 
 /**
- * True when an assistant message's text was already streamed (and persisted)
- * as deltas under its Codex item id, so its canonical / rich-part
- * representation must be suppressed to avoid rendering the same content twice.
- * The single source of truth for that suppression, shared by the daemon's
- * canonical-event builder and the server's rich-part emitter.
- */
-export function isDeltaStreamedAssistantMessage(
-  message: ClaudeMessage,
-): boolean {
-  return (
-    message.type === "assistant" &&
-    (message._codexItemId !== undefined ||
-      message._claudeStreamedBlockIndices !== undefined)
-  );
-}
-
-/**
  * The error string carried by an erroring `result` message, or null when none.
  * The single source of truth for reading that field off the `ClaudeMessage`
  * union, shared by the daemon's terminal mapping (deriveRunTerminalFromMessages)

@@ -3700,123 +3700,6 @@ describe("daemon", () => {
     expect(initMessage?.session_id).toBe("gemini-session-12345");
   });
 
-  it("should parse and handle Opencode JSON output", async () => {
-    await daemon.start();
-    const opencodeMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      agent: "opencode",
-      model: "opencode/grok-code",
-    };
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(opencodeMessage),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    const opencodeCommand = spawnCommandLineMock.mock.calls[0]![0];
-    expect(
-      opencodeCommand.replace(/\/tmp\/.*.txt/, "<txt>"),
-    ).toMatchInlineSnapshot(
-      `"cat <txt> | opencode run --model terry/grok-code --format json"`,
-    );
-
-    // Simulate Opencode sending a step_start event
-    const stepStartEvent = {
-      type: "step_start",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "step-1",
-        type: "step-start",
-        sessionID: "opencode-session-123",
-        messageID: "msg-1",
-      },
-    };
-    mockSpawnCommandStdoutLine(stepStartEvent);
-
-    // Simulate Opencode sending a text event
-    const textEvent = {
-      type: "text",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "text-1",
-        type: "text",
-        text: "Hello from Opencode",
-        sessionID: "opencode-session-123",
-        messageID: "msg-2",
-        time: {
-          start: Date.now() - 1000,
-          end: Date.now(),
-        },
-      },
-    };
-    mockSpawnCommandStdoutLine(textEvent);
-
-    // Simulate Opencode sending a tool_use event
-    const toolUseEvent = {
-      type: "tool_use",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "tool-1",
-        type: "tool",
-        tool: "bash",
-        callID: "call-123",
-        sessionID: "opencode-session-123",
-        messageID: "msg-3",
-        state: {
-          status: "completed",
-          input: { command: "echo 'test'" },
-          output: "test",
-          title: "Execute command",
-          metadata: {},
-          time: { start: Date.now() - 500, end: Date.now() },
-        },
-      },
-    };
-    mockSpawnCommandStdoutLine(toolUseEvent);
-
-    await sleep(20);
-
-    // All messages should be sent to the server
-    expect(serverPostMock).toHaveBeenCalled();
-    const allMessages = serverPostMock.mock.calls.flatMap(
-      (call) => call[0].messages,
-    );
-
-    // Should have system (from step_start), assistant (from text and tool_use), and user (from tool_result) messages
-    expect(allMessages.some((m: any) => m.type === "system")).toBe(true);
-    expect(allMessages.filter((m: any) => m.type === "assistant")).toHaveLength(
-      2,
-    ); // One from text, one from tool_use
-    expect(allMessages.some((m: any) => m.type === "user")).toBe(true); // From tool_result
-    expect(allMessages).toHaveLength(4); // system + assistant + assistant + user
-  });
-
-  it("should handle Opencode session ID correctly", async () => {
-    await daemon.start();
-
-    const opencodeMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      agent: "opencode",
-      model: "opencode/grok-code",
-      sessionId: "existing-session-456",
-    };
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(opencodeMessage),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const opencodeCommand = spawnCommandLineMock.mock.calls[0]![0];
-    // Should include existing session ID
-    expect(opencodeCommand).toContain("--session existing-session-456");
-  });
-
   describe("Multiple process tracking", () => {
     it("should track multiple processes by threadChatId", async () => {
       const process1Pid = 5001;
@@ -4428,9 +4311,9 @@ describe("daemon", () => {
 
 describe("ACP SSE terminal validation", () => {
   it("does not restart sandbox-agent for a healthy ACP resume", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response("ok", { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("ok", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
@@ -4438,9 +4321,7 @@ describe("ACP SSE terminal validation", () => {
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
-    const execSyncSpy = vi
-      .spyOn(localRuntime, "execSync")
-      .mockReturnValue("");
+    const execSyncSpy = vi.spyOn(localRuntime, "execSync").mockReturnValue("");
     const localDaemon = new TerragonDaemon({ runtime: localRuntime });
     const internals = localDaemon as unknown as {
       ensureSandboxAgentRuntime: (

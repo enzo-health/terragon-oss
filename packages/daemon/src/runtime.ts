@@ -27,6 +27,14 @@ import {
   RuntimeAdapterOperation,
 } from "./shared";
 
+/**
+ * Abort a daemon `serverPost` that has not completed in this many milliseconds.
+ * Without it a hung POST (connection accepted, no response) blocks flushing
+ * indefinitely; aborting surfaces the stall as a normal failure that the
+ * per-thread retry/backoff machinery re-buffers and retries.
+ */
+const SERVER_POST_TIMEOUT_MS = 60_000;
+
 function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {
   if (body.payloadVersion !== 2) {
     return false;
@@ -465,56 +473,66 @@ export class DaemonRuntime implements IDaemonRuntime {
       headers[DAEMON_EVENT_CAPABILITIES_HEADER] = allCapabilities.join(",");
     }
 
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(
+      () => abortController.abort(),
+      SERVER_POST_TIMEOUT_MS,
+    );
     const requestInit: RequestInit = {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal: abortController.signal,
     };
 
-    const response = await fetch(url, requestInit);
-    this.logger.info("[agent-trace]", {
-      name: "daemon.server_post.completed",
-      ...traceAttrs,
-      status: response.status,
-      durationMs: Date.now() - traceStartedAtMs,
-    });
-    if (!response.ok) {
-      let responseBody: unknown = null;
-      try {
-        responseBody = await response.json();
-      } catch {
+    try {
+      const response = await fetch(url, requestInit);
+      this.logger.info("[agent-trace]", {
+        name: "daemon.server_post.completed",
+        ...traceAttrs,
+        status: response.status,
+        durationMs: Date.now() - traceStartedAtMs,
+      });
+      if (!response.ok) {
+        let responseBody: unknown = null;
         try {
-          responseBody = await response.text();
+          responseBody = await response.json();
+        } catch {
+          try {
+            responseBody = await response.text();
+          } catch {
+            responseBody = null;
+          }
+        }
+        const errorCode = extractDaemonServerErrorCode(responseBody);
+        throw new DaemonServerPostError({
+          status: response.status,
+          errorCode,
+          responseBody,
+        });
+      }
+
+      if (hasDaemonEventEnvelopeV2(body)) {
+        let responseBody: unknown = null;
+        try {
+          responseBody = await response.json();
         } catch {
           responseBody = null;
         }
+        const envelopeAck = parseDaemonEventEnvelopeAck(responseBody);
+        if (
+          !envelopeAck ||
+          envelopeAck.acknowledgedEventId !== body.eventId ||
+          envelopeAck.acknowledgedSeq !== body.seq
+        ) {
+          throw new Error(
+            `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
+          );
+        }
+        return;
       }
-      const errorCode = extractDaemonServerErrorCode(responseBody);
-      throw new DaemonServerPostError({
-        status: response.status,
-        errorCode,
-        responseBody,
-      });
-    }
-
-    if (hasDaemonEventEnvelopeV2(body)) {
-      let responseBody: unknown = null;
-      try {
-        responseBody = await response.json();
-      } catch {
-        responseBody = null;
-      }
-      const envelopeAck = parseDaemonEventEnvelopeAck(responseBody);
-      if (
-        !envelopeAck ||
-        envelopeAck.acknowledgedEventId !== body.eventId ||
-        envelopeAck.acknowledgedSeq !== body.seq
-      ) {
-        throw new Error(
-          `Daemon event ack mismatch for ${body.eventId}:${body.seq}`,
-        );
-      }
-      return;
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 

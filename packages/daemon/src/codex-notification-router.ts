@@ -42,9 +42,9 @@ export type CodexNotificationDecision =
 /**
  * Codex item types whose text is streamed live as deltas and persisted under
  * the item id. On `item.completed` any tail the deltas missed is flushed under
- * the same id; the canonical/rich-part representation is then suppressed (see
- * `isDeltaStreamedAssistantMessage`). `agent_message` streams as "text",
- * `reasoning` as "thinking".
+ * the same id; the canonical/rich-part representation is then suppressed via
+ * the `_codexItemId` skip in the canonical-event builder. `agent_message`
+ * streams as "text", `reasoning` as "thinking".
  */
 function codexStreamedTextChannel(
   context: CodexNotificationContext,
