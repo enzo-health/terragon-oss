@@ -25,7 +25,6 @@ import {
   deleteThreadById,
   getActiveThreadCount,
   getEligibleQueuedThreadChats,
-  getStalledThreads,
   getThread,
   getThreadChat,
   getThreadMinimal,
@@ -35,7 +34,6 @@ import {
   getThreadWithPermissions,
   getUserIdsWithThreadsReadyToProcess,
   getUserIdsWithThreadsStuckInQueue,
-  stopStalledThreads,
   updateThread,
   updateThreadChat,
   updateThreadChatStatusAtomic,
@@ -2813,184 +2811,6 @@ describe("thread", () => {
       });
       expect(child2After).toBeDefined();
       expect(child2After!.parentThreadId).toBeNull();
-    });
-  });
-
-  describe("getStalledThreads", () => {
-    it("should return threads stuck in transitional states", async () => {
-      // Create threads with different statuses
-      const bootingThread = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "booting" },
-      });
-      const workingThread = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "working" },
-      });
-      const stoppingThread = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "stopping" },
-      });
-      const stoppedThread = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "complete" },
-      });
-      // Initially no stalled threads (all were just created)
-      const stalledThreads = await getStalledThreads({ db, cutoffSecs: 60 });
-      const recentThreadIds = [
-        bootingThread.threadId,
-        workingThread.threadId,
-        stoppingThread.threadId,
-        stoppedThread.threadId,
-      ];
-      const recentStalledThreads = stalledThreads.filter((t) =>
-        recentThreadIds.includes(t.id),
-      );
-      expect(recentStalledThreads.length).toBe(0);
-
-      // Manually update the updatedAt timestamp to simulate old threads
-      const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: oldDate })
-        .where(eq(schema.threadChat.threadId, bootingThread.threadId));
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: oldDate })
-        .where(eq(schema.threadChat.threadId, workingThread.threadId));
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: oldDate })
-        .where(eq(schema.threadChat.threadId, stoppingThread.threadId));
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: oldDate })
-        .where(eq(schema.threadChat.threadId, stoppedThread.threadId));
-
-      // Now we should get the stalled threads (booting, working, stopping only)
-      const stalledThreadsAfter = await getStalledThreads({
-        db,
-        cutoffSecs: 60 * 60,
-      });
-      const ourStalledThreads = stalledThreadsAfter.filter((t) =>
-        recentThreadIds.includes(t.id),
-      );
-      expect(ourStalledThreads.length).toBe(3);
-
-      const stalledIds = ourStalledThreads.map((t) => t.id);
-      expect(stalledIds).toContain(bootingThread.threadId);
-      expect(stalledIds).toContain(workingThread.threadId);
-      expect(stalledIds).toContain(stoppingThread.threadId);
-      expect(stalledIds).not.toContain(stoppedThread.threadId);
-    });
-
-    it("should respect custom cutoff time", async () => {
-      const { threadId } = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "booting" },
-      });
-
-      // Set to 30 seconds ago
-      const thirtySecsAgo = new Date(Date.now() - 30 * 1000);
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: thirtySecsAgo })
-        .where(eq(schema.threadChat.threadId, threadId));
-
-      // Should not appear with 60 second cutoff
-      const stalled60 = await getStalledThreads({ db, cutoffSecs: 60 });
-      const ourStalled60 = stalled60.filter((t) => t.id === threadId);
-      expect(ourStalled60.length).toBe(0);
-
-      // Should appear with 10 second cutoff
-      const stalled10 = await getStalledThreads({ db, cutoffSecs: 10 });
-      const ourStalled10 = stalled10.filter((t) => t.id === threadId);
-      expect(ourStalled10.length).toBe(1);
-      expect(ourStalled10[0]!.id).toBe(threadId);
-    });
-
-    it("ignores old transitional chats when a newer chat is no longer transitional", async () => {
-      const { threadId, threadChatId } = await createTestThread({
-        db,
-        userId: user.id,
-        chatOverrides: { status: "working" },
-      });
-
-      const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
-      await db
-        .update(schema.threadChat)
-        .set({ updatedAt: oldDate })
-        .where(eq(schema.threadChat.id, threadChatId));
-
-      await db.insert(schema.threadChat).values({
-        threadId,
-        userId: user.id,
-        status: "complete",
-      });
-
-      const stalledThreads = await getStalledThreads({
-        db,
-        cutoffSecs: 60 * 60,
-      });
-      const stalledForThread = stalledThreads.filter((thread) => {
-        return thread.id === threadId;
-      });
-
-      expect(stalledForThread).toHaveLength(0);
-    });
-  });
-
-  describe("stopStalledThreads", () => {
-    it("should update status and error message for stalled threads", async () => {
-      const { threadId: thread1Id, threadChatId: thread1ChatId } =
-        await createTestThread({
-          db,
-          userId: user.id,
-          chatOverrides: { status: "complete" },
-        });
-
-      const { threadId: thread2Id, threadChatId: thread2ChatId } =
-        await createTestThread({
-          db,
-          userId: user.id,
-          chatOverrides: { status: "working" },
-        });
-
-      // Stop both threads
-      await stopStalledThreads({
-        db,
-        threadIds: [thread1Id, thread2Id],
-      });
-
-      // Verify they are stopped with error message
-      let updatedThreadChat = await getThreadChat({
-        db,
-        threadId: thread1Id,
-        threadChatId: thread1ChatId,
-        userId: user.id,
-      });
-      expect(updatedThreadChat!.status).toBe("complete");
-      expect(updatedThreadChat!.errorMessage).toBe("request-timeout");
-
-      updatedThreadChat = await getThreadChat({
-        db,
-        threadId: thread2Id,
-        threadChatId: thread2ChatId,
-        userId: user.id,
-      });
-      expect(updatedThreadChat!.status).toBe("complete");
-      expect(updatedThreadChat!.errorMessage).toBe("request-timeout");
-    });
-
-    it("should handle empty array", async () => {
-      await expect(
-        stopStalledThreads({ db, threadIds: [] }),
-      ).resolves.not.toThrow();
     });
   });
 

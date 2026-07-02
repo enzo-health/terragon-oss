@@ -1,3 +1,4 @@
+import type { BaseEvent } from "@ag-ui/core";
 import type { AgUiEventEnvelope } from "@terragon/shared/model/agent-event-log";
 import { isTerminalAgentRunStatus } from "@terragon/shared/model/agent-event-log";
 import type { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
@@ -9,6 +10,37 @@ import {
 import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 type RunContext = Awaited<ReturnType<typeof getAgentRunContextByRunId>>;
+
+/**
+ * Fabricate an AG-UI terminal frame (RUN_FINISHED/RUN_ERROR) from a run's
+ * durable status, or null when the run has no id or has not yet reached a
+ * terminal status. Shared by the replay path (synthesizeTerminalEntry) and the
+ * live-tail idle poll (reconcileActiveRunFromDurable) so both fabricate the
+ * exact same frame from the run-context.
+ */
+export function buildTerminalEventFromRunContext(params: {
+  runId: string | null;
+  runContext: RunContext;
+  threadId: string;
+}): BaseEvent | null {
+  const { runId, runContext, threadId } = params;
+  if (
+    runId === null ||
+    runContext === null ||
+    !isTerminalAgentRunStatus(runContext.status)
+  ) {
+    return null;
+  }
+  return buildRunTerminalAgUi({
+    threadId,
+    runId,
+    daemonRunStatus: runContext.status,
+    errorMessage: runContext.failureTerminalReason ?? null,
+    errorCode: runContext.failureTerminalReason
+      ? deriveChatFailureThreadErrorType(runContext.failureTerminalReason)
+      : null,
+  });
+}
 
 export type TerminalSynthesisResult = {
   /** Whether the replay envelopes already contain a terminal event for the run. */
@@ -42,25 +74,18 @@ export function synthesizeTerminalEntry(params: {
             entry.runId === runId && isTerminalRunEventType(entry.payload.type),
         );
 
-  if (
-    !hasTerminalEvent &&
-    runContext !== null &&
-    runId !== null &&
-    isTerminalAgentRunStatus(runContext.status)
-  ) {
-    const terminalEvent = buildRunTerminalAgUi({
-      threadId,
+  if (!hasTerminalEvent) {
+    const terminalEvent = buildTerminalEventFromRunContext({
       runId,
-      daemonRunStatus: runContext.status,
-      errorMessage: runContext.failureTerminalReason ?? null,
-      errorCode: runContext.failureTerminalReason
-        ? deriveChatFailureThreadErrorType(runContext.failureTerminalReason)
-        : null,
+      runContext,
+      threadId,
     });
-    return {
-      hasTerminalEvent,
-      syntheticTerminalEntry: { seq: null, event: terminalEvent },
-    };
+    if (terminalEvent !== null) {
+      return {
+        hasTerminalEvent,
+        syntheticTerminalEntry: { seq: null, event: terminalEvent },
+      };
+    }
   }
 
   return {
