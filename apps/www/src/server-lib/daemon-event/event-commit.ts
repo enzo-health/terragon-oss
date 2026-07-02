@@ -395,6 +395,9 @@ type ProviderRichPartCanonicalEvent = Extract<
   { type: "provider-rich-part" }
 >;
 
+export const LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS =
+  true;
+
 function buildRichPartRows(params: {
   envelopeV2: DaemonEventEnvelopeV2 | null;
   messages: DaemonEventAPIBody["messages"];
@@ -409,7 +412,10 @@ function buildRichPartRows(params: {
   if (providerRichEvents.length > 0) {
     return richPartRowsFromProviderRichEvents(providerRichEvents);
   }
-  if (!params.envelopeV2) {
+  if (
+    !LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS ||
+    !params.envelopeV2
+  ) {
     return [];
   }
   return richPartRowsFromMessages({

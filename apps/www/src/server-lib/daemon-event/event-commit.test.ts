@@ -212,6 +212,29 @@ describe("daemon runtime event commit planning", () => {
     ]);
   });
 
+  it("emits each rich row exactly once from the canonical carrier when a mixed batch also carries messages[]", () => {
+    const plan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [createRichPartMessage()],
+      canonicalEventsForPersistence: [
+        createRunStartedEvent(),
+        createProviderRichToolCallEvent(),
+      ],
+      deltas: null,
+      runId: "run-1",
+    });
+
+    expect(plan.richPartRows.map((row) => row.eventId)).toEqual([
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_START:0",
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_ARGS:1",
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_END:2",
+    ]);
+    expect(plan.mergedRows.some((row) => row.eventId.includes("event-1"))).toBe(
+      false,
+    );
+  });
+
   it("does not require persistence when canonical inputs expand to no AG-UI rows", () => {
     const plan = buildPreLegacyAgUiCommitPlan({
       canPersistCanonicalEvents: false,

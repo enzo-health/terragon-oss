@@ -9,6 +9,7 @@ import * as schema from "@terragon/shared/db/schema";
 import {
   assignThreadChatMessageSeqToCanonicalEvents,
   findOpenAgUiMessagesForRun,
+  findOpenAgUiToolCallsForRun,
 } from "@terragon/shared/model/agent-event-log";
 import {
   getAgentRunContextByRunId,
@@ -35,7 +36,10 @@ import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import { messagesIndicateRecoverableFailure } from "@/server-lib/daemon-event/message-parser";
+import {
+  LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE,
+  messagesIndicateRecoverableFailure,
+} from "@/server-lib/daemon-event/message-parser";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type DaemonTokenAuthContext,
@@ -70,6 +74,11 @@ import {
 import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
+import { parseClaudeOverloadedMessage } from "@/agent/msg/helpers";
+import { buildInterruptedToolResultMessages } from "@/lib/db-message-helpers";
+import { trackUsageEvents } from "@/server-lib/usage-events";
+import { isAnthropicDownPOST } from "@/server-lib/internal-request";
+import { persistSideEffectAgUiMessages } from "@/server-lib/ag-ui-side-effect-messages";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -199,6 +208,37 @@ function deriveSessionIdFromMessages(
     }
   }
   return null;
+}
+
+function deriveUsageFromMessages(messages: DaemonEventAPIBody["messages"]): {
+  costUsd: number;
+  agentDurationMs: number;
+} {
+  let costUsd = 0;
+  let agentDurationMs = 0;
+  for (const message of messages) {
+    if (message.type === "custom-stop" || message.type === "custom-error") {
+      agentDurationMs = message.duration_ms ?? 0;
+    }
+    if (message.type === "result") {
+      agentDurationMs = message.duration_ms ?? 0;
+      costUsd = "total_cost_usd" in message ? message.total_cost_usd : 0;
+    }
+  }
+  return { costUsd, agentDurationMs };
+}
+
+function messagesIndicateOverloaded(
+  messages: DaemonEventAPIBody["messages"],
+  agent: string | undefined,
+): boolean {
+  if (agent !== "claudeCode") {
+    return false;
+  }
+  return messages.some(
+    (message) =>
+      message.type === "result" && parseClaudeOverloadedMessage(message),
+  );
 }
 
 function publishMetaEvents(params: {
@@ -783,11 +823,12 @@ export async function POST(request: Request) {
     : null;
   const isRecoverableResult =
     recoverableTerminalCandidate?.recoverable != null ||
-    messagesIndicateRecoverableFailure({
-      messages,
-      agent: runContext?.agent,
-      timezone,
-    });
+    (LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE &&
+      messagesIndicateRecoverableFailure({
+        messages,
+        agent: runContext?.agent,
+        timezone,
+      }));
   const canonicalEvents =
     isRecoverableResult && rawCanonicalEvents
       ? rawCanonicalEvents.filter((event) => event.type !== "run-terminal")
@@ -1220,6 +1261,17 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
+  if (
+    skipLegacyRuntimeTranscriptPersistence &&
+    terminalFenceOutcome !== "duplicate"
+  ) {
+    const { costUsd, agentDurationMs } = deriveUsageFromMessages(messages);
+    waitUntil(trackUsageEvents({ userId, costUsd, agentDurationMs }));
+    if (messagesIndicateOverloaded(messages, runContext.agent)) {
+      waitUntil(isAnthropicDownPOST());
+    }
+  }
+
   if (result.threadChatMessageSeq != null) {
     const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
     if (insertedEventIds.length > 0) {
@@ -1552,6 +1604,42 @@ export async function POST(request: Request) {
           }
         }
       }
+    }
+  }
+
+  if (
+    (daemonRunStatusFromMessages === "stopped" ||
+      daemonRunStatusFromMessages === "failed") &&
+    skipLegacyRuntimeTranscriptPersistence &&
+    terminalFenceOutcome === "committed"
+  ) {
+    try {
+      const openToolCalls = await findOpenAgUiToolCallsForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      const interruptedToolResults = buildInterruptedToolResultMessages({
+        openToolCalls,
+        interruptionReason:
+          daemonRunStatusFromMessages === "failed" ? "error" : "user",
+      });
+      if (interruptedToolResults.length > 0) {
+        await persistSideEffectAgUiMessages({
+          db,
+          threadId,
+          threadChatId,
+          messages: interruptedToolResults,
+          source: "daemon-side-effect",
+          runId: authoritativeRunId,
+        });
+      }
+    } catch (error) {
+      console.warn("[daemon-event] interrupted tool-result injection failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
     }
   }
 

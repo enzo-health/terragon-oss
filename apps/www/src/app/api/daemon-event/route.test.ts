@@ -27,6 +27,8 @@ import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-prefligh
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { trackUsageEvents } from "@/server-lib/usage-events";
+import { isAnthropicDownPOST } from "@/server-lib/internal-request";
 import { POST } from "./route";
 
 const dbMocks = vi.hoisted(() => {
@@ -99,6 +101,13 @@ const dbMocks = vi.hoisted(() => {
 const canonicalEventLogMocks = vi.hoisted(() => ({
   assignThreadChatMessageSeqToCanonicalEvents: vi.fn(),
   findOpenAgUiMessagesForRun: vi.fn(),
+  findOpenAgUiToolCallsForRun: vi.fn(),
+}));
+
+const sideEffectMocks = vi.hoisted(() => ({
+  persistSideEffectAgUiMessages: vi.fn(),
+  persistInvalidTokenRetrySideEffectMarker: vi.fn(),
+  hasInvalidTokenRetrySideEffectMarker: vi.fn(),
 }));
 
 const agUiPublisherMocks = vi.hoisted(() => ({
@@ -202,7 +211,11 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
   assignThreadChatMessageSeqToCanonicalEvents:
     canonicalEventLogMocks.assignThreadChatMessageSeqToCanonicalEvents,
   findOpenAgUiMessagesForRun: canonicalEventLogMocks.findOpenAgUiMessagesForRun,
+  findOpenAgUiToolCallsForRun:
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun,
 }));
+
+vi.mock("@/server-lib/ag-ui-side-effect-messages", () => sideEffectMocks);
 
 vi.mock("@/server-lib/ag-ui-publisher", () => agUiPublisherMocks);
 
@@ -212,6 +225,15 @@ vi.mock("@terragon/shared/broadcast-server", () => ({
 
 vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
   getDaemonEventDbPreflight: vi.fn(),
+}));
+
+vi.mock("@/server-lib/usage-events", () => ({
+  trackUsageEvents: vi.fn(),
+}));
+
+vi.mock("@/server-lib/internal-request", () => ({
+  isAnthropicDownPOST: vi.fn(),
+  internalPOST: vi.fn(),
 }));
 
 function createDaemonRequest(
@@ -481,6 +503,142 @@ describe("daemon-event route", () => {
     agUiPublisherMocks.publishPersistedAgUiEvents.mockResolvedValue(undefined);
     agUiPublisherMocks.broadcastAgUiEventEphemeral.mockResolvedValue(undefined);
     canonicalEventLogMocks.findOpenAgUiMessagesForRun.mockResolvedValue([]);
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([]);
+    sideEffectMocks.persistSideEffectAgUiMessages.mockResolvedValue(undefined);
+    sideEffectMocks.persistInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      undefined,
+    );
+    sideEffectMocks.hasInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      false,
+    );
+    vi.mocked(trackUsageEvents).mockResolvedValue(undefined);
+    vi.mocked(isAnthropicDownPOST).mockResolvedValue(undefined as never);
+  });
+
+  it("injects interrupted tool-results for open tool calls on a v2 stopped terminal", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([
+      { toolCallId: "tool-open-1", parentToolUseId: null },
+    ]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-stop",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-stop",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "daemon-side-effect",
+        runId: "run-1",
+        messages: [
+          expect.objectContaining({
+            type: "tool-result",
+            id: "tool-open-1",
+            is_error: true,
+            result: "Tool execution interrupted by user",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not inject interrupted tool-results when no tool calls are open", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-none",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-none",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      sideEffectMocks.persistSideEffectAgUiMessages,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("tracks usage from the result message for a v2 batch", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            ...createSuccessResultMessage(),
+            total_cost_usd: 0.05,
+            duration_ms: 1234,
+          },
+        ],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-usage",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(trackUsageEvents).toHaveBeenCalledWith({
+      userId: "user-1",
+      costUsd: 0.05,
+      agentDurationMs: 1234,
+    });
+    expect(isAnthropicDownPOST).not.toHaveBeenCalled();
+  });
+
+  it("pings the anthropic-down endpoint for an overloaded v2 batch", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            ...createSuccessResultMessage(),
+            result:
+              "overloaded_error: Anthropic is overloaded. Please try again later.",
+          },
+        ],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-overloaded",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(isAnthropicDownPOST).toHaveBeenCalledTimes(1);
   });
 
   it("returns 401 when daemon token auth fails", async () => {

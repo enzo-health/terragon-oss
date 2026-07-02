@@ -204,24 +204,3 @@ export async function handleThreadFinish(params: {
     }
   }
 }
-
-export function buildInterruptedToolResultMessages({
-  openToolCalls,
-  interruptionReason,
-}: {
-  openToolCalls: { toolCallId: string; parentToolUseId: string | null }[];
-  interruptionReason: "user" | "error";
-}): import("@terragon/shared").DBMessage[] {
-  const interruptionMessage =
-    interruptionReason === "error"
-      ? "Tool execution interrupted by error"
-      : "Tool execution interrupted by user";
-
-  return openToolCalls.map((toolCall) => ({
-    type: "tool-result" as const,
-    id: toolCall.toolCallId,
-    is_error: true,
-    parent_tool_use_id: toolCall.parentToolUseId,
-    result: interruptionMessage,
-  }));
-}

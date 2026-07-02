@@ -42,10 +42,8 @@ import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue"
 import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
 import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { trackUsageEvents } from "@/server-lib/usage-events";
-import {
-  buildInterruptedToolResultMessages,
-  handleThreadFinish,
-} from "./lifecycle-manager";
+import { buildInterruptedToolResultMessages } from "@/lib/db-message-helpers";
+import { handleThreadFinish } from "./lifecycle-manager";
 import { maybeEmitLinearActivities } from "./linear-activity-emitter";
 import {
   buildRunContextFailureUpdates,
@@ -198,13 +196,15 @@ export async function routeDaemonEvent(
     agent,
   });
 
-  waitUntil(
-    deps.trackUsageEvents({
-      userId,
-      costUsd: classification.costUsd,
-      agentDurationMs: classification.durationMs,
-    }),
-  );
+  if (!skipThreadChatPersistence) {
+    waitUntil(
+      deps.trackUsageEvents({
+        userId,
+        costUsd: classification.costUsd,
+        agentDurationMs: classification.durationMs,
+      }),
+    );
+  }
 
   const isThreadFinished =
     classification.isStop || classification.isDone || classification.isError;
@@ -242,7 +242,7 @@ export async function routeDaemonEvent(
       }),
     );
   }
-  if (classification.isOverloaded) {
+  if (classification.isOverloaded && !skipThreadChatPersistence) {
     waitUntil(deps.isAnthropicDownPOST());
   }
 

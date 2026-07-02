@@ -62,6 +62,9 @@ export function deriveDaemonTerminalErrorInfo(messages: ClaudeMessage[]): {
   };
 }
 
+export const LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE =
+  true;
+
 /**
  * True when a terminal batch carries a RECOVERABLE failure that must defer to the
  * message-based recovery path rather than terminate via the canonical fence:
