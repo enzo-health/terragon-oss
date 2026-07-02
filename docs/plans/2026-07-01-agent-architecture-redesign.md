@@ -122,9 +122,23 @@ Wave 0  Tier-0 deletions + §0 doc corrections + latency #2 (daemon timeout/queu
 Wave 1  Derived thread_chat.status (§1 fix) + latency #1 (XADD decouple) + #4 (fromSeq seed)
 Wave 2  K2 typed recoverable terminals in canonical model  →  unlocks Tier-2
 Wave 3  K1a deltas-as-canonical (one identity)  →  Tier-1 coexistence deletion; W-ID.3/4/5 fall out
-Wave 4  Tier-2: delete messages[] channel; DBMessage becomes a projection (harness equality gate)
-Wave 5  Write-time validity (observe → enforce)  →  Tier-3: delete the repair band
-Wave 6  ACTIVITY_* rich parts + typed errors end-to-end + close followUp() bypasses
+Wave 4a REORDERED (2026-07-02): rich-part canonical carrier FIRST — the messages[] channel is
+        the sole persister of the acp-*/codex-* rich-part surface (plan/diff/terminal/image/
+        audio/resource-link/auto-approval-review/codex-error) + meta + permission; the canonical
+        builder emits nothing for those types, so the Tier-2 equality gate is unconstructable
+        until they have a full-fidelity canonical carrier. This was originally Wave 6's
+        ACTIVITY_* item; it must precede the deletion, not follow it.
+Wave 4b Tier-2: delete messages[] channel; DBMessage becomes a projection (harness equality gate).
+        The `|| messagesIndicateRecoverableFailure` fallback also dies here, NOT earlier — no
+        deployed daemon stamps the typed recoverable field until this branch ships.
+Wave 5  Write-time validity (observe → enforce)  →  Tier-3: delete the repair band.
+        LANDED: run-protocol-validator.ts (per-run state machine mirroring the read-time
+        band) + harness gate (write-time-protocol-validity.test.ts, zero violations across
+        recorded corpus), default OBSERVE. EXIT CRITERION for deleting the repair band:
+        a production observe-mode soak reporting ZERO would-be repairs (the
+        [agui-write-validation] diagnostic) sustained across a full daemon-version window,
+        AND enforce mode shipped as the default. Until both hold, the repair band stays.
+Wave 6  typed errors end-to-end + close followUp() bypasses (ACTIVITY_* item moved to 4a)
 Ext     Upstream ask: gemini in sandbox-agent  →  Tier-4 legacy transport deletion
 ```
 
