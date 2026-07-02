@@ -1,4 +1,5 @@
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
+import type { RecoverableTerminal } from "@terragon/agent/canonical-events";
 import {
   EventType,
   type BaseEvent,
@@ -53,6 +54,7 @@ export type CanonicalRunTerminalEvent = {
   errorMessage: string | null;
   errorCode: string | null;
   headShaAtCompletion: string | null;
+  recoverable: RecoverableTerminal | null;
 };
 
 export type CanonicalEventContextMismatch = {
@@ -159,6 +161,7 @@ export function findCanonicalRunTerminalEvent(
       errorMessage: event.errorMessage ?? null,
       errorCode: event.errorCode ?? null,
       headShaAtCompletion: event.headShaAtCompletion ?? null,
+      recoverable: event.recoverable ?? null,
     };
   }
   return null;

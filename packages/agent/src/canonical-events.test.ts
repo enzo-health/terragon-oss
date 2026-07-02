@@ -7,6 +7,8 @@ import {
   EVENT_ENVELOPE_VERSION,
   MetaEventSchema,
   OperationalRunStartedEventSchema,
+  OperationalRunTerminalEventSchema,
+  RecoverableTerminalSchema,
   PermissionResponseEventSchema,
   SeqSchema,
   ThreadChatIdSchema,
@@ -297,6 +299,48 @@ describe("canonical-events", () => {
         timezone: "America/Denver",
       }),
     ).toThrow();
+  });
+
+  it("round-trips a run-terminal with a typed recoverable classification", () => {
+    const terminal = {
+      ...baseEnvelope,
+      category: "operational" as const,
+      type: "run-terminal" as const,
+      status: "failed" as const,
+      recoverable: {
+        kind: "rate-limit" as const,
+        retryAfterMs: 60_000,
+        detail: "resets 3pm",
+      },
+    };
+    expect(OperationalRunTerminalEventSchema.parse(terminal)).toEqual(terminal);
+    expect(CanonicalEventSchema.parse(terminal)).toMatchObject({
+      type: "run-terminal",
+      recoverable: { kind: "rate-limit", retryAfterMs: 60_000 },
+    });
+  });
+
+  it("parses a run-terminal without the recoverable field (back-compat)", () => {
+    const terminal = {
+      ...baseEnvelope,
+      category: "operational" as const,
+      type: "run-terminal" as const,
+      status: "completed" as const,
+    };
+    const parsed = OperationalRunTerminalEventSchema.parse(terminal);
+    expect(parsed).toEqual(terminal);
+    expect("recoverable" in parsed).toBe(false);
+  });
+
+  it("accepts each recoverable kind and rejects unknown kinds", () => {
+    for (const kind of [
+      "rate-limit",
+      "oauth-token-revoked",
+      "context-exhausted",
+    ] as const) {
+      expect(RecoverableTerminalSchema.parse({ kind })).toEqual({ kind });
+    }
+    expect(() => RecoverableTerminalSchema.parse({ kind: "nope" })).toThrow();
   });
 
   it("keeps the primitive schemas practical", () => {

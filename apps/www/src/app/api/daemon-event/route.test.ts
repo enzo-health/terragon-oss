@@ -767,6 +767,59 @@ describe("daemon-event route", () => {
     );
   });
 
+  it.each([
+    { kind: "rate-limit" as const, status: "completed" as const },
+    { kind: "oauth-token-revoked" as const, status: "failed" as const },
+    { kind: "context-exhausted" as const, status: "failed" as const },
+  ])(
+    "defers off the typed recoverable=$kind field even when messages do not sniff-match",
+    async ({ kind, status }) => {
+      // K2: the daemon stamps `recoverable` on the canonical run-terminal. The
+      // route must defer to the recovery path off the typed field alone. The
+      // messages here are a benign success result that the legacy sniff
+      // (messagesIndicateRecoverableFailure) would NOT flag, proving the typed
+      // field — not message re-parsing — drives the defer.
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "result",
+              subtype: "success",
+              total_cost_usd: 0,
+              duration_ms: 10,
+              duration_api_ms: 10,
+              is_error: false,
+              num_turns: 1,
+              result: "ok",
+              session_id: "session-1",
+            },
+          ],
+          canonicalEvents: [
+            createCanonicalRunTerminalEvent({
+              eventId: "typed-recoverable-terminal",
+              seq: 10,
+              status,
+              recoverable: { kind },
+            }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "typed-recoverable-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
+      expect(handleDaemonEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+      );
+    },
+  );
+
   it("fails closed when runtime-session run-context columns are unavailable", async () => {
     vi.mocked(getDaemonEventDbPreflight).mockResolvedValueOnce({
       agentEventLogReady: true,

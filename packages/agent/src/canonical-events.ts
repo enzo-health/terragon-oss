@@ -69,6 +69,13 @@ export type OperationalRunStartedEvent = z.infer<
   typeof OperationalRunStartedEventSchema
 >;
 
+export const RecoverableTerminalSchema = z.object({
+  kind: z.enum(["rate-limit", "oauth-token-revoked", "context-exhausted"]),
+  retryAfterMs: z.number().optional(),
+  detail: z.string().optional(),
+});
+export type RecoverableTerminal = z.infer<typeof RecoverableTerminalSchema>;
+
 export const OperationalRunTerminalEventSchema = BaseEventEnvelopeSchema.extend(
   {
     category: z.literal("operational"),
@@ -77,6 +84,11 @@ export const OperationalRunTerminalEventSchema = BaseEventEnvelopeSchema.extend(
     errorMessage: z.string().nullable().optional(),
     errorCode: z.string().min(1).nullable().optional(),
     headShaAtCompletion: z.string().min(1).nullable().optional(),
+    // Present when the daemon classified this terminal as a RECOVERABLE failure
+    // (rate-limit re-queue, OAuth refresh+retry, or auto-compact+retry). The
+    // server defers to the message-based recovery path instead of fencing the
+    // run. Absent on non-recoverable terminals and on bundles predating K2.
+    recoverable: RecoverableTerminalSchema.optional(),
   },
 );
 export type OperationalRunTerminalEvent = z.infer<

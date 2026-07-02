@@ -3,6 +3,7 @@ import {
   type CanonicalEvent,
   EVENT_ENVELOPE_VERSION,
 } from "@terragon/agent/canonical-events";
+import { classifyRecoverableTerminal } from "@terragon/agent/recoverable-terminal";
 import {
   type AIAgent,
   type AIModel,
@@ -14,6 +15,14 @@ import {
   type DaemonTransportMode,
   resultErrorMessage,
 } from "./shared";
+
+function resolveRuntimeTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
 
 function stringifyCanonicalToolResult(value: unknown): string {
   if (typeof value === "string") {
@@ -132,6 +141,13 @@ export type BuildCanonicalEventsParams = {
   canonicalTerminalEmitted: boolean;
   threadId: string;
   threadChatId: string;
+  /**
+   * Timezone used only to compute a recoverable rate-limit's `retryAfterMs`;
+   * recoverable-KIND detection is timezone-independent. Defaults to the
+   * runtime's resolved timezone (matching the daemon's `getCurrentTimezone()`),
+   * so the off-limits daemon.ts call site needs no change.
+   */
+  timezone?: string;
   messages: ClaudeMessage[];
   onMalformedBlock?: (info: {
     runId: string;
@@ -163,6 +179,7 @@ export function buildCanonicalEventsForBatch(
     messages,
     onMalformedBlock,
   } = params;
+  const timezone = params.timezone ?? resolveRuntimeTimezone();
   if (messages.length === 0 || agent === null) {
     return {
       canonicalEvents: [],
@@ -347,6 +364,15 @@ export function buildCanonicalEventsForBatch(
     const terminal = deriveRunTerminalFromMessages(messages);
     if (terminal) {
       const baseEvent = allocateBaseEvent();
+      // Carry the recoverable classification as typed data (rate-limit,
+      // OAuth-revoked, context-exhausted) so the server defers to the recovery
+      // path off the field instead of re-parsing raw messages (K2). Absent when
+      // the batch is not a recoverable failure.
+      const recoverable = classifyRecoverableTerminal({
+        messages,
+        agent,
+        timezone,
+      });
       events.push({
         ...baseEvent,
         category: "operational",
@@ -355,6 +381,7 @@ export function buildCanonicalEventsForBatch(
         ...(terminal.errorMessage !== null
           ? { errorMessage: terminal.errorMessage }
           : {}),
+        ...(recoverable !== null ? { recoverable } : {}),
       });
       canonicalTerminalEmitted = true;
     }

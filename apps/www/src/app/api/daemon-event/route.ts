@@ -779,11 +779,21 @@ export async function POST(request: Request) {
   // OAuth-revoked, prompt-too-long). When it does, drop the canonical
   // run-terminal so the message-based recovery path can re-queue instead of
   // fencing the run to a hard stop; recovery terminates itself if it fails.
-  const isRecoverableResult = messagesIndicateRecoverableFailure({
-    messages,
-    agent: runContext?.agent,
-    timezone,
-  });
+  //
+  // K2: prefer the daemon's typed `recoverable` classification on the terminal.
+  // Fall back to re-parsing raw messages for terminals from daemon bundles that
+  // predate the field. Wave 4 deletes the `||` fallback and
+  // messagesIndicateRecoverableFailure once every daemon stamps the field.
+  const recoverableTerminalCandidate = canonicalEventsAfterDeltaFilter
+    ? findCanonicalRunTerminalEvent(canonicalEventsAfterDeltaFilter)
+    : null;
+  const isRecoverableResult =
+    recoverableTerminalCandidate?.recoverable != null ||
+    messagesIndicateRecoverableFailure({
+      messages,
+      agent: runContext?.agent,
+      timezone,
+    });
   const canonicalEvents =
     isRecoverableResult && canonicalEventsAfterDeltaFilter
       ? canonicalEventsAfterDeltaFilter.filter(

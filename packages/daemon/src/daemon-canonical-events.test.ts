@@ -26,6 +26,7 @@ function baseParams(
     canonicalTerminalEmitted: false,
     threadId: "thread-1",
     threadChatId: "thread-chat-1",
+    timezone: "UTC",
     messages: [],
     ...overrides,
   };
@@ -440,6 +441,147 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
     expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
     expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+});
+
+describe("buildCanonicalEventsForBatch recoverable classification", () => {
+  function terminalOf(result: ReturnType<typeof buildCanonicalEventsForBatch>) {
+    return result.canonicalEvents.find(
+      (event) => event.type === "run-terminal",
+    ) as Extract<
+      ReturnType<
+        typeof buildCanonicalEventsForBatch
+      >["canonicalEvents"][number],
+      { type: "run-terminal" }
+    >;
+  }
+
+  it("stamps a rate-limit terminal (Claude usage limit)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "Claude AI usage limit reached|1752350400",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("completed");
+    expect(terminal.recoverable).toEqual({
+      kind: "rate-limit",
+      retryAfterMs: expect.any(Number),
+    });
+  });
+
+  it("stamps a rate-limit terminal (Codex usage limit)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "codex",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "You've hit your usage limit. Try again in 2 hours.",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.recoverable?.kind).toBe("rate-limit");
+    expect(terminal.recoverable?.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("stamps an oauth-token-revoked terminal", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: "OAuth token revoked",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.recoverable).toEqual({ kind: "oauth-token-revoked" });
+  });
+
+  it("stamps a context-exhausted terminal", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: "Prompt is too long",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.recoverable).toEqual({ kind: "context-exhausted" });
+  });
+
+  it("leaves a non-recoverable terminal unstamped", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("completed");
+    expect(terminal).not.toHaveProperty("recoverable");
   });
 });
 
