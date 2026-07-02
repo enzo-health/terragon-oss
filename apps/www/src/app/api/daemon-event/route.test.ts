@@ -16,6 +16,7 @@ import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
+  updateThreadChat,
   updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +30,8 @@ import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 import { trackUsageEvents } from "@/server-lib/usage-events";
 import { isAnthropicDownPOST } from "@/server-lib/internal-request";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { compactThreadChat } from "@/server-lib/compact";
 import { POST } from "./route";
 
 const dbMocks = vi.hoisted(() => {
@@ -234,6 +237,16 @@ vi.mock("@/server-lib/usage-events", () => ({
 vi.mock("@/server-lib/internal-request", () => ({
   isAnthropicDownPOST: vi.fn(),
   internalPOST: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/feature-flags", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  getFeatureFlagForUser: vi.fn(),
+}));
+
+vi.mock("@/server-lib/compact", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  compactThreadChat: vi.fn(),
 }));
 
 function createDaemonRequest(
@@ -513,6 +526,10 @@ describe("daemon-event route", () => {
     );
     vi.mocked(trackUsageEvents).mockResolvedValue(undefined);
     vi.mocked(isAnthropicDownPOST).mockResolvedValue(undefined as never);
+    vi.mocked(getFeatureFlagForUser).mockResolvedValue(false);
+    vi.mocked(compactThreadChat).mockResolvedValue({
+      summary: "auto-compact summary",
+    });
   });
 
   it("injects interrupted tool-results for open tool calls on a v2 stopped terminal", async () => {
@@ -838,12 +855,7 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("re-queues a rate-limit result instead of completing it", async () => {
-    // A Claude rate-limit arrives as a result message that the daemon
-    // canonicalizes into a `completed` run-terminal. Completing it would skip the
-    // rate-limit re-queue (queued-agent-rate-limit), so the route must drop the
-    // terminal and defer recovery to the message-based path. Without the guard,
-    // completeAgentRunContextTerminal fires and the run wrongly terminates.
+  it("re-queues a rate-limit result via a route-owned rate-limit transition", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -881,11 +893,13 @@ describe("daemon-event route", () => {
     expect(handleDaemonEvent).toHaveBeenCalledWith(
       expect.objectContaining({ deferTerminalTransitionToRoute: false }),
     );
+    expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "system.agent-rate-limit" }),
+    );
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
 
-  it("defers an OAuth-token-revoked result to the recovery path", async () => {
-    // OAuth-token-revoked is recoverable (refresh + retry). The route drops the
-    // canonical terminal and defers; the recovery path retries or terminates.
+  it("recovers an OAuth-token-revoked result: retry marker before queued Continue, then re-dispatch", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -919,64 +933,140 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+    expect(
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        runId: "run-1",
+      }),
+    );
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "daemon-side-effect",
+        messages: [
+          expect.objectContaining({
+            type: "system",
+            message_type: "invalid-token-retry",
+          }),
+        ],
+      }),
+    );
+    const continueCallIndex = vi
+      .mocked(updateThreadChat)
+      .mock.calls.findIndex(
+        ([arg]) =>
+          (arg as { updates?: { appendQueuedMessages?: unknown[] } })?.updates
+            ?.appendQueuedMessages !== undefined,
+      );
+    expect(continueCallIndex).toBeGreaterThanOrEqual(0);
+    const markerOrder =
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker.mock
+        .invocationCallOrder[0]!;
+    const continueOrder =
+      vi.mocked(updateThreadChat).mock.invocationCallOrder[continueCallIndex]!;
+    expect(markerOrder).toBeLessThan(continueOrder);
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
     );
   });
 
-  it.each([
-    { kind: "rate-limit" as const, status: "completed" as const },
-    { kind: "oauth-token-revoked" as const, status: "failed" as const },
-    { kind: "context-exhausted" as const, status: "failed" as const },
-  ])(
-    "defers off the typed recoverable=$kind field even when messages do not sniff-match",
-    async ({ kind, status }) => {
-      // K2: the daemon stamps `recoverable` on the canonical run-terminal. The
-      // route must defer to the recovery path off the typed field alone. The
-      // messages here are a benign success result that the legacy sniff
-      // (messagesIndicateRecoverableFailure) would NOT flag, proving the typed
-      // field — not message re-parsing — drives the defer.
-      const response = await POST(
-        createDaemonRequest({
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [
-            {
-              type: "result",
-              subtype: "success",
-              total_cost_usd: 0,
-              duration_ms: 10,
-              duration_api_ms: 10,
-              is_error: false,
-              num_turns: 1,
-              result: "ok",
-              session_id: "session-1",
-            },
-          ],
-          canonicalEvents: [
-            createCanonicalRunTerminalEvent({
-              eventId: "typed-recoverable-terminal",
-              seq: 10,
-              status,
-              recoverable: { kind },
-            }),
-          ],
-          timezone: "UTC",
-          payloadVersion: 2,
-          eventId: "typed-recoverable-terminal",
-          runId: "run-1",
-          seq: 10,
-        }),
-      );
+  it("does not retry an OAuth-token-revoked result a second time (marker already present)", async () => {
+    sideEffectMocks.hasInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      true,
+    );
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: true,
+            num_turns: 1,
+            result: "OAuth token revoked",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "oauth-terminal-retried",
+            seq: 10,
+            status: "failed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "oauth-terminal-retried",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
 
-      expect(response.status).toBe(200);
-      expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ deferTerminalTransitionToRoute: false }),
-      );
-    },
-  );
+    expect(response.status).toBe(200);
+    expect(completeAgentRunContextTerminal).toHaveBeenCalled();
+    expect(
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker,
+    ).not.toHaveBeenCalled();
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("recovers a typed context-exhausted terminal off the recoverable field (auto-compact + re-dispatch)", async () => {
+    vi.mocked(getFeatureFlagForUser).mockResolvedValue(true);
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "typed-context-terminal",
+            seq: 10,
+            status: "failed",
+            recoverable: { kind: "context-exhausted" },
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "typed-context-terminal",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(compactThreadChat).toHaveBeenCalled();
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            type: "system",
+            message_type: "compact-result",
+          }),
+        ],
+      }),
+    );
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
+    );
+  });
 
   it("fails closed when runtime-session run-context columns are unavailable", async () => {
     vi.mocked(getDaemonEventDbPreflight).mockResolvedValueOnce({
@@ -4028,12 +4118,8 @@ describe("daemon-event route", () => {
       );
     });
 
-    it("defers a context-exhausted result to the recovery path", async () => {
-      // A context-length-exceeded result is recoverable (auto-compact + retry).
-      // The route drops the canonical terminal and defers to the message-based
-      // recovery path, which compacts and re-queues or terminates itself with the
-      // prompt-too-long classification preserved. The canonical fence must NOT
-      // fire here, or it would terminate the run before recovery is attempted.
+    it("fences a context-exhausted terminal as its real failure when auto-compact is disabled", async () => {
+      vi.mocked(getFeatureFlagForUser).mockResolvedValue(false);
       const response = await POST(
         createDaemonRequest({
           threadId: "thread-1",
@@ -4063,10 +4149,69 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-      expect(updateThreadChatTerminalMetadataIfTerminal).not.toHaveBeenCalled();
+      expect(completeAgentRunContextTerminal).toHaveBeenCalled();
+      expect(compactThreadChat).not.toHaveBeenCalled();
+      expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
       expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+        expect.objectContaining({ deferTerminalTransitionToRoute: true }),
+      );
+    });
+
+    it("auto-compacts and re-dispatches a context-exhausted terminal that also carries rich parts", async () => {
+      vi.mocked(getFeatureFlagForUser).mockResolvedValue(true);
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "context length exceeded",
+            } as any,
+          ],
+          canonicalEvents: [
+            createCanonicalRunStartedEvent({
+              eventId: "event-recoverable-richpart",
+              seq: 9,
+            }),
+            createCanonicalRunTerminalEvent({
+              eventId: "event-recoverable-richpart-terminal",
+              seq: 10,
+              status: "failed",
+              errorMessage: "context length exceeded",
+              errorCode: "daemon_result_error",
+              recoverable: { kind: "context-exhausted" },
+            }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-recoverable-richpart-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(compactThreadChat).toHaveBeenCalled();
+      const continueCall = vi
+        .mocked(updateThreadChat)
+        .mock.calls.find(
+          ([arg]) =>
+            (arg as { updates?: { appendQueuedMessages?: unknown[] } })?.updates
+              ?.appendQueuedMessages !== undefined,
+        );
+      expect(continueCall?.[0]).toMatchObject({
+        updates: {
+          appendQueuedMessages: [
+            { type: "user", parts: [{ type: "text", text: "Continue" }] },
+          ],
+          sessionId: null,
+          contextLength: null,
+        },
+      });
+      expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
       );
     });
 

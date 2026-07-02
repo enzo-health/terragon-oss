@@ -79,6 +79,13 @@ import { buildInterruptedToolResultMessages } from "@/lib/db-message-helpers";
 import { trackUsageEvents } from "@/server-lib/usage-events";
 import { isAnthropicDownPOST } from "@/server-lib/internal-request";
 import { persistSideEffectAgUiMessages } from "@/server-lib/ag-ui-side-effect-messages";
+import {
+  applyRouteRecoveryFire,
+  applyRouteRecoveryRateLimit,
+  planRouteRecovery,
+  type RouteRecoveryPlan,
+} from "@/server-lib/daemon-event/route-recovery";
+import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -809,15 +816,6 @@ export async function POST(request: Request) {
     }
   }
 
-  // A terminal batch can still carry a RECOVERABLE failure (rate-limit,
-  // OAuth-revoked, prompt-too-long). When it does, drop the canonical
-  // run-terminal so the message-based recovery path can re-queue instead of
-  // fencing the run to a hard stop; recovery terminates itself if it fails.
-  //
-  // K2: prefer the daemon's typed `recoverable` classification on the terminal.
-  // Fall back to re-parsing raw messages for terminals from daemon bundles that
-  // predate the field. Wave 4 deletes the `||` fallback and
-  // messagesIndicateRecoverableFailure once every daemon stamps the field.
   const recoverableTerminalCandidate = rawCanonicalEvents
     ? findCanonicalRunTerminalEvent(rawCanonicalEvents)
     : null;
@@ -829,8 +827,30 @@ export async function POST(request: Request) {
         agent: runContext?.agent,
         timezone,
       }));
+
+  const isV2Batch = canPersistCanonicalEvents && envelopeV2 != null;
+  const recoveryPlan: RouteRecoveryPlan | null =
+    isV2Batch && isRecoverableResult && runContext
+      ? await planRouteRecovery({
+          daemonStampedRecoverable:
+            recoverableTerminalCandidate?.recoverable ?? null,
+          messages,
+          agent: runContext.agent,
+          timezone,
+          userId,
+          threadId,
+          threadChatId,
+        })
+      : null;
+  const routeOwnsRecovery =
+    recoveryPlan !== null &&
+    (recoveryPlan.outcome === "fire" || recoveryPlan.outcome === "rate-limit");
+
+  const dropRecoverableRunTerminal =
+    isRecoverableResult &&
+    (recoveryPlan === null || recoveryPlan.outcome !== "no-recovery");
   const canonicalEvents =
-    isRecoverableResult && rawCanonicalEvents
+    dropRecoverableRunTerminal && rawCanonicalEvents
       ? rawCanonicalEvents.filter((event) => event.type !== "run-terminal")
       : rawCanonicalEvents;
   const canonicalTerminalBeforePersistence = canonicalEvents
@@ -846,7 +866,12 @@ export async function POST(request: Request) {
     | "processing"
     | "completed"
     | "failed"
-    | "stopped" = canonicalTerminal ? canonicalTerminal.status : "processing";
+    | "stopped" =
+    recoveryPlan?.outcome === "fire"
+      ? "completed"
+      : canonicalTerminal
+        ? canonicalTerminal.status
+        : "processing";
   const daemonTerminalErrorInfo: {
     errorMessage: string | null;
     errorCategory: DaemonTerminalErrorCategory;
@@ -1205,6 +1230,7 @@ export async function POST(request: Request) {
     });
   }
   let skipLegacyRuntimeTranscriptPersistence = false;
+  let routerSkipThreadChatPersistence = false;
   try {
     const isCanonicalOnlyTerminalBatch =
       canonicalTerminal != null &&
@@ -1215,6 +1241,8 @@ export async function POST(request: Request) {
       (deltas != null && deltas.length > 0);
     skipLegacyRuntimeTranscriptPersistence =
       canPersistCanonicalEvents && envelopeV2 != null && hasNativeRuntimeEvents;
+    routerSkipThreadChatPersistence =
+      skipLegacyRuntimeTranscriptPersistence || routeOwnsRecovery;
     const shouldSkipDuplicateTerminalProjection =
       terminalFenceOutcome === "duplicate" &&
       !messages.some((message) => message.type === "assistant") &&
@@ -1236,7 +1264,7 @@ export async function POST(request: Request) {
         runId: authoritativeRunId,
         runContext,
         deferTerminalTransitionToRoute: fenceTerminalTransition,
-        skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
+        skipThreadChatPersistence: routerSkipThreadChatPersistence,
       });
     }
   } catch (error) {
@@ -1261,10 +1289,7 @@ export async function POST(request: Request) {
     return new Response(result.error, { status: result.status || 500 });
   }
 
-  if (
-    skipLegacyRuntimeTranscriptPersistence &&
-    terminalFenceOutcome !== "duplicate"
-  ) {
+  if (routerSkipThreadChatPersistence && terminalFenceOutcome !== "duplicate") {
     const { costUsd, agentDurationMs } = deriveUsageFromMessages(messages);
     waitUntil(trackUsageEvents({ userId, costUsd, agentDurationMs }));
     if (messagesIndicateOverloaded(messages, runContext.agent)) {
@@ -1667,6 +1692,59 @@ export async function POST(request: Request) {
       return Response.json(terminalCommit.body, {
         status: terminalCommit.status,
       });
+    }
+  }
+
+  if (
+    routeOwnsRecovery &&
+    recoveryPlan?.outcome === "fire" &&
+    terminalFenceOutcome === "committed"
+  ) {
+    try {
+      await applyRouteRecoveryFire({
+        plan: recoveryPlan,
+        userId,
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+      });
+      waitUntil(
+        maybeProcessFollowUpQueue({
+          userId,
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          bypassBusyCheck: true,
+        }),
+      );
+    } catch (error) {
+      console.warn("[daemon-event] route recovery re-dispatch failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+    }
+  }
+
+  if (routeOwnsRecovery && recoveryPlan?.outcome === "rate-limit") {
+    try {
+      await applyRouteRecoveryRateLimit({
+        plan: recoveryPlan,
+        userId,
+        threadId,
+        threadChatId,
+      });
+    } catch (error) {
+      console.warn(
+        "[daemon-event] route recovery rate-limit transition failed",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
     }
   }
 

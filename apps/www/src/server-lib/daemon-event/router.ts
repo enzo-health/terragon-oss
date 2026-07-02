@@ -327,7 +327,8 @@ export async function routeDaemonEvent(
     }
   }
 
-  const allowTerminalRecoverySideEffects = !suppressTerminalRecoverySideEffects;
+  const allowTerminalRecoverySideEffects =
+    !suppressTerminalRecoverySideEffects && !skipThreadChatPersistence;
 
   // Auto-compact recovery
   if (classification.isPromptTooLong && allowTerminalRecoverySideEffects) {
