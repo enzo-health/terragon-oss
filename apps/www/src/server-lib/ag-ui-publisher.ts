@@ -23,10 +23,23 @@ import {
   type AgUiEventEnvelope,
   agUiStreamKey,
   appendAgUiEventRows,
+  getAgUiEventEnvelopesForRun,
   peekNextThreadChatSeqLocked,
 } from "@terragon/shared/model/agent-event-log";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import { isLocalRedisHttpMode, redis } from "@/lib/redis";
+import {
+  countViolations,
+  emitProtocolValidationDiagnostic,
+  foldRows,
+  getProtocolValidationMode,
+  isHardViolation,
+  type PlannedRow,
+  PROTOCOL_VALIDATION_LOG_PREFIX,
+  type ProtocolRow,
+  RunProtocolStateStore,
+  validateBatch,
+} from "@/server-lib/ag-ui/run-protocol-validator";
 
 // Bound the per-thread-chat Redis stream so live-tail buffers can't grow without
 // limit. Trimming is approximate (~) so it stays cheap on the publish hot path;
@@ -38,6 +51,83 @@ const AGUI_STREAM_TTL_SECONDS = 60 * 60;
 const AGUI_XADD_TRIM = {
   trim: { type: "MAXLEN", threshold: AGUI_STREAM_MAXLEN, comparison: "~" },
 } as const;
+
+const runProtocolStateStore = new RunProtocolStateStore();
+
+function plannedRowsToPublishRows(
+  planned: readonly PlannedRow<AgUiPublishRow & ProtocolRow>[],
+  fallbackTimestamp: Date,
+): AgUiPublishRow[] {
+  const out: AgUiPublishRow[] = [];
+  let lastTimestamp = fallbackTimestamp;
+  for (const entry of planned) {
+    if (entry.kind === "keep") {
+      lastTimestamp = entry.row.timestamp;
+      out.push(entry.row);
+    } else {
+      out.push({
+        event: entry.event,
+        eventId: entry.eventId,
+        timestamp: lastTimestamp,
+      });
+    }
+  }
+  return out;
+}
+
+async function validateRowsForPersist(params: {
+  db: DB;
+  runId: string;
+  threadChatId: string;
+  rows: AgUiPublishRow[];
+}): Promise<AgUiPublishRow[]> {
+  const { db, runId, threadChatId, rows } = params;
+  const mode = getProtocolValidationMode();
+  if (mode === "off") {
+    return rows;
+  }
+  let priorState = runProtocolStateStore.get(runId);
+  if (priorState === undefined) {
+    const priorEnvelopes = await getAgUiEventEnvelopesForRun({
+      db,
+      runId,
+      threadChatId,
+    });
+    priorState = foldRows(
+      runId,
+      priorEnvelopes.flatMap((envelope) =>
+        envelope.eventId === undefined
+          ? []
+          : [{ event: envelope.payload, eventId: envelope.eventId }],
+      ),
+    );
+  }
+  const { state, violations, plannedRows } = validateBatch(
+    priorState,
+    rows as (AgUiPublishRow & ProtocolRow)[],
+  );
+  runProtocolStateStore.set(runId, state);
+  if (violations.length > 0) {
+    emitProtocolValidationDiagnostic({
+      runId,
+      threadChatId,
+      mode,
+      attempted: rows.length,
+      totalViolations: violations.length,
+      hardViolations: violations.filter((violation) =>
+        isHardViolation(violation.kind),
+      ).length,
+      counts: countViolations(violations),
+    });
+  }
+  if (mode !== "enforce") {
+    return rows;
+  }
+  return plannedRowsToPublishRows(
+    plannedRows,
+    rows[0]?.timestamp ?? new Date(),
+  );
+}
 
 function refreshStreamTtl(streamKey: string): void {
   // Best-effort: a TTL refresh must never break publishing. Guard the call
@@ -147,6 +237,22 @@ export async function persistAgUiEvents(params: {
     };
   }
 
+  let effectiveRows = rows;
+  try {
+    effectiveRows = await validateRowsForPersist({
+      db,
+      runId,
+      threadChatId,
+      rows,
+    });
+  } catch (error) {
+    console.warn(`${PROTOCOL_VALIDATION_LOG_PREFIX} degraded`, {
+      runId,
+      threadChatId,
+      error: String(error),
+    });
+  }
+
   let inserted = 0;
   let skipped = 0;
   const insertedEventIds: string[] = [];
@@ -158,10 +264,10 @@ export async function persistAgUiEvents(params: {
     const startSeq = await peekNextThreadChatSeqLocked({
       tx,
       threadChatId,
-      count: rows.length,
+      count: effectiveRows.length,
     });
 
-    const candidateRows = rows.map((row, index) => {
+    const candidateRows = effectiveRows.map((row, index) => {
       const seq = startSeq + index;
       return {
         source: row,
