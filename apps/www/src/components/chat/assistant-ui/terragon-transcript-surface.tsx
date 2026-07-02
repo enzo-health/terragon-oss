@@ -3,6 +3,7 @@
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
 import type { ThreadStatus, UISystemMessage } from "@terragon/shared";
+import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import { ChatError } from "../chat-error";
 import { LeafLoading } from "../leaf-loading";
 import { MessageScheduled, WorkingMessage } from "../chat-messages";
@@ -59,6 +60,10 @@ export function TerragonTranscriptSurface({
   const workingMessageSlotClassName = getWorkingMessageSlotClassName({
     threadStatus,
   });
+  // Suppress the "Connecting to live task…" indicator on fast/warm hydrations:
+  // it only appears once hydration has run past the threshold, so sub-250ms
+  // reconnects go straight to the transcript with no spinner flash.
+  const showHydrationIndicator = useDelayedFlag(isRuntimeHydrating, 250);
 
   return (
     <div className="nauval-chat-surface flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 py-6 sm:py-8 mt-6 sm:mt-8 mb-8 rounded-[var(--radius-outer)]">
@@ -74,9 +79,11 @@ export function TerragonTranscriptSurface({
         </div>
       ) : null}
       {isRuntimeHydrating ? (
-        <div className="pt-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
-          <LeafLoading message="Connecting to live task…" />
-        </div>
+        showHydrationIndicator ? (
+          <div className="pt-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]">
+            <LeafLoading message="Connecting to live task…" />
+          </div>
+        ) : null
       ) : (
         <div className="animate-in fade-in duration-[var(--duration-base)] ease-[var(--ease-emphasis)]">
           <NativeThread />

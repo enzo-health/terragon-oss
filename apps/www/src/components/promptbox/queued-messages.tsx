@@ -31,6 +31,7 @@ export function QueuedMessages({
         className={cn(
           "border-t border-x rounded-tl-md rounded-tr-md border-border bg-muted/50",
           "pb-2 -mb-2 overflow-hidden",
+          "animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
           className,
         )}
       >
