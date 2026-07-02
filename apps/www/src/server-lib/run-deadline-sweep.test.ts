@@ -18,9 +18,15 @@ const runContextMocks = vi.hoisted(() => ({
   completeAgentRunContextTerminal: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  db: { label: "db" },
-}));
+vi.mock("@/lib/db", () => {
+  const db = {
+    label: "db",
+    // The run-terminal choke point fences + transitions inside one transaction;
+    // pass the callback the same mock handle since the model calls are mocked.
+    transaction: (callback: (tx: unknown) => unknown) => callback(db),
+  };
+  return { db };
+});
 
 vi.mock("@terragon/shared/model/threads", () => ({
   getStalledThreadChats: threadMocks.getStalledThreadChats,

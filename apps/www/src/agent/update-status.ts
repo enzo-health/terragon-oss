@@ -8,12 +8,17 @@ import {
   updateThreadChat,
   updateThreadChatStatusAtomic,
 } from "@terragon/shared/model/threads";
-import { db } from "@/lib/db";
+import type { DB } from "@terragon/shared/db";
+import { db as defaultDb } from "@/lib/db";
 import { broadcastAgUiEventEphemeral } from "@/server-lib/ag-ui-publisher";
 import { ThreadError } from "./error";
 import { handleTransition, ThreadEvent } from "./machine";
 
 export type UpdateThreadChatWithTransitionParams = {
+  // Optional DB handle so callers can run the transition inside an outer
+  // transaction (e.g. the run-terminal choke point fences the run-context and
+  // applies this status transition atomically). Defaults to the shared pool.
+  db?: DB;
   threadId: string;
   userId: string;
   threadChatId: string;
@@ -38,6 +43,7 @@ export type UpdateThreadChatWithTransitionResult = {
 };
 
 export async function updateThreadChatWithTransition({
+  db = defaultDb,
   userId,
   threadId,
   threadChatId,

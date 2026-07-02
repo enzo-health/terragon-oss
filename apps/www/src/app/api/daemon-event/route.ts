@@ -11,7 +11,6 @@ import {
   findOpenAgUiMessagesForRun,
 } from "@terragon/shared/model/agent-event-log";
 import {
-  completeAgentRunContextTerminal,
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
@@ -37,7 +36,6 @@ import {
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
 import { messagesIndicateRecoverableFailure } from "@/server-lib/daemon-event/message-parser";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type DaemonTokenAuthContext,
@@ -67,9 +65,10 @@ import {
 import {
   buildFailedTerminalErrorMetadata,
   buildTerminalLifecyclePolicy,
-  resolveTerminalStatusForTransition,
   shouldQueueTerminalCheckpoint,
+  type TerminalCheckpointReadyStatus,
 } from "@/server-lib/daemon-event/run-completion";
+import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 
@@ -846,6 +845,14 @@ export async function POST(request: Request) {
   let terminalFenceOutcome: "committed" | "duplicate" | null = null;
   let terminalEventIdForAck: string | null = null;
   let terminalSeqForAck: number | null = null;
+  // Captured from the atomic fence+transition below so the terminal-state
+  // machinery further down (CAS verify, checkpoint gating, metadata) keys off the
+  // transition that already ran inside the fence transaction.
+  let terminalChatTransition: Awaited<
+    ReturnType<typeof commitTerminalRunAndChatStatus>
+  >["transition"] = null;
+  let terminalCheckpointReadyStatus: TerminalCheckpointReadyStatus | null =
+    null;
   if (daemonRunStatusFromMessages !== "processing") {
     const terminalEventId = canonicalTerminal?.eventId ?? envelopeV2?.eventId;
     const terminalSeq = canonicalTerminal?.seq ?? envelopeV2?.seq;
@@ -861,27 +868,59 @@ export async function POST(request: Request) {
     terminalEventIdForAck = terminalEventId;
     terminalSeqForAck = terminalSeq;
 
-    const terminalFenceResult = await completeAgentRunContextTerminal({
-      db,
-      runId: runContext.runId,
-      userId,
-      threadId,
-      threadChatId,
-      transportMode: runContext.transportMode,
-      protocolVersion: runContext.protocolVersion,
-      runtimeProvider: runContext.runtimeProvider,
-      daemonTokenKeyId: runContext.daemonTokenKeyId,
-      terminalStatus: daemonRunStatusFromMessages,
-      lastAcceptedSeq: terminalSeq,
-      terminalEventId,
-      failureUpdates: terminalFailureUpdates,
+    // Derive the coupled chat transition up front. `terminalRecoveryQueued` is
+    // provably false whenever the fence runs (recoverable terminals are dropped
+    // before this point), so `daemonRunStatusFromMessages` IS the terminal status
+    // for the transition — no need to wait for handleDaemonEvent.
+    const terminalThreadForPolicy =
+      daemonRunStatusFromMessages === "completed"
+        ? await getThreadMinimal({ db, threadId, userId })
+        : null;
+    const disableGitCheckpointing =
+      !!terminalThreadForPolicy?.disableGitCheckpointing;
+    const terminalPolicy = buildTerminalLifecyclePolicy({
+      status: daemonRunStatusFromMessages,
+      disableGitCheckpointing,
     });
-    if (terminalFenceResult.status === "rejected") {
+    terminalCheckpointReadyStatus = terminalPolicy.checkpointReadyStatus;
+
+    // Fence the run-context terminal AND transition thread_chat.status in ONE
+    // transaction. This is the derived-status choke point: no early return or
+    // error between here and the old late transition can split the two surfaces.
+    const commit = await commitTerminalRunAndChatStatus({
+      db,
+      fence: {
+        runId: runContext.runId,
+        userId,
+        threadId,
+        threadChatId,
+        transportMode: runContext.transportMode,
+        protocolVersion: runContext.protocolVersion,
+        runtimeProvider: runContext.runtimeProvider,
+        daemonTokenKeyId: runContext.daemonTokenKeyId,
+        terminalStatus: daemonRunStatusFromMessages,
+        lastAcceptedSeq: terminalSeq,
+        terminalEventId,
+        failureUpdates: terminalFailureUpdates,
+      },
+      transition: {
+        userId,
+        threadId,
+        threadChatId,
+        eventType: terminalPolicy.eventType,
+        markAsUnread: true,
+        requireStatusTransitionForChatUpdates: true,
+        skipBroadcast: true,
+      },
+      disableGitCheckpointing,
+    });
+    const terminalFenceResult = commit.fence;
+    if (!terminalFenceResult || terminalFenceResult.status === "rejected") {
       return Response.json(
         {
           success: false,
           error: "daemon_event_terminal_run_context_cas_failed",
-          reason: terminalFenceResult.reason,
+          reason: terminalFenceResult?.reason,
           runId: runContext.runId,
         },
         { status: 409 },
@@ -889,6 +928,7 @@ export async function POST(request: Request) {
     }
     terminalFenceOutcome = terminalFenceResult.status;
     runContext = terminalFenceResult.runContext;
+    terminalChatTransition = commit.transition;
   }
 
   const {
@@ -1332,40 +1372,17 @@ export async function POST(request: Request) {
     const terminalOps: Array<Promise<unknown>> = [];
 
     if (fenceTerminalTransition) {
-      const terminalStatusForTransition = resolveTerminalStatusForTransition({
-        resolvedStatus,
-        terminalRecoveryQueued: result.terminalRecoveryQueued,
-      });
-      const terminalThread =
-        terminalStatusForTransition === "completed"
-          ? await getThreadMinimal({ db, threadId, userId })
-          : null;
-      const { eventType, checkpointReadyStatus } = buildTerminalLifecyclePolicy(
-        {
-          status: terminalStatusForTransition,
-          disableGitCheckpointing: !!terminalThread?.disableGitCheckpointing,
-        },
-      );
-
-      const transitionResult = await updateThreadChatWithTransition({
-        userId,
-        threadId,
-        threadChatId,
-        eventType,
-        // `handleDaemonEvent` skips unread + terminal metadata when it defers the
-        // terminal transition to this fenced route path.
-        markAsUnread: true,
-        // No chatUpdates here: this path is terminal-only and must not append
-        // messages. Terminal metadata is written in a separate, status-gated
-        // update below.
-        requireStatusTransitionForChatUpdates: true,
-        skipBroadcast: true,
-      });
+      // The terminal chat transition already ran atomically with the fence
+      // above; reuse its result. `checkpointReadyStatus` was captured from the
+      // same buildTerminalLifecyclePolicy call.
+      const checkpointReadyStatus = terminalCheckpointReadyStatus;
+      const didUpdateStatus = terminalChatTransition?.didUpdateStatus ?? false;
+      const updatedStatus = terminalChatTransition?.updatedStatus;
 
       let latestThreadChatAfterTransition:
         | Awaited<ReturnType<typeof getThreadChat>>
         | undefined;
-      if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
+      if (updatedStatus && !didUpdateStatus) {
         latestThreadChatAfterTransition = await getThreadChat({
           db,
           userId,
@@ -1374,14 +1391,13 @@ export async function POST(request: Request) {
         });
         if (
           !latestThreadChatAfterTransition ||
-          latestThreadChatAfterTransition.status !==
-            transitionResult.updatedStatus
+          latestThreadChatAfterTransition.status !== updatedStatus
         ) {
           return Response.json(
             {
               success: false,
               error: "daemon_event_terminal_thread_chat_cas_failed",
-              expectedStatus: transitionResult.updatedStatus,
+              expectedStatus: updatedStatus,
               actualStatus: latestThreadChatAfterTransition?.status ?? null,
             },
             { status: 409 },
@@ -1390,7 +1406,7 @@ export async function POST(request: Request) {
       }
       if (
         checkpointReadyStatus !== null &&
-        !transitionResult.didUpdateStatus &&
+        !didUpdateStatus &&
         latestThreadChatAfterTransition === undefined
       ) {
         latestThreadChatAfterTransition = await getThreadChat({
@@ -1403,7 +1419,7 @@ export async function POST(request: Request) {
       if (
         shouldQueueTerminalCheckpoint({
           checkpointReadyStatus,
-          didUpdateStatus: transitionResult.didUpdateStatus,
+          didUpdateStatus,
           latestStatus: latestThreadChatAfterTransition?.status,
         })
       ) {

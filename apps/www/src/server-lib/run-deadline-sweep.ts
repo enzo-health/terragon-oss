@@ -1,12 +1,9 @@
 import { getStalledThreadChats } from "@terragon/shared/model/threads";
-import {
-  completeAgentRunContextTerminal,
-  getLatestAgentRunContextForThreadChat,
-} from "@terragon/shared/model/agent-run-context";
+import { getLatestAgentRunContextForThreadChat } from "@terragon/shared/model/agent-run-context";
 import { DB } from "@terragon/shared/db";
 import { maybeHibernateSandboxById } from "@/agent/sandbox";
 import { setActiveThreadChat } from "@/agent/sandbox-resource";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
 
 export const RUN_DEADLINE_CUTOFF_SECS = 15 * 60;
 
@@ -23,70 +20,71 @@ export type RunDeadlineSweepResult = {
   skipped: number;
 };
 
-// Drive a stalled run to a terminal status through the machine transition (and the
-// thread.status_changed broadcast it emits), NOT a bulk UPDATE — so the composer
-// de-latches instead of waiting for a refresh. `system.error` is a no-op on rows
-// already terminal, so the sweep is idempotent and safe to run on every tick.
+// Drive a stalled run to terminal through the derived-status choke point: fence the
+// run-context (so a late daemon event from the dead run can't pass the route's
+// active-run guards and append to the swept transcript) AND apply the `system.error`
+// chat transition (with the thread.status_changed broadcast it emits) in ONE
+// transaction. The stalled row carries no runId, so resolve the newest run first.
+// Fenced + idempotent: terminalEventId is keyed to the runId (a re-run returns
+// "duplicate"), and the CAS self-rejects if a newer run has already superseded this
+// one — so it can never stomp a live successor. Rows with no run-context still get the
+// chat transition.
 async function terminateStalledThreadChat(
-  threadChat: SweepThreadChat,
-): Promise<boolean> {
-  const { didUpdateStatus } = await updateThreadChatWithTransition({
-    userId: threadChat.userId,
-    threadId: threadChat.threadId,
-    threadChatId: threadChat.id,
-    eventType: "system.error",
-    chatUpdates: {
-      replaceQueuedMessages: [],
-      errorMessage: "agent-generic-error",
-      errorMessageInfo: DEADLINE_ERROR_INFO,
-      appendMessages: [
-        {
-          type: "error",
-          error_type: "agent-generic-error",
-          error_info: DEADLINE_ERROR_INFO,
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    },
-  });
-  return didUpdateStatus;
-}
-
-// Close the agent run-context for a swept chat through the canonical terminal fence,
-// so a late daemon event from the dead run can't pass the route's active-run guards and
-// append to the swept transcript. The stalled row carries no runId, so resolve the
-// newest run for the chat first. Fenced + idempotent: terminalEventId is keyed to the
-// runId (a re-run returns "duplicate"), and the CAS self-rejects if a newer run has
-// already superseded this one — so it can never stomp a live successor.
-async function closeStalledRunContext(
   db: DB,
   threadChat: SweepThreadChat,
-): Promise<void> {
+): Promise<boolean> {
   const runContext = await getLatestAgentRunContextForThreadChat({
     db,
     userId: threadChat.userId,
     threadId: threadChat.threadId,
     threadChatId: threadChat.id,
   });
-  if (!runContext) return;
-  await completeAgentRunContextTerminal({
+  const { transition } = await commitTerminalRunAndChatStatus({
     db,
-    runId: runContext.runId,
-    userId: runContext.userId,
-    threadId: runContext.threadId,
-    threadChatId: runContext.threadChatId,
-    transportMode: runContext.transportMode,
-    protocolVersion: runContext.protocolVersion,
-    runtimeProvider: runContext.runtimeProvider,
-    daemonTokenKeyId: runContext.daemonTokenKeyId,
-    terminalStatus: "failed",
-    lastAcceptedSeq: (runContext.lastAcceptedSeq ?? 0) + 1,
-    terminalEventId: `deadline-sweep:${runContext.runId}`,
-    failureUpdates: {
-      failureSource: "custom-error",
-      failureTerminalReason: DEADLINE_ERROR_INFO,
+    fence: runContext
+      ? {
+          runId: runContext.runId,
+          userId: runContext.userId,
+          threadId: runContext.threadId,
+          threadChatId: runContext.threadChatId,
+          transportMode: runContext.transportMode,
+          protocolVersion: runContext.protocolVersion,
+          runtimeProvider: runContext.runtimeProvider,
+          daemonTokenKeyId: runContext.daemonTokenKeyId,
+          terminalStatus: "failed",
+          lastAcceptedSeq: (runContext.lastAcceptedSeq ?? 0) + 1,
+          terminalEventId: `deadline-sweep:${runContext.runId}`,
+          failureUpdates: {
+            failureSource: "custom-error",
+            failureTerminalReason: DEADLINE_ERROR_INFO,
+          },
+        }
+      : null,
+    transition: {
+      userId: threadChat.userId,
+      threadId: threadChat.threadId,
+      threadChatId: threadChat.id,
+      eventType: "system.error",
+      chatUpdates: {
+        replaceQueuedMessages: [],
+        errorMessage: "agent-generic-error",
+        errorMessageInfo: DEADLINE_ERROR_INFO,
+        appendMessages: [
+          {
+            type: "error",
+            error_type: "agent-generic-error",
+            error_info: DEADLINE_ERROR_INFO,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      },
     },
+    // The sweep favours a terminal `complete` on the rare reconcile path (a real
+    // terminal landed between the read and the CAS) rather than a checkpoint-pending
+    // state; the sweep never checkpoints.
+    disableGitCheckpointing: true,
   });
+  return transition?.didUpdateStatus ?? false;
 }
 
 async function releaseStalledSandboxes(
@@ -156,7 +154,7 @@ export async function runDeadlineSweep({
 
   for (const threadChat of stalledThreadChats) {
     try {
-      if (await terminateStalledThreadChat(threadChat)) {
+      if (await terminateStalledThreadChat(db, threadChat)) {
         terminated += 1;
       } else {
         skipped += 1;
@@ -168,15 +166,6 @@ export async function runDeadlineSweep({
         error,
       );
     }
-    // Always attempt the run-context close (even when the status transition was a
-    // no-op): the split-ownership bug is precisely a chat that already reads terminal
-    // while its run-context stays live. Tolerant of rejection so it never aborts a row.
-    await closeStalledRunContext(db, threadChat).catch((error) => {
-      console.error(
-        `Run deadline sweep: run-context close failed for thread chat ${threadChat.id}`,
-        error,
-      );
-    });
   }
 
   await releaseStalledSandboxes(stalledThreadChats);

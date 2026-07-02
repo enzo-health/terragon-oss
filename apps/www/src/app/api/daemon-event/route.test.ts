@@ -3625,7 +3625,18 @@ describe("daemon-event route", () => {
         projectionError,
       );
       expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
+      // Derived status: the terminal chat transition now commits atomically with
+      // the run-context fence, so it lands on the FIRST POST even though the
+      // projection (handleDaemonEvent) then throws — closing the terminal-context
+      // /live-chat split window while the daemon retries.
+      expect(updateThreadChatWithTransition).toHaveBeenCalledTimes(1);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "assistant.message_done",
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+        }),
+      );
       expect(updateAgentRunContext).not.toHaveBeenCalledWith(
         expect.objectContaining({
           updates: expect.objectContaining({ status: "failed" }),
@@ -3638,6 +3649,10 @@ describe("daemon-event route", () => {
       expect(retryResponse.status).toBe(200);
       expect(retryData).toMatchObject({ success: true });
       expect(handleDaemonEvent).toHaveBeenCalledTimes(2);
+      // The retry re-projects the transcript and idempotently re-runs the
+      // transition (chat is already terminal, so it is a no-op that still keeps
+      // the surfaces coupled).
+      expect(updateThreadChatWithTransition).toHaveBeenCalledTimes(2);
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
