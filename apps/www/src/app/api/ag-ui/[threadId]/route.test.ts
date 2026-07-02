@@ -457,14 +457,20 @@ describe("ag-ui SSE route", () => {
   });
 
   it("reports runActive=true with the active runId when the latest run is non-terminal", async () => {
+    const runStartedEvent = {
+      type: EventType.RUN_STARTED,
+      timestamp: 1,
+      threadId: "thread-1",
+      runId: "run-live",
+    } as BaseEvent;
     const snapshotEvent = {
       type: EventType.MESSAGES_SNAPSHOT,
-      timestamp: 1,
+      timestamp: 2,
       messages: [{ id: "user-1", role: "user", content: "start here" }],
     } as BaseEvent;
-    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
-    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(
-      "run-live" as Awaited<ReturnType<typeof getLatestRunIdForThreadChat>>,
+    mockAgUiEventEnvelopesForThreadChat(
+      [runStartedEvent, snapshotEvent],
+      [41, 42],
     );
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
       makeRunContext({ runId: "run-live", status: "processing" }),
@@ -487,14 +493,20 @@ describe("ag-ui SSE route", () => {
   });
 
   it("reports runActive=false but keeps the active runId when the latest run is terminal", async () => {
+    const runStartedEvent = {
+      type: EventType.RUN_STARTED,
+      timestamp: 1,
+      threadId: "thread-1",
+      runId: "run-done",
+    } as BaseEvent;
     const snapshotEvent = {
       type: EventType.MESSAGES_SNAPSHOT,
-      timestamp: 1,
+      timestamp: 2,
       messages: [{ id: "user-1", role: "user", content: "start here" }],
     } as BaseEvent;
-    mockAgUiEventEnvelopesForThreadChat([snapshotEvent], [42]);
-    vi.mocked(getLatestRunIdForThreadChat).mockResolvedValue(
-      "run-done" as Awaited<ReturnType<typeof getLatestRunIdForThreadChat>>,
+    mockAgUiEventEnvelopesForThreadChat(
+      [runStartedEvent, snapshotEvent],
+      [41, 42],
     );
     vi.mocked(getAgentRunContextByRunId).mockResolvedValue(
       makeRunContext({ runId: "run-done", status: "completed" }),
@@ -782,7 +794,7 @@ describe("ag-ui SSE route", () => {
       ],
       lastSeq: 60,
       runActive: false,
-      activeRunId: null,
+      activeRunId: "run-1",
     });
   });
 
@@ -1072,7 +1084,7 @@ describe("ag-ui SSE route", () => {
       ],
       lastSeq: 51,
       runActive: false,
-      activeRunId: null,
+      activeRunId: "run-before-follow-up",
     });
   });
 

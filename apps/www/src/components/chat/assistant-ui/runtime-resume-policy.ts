@@ -1,11 +1,8 @@
 export type RuntimeHistoryMode = "active-resume" | "idle-finalized";
 
-export type RuntimeReplayCursorAction = "apply-history-last-seq" | "clear";
-
 export type RuntimeResumePolicy = {
   historyLoadKey: string;
   historyMode: RuntimeHistoryMode;
-  replayCursorAction: RuntimeReplayCursorAction;
 };
 
 export function resolveRuntimeResumePolicy({
@@ -42,6 +39,5 @@ export function resolveRuntimeResumePolicy({
         ? `${baseHistoryLoadKey}:retry-${retryNonce}`
         : baseHistoryLoadKey,
     historyMode,
-    replayCursorAction: isLive ? "apply-history-last-seq" : "clear",
   };
 }

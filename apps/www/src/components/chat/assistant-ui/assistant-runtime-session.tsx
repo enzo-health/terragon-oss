@@ -213,13 +213,16 @@ export function AssistantRuntimeSession({
       // Capture server-authoritative liveness for the resume policy. `undefined`
       // (server did not report) leaves the policy on the isAgentWorking fallback.
       setServerRunActive(history.runActive);
-      if (runtimeResumePolicy.replayCursorAction === "apply-history-last-seq") {
-        setReplayCursor(
-          history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
-        );
-      } else {
-        setReplayCursor(null);
-      }
+      // Seed the replay cursor from the history response on every load, active
+      // or idle. The idle path used to clear it, which forced any later SSE open
+      // (resume, follow-up, reconnect) to re-scan the whole run from Postgres
+      // even though history already delivered every row — the cold-open
+      // double-read. A finished run has no events past `lastSeq` and a new run
+      // gets higher seqs, so seeding never drops live events; on an empty thread
+      // `lastSeq` is -1 and replays everything, identical to clearing.
+      setReplayCursor(
+        history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
+      );
       setHistoryLoadErrorState(null);
       setRuntimeErrorState(null);
       return history.messages;
@@ -235,12 +238,7 @@ export function AssistantRuntimeSession({
       });
       throw new AssistantHistoryLoadError(message);
     }
-  }, [
-    agent,
-    loadAgUiHistoryMessages,
-    runtimeResumePolicy.replayCursorAction,
-    setReplayCursor,
-  ]);
+  }, [agent, loadAgUiHistoryMessages, setReplayCursor]);
 
   const handleRuntimeError = useCallback(
     (error: Error) => {

@@ -11,7 +11,6 @@ describe("resolveRuntimeResumePolicy", () => {
     ).toEqual({
       historyLoadKey: "chat-1:active",
       historyMode: "active-resume",
-      replayCursorAction: "apply-history-last-seq",
     });
   });
 
@@ -24,7 +23,6 @@ describe("resolveRuntimeResumePolicy", () => {
     ).toEqual({
       historyLoadKey: "chat-1:idle",
       historyMode: "idle-finalized",
-      replayCursorAction: "clear",
     });
   });
 
@@ -45,7 +43,6 @@ describe("resolveRuntimeResumePolicy", () => {
       threadChatId: "chat-1",
     });
     expect(policy.historyMode).toBe("active-resume");
-    expect(policy.replayCursorAction).toBe("apply-history-last-seq");
     expect(policy.historyLoadKey).toBe("chat-1:active");
   });
 
@@ -56,7 +53,6 @@ describe("resolveRuntimeResumePolicy", () => {
       threadChatId: "chat-1",
     });
     expect(policy.historyMode).toBe("active-resume");
-    expect(policy.replayCursorAction).toBe("apply-history-last-seq");
   });
 
   it("both signals idle resolves to a closed stream", () => {
@@ -66,7 +62,6 @@ describe("resolveRuntimeResumePolicy", () => {
       threadChatId: "chat-1",
     });
     expect(policy.historyMode).toBe("idle-finalized");
-    expect(policy.replayCursorAction).toBe("clear");
   });
 
   it("undefined serverRunActive falls back to isAgentWorking (server has not reported yet)", () => {
