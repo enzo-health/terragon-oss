@@ -144,6 +144,14 @@ Ext     Upstream ask: gemini in sandbox-agent  →  Tier-4 legacy transport dele
 
 Rules: one wave at a time on the optimistic-submit/resume seam; every wave gates on the replay integration harness; pins and the patch stay exact; daemon disk journal (durability #3) can land any time — it's additive and independent.
 
+## 7b. Follow-up tickets surfaced during implementation (2026-07-02)
+
+- **Usage needs a canonical carrier**: cost/duration exists only in the legacy `messages[]` result. Before daemons stop sending `messages[]` entirely, stamp usage on the canonical terminal (daemon change) or billing data is lost for everyone, not just skew.
+- **Completed+queued sweeper**: a throw between terminal completion and `maybeProcessFollowUpQueue` strands a done chat with an eligible queued message — a pre-existing property of every completion path (not introduced by Wave 4b). A cron sweep for completed chats with eligible queued messages would make it degrade to delayed.
+- **Repair-band deletion**: gated on production observe-mode soak of the write-time validator (zero `[agui-write-validation]` repairs across a full daemon-version window), then enforce-by-default.
+- **Two skew fallbacks retire on different triggers**: grep `LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS` (all daemons emit provider-rich-part) and `LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE` (all daemons stamp recoverable) — do not collapse into one cleanup.
+- **Unify the two canonical→DBMessage projections**: `canonicalEventToReplayMessage` (prompt-replay, drops rich/meta) and `deriveDBMessagesFromCanonical` (parity-tested, rich-aware; consumer: Linear activity emission) coexist after Wave 4b. One projection with a fidelity parameter would end the split.
+
 ## 8. Risks
 
 - **Tier-2 equality gate**: DBMessage-from-canonical must match DBMessage-from-`messages[]` across the recorded corpus before the swap; budget recorder time to widen the corpus (especially recovery scenarios: rate-limit, OAuth-revoked, auto-compact).

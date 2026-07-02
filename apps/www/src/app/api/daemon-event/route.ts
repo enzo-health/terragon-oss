@@ -7,7 +7,6 @@ import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  assignThreadChatMessageSeqToCanonicalEvents,
   findOpenAgUiMessagesForRun,
   findOpenAgUiToolCallsForRun,
 } from "@terragon/shared/model/agent-event-log";
@@ -73,11 +72,15 @@ import {
 } from "@/server-lib/daemon-event/run-completion";
 import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import { parseClaudeOverloadedMessage } from "@/agent/msg/helpers";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
 import { buildInterruptedToolResultMessages } from "@/lib/db-message-helpers";
 import { trackUsageEvents } from "@/server-lib/usage-events";
-import { isAnthropicDownPOST } from "@/server-lib/internal-request";
+import {
+  internalPOST,
+  isAnthropicDownPOST,
+} from "@/server-lib/internal-request";
+import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
 import { persistSideEffectAgUiMessages } from "@/server-lib/ag-ui-side-effect-messages";
 import {
   applyRouteRecoveryFire,
@@ -86,6 +89,8 @@ import {
   type RouteRecoveryPlan,
 } from "@/server-lib/daemon-event/route-recovery";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { emitLinearActivitiesForCanonicalBatch } from "@/server-lib/linear-agent-activity";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -273,18 +278,6 @@ function publishMetaEvents(params: {
 function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
   const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
   return action !== "blocked";
-}
-
-function numericUsageField(usage: object, field: string): number {
-  const value = Reflect.get(usage, field);
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "string" && value.length > 0) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
 }
 
 function buildRunContextFailureUpdates(params: {
@@ -983,6 +976,16 @@ export async function POST(request: Request) {
       disableGitCheckpointing,
     });
     const terminalFenceResult = commit.fence;
+    if (commit.reconciled) {
+      return jsonTerminalAckResponse({
+        status: 202,
+        deduplicated: true,
+        reason: "run_terminal_reconciled",
+        runId: runContext.runId,
+        acknowledgedEventId: terminalEventId,
+        acknowledgedSeq: terminalSeq,
+      });
+    }
     if (!terminalFenceResult || terminalFenceResult.status === "rejected") {
       return Response.json(
         {
@@ -1107,20 +1110,32 @@ export async function POST(request: Request) {
     (!deltas || deltas.length === 0) &&
     (!canonicalEvents || canonicalEvents.length === 0)
   ) {
-    const result = await handleDaemonEvent({
-      messages: [],
+    const heartbeatThread = await getThreadMinimal({ db, threadId, userId });
+    if (!heartbeatThread) {
+      return new Response("Thread not found", { status: 404 });
+    }
+    if (heartbeatThread.codesandboxId && heartbeatThread.sandboxProvider) {
+      waitUntil(
+        extendSandboxLife({
+          sandboxId: heartbeatThread.codesandboxId,
+          sandboxProvider: heartbeatThread.sandboxProvider,
+        }),
+      );
+    }
+    await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+    return Response.json({ success: true });
+  }
+
+  const isNonTerminalActivityBatch =
+    daemonRunStatusFromMessages === "processing";
+  if (isNonTerminalActivityBatch) {
+    await updateThreadChatWithTransition({
+      db,
+      userId,
       threadId,
       threadChatId,
-      userId,
-      timezone,
-      contextUsage: null,
-      runId: authoritativeRunId,
-      runContext,
+      eventType: "assistant.message",
     });
-    if (!result.success) {
-      return new Response(result.error, { status: result.status || 500 });
-    }
-    return Response.json({ success: true });
   }
 
   if (
@@ -1187,40 +1202,6 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing" &&
     (envelopeV2 != null || canonicalTerminal != null);
 
-  // Prefer computing context usage from the last non-result message's usage
-  // fields when available. Do not sum across all messages.
-  const computedContextUsage = (() => {
-    try {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
-        if (!message || message.type === "result") continue;
-        if (!("message" in message)) continue;
-        if ("parent_tool_use_id" in message && message.parent_tool_use_id) {
-          continue;
-        }
-        const messagePayload = message.message;
-        if (typeof messagePayload !== "object" || messagePayload === null) {
-          continue;
-        }
-        if (!("usage" in messagePayload)) continue;
-        const usage = messagePayload.usage;
-        if (typeof usage !== "object" || usage === null) continue;
-        const input = numericUsageField(usage, "input_tokens");
-        const output = numericUsageField(usage, "output_tokens");
-        const cacheCreate = numericUsageField(
-          usage,
-          "cache_creation_input_tokens",
-        );
-        const cacheRead = numericUsageField(usage, "cache_read_input_tokens");
-        const total = input + output + cacheCreate + cacheRead;
-        return Number.isFinite(total) && total > 0 ? total : null;
-      }
-      return null;
-    } catch (_e) {
-      return null;
-    }
-  })();
-  let result: Awaited<ReturnType<typeof handleDaemonEvent>>;
   if (
     runContext &&
     (runContext.status === "pending" || runContext.status === "dispatched")
@@ -1229,67 +1210,18 @@ export async function POST(request: Request) {
       status: "processing",
     });
   }
-  let skipLegacyRuntimeTranscriptPersistence = false;
-  let routerSkipThreadChatPersistence = false;
-  try {
-    const isCanonicalOnlyTerminalBatch =
-      canonicalTerminal != null &&
-      messages.length === 0 &&
-      (!deltas || deltas.length === 0);
-    const hasNativeRuntimeEvents =
-      (canonicalEvents != null && canonicalEvents.length > 0) ||
-      (deltas != null && deltas.length > 0);
-    skipLegacyRuntimeTranscriptPersistence =
-      canPersistCanonicalEvents && envelopeV2 != null && hasNativeRuntimeEvents;
-    routerSkipThreadChatPersistence =
-      skipLegacyRuntimeTranscriptPersistence || routeOwnsRecovery;
-    const shouldSkipDuplicateTerminalProjection =
-      terminalFenceOutcome === "duplicate" &&
-      !messages.some((message) => message.type === "assistant") &&
-      (!deltas || deltas.length === 0);
-    if (shouldSkipDuplicateTerminalProjection || isCanonicalOnlyTerminalBatch) {
-      result = {
-        success: true,
-        threadChatMessageSeq: null,
-        terminalRecoveryQueued: false,
-      };
-    } else {
-      result = await handleDaemonEvent({
-        messages,
-        threadId,
-        threadChatId,
-        userId,
-        timezone,
-        contextUsage: computedContextUsage ?? null,
-        runId: authoritativeRunId,
-        runContext,
-        deferTerminalTransitionToRoute: fenceTerminalTransition,
-        skipThreadChatPersistence: routerSkipThreadChatPersistence,
-      });
-    }
-  } catch (error) {
-    console.error(
-      "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
-      error,
+
+  const mainPathThread = await getThreadMinimal({ db, threadId, userId });
+  if (mainPathThread?.codesandboxId && mainPathThread.sandboxProvider) {
+    waitUntil(
+      extendSandboxLife({
+        sandboxId: mainPathThread.codesandboxId,
+        sandboxProvider: mainPathThread.sandboxProvider,
+      }),
     );
-    if (runContext && !fenceTerminalTransition) {
-      await updateRunContextIfPresent({
-        status: "failed",
-      });
-    }
-    throw error;
   }
 
-  if (!result.success) {
-    if (runContext) {
-      await updateRunContextIfPresent({
-        status: "failed",
-      });
-    }
-    return new Response(result.error, { status: result.status || 500 });
-  }
-
-  if (routerSkipThreadChatPersistence && terminalFenceOutcome !== "duplicate") {
+  if (terminalFenceOutcome !== "duplicate") {
     const { costUsd, agentDurationMs } = deriveUsageFromMessages(messages);
     waitUntil(trackUsageEvents({ userId, costUsd, agentDurationMs }));
     if (messagesIndicateOverloaded(messages, runContext.agent)) {
@@ -1297,26 +1229,30 @@ export async function POST(request: Request) {
     }
   }
 
-  if (result.threadChatMessageSeq != null) {
-    const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
-    if (insertedEventIds.length > 0) {
-      // The persist layer already recorded the exact eventIds it wrote —
-      // use them directly instead of re-running the mapper (which would
-      // risk drift between producer and consumer if the mapping ever
-      // changed). Duplicates from earlier POSTs already carry their seq
-      // from the initial insert, so they're intentionally excluded here.
-      await assignThreadChatMessageSeqToCanonicalEvents({
-        db,
-        eventIds: insertedEventIds,
-        threadChatMessageSeq: result.threadChatMessageSeq,
-      });
+  if (
+    mainPathThread?.sourceType === "linear-mention" &&
+    mainPathThread.sourceMetadata != null &&
+    canonicalEvents != null &&
+    canonicalEvents.length > 0
+  ) {
+    const linearMeta = mainPathThread.sourceMetadata as Extract<
+      ThreadSourceMetadata,
+      { type: "linear-mention" }
+    >;
+    if (linearMeta.agentSessionId) {
+      const isRecoveryFire = recoveryPlan?.outcome === "fire";
+      const { costUsd: linearCostUsd } = deriveUsageFromMessages(messages);
+      waitUntil(
+        emitLinearActivitiesForCanonicalBatch(linearMeta, canonicalEvents, {
+          isDone:
+            daemonRunStatusFromMessages === "completed" && !isRecoveryFire,
+          isError: daemonRunStatusFromMessages === "failed" && !isRecoveryFire,
+          customErrorMessage: daemonTerminalErrorInfo.errorMessage,
+          costUsd: linearCostUsd,
+        }),
+      );
     }
   }
-
-  // Rich-part AG-UI rows were already persisted in the merged persist call
-  // above (canonical + delta + rich-part rows in a single transaction).
-  // The old second toDBMessage call is eliminated — the precomputed
-  // results were used to build richPartRows before handleDaemonEvent.
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
   const resolvedStatus = daemonRunStatusFromMessages;
@@ -1511,29 +1447,32 @@ export async function POST(request: Request) {
         runId: runContext.runId,
       });
 
-      if (result.terminalRecoveryQueued) {
-        await Promise.all([
-          updateThreadChatTerminalMetadataIfTerminal({
-            db,
-            userId,
-            threadId,
-            threadChatId,
-            updates: {
-              errorMessage: null,
-              errorMessageInfo: null,
-            },
-          }),
-          updateRunContextIfPresent({
-            status: "completed",
-            ...buildRunContextFailureUpdates({
-              status: "completed",
-              errorMessage: null,
-              errorCategory: "unknown",
-              failureSource: null,
-            }),
-          }),
-        ]);
-      } else if (resolvedStatus === "failed") {
+      const terminalFreedConcurrencySlot = recoveryPlan?.outcome !== "fire";
+      if (terminalFreedConcurrencySlot) {
+        waitUntil(
+          (async () => {
+            try {
+              const eligibleQueuedThreadChats =
+                await getEligibleQueuedThreadChats({ userId });
+              if (eligibleQueuedThreadChats.length > 0) {
+                await internalPOST(`process-thread-queue/${userId}`);
+              }
+            } catch (error) {
+              console.warn(
+                "[daemon-event] concurrency-slot queue kick failed",
+                {
+                  userId,
+                  threadId,
+                  threadChatId,
+                  error,
+                },
+              );
+            }
+          })(),
+        );
+      }
+
+      if (resolvedStatus === "failed") {
         const errorMetadata = buildFailedTerminalErrorMetadata(
           daemonTerminalErrorInfo.errorMessage,
         );
@@ -1635,7 +1574,6 @@ export async function POST(request: Request) {
   if (
     (daemonRunStatusFromMessages === "stopped" ||
       daemonRunStatusFromMessages === "failed") &&
-    skipLegacyRuntimeTranscriptPersistence &&
     terminalFenceOutcome === "committed"
   ) {
     try {

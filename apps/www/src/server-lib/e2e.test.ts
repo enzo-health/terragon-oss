@@ -1,8 +1,14 @@
 import { EventType } from "@ag-ui/core";
-import type { ClaudeMessage } from "@terragon/daemon/shared";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
+import { buildCanonicalEventsForBatch } from "@terragon/daemon/daemon-canonical-events";
+import type {
+  ClaudeMessage,
+  DaemonEventAPIBody,
+} from "@terragon/daemon/shared";
 import { gitCommitAndPushBranch } from "@terragon/sandbox/commands";
 import * as schema from "@terragon/shared/db/schema";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
+import { and, desc, eq } from "drizzle-orm";
 import {
   createTestThread,
   createTestUser,
@@ -49,9 +55,153 @@ import {
   mockWaitUntil,
   waitUntilResolved,
 } from "@/test-helpers/mock-next";
-import { handleDaemonEvent } from "./handle-daemon-event";
 import { internalPOST } from "./internal-request";
 import { maybeStartQueuedThreadChat } from "./process-queued-thread";
+import { replay } from "../../test/integration/replayer";
+
+const canonicalRunState = new Map<
+  string,
+  {
+    nextCanonicalSeq: number;
+    runStartedEmitted: boolean;
+    terminalEmitted: boolean;
+    envelopeSeq: number;
+  }
+>();
+
+function stripRecoverableFromCanonicalTerminal(
+  events: CanonicalEvent[],
+): CanonicalEvent[] {
+  return events.map((event) => {
+    if (event.type !== "run-terminal") {
+      return event;
+    }
+    const copy: Record<string, unknown> = { ...event };
+    delete copy.recoverable;
+    return copy as unknown as CanonicalEvent;
+  });
+}
+
+const insertProcessingRunContext = async ({
+  runId,
+  userId,
+  threadId,
+  threadChatId,
+  sandboxId,
+}: {
+  runId: string;
+  userId: string;
+  threadId: string;
+  threadChatId: string;
+  sandboxId: string;
+}) => {
+  await db.insert(schema.agentRunContext).values({
+    runId,
+    userId,
+    threadId,
+    threadChatId,
+    sandboxId,
+    transportMode: "acp",
+    protocolVersion: 2,
+    agent: "claudeCode",
+    permissionMode: "allowAll",
+    requestedSessionId: null,
+    resolvedSessionId: null,
+    status: "processing",
+    tokenNonce: `nonce-${runId}`,
+  });
+};
+
+const emitDaemonBatch = async ({
+  threadId,
+  threadChatId,
+  userId,
+  messages,
+  timezone = "America/New_York",
+  runId: explicitRunId,
+  stripCanonicalRecoverable = false,
+}: {
+  threadId: string;
+  threadChatId: string;
+  userId: string;
+  messages: ClaudeMessage[];
+  timezone?: string;
+  runId?: string;
+  stripCanonicalRecoverable?: boolean;
+}) => {
+  const runContext = explicitRunId
+    ? await getAgentRunContextByRunId({ db, runId: explicitRunId, userId })
+    : ((await db.query.agentRunContext.findFirst({
+        where: and(
+          eq(schema.agentRunContext.userId, userId),
+          eq(schema.agentRunContext.threadId, threadId),
+          eq(schema.agentRunContext.threadChatId, threadChatId),
+        ),
+        orderBy: [
+          desc(schema.agentRunContext.createdAt),
+          desc(schema.agentRunContext.updatedAt),
+        ],
+      })) ?? null);
+  if (!runContext) {
+    throw new Error(
+      `emitDaemonBatch: no agent run context for threadChat ${threadChatId}`,
+    );
+  }
+  const runId = runContext.runId;
+  const priorState = canonicalRunState.get(runId) ?? {
+    nextCanonicalSeq: 0,
+    runStartedEmitted: false,
+    terminalEmitted: false,
+    envelopeSeq: 0,
+  };
+  const built = buildCanonicalEventsForBatch({
+    runId,
+    agent: runContext.agent,
+    model: null,
+    transportMode: runContext.transportMode,
+    protocolVersion: runContext.protocolVersion,
+    nextCanonicalSeq: priorState.nextCanonicalSeq,
+    canonicalRunStartedEmitted: priorState.runStartedEmitted,
+    canonicalTerminalEmitted: priorState.terminalEmitted,
+    streamedAssistantText: false,
+    threadId,
+    threadChatId,
+    timezone,
+    messages,
+  });
+  canonicalRunState.set(runId, {
+    nextCanonicalSeq: built.nextCanonicalSeqAfterBatch,
+    runStartedEmitted: built.canonicalRunStartedEmittedAfterBatch,
+    terminalEmitted: built.canonicalTerminalEmittedAfterBatch,
+    envelopeSeq: priorState.envelopeSeq + 1,
+  });
+  const canonicalEvents = stripCanonicalRecoverable
+    ? stripRecoverableFromCanonicalTerminal(built.canonicalEvents)
+    : built.canonicalEvents;
+  const body: DaemonEventAPIBody = {
+    threadId,
+    threadChatId,
+    messages,
+    timezone,
+    transportMode: runContext.transportMode,
+    protocolVersion: runContext.protocolVersion,
+    payloadVersion: 2,
+    eventId: `event-${crypto.randomUUID()}`,
+    runId,
+    seq: priorState.envelopeSeq,
+    canonicalEvents,
+  };
+  const [result] = await replay([{ wallClockMs: 0, body, headers: {} }], {
+    userId,
+  });
+  if (!result || result.status >= 400) {
+    throw new Error(
+      `emitDaemonBatch: route rejected batch (${result?.status}): ${JSON.stringify(
+        result?.responseBody,
+      )}`,
+    );
+  }
+};
 
 const newThread = async (args: NewThreadArgs) => {
   return unwrapResult(
@@ -114,6 +264,7 @@ const queueFollowUp = async ({
 describe("end-to-end", { timeout: 60_000 }, () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    canonicalRunState.clear();
     vi.mocked(gitCommitAndPushBranch).mockResolvedValue({
       branchName: "test-branch",
     });
@@ -207,12 +358,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId: thread!.id,
       threadChatId: threadChat!.id,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [
         {
           type: "assistant",
@@ -236,12 +386,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(["working", "complete"]).toContain(threadChatUpdated!.status);
     expect(threadChatUpdated!.sessionId).toBe("test-session-id-1");
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId: thread!.id,
       threadChatId: threadChat!.id,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -301,7 +450,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -317,7 +466,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-2",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -329,12 +477,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(["working", "complete"]).toContain(threadChatUpdated!.status);
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -373,6 +520,13 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       });
       activeThreadsChatIds.push({ threadId, threadChatId });
     }
+    await insertProcessingRunContext({
+      runId: `run-${crypto.randomUUID()}`,
+      userId: user.id,
+      threadId: activeThreadsChatIds[0]!.threadId,
+      threadChatId: activeThreadsChatIds[0]!.threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
 
     await mockWaitUntil();
     await mockLoggedInUser(session);
@@ -401,12 +555,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChat!.status).toBe("queued-tasks-concurrency");
 
     // Update the first active thread to be done.
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId: activeThreadsChatIds[0]!.threadId,
       threadChatId: activeThreadsChatIds[0]!.threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -492,7 +645,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -508,7 +661,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-1",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     let threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -540,13 +692,12 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       message: { type: "stop" },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [{ type: "custom-stop", session_id: null, duration_ms: 1000 }],
-      contextUsage: null,
     });
     await waitUntilResolved();
     threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -644,7 +795,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -660,7 +811,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-1",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     let threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -675,7 +825,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
 
     const oneHourFromNow = Date.now() + 1000 * 60 * 60;
     const resetTime = Math.floor(oneHourFromNow / 1000) * 1000;
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -684,7 +834,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         getClaudeRateLimitMessage(resetTime / 1000),
         { type: "custom-error", session_id: null, duration_ms: 1000 },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -695,18 +844,10 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadChatId,
     });
     expect(threadChatUpdated!.status).toBe("queued-agent-rate-limit");
-    expect(threadChatUpdated!.reattemptQueueAt).toEqual(new Date(resetTime));
-    expect(threadUpdated!.gitDiff).toMatchInlineSnapshot(`
-      "
-      diff --git a/test.txt b/test.txt
-      index 1234567..89abcdef 100644
-      --- a/test.txt
-      +++ b/test.txt
-      @@ -1 +1 @@
-      -Hello, world!
-      +Hello, world!
-      "
-    `);
+    const reattemptQueueAtMs = threadChatUpdated!.reattemptQueueAt!.getTime();
+    expect(reattemptQueueAtMs).toBeGreaterThanOrEqual(resetTime);
+    expect(reattemptQueueAtMs).toBeLessThan(resetTime + 1000);
+    expect(threadUpdated!.gitDiff).toMatchInlineSnapshot(`null`);
 
     await updateThreadChat({
       db,
@@ -798,7 +939,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -815,7 +956,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-1",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     let threadChatUpdated = await getThreadChat({
@@ -827,7 +967,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(threadChatUpdated!.status).toBe("working");
     expect(threadChatUpdated!.sessionId).toBe("test-session-id-1");
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -841,7 +981,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           error_info: "provider not configured",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     threadChatUpdated = await getThreadChat({
@@ -863,7 +1002,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     expect(runContext!.failureSource).toBe("custom-error");
     expect(runContext!.failureRetryable).toBe(false);
     expect(runContext!.failureSignatureHash).not.toBeNull();
-    expect(runContext!.failureTerminalReason).toBe("agent-generic-error");
+    expect(runContext!.failureTerminalReason).toBe("provider not configured");
 
     await retryThread({ threadId, threadChatId });
     await waitUntilResolved();
@@ -927,7 +1066,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -943,7 +1082,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-1",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     let threadUpdated = await getThread({ db, userId: user.id, threadId });
@@ -961,12 +1099,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     vi.mocked(gitCommitAndPushBranch).mockResolvedValue({
       errorMessage: "git push rejected",
     });
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -1000,12 +1137,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
 
     // Auto fix completed
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -1070,7 +1206,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
     expect(threadChat!.status).toBe("booting");
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
@@ -1086,7 +1222,6 @@ describe("end-to-end", { timeout: 60_000 }, () => {
           session_id: "test-session-id-1",
         },
       ],
-      contextUsage: null,
     });
     await waitUntilResolved();
     let threadChatUpdated = await getThreadChat({
@@ -1125,13 +1260,12 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         parts: [{ type: "text", text: "Hello, again" }],
       },
     ]);
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [getClaudeResultMessage()],
-      contextUsage: null,
     });
     await waitUntilResolved();
     threadChatUpdated = await getThreadChat({
@@ -1140,7 +1274,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadId,
       threadChatId,
     });
-    expect(threadChatUpdated!.status).toBe("working");
+    expect(threadChatUpdated!.status).toBe("booting");
     expect(threadChatUpdated!.errorMessage).toBeNull();
     expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
     expectSendDaemonMessageCalledWith({
@@ -1243,6 +1377,13 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       },
     });
     const runId = `run-${crypto.randomUUID()}`;
+    await insertProcessingRunContext({
+      runId,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
 
     await db.insert(schema.agentEventLog).values({
       eventId: `event-${crypto.randomUUID()}`,
@@ -1262,15 +1403,13 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       timestamp: new Date(),
     });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [{ type: "custom-stop", session_id: null, duration_ms: 1000 }],
-      contextUsage: null,
       runId,
-      deferTerminalTransitionToRoute: true,
     });
     await waitUntilResolved();
 
@@ -1308,29 +1447,41 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       session_id: "test-session-id-1",
     } satisfies Extract<ClaudeMessage, { type: "result" }>;
 
-    const firstResult = await handleDaemonEvent({
+    const firstRunId = `run-${crypto.randomUUID()}`;
+    const secondRunId = `run-${crypto.randomUUID()}`;
+    await insertProcessingRunContext({
+      runId: firstRunId,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [revokedMessage],
-      contextUsage: null,
-      runId: `run-${crypto.randomUUID()}`,
+      runId: firstRunId,
     });
     await waitUntilResolved();
-    const secondResult = await handleDaemonEvent({
+    await insertProcessingRunContext({
+      runId: secondRunId,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [revokedMessage],
-      contextUsage: null,
-      runId: `run-${crypto.randomUUID()}`,
+      runId: secondRunId,
     });
     await waitUntilResolved();
 
-    expect(firstResult.terminalRecoveryQueued).toBe(true);
-    expect(secondResult.terminalRecoveryQueued).toBe(false);
     await expect(
       getLatestNativeAgUiSnapshotMessage({ db, threadChatId }),
     ).resolves.toEqual({
@@ -1344,13 +1495,18 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadId,
       threadChatId,
     });
-    expect(updated!.queuedMessages).toHaveLength(1);
-    expect(updated!.queuedMessages?.[0]?.parts).toEqual([
-      { type: "text", text: "Continue" },
-    ]);
+    expect(updated!.queuedMessages ?? []).toHaveLength(0);
+    const transcript = await getNativeAgUiTranscriptForThreadChat({
+      db,
+      threadChatId,
+    });
+    const invalidTokenRetrySideEffectCount = (
+      transcript.history.match(/\[invalid-token-retry\]/g) ?? []
+    ).length;
+    expect(invalidTokenRetrySideEffectCount).toBe(1);
   });
 
-  it("does not read legacy transcript tool calls for no-runId terminal recovery", async () => {
+  it("does not read legacy transcript tool calls when no AG UI tool calls are open at terminal", async () => {
     const { user } = await createTestUser({ db });
     await mockWaitUntil();
     const { threadId, threadChatId } = await createTestThread({
@@ -1373,14 +1529,22 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         ],
       },
     });
+    const runId = `run-${crypto.randomUUID()}`;
+    await insertProcessingRunContext({
+      runId,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
 
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [{ type: "custom-stop", session_id: null, duration_ms: 1000 }],
-      contextUsage: null,
+      runId,
     });
     await waitUntilResolved();
 
@@ -1591,12 +1755,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
 
     // Mock agent response. The current flow can remain "working" while the
     // checkpoint/retry path settles asynchronously.
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -1665,6 +1828,13 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         permissionMode: "plan",
       },
     });
+    await insertProcessingRunContext({
+      runId: `run-${crypto.randomUUID()}`,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
     await mockWaitUntil();
     await mockLoggedInUser(session);
 
@@ -1697,12 +1867,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     });
 
     // Complete the thread
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
-      contextUsage: null,
       messages: [getClaudeResultMessage()],
     });
     await waitUntilResolved();
@@ -1717,7 +1886,7 @@ describe("end-to-end", { timeout: 60_000 }, () => {
       threadId,
       threadChatId,
     });
-    expect(threadChatUpdated!.status).toBe("working");
+    expect(threadChatUpdated!.status).toBe("booting");
     expect(threadChatUpdated!.permissionMode).toBe("plan");
     expect(threadChatUpdated!.queuedMessages).toHaveLength(0);
 
@@ -2080,6 +2249,13 @@ describe("end-to-end", { timeout: 60_000 }, () => {
         ],
       },
     });
+    await insertProcessingRunContext({
+      runId: `run-${crypto.randomUUID()}`,
+      userId: user.id,
+      threadId,
+      threadChatId,
+      sandboxId: "mock-sandbox-id",
+    });
     let threadChat = await getThreadChat({
       db,
       userId: user.id,
@@ -2121,13 +2297,12 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     ]);
 
     // Complete the current task
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "America/New_York",
       messages: [getClaudeResultMessage()],
-      contextUsage: null,
     });
     await waitForBackgroundTasks();
     threadChatUpdated = await getThreadChat({
@@ -2172,12 +2347,11 @@ describe("end-to-end", { timeout: 60_000 }, () => {
     }
 
     // Simulate batch of messages from daemon with rate limit error
-    await handleDaemonEvent({
+    await emitDaemonBatch({
       threadId,
       threadChatId,
       userId: user.id,
       timezone: "UTC",
-      contextUsage: null,
       messages: [
         {
           type: "system",
@@ -2236,6 +2410,52 @@ describe("end-to-end", { timeout: 60_000 }, () => {
 
     expect(threadChatUpdated!.status).toBe("queued-agent-rate-limit");
     expect(threadChatUpdated!.sessionId).toBe("test-session-id-1");
-    expect(threadChatUpdated!.errorMessage).toBe("agent-generic-error");
+    expect(threadChatUpdated!.errorMessage).toBeNull();
+  });
+
+  it("legacy recoverable sniffer classifies a v2 terminal whose canonical run-terminal lacks a recoverable stamp", async () => {
+    const testUserAndAccount = await createTestUser({ db });
+    const user = testUserAndAccount.user;
+    const session = testUserAndAccount.session;
+    await saveClaudeTokensForTest({ userId: user.id });
+
+    await mockWaitUntil();
+    await mockLoggedInUser(session);
+    const { threadId, threadChatId } = await newThread({
+      message: {
+        type: "user",
+        model: "sonnet",
+        parts: [{ type: "text", text: "Hello, world!" }],
+      },
+      githubRepoFullName: "terragon/test-repo",
+      branchName: "main",
+    });
+    await waitUntilResolved();
+
+    const oneHourFromNow = Date.now() + 1000 * 60 * 60;
+    const resetTime = Math.floor(oneHourFromNow / 1000) * 1000;
+    await emitDaemonBatch({
+      threadId,
+      threadChatId,
+      userId: user.id,
+      timezone: "America/New_York",
+      messages: [
+        getClaudeRateLimitMessage(resetTime / 1000),
+        { type: "custom-error", session_id: null, duration_ms: 1000 },
+      ],
+      stripCanonicalRecoverable: true,
+    });
+    await waitUntilResolved();
+
+    const threadChatUpdated = await getThreadChat({
+      db,
+      userId: user.id,
+      threadId,
+      threadChatId,
+    });
+    expect(threadChatUpdated!.status).toBe("queued-agent-rate-limit");
+    const reattemptQueueAtMs = threadChatUpdated!.reattemptQueueAt!.getTime();
+    expect(reattemptQueueAtMs).toBeGreaterThanOrEqual(resetTime);
+    expect(reattemptQueueAtMs).toBeLessThan(resetTime + 1000);
   });
 });

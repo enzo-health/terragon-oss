@@ -17,10 +17,15 @@
  */
 
 import { LinearClient, AgentActivitySignal } from "@linear/sdk";
-import type { ClaudeMessage } from "@terragon/daemon/shared";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import { deriveDBMessagesFromCanonical } from "@terragon/shared/model/derive-db-messages-from-canonical";
 import { db } from "@/lib/db";
 import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
+import {
+  extractLastAssistantTextFromDBMessages,
+  extractLatestAgentPlanFromDBMessages,
+} from "@/server-lib/linear-activity-from-canonical";
 
 /**
  * Input shape for an external URL on a Linear agent session.
@@ -201,56 +206,6 @@ const lastActionEmitMap = new Map<string, number>();
 /** Max 1 `action` activity per session per this interval (ms). */
 const ACTION_THROTTLE_MS = 30_000;
 
-/** Max chars for progress summary extracted from assistant messages. */
-const SUMMARY_MAX_CHARS = 200;
-
-// ---------------------------------------------------------------------------
-// Helper: extract last assistant text from daemon messages
-// ---------------------------------------------------------------------------
-
-function extractLastAssistantText(messages: ClaudeMessage[]): string | null {
-  // Walk backwards to find the last assistant message with text content
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    if (msg.type !== "assistant") continue;
-
-    const content = msg.message.content;
-    if (typeof content === "string" && content.trim()) {
-      return content.slice(0, SUMMARY_MAX_CHARS);
-    }
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block.type === "text" && block.text?.trim()) {
-          return block.text.slice(0, SUMMARY_MAX_CHARS);
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function extractLatestAgentPlan(
-  messages: ClaudeMessage[],
-): AgentPlanStep[] | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!;
-    if (message.type !== "acp-plan" && message.type !== "codex-plan") {
-      continue;
-    }
-
-    return message.entries.map((entry) => ({
-      content: entry.content,
-      status:
-        entry.status === "in_progress"
-          ? "inProgress"
-          : entry.status === "completed"
-            ? "completed"
-            : "pending",
-    }));
-  }
-  return null;
-}
-
 type LinearDaemonActivityUpdate =
   | { type: "action"; summary: string }
   | { type: "plan"; plan: AgentPlanStep[] }
@@ -258,20 +213,20 @@ type LinearDaemonActivityUpdate =
   | { type: "error"; body: string };
 
 function buildTerminalActivityUpdate({
-  messages,
+  lastAssistantText,
   isDone,
   isError,
   customErrorMessage,
   costUsd,
 }: {
-  messages: ClaudeMessage[];
+  lastAssistantText: string | null;
   isDone: boolean;
   isError: boolean;
   customErrorMessage?: string | null;
   costUsd?: number;
 }): LinearDaemonActivityUpdate | null {
   if (isDone && !isError) {
-    let body = extractLastAssistantText(messages) ?? "Task completed.";
+    let body = lastAssistantText ?? "Task completed.";
     if (costUsd && costUsd > 0) {
       body += ` (cost: $${costUsd.toFixed(4)})`;
     }
@@ -290,16 +245,17 @@ function buildTerminalActivityUpdate({
 
 function buildNonTerminalActivityUpdate({
   agentSessionId,
-  messages,
+  lastAssistantText,
+  latestPlan,
   now,
 }: {
   agentSessionId: string;
-  messages: ClaudeMessage[];
+  lastAssistantText: string | null;
+  latestPlan: AgentPlanStep[] | null;
   now: number;
 }): LinearDaemonActivityUpdate | null {
-  const plan = extractLatestAgentPlan(messages);
-  if (plan) {
-    return { type: "plan", plan };
+  if (latestPlan) {
+    return { type: "plan", plan: latestPlan };
   }
 
   const lastEmit = lastActionEmitMap.get(agentSessionId);
@@ -307,13 +263,12 @@ function buildNonTerminalActivityUpdate({
     return null;
   }
 
-  const summary = extractLastAssistantText(messages);
-  if (!summary) {
+  if (!lastAssistantText) {
     return null;
   }
 
   lastActionEmitMap.set(agentSessionId, now);
-  return { type: "action", summary };
+  return { type: "action", summary: lastAssistantText };
 }
 
 async function getLinearActivityAccessToken({
@@ -402,25 +357,9 @@ type LinearMentionMetadata = Extract<
   { type: "linear-mention" }
 >;
 
-/**
- * Emit Linear agent activities based on daemon event messages.
- *
- * - `action` activities are throttled to max 1 per 30 seconds per agentSessionId.
- * - `response`/`error` terminal activities always bypass the throttle.
- * - All emissions are wrapped in try/catch — never throws, never blocks thread processing.
- *
- * @param sourceMetadata - The thread's linear-mention source metadata (already validated)
- * @param messages - Daemon event messages for this batch
- * @param opts.isDone - Whether the thread completed successfully
- * @param opts.isError - Whether the thread errored
- * @param opts.customErrorMessage - Error message if isError is true
- * @param opts.costUsd - Cost in USD if isDone
- * @param opts.now - Injectable clock for testing throttle behavior (defaults to Date.now)
- * @param opts.createClient - Injectable LinearClient factory for testing
- */
-export async function emitLinearActivitiesForDaemonEvent(
+export async function emitLinearActivitiesForCanonicalBatch(
   sourceMetadata: LinearMentionMetadata,
-  messages: ClaudeMessage[],
+  canonicalEvents: readonly CanonicalEvent[],
   opts?: {
     isDone?: boolean;
     isError?: boolean;
@@ -432,7 +371,6 @@ export async function emitLinearActivitiesForDaemonEvent(
 ): Promise<void> {
   const agentSessionId = sourceMetadata.agentSessionId;
   if (!agentSessionId) {
-    // Legacy fn-1 thread without agentSessionId — skip gracefully
     console.warn(
       "[linear-agent-activity] Skipping Linear activity: legacy thread missing agentSessionId",
       { organizationId: sourceMetadata.organizationId },
@@ -447,9 +385,13 @@ export async function emitLinearActivitiesForDaemonEvent(
   const isDone = opts?.isDone ?? false;
   const isError = opts?.isError ?? false;
 
+  const dbMessages = deriveDBMessagesFromCanonical(canonicalEvents);
+  const lastAssistantText = extractLastAssistantTextFromDBMessages(dbMessages);
+  const latestPlan = extractLatestAgentPlanFromDBMessages(dbMessages);
+
   const update =
     buildTerminalActivityUpdate({
-      messages,
+      lastAssistantText,
       isDone,
       isError,
       customErrorMessage: opts?.customErrorMessage,
@@ -457,7 +399,8 @@ export async function emitLinearActivitiesForDaemonEvent(
     }) ??
     buildNonTerminalActivityUpdate({
       agentSessionId,
-      messages,
+      lastAssistantText,
+      latestPlan,
       now: nowFn(),
     });
 
