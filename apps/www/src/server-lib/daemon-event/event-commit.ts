@@ -10,6 +10,7 @@ import {
 } from "@ag-ui/core";
 import type { DBMessage, DBToolCall } from "@terragon/shared";
 import type { DB } from "@terragon/shared/db";
+import { providerRichPartToDbMessages } from "@terragon/shared/model/provider-rich-part-to-db";
 import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
@@ -109,38 +110,6 @@ export function emptyCanonicalPersistenceSummary(): CanonicalPersistenceSummary 
   };
 }
 
-/**
- * BACK-COMPAT GUARD — delete in Wave 4 with the `messages[]` channel.
- *
- * Daemon bundles predating K1a (deltas-as-canonical) emit BOTH a streaming
- * text/thinking delta AND an un-suppressed `assistant-message` canonical event
- * for the same content. Persisting both double-renders the text in the
- * transcript. Current daemons (>= K1a) suppress the `assistant-message` at the
- * source via the run's `streamedAssistantText` flag, so they never send both —
- * this filter is a no-op for them. It exists only for long-lived sandboxes still
- * running a pre-#205 daemon bundle (the `daemonDeltasToAgUiRows` + canonical
- * builder both shipped in #153; per-message suppression only landed in #205),
- * which have no flags to key on, so we key on the presence of text/thinking
- * deltas. Tool-output deltas are ignored: they never coexist with an
- * `assistant-message` for the same content.
- */
-export function filterCanonicalEventsForDeltaCoexistence(params: {
-  canonicalEvents: CanonicalEventsPayload | null;
-  deltas: DaemonDeltasPayload | null | undefined;
-}): CanonicalEventsPayload | null {
-  const { canonicalEvents, deltas } = params;
-  if (!canonicalEvents || canonicalEvents.length === 0) {
-    return canonicalEvents;
-  }
-  const hasTextOrThinkingDeltas =
-    deltas?.some((delta) => delta.kind !== "tool-output") ?? false;
-  if (!hasTextOrThinkingDeltas) {
-    return canonicalEvents;
-  }
-
-  return canonicalEvents.filter((event) => event.type !== "assistant-message");
-}
-
 export function findCanonicalEventContextMismatch(params: {
   canonicalEvents: CanonicalEventsPayload;
   runId: string;
@@ -220,13 +189,13 @@ export function buildPreLegacyAgUiCommitPlan(params: {
     params.deltas && params.deltas.length > 0
       ? daemonDeltasToAgUiRows({ runId: params.runId, deltas: params.deltas })
       : [];
-  const richPartRows =
-    params.canPersistCanonicalEvents && params.envelopeV2
-      ? buildRichPartRows({
-          envelopeV2: params.envelopeV2,
-          messages: params.messages,
-        })
-      : [];
+  const richPartRows = params.canPersistCanonicalEvents
+    ? buildRichPartRows({
+        envelopeV2: params.envelopeV2,
+        messages: params.messages,
+        canonicalEventsForPersistence: params.canonicalEventsForPersistence,
+      })
+    : [];
   const mergedRows = [...canonicalRows, ...deltaRows, ...richPartRows];
 
   return {
@@ -421,7 +390,67 @@ export async function commitTerminalAgUiEvents(params: {
   };
 }
 
+type ProviderRichPartCanonicalEvent = Extract<
+  CanonicalEventsPayload[number],
+  { type: "provider-rich-part" }
+>;
+
 function buildRichPartRows(params: {
+  envelopeV2: DaemonEventEnvelopeV2 | null;
+  messages: DaemonEventAPIBody["messages"];
+  canonicalEventsForPersistence: CanonicalEventsPayload | null;
+}): AgUiPublishRow[] {
+  const providerRichEvents = (
+    params.canonicalEventsForPersistence ?? []
+  ).filter(
+    (event): event is ProviderRichPartCanonicalEvent =>
+      event.type === "provider-rich-part",
+  );
+  if (providerRichEvents.length > 0) {
+    return richPartRowsFromProviderRichEvents(providerRichEvents);
+  }
+  if (!params.envelopeV2) {
+    return [];
+  }
+  return richPartRowsFromMessages({
+    envelopeV2: params.envelopeV2,
+    messages: params.messages,
+  });
+}
+
+function richPartRowsFromProviderRichEvents(
+  events: readonly ProviderRichPartCanonicalEvent[],
+): AgUiPublishRow[] {
+  const richPartRows: AgUiPublishRow[] = [];
+  const richPartInputs: AssistantMessagePartsInput[] = [];
+  const timestamp = new Date();
+  for (const event of events) {
+    const dbMsgs = providerRichPartToDbMessages(event);
+    let indexWithinEvent = 0;
+    for (const dbMsg of dbMsgs) {
+      const messageId = `${event.eventId}:msg:${indexWithinEvent}`;
+      indexWithinEvent++;
+      if (dbMsg.type === "tool-call") {
+        richPartRows.push(
+          ...dbToolCallToAgUiRows({ messageId, toolCall: dbMsg, timestamp }),
+        );
+        continue;
+      }
+      if (dbMsg.type !== "agent") continue;
+      const richParts = dbMsg.parts.filter(
+        (part) => part.type !== "text" && part.type !== "thinking",
+      );
+      if (richParts.length === 0) continue;
+      richPartInputs.push({ messageId, parts: richParts });
+    }
+  }
+  if (richPartInputs.length > 0) {
+    richPartRows.push(...dbAgentMessagePartsToAgUiRows(richPartInputs));
+  }
+  return richPartRows;
+}
+
+function richPartRowsFromMessages(params: {
   envelopeV2: DaemonEventEnvelopeV2;
   messages: DaemonEventAPIBody["messages"];
 }): AgUiPublishRow[] {
@@ -445,11 +474,6 @@ function buildRichPartRows(params: {
         continue;
       }
       if (dbMsg.type !== "agent") continue;
-      // Assistant text and thinking are the delta stream's single persisted
-      // representation (delta rows carry them), so the rich-part channel emits
-      // only the parts canonical events / deltas don't cover — diff, terminal,
-      // plan, image, audio, ... . Excluding text/thinking here is what stops the
-      // double-render the removed coexistence flags used to guard against.
       const richParts = dbMsg.parts.filter(
         (part) => part.type !== "text" && part.type !== "thinking",
       );

@@ -57,7 +57,6 @@ import {
   commitPreLegacyAgUiEvents,
   commitTerminalAgUiEvents,
   type DaemonEventEnvelopeV2,
-  filterCanonicalEventsForDeltaCoexistence,
   findCanonicalEventContextMismatch,
   findCanonicalRunTerminalEvent,
   splitCanonicalEventsForCommit,
@@ -770,11 +769,6 @@ export async function POST(request: Request) {
     }
   }
 
-  const canonicalEventsAfterDeltaFilter =
-    filterCanonicalEventsForDeltaCoexistence({
-      canonicalEvents: rawCanonicalEvents,
-      deltas,
-    });
   // A terminal batch can still carry a RECOVERABLE failure (rate-limit,
   // OAuth-revoked, prompt-too-long). When it does, drop the canonical
   // run-terminal so the message-based recovery path can re-queue instead of
@@ -784,8 +778,8 @@ export async function POST(request: Request) {
   // Fall back to re-parsing raw messages for terminals from daemon bundles that
   // predate the field. Wave 4 deletes the `||` fallback and
   // messagesIndicateRecoverableFailure once every daemon stamps the field.
-  const recoverableTerminalCandidate = canonicalEventsAfterDeltaFilter
-    ? findCanonicalRunTerminalEvent(canonicalEventsAfterDeltaFilter)
+  const recoverableTerminalCandidate = rawCanonicalEvents
+    ? findCanonicalRunTerminalEvent(rawCanonicalEvents)
     : null;
   const isRecoverableResult =
     recoverableTerminalCandidate?.recoverable != null ||
@@ -795,11 +789,9 @@ export async function POST(request: Request) {
       timezone,
     });
   const canonicalEvents =
-    isRecoverableResult && canonicalEventsAfterDeltaFilter
-      ? canonicalEventsAfterDeltaFilter.filter(
-          (event) => event.type !== "run-terminal",
-        )
-      : canonicalEventsAfterDeltaFilter;
+    isRecoverableResult && rawCanonicalEvents
+      ? rawCanonicalEvents.filter((event) => event.type !== "run-terminal")
+      : rawCanonicalEvents;
   const canonicalTerminalBeforePersistence = canonicalEvents
     ? findCanonicalRunTerminalEvent(canonicalEvents)
     : null;

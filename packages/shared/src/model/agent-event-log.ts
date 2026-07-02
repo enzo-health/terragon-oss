@@ -658,6 +658,8 @@ function canonicalEventToReplayMessage(
     case "permission-response":
     case "artifact-reference":
     case "meta":
+    case "provider-rich-part":
+      return null;
     case "unknown-provider-event":
       return null;
     default: {

@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildPreLegacyAgUiCommitPlan,
   buildTerminalAgUiCommitPlan,
-  filterCanonicalEventsForDeltaCoexistence,
   type CanonicalEventsPayload,
   type DaemonEventEnvelopeV2,
 } from "./event-commit";
@@ -36,18 +35,6 @@ function createRunStartedEvent(
     agent: "claudeCode",
     transportMode: "acp",
     protocolVersion: 2,
-  };
-}
-
-function createAssistantMessageEvent(): CanonicalEventsPayload[number] {
-  return {
-    ...baseEvent,
-    eventId: "canonical-assistant",
-    seq: 2,
-    category: "transcript",
-    type: "assistant-message",
-    messageId: "message-1",
-    content: "streamed already",
   };
 }
 
@@ -104,37 +91,52 @@ function createRichPartMessage(): DaemonEventAPIBody["messages"][number] {
   };
 }
 
-describe("daemon runtime event commit planning", () => {
-  it("drops canonical assistant messages when text/thinking deltas own the stream", () => {
-    const filtered = filterCanonicalEventsForDeltaCoexistence({
-      canonicalEvents: [createAssistantMessageEvent(), createRunStartedEvent()],
-      deltas: [createDelta()],
-    });
-
-    expect(filtered?.map((event) => event.type)).toEqual(["run-started"]);
-  });
-
-  it("keeps canonical assistant messages when only tool-output deltas are present", () => {
-    const filtered = filterCanonicalEventsForDeltaCoexistence({
-      canonicalEvents: [createAssistantMessageEvent(), createRunStartedEvent()],
-      deltas: [
+function createProviderRichPlanEvent(
+  eventId = "canonical-rich-plan",
+): CanonicalEventsPayload[number] {
+  return {
+    ...baseEvent,
+    eventId,
+    seq: 2,
+    category: "artifact",
+    type: "provider-rich-part",
+    richKind: "acp-plan",
+    payload: {
+      entries: [
         {
-          messageId: "tool-1",
-          partIndex: 0,
-          deltaSeq: 1,
-          kind: "tool-output",
-          text: "stdout chunk",
-          toolCallId: "tool-1",
+          id: "step-1",
+          content: "Run tests",
+          priority: "medium",
+          status: "pending",
         },
       ],
-    });
+    },
+  };
+}
 
-    expect(filtered?.map((event) => event.type)).toEqual([
-      "assistant-message",
-      "run-started",
-    ]);
-  });
+function createProviderRichToolCallEvent(
+  eventId = "canonical-rich-tool",
+): CanonicalEventsPayload[number] {
+  return {
+    ...baseEvent,
+    eventId,
+    seq: 2,
+    category: "artifact",
+    type: "provider-rich-part",
+    richKind: "acp-tool-call",
+    payload: {
+      toolCallId: "acp-tool-7",
+      title: "Read file",
+      kind: "read",
+      status: "completed",
+      locations: [],
+      rawInput: "{}",
+      progressChunks: [],
+    },
+  };
+}
 
+describe("daemon runtime event commit planning", () => {
   it("builds a single pre-legacy commit plan for canonical, delta, and rich rows", () => {
     const plan = buildPreLegacyAgUiCommitPlan({
       canPersistCanonicalEvents: true,
@@ -156,6 +158,56 @@ describe("daemon runtime event commit planning", () => {
       "canonical-start:RUN_STARTED:0",
       "delta-start:run-1:message-1:text",
       "delta:run-1:message-1:0:text:1",
+      "msg:event-1:msg:0:CUSTOM:0",
+    ]);
+  });
+
+  it("sources rich-part rows from provider-rich-part canonical events and ignores messages[]", () => {
+    const plan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [createRichPartMessage()],
+      canonicalEventsForPersistence: [
+        createRunStartedEvent(),
+        createProviderRichPlanEvent(),
+      ],
+      deltas: null,
+      runId: "run-1",
+    });
+
+    expect(plan.richPartRows.map((row) => row.eventId)).toEqual([
+      "msg:canonical-rich-plan:msg:0:CUSTOM:0",
+    ]);
+  });
+
+  it("expands an ACP tool-call carrier to tool-call rows keyed on the canonical eventId", () => {
+    const plan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [],
+      canonicalEventsForPersistence: [createProviderRichToolCallEvent()],
+      deltas: null,
+      runId: "run-1",
+    });
+
+    expect(plan.richPartRows.map((row) => row.eventId)).toEqual([
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_START:0",
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_ARGS:1",
+      "msg:canonical-rich-tool:msg:0:TOOL_CALL_END:2",
+    ]);
+  });
+
+  it("falls back to toDBMessage(messages[]) when the batch carries no provider-rich-part carrier", () => {
+    const plan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [createRichPartMessage()],
+      canonicalEventsForPersistence: [createRunStartedEvent()],
+      deltas: null,
+      runId: "run-1",
+    });
+
+    expect(plan.richPartRows.map((row) => row.eventId)).toEqual([
       "msg:event-1:msg:0:CUSTOM:0",
     ]);
   });

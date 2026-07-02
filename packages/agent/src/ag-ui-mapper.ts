@@ -72,6 +72,8 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
       return [mapArtifactReference(event, timestamp)];
     case "meta":
       return [mapCanonicalMeta(event, timestamp)];
+    case "provider-rich-part":
+      return [];
     case "unknown-provider-event":
       return [];
     default: {

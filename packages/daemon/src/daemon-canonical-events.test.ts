@@ -212,6 +212,196 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
   });
 
+  it("folds inline narration blocks into one assistant-narration carrier, then tool_use", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "Let me search." },
+                {
+                  type: "thinking",
+                  thinking: "web search fits",
+                  signature: "sig-1",
+                },
+                {
+                  type: "server_tool_use",
+                  id: "srvtoolu_1",
+                  name: "web_search",
+                  input: { query: "q" },
+                },
+                {
+                  type: "web_search_tool_result",
+                  tool_use_id: "srvtoolu_1",
+                  content: [
+                    {
+                      type: "web_search_result",
+                      url: "https://ex.com/a",
+                      title: "A",
+                    },
+                  ],
+                },
+                {
+                  type: "document",
+                  source: { type: "url", url: "https://docs.ex.com" },
+                  title: "Doc",
+                },
+                {
+                  type: "tool_use",
+                  id: "tool-call-9",
+                  name: "read_file",
+                  input: { path: "a.ts" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "assistant-narration",
+        payload: {
+          parentToolUseId: null,
+          parts: [
+            { kind: "text", text: "Let me search." },
+            {
+              kind: "thinking",
+              thinking: "web search fits",
+              signature: "sig-1",
+            },
+            {
+              kind: "server-tool-use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "q" },
+            },
+            {
+              kind: "web-search-result",
+              toolUseId: "srvtoolu_1",
+              content: [
+                {
+                  type: "web_search_result",
+                  url: "https://ex.com/a",
+                  title: "A",
+                },
+              ],
+            },
+            {
+              kind: "document",
+              source: { type: "url", url: "https://docs.ex.com" },
+              title: "Doc",
+            },
+          ],
+        },
+      }),
+      expect.objectContaining({
+        type: "tool-call-start",
+        toolCallId: "tool-call-9",
+      }),
+    ]);
+  });
+
+  it("drops delta-owned text/thinking from the narration carrier but keeps rich blocks when streaming", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        streamedAssistantText: true,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "streamed text" },
+                { type: "thinking", thinking: "streamed thinking" },
+                {
+                  type: "server_tool_use",
+                  id: "srvtoolu_2",
+                  name: "web_search",
+                  input: { query: "q" },
+                },
+                {
+                  type: "web_search_tool_result",
+                  tool_use_id: "srvtoolu_2",
+                  content: {
+                    type: "web_search_tool_result_error",
+                    error_code: "boom",
+                  },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "assistant-narration",
+        payload: {
+          parentToolUseId: null,
+          parts: [
+            {
+              kind: "server-tool-use",
+              id: "srvtoolu_2",
+              name: "web_search",
+              input: { query: "q" },
+            },
+            {
+              kind: "web-search-result",
+              toolUseId: "srvtoolu_2",
+              content: {
+                type: "web_search_tool_result_error",
+                error_code: "boom",
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+  });
+
+  it("emits no carrier for a streamed text+thinking message (no double-count of deltas)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        streamedAssistantText: true,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "streamed text" },
+                { type: "thinking", thinking: "streamed thinking" },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([]);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(1);
+  });
+
   it("emits tool-call-start and tool-call-result events", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
@@ -335,8 +525,13 @@ describe("buildCanonicalEventsForBatch", () => {
         content: "All done",
       }),
       expect.objectContaining({
-        eventId: canonicalEventId("run-1", 5),
         seq: 5,
+        type: "provider-rich-part",
+        richKind: "result",
+      }),
+      expect.objectContaining({
+        eventId: canonicalEventId("run-1", 6),
+        seq: 6,
         category: "operational",
         type: "run-terminal",
         status: "completed",
@@ -344,7 +539,7 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
     const terminal = result.canonicalEvents.at(-1)!;
     expect("errorMessage" in terminal).toBe(false);
-    expect(result.nextCanonicalSeqAfterBatch).toBe(6);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(7);
     expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
     expect(CanonicalEventSchema.parse(terminal)).toMatchObject({
       type: "run-terminal",
@@ -370,6 +565,10 @@ describe("buildCanonicalEventsForBatch", () => {
       }),
     );
     expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "result",
+      }),
       expect.objectContaining({
         type: "run-terminal",
         status: "failed",
@@ -451,6 +650,7 @@ describe("buildCanonicalEventsForBatch", () => {
     );
     expect(result.canonicalEvents.map((event) => event.type)).toEqual([
       "run-started",
+      "provider-rich-part",
       "run-terminal",
     ]);
     expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
