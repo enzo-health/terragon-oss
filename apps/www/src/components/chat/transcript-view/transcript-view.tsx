@@ -75,9 +75,9 @@ export type TranscriptViewProps = {
 };
 
 const SCROLL_BUTTON_CLASS = cn(
-  "absolute bottom-3 left-1/2 -translate-x-1/2 z-10",
+  "absolute bottom-5 left-1/2 -translate-x-1/2 z-10",
   "flex size-10 items-center justify-center rounded-full",
-  "bg-background border border-border/60 shadow-sm",
+  "bg-card border border-border/60 shadow-md",
   "transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
   "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
   "data-[at-bottom=true]:opacity-0 data-[at-bottom=true]:translate-y-2 data-[at-bottom=true]:pointer-events-none",

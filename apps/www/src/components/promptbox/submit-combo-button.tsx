@@ -82,7 +82,7 @@ export function SubmitComboButton({
               crossFade,
               showStop && "opacity-0 pointer-events-none",
             )}
-            aria-hidden={showStop}
+            inert={showStop}
           >
             <SendButton
               isProcessingAudio={isProcessingAudio}
@@ -97,7 +97,7 @@ export function SubmitComboButton({
               crossFade,
               !showStop && "opacity-0 pointer-events-none",
             )}
-            aria-hidden={!showStop}
+            inert={!showStop}
           >
             <StopButton handleStop={handleStop} disabled={isSubmitting} />
           </span>

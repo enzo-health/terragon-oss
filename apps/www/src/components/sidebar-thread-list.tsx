@@ -1,5 +1,6 @@
 "use client";
 
+import { Collapsible } from "@base-ui/react/collapsible";
 import type { ThreadInfo } from "@terragon/shared/db/types";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronRight, EllipsisVerticalIcon } from "lucide-react";
@@ -109,11 +110,12 @@ function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
   };
 
   return (
-    <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-      <button
-        type="button"
-        onClick={toggleRepoSection}
-        aria-expanded={!isCollapsed}
+    <Collapsible.Root
+      open={!isCollapsed}
+      onOpenChange={toggleRepoSection}
+      className="flex flex-col group-data-[collapsible=icon]:hidden"
+    >
+      <Collapsible.Trigger
         className={cn(
           "group/repo flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground text-left select-none",
           "transition-colors duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:text-sidebar-foreground hover:bg-sidebar-accent/40",
@@ -132,8 +134,8 @@ function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
         <span className="ml-auto text-micro font-medium tabular-nums text-muted-foreground/70 flex-shrink-0">
           {threads.length}
         </span>
-      </button>
-      {!isCollapsed && (
+      </Collapsible.Trigger>
+      <Collapsible.Panel className="overflow-hidden h-(--collapsible-panel-height) transition-[height] duration-[var(--duration-quick)] ease-[var(--ease-standard)] data-starting-style:h-0 data-ending-style:h-0">
         <div className="flex flex-col gap-0.5 px-1 pb-1">
           {threads.map((thread) => (
             <SidebarThreadItem
@@ -143,8 +145,8 @@ function RepoSection({ repoName, threads, activeThreadId }: RepoSectionProps) {
             />
           ))}
         </div>
-      )}
-    </div>
+      </Collapsible.Panel>
+    </Collapsible.Root>
   );
 }
 

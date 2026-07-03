@@ -152,7 +152,7 @@ export function ToolName({
     <span
       data-slot="tool-name"
       className={cn(
-        "min-w-0 shrink truncate font-mono text-foreground text-sm",
+        "min-w-0 shrink-0 max-w-[18ch] truncate font-mono text-foreground text-sm",
         "group-data-[state=error]/tool:text-destructive",
         className,
       )}

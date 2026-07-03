@@ -34,25 +34,33 @@ const quotedJsonField = (argsText: string, key: string): string | null => {
   return match?.[1] ? parseJsonStringLiteral(match[1]) : null;
 };
 
-export const toolArgPreview = (argsText: string): string | null => {
+const PATH_PREVIEW_FIELDS = ["file_path", "path"] as const;
+
+const isPathField = (key: string): boolean =>
+  (PATH_PREVIEW_FIELDS as readonly string[]).includes(key);
+
+export type ToolArgPreview = {
+  readonly text: string;
+  readonly isPath: boolean;
+};
+
+export const toolArgPreview = (argsText: string): ToolArgPreview | null => {
   if (!argsText) return null;
 
   for (const key of TOOL_PREVIEW_FIELDS) {
     const field = quotedJsonField(argsText, key);
-    if (field) return field;
+    if (field) return { text: field, isPath: isPathField(key) };
   }
 
   try {
     const parsed: unknown = JSON.parse(argsText);
-    return (
-      jsonField(parsed, "command") ??
-      jsonField(parsed, "file_path") ??
-      jsonField(parsed, "path") ??
-      jsonField(parsed, "pattern") ??
-      jsonField(parsed, "query")
-    );
+    for (const key of TOOL_PREVIEW_FIELDS) {
+      const field = jsonField(parsed, key);
+      if (field) return { text: field, isPath: isPathField(key) };
+    }
+    return null;
   } catch {
-    return argsText;
+    return { text: argsText, isPath: false };
   }
 };
 
@@ -100,6 +108,7 @@ export type ToolViewInput = {
 export type ToolViewProps = {
   readonly name: string;
   readonly preview: string | null;
+  readonly previewIsPath: boolean;
   readonly state: ToolCallState;
   readonly stream: StreamingView;
   readonly resultText: string;
@@ -111,9 +120,11 @@ export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
   const { toolName, argsText, result, active, failed } = input;
   const resultText = toolCallResultText(result);
   const state = toolCallState(active, failed);
+  const preview = toolArgPreview(argsText);
   return {
     name: toolName,
-    preview: toolArgPreview(argsText),
+    preview: preview?.text ?? null,
+    previewIsPath: preview?.isPath ?? false,
     state,
     stream: { text: toolArgsDisplayText(argsText, active), streaming: active },
     resultText,

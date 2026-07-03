@@ -58,14 +58,22 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
   const active = item.status === "running" || item.status === "pending";
   const failed = item.isError || item.status === "error";
-  const { name, preview, state, stream, resultText, errorText, defaultOpen } =
-    toolViewProps({
-      toolName: item.name,
-      argsText: item.argsText,
-      result: item.result ?? undefined,
-      active,
-      failed,
-    });
+  const {
+    name,
+    preview,
+    previewIsPath,
+    state,
+    stream,
+    resultText,
+    errorText,
+    defaultOpen,
+  } = toolViewProps({
+    toolName: item.name,
+    argsText: item.argsText,
+    result: item.result ?? undefined,
+    active,
+    failed,
+  });
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const open = userOpen ?? defaultOpen;
   const seeded = useIsSeeded(item.key);
@@ -74,10 +82,6 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
       ? `${getToolVerb(name, verbStatus(item.status))} · ${summarizeToolResult(
           item.result,
         )}`
-      : getToolVerb(name, verbStatus(item.status));
-  const outcome =
-    item.result !== null
-      ? summarizeToolResult(item.result)
       : getToolVerb(name, verbStatus(item.status));
   const Icon = TOOL_ICONS[name] ?? Wrench;
 
@@ -94,12 +98,13 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
         </ToolIcon>
         <ToolName>{name || "Tool"}</ToolName>
         {preview ? (
-          <ToolLabel className="font-mono">{preview}</ToolLabel>
-        ) : null}
-        {!active && !failed ? (
-          <ToolLabel className="tabular-nums text-muted-foreground/70">
-            {outcome}
-          </ToolLabel>
+          previewIsPath ? (
+            <ToolLabel className="font-mono truncate-start">
+              <span className="force-ltr">{preview}</span>
+            </ToolLabel>
+          ) : (
+            <ToolLabel className="font-mono">{preview}</ToolLabel>
+          )
         ) : null}
       </ToolTrigger>
       <ToolContent keepMounted>

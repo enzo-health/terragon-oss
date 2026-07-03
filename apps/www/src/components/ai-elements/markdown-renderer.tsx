@@ -574,7 +574,7 @@ function getResponseComponents(
     td(props) {
       const children = getChildren(props);
       return (
-        <td className="border border-border px-2 py-1 text-foreground">
+        <td className="border border-border px-2 py-1 text-foreground tabular-nums">
           {children}
         </td>
       );

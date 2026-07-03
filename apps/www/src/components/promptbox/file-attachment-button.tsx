@@ -24,7 +24,7 @@ export function FileAttachmentButton({
       variant="ghost"
       size="icon"
       type="button"
-      className={cn("size-8", className)}
+      className={cn("size-11 sm:size-8", className)}
       onClick={openAttachmentPicker}
       title="Attach files (images, PDFs, CSV, Markdown, etc.)"
     >

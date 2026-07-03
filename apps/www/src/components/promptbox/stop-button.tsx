@@ -28,7 +28,7 @@ export function StopButton({
             handleStop();
           }}
           disabled={disabled}
-          className={cn("size-8", className)}
+          className={cn("size-11 sm:size-8", className)}
           size="icon"
         >
           <Square className="size-4 fill-background" />
