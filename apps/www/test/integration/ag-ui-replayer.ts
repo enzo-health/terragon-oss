@@ -1,18 +1,16 @@
 /**
  * AG-UI integration replayer — minimal harness that feeds a sequence of
- * AG-UI `BaseEvent`s through the product sidecar projection used beside the
- * assistant-ui runtime.
+ * AG-UI `BaseEvent`s through the product sidecar projection.
  *
- * This is the Phase 7 counterpart to the legacy daemon-event replayer
- * (`./replayer.ts`). The legacy harness exercises the full Next.js route
- * + DB pipeline; this one exercises the *frontend* half of the AG-UI
- * migration end-to-end, proving that an SSE-style BaseEvent stream updates
+ * The legacy daemon-event replayer (`./replayer.ts`) exercises the full Next.js
+ * route + DB pipeline; this one exercises the *frontend* sidecar half of the
+ * AG-UI stream end-to-end, proving that an SSE-style BaseEvent stream updates
  * lifecycle, artifacts, and quarantine state without becoming a second
  * transcript renderer.
  *
- * The transcript itself is rendered by the assistant-ui runtime
- * (`useAgUiRuntime` / `NativeThread`) and covered by `native-thread.test.tsx`;
- * this harness only asserts the live sidecar projection
+ * The transcript itself is rendered by the `chat/transcript-view/` store fold +
+ * leaf registry (covered by `transcript-view/registry.test.tsx` and the store
+ * tests); this harness only asserts the live sidecar projection
  * (`useThreadViewModel` / `useAgUiSidecarRouter`).
  *
  * No DB, no Redis, no route — a pure in-memory `HttpAgent` double pumps

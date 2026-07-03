@@ -35,6 +35,16 @@ export function getWorkingFooterFreshness(params: {
   return { kind: "uncertain", message: params.uncertainMessage };
 }
 
+export function getWorkingMessageSlotClassName({
+  threadStatus,
+}: {
+  threadStatus: ThreadStatus | null;
+}): string {
+  return threadStatus === "booting"
+    ? "min-h-[168px]"
+    : "min-h-11 flex items-start";
+}
+
 export function shouldSuppressPreStartLifecycleFooter(params: {
   threadStatus: ThreadStatus | null;
   hasAgentMessages: boolean;

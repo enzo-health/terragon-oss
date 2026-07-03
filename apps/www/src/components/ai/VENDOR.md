@@ -6,11 +6,11 @@ vendor pass regenerates them from upstream.
 
 **Layer A (purity).** Everything in `components/ai/*` is pure, prop-driven UI: a
 component takes its visual `state` as plain string/boolean/number props the call
-site computes. These files must NOT import `@assistant-ui/*`, `@terragon/*`, or
-any store (`jotai`). The Terragon adaptations live in the binding shells
-(`chat/assistant-ui/native-thread.tsx`, `chat/chat-message-system.tsx`), which
-call the view-props adapter (`chat/assistant-ui/native-thread-utils.ts`) and pass
-plain props down. The boundary is enforced by a Biome `noRestrictedImports`
+site computes. These files must NOT import `@terragon/*` or any store (`jotai`).
+The Terragon adaptations live in the transcript leaves
+(`chat/transcript-view/leaves/*`, `chat/chat-message-system.tsx`), which compute
+plain view props (e.g. `leaves/tool-view-props.ts`) and pass them down. The
+boundary is enforced by a Biome `noRestrictedImports`
 override scoped to `**/apps/www/src/components/ai/**` in the repo-root
 `biome.json` (the repo lints with Biome, not ESLint — this is the functional
 equivalent of the planned ESLint `no-restricted-imports` rule).

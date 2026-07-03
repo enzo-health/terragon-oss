@@ -201,21 +201,16 @@ function ChatUIContent() {
     threadChatId: threadChat.id,
   });
 
-  const {
-    thread,
-    threadViewSnapshot,
-    lastUsedModel,
-    redoDialogData,
-    forkDialogData,
-  } = useChatViewSnapshot({
-    shell,
-    threadChat,
-    threadDiff: threadDiff ?? null,
-    threadChatSource,
-    agent: chatAgent,
-    capturedRunId,
-    threadId,
-  });
+  const { thread, threadViewSnapshot, lastUsedModel, redoDialogData } =
+    useChatViewSnapshot({
+      shell,
+      threadChat,
+      threadDiff: threadDiff ?? null,
+      threadChatSource,
+      agent: chatAgent,
+      capturedRunId,
+      threadId,
+    });
 
   useThreadDocumentTitleAndFavicon({
     name: shell.name ?? "",
@@ -359,32 +354,6 @@ function ChatUIContent() {
   const onOpenRepoTree = repoFilePreviewEnabled
     ? handleOpenRepoTree
     : undefined;
-
-  const toolProps = useMemo(
-    () => ({
-      threadId,
-      threadChatId: threadViewModel.threadChatId,
-      isReadOnly,
-      promptBoxRef,
-      childThreads: shell.childThreads ?? [],
-      githubRepoFullName: thread.githubRepoFullName ?? "",
-      repoBaseBranchName: thread.repoBaseBranchName ?? "main",
-      branchName: thread.branchName ?? null,
-      onOptimisticPermissionModeUpdate,
-      onOpenRepoFile,
-    }),
-    [
-      isReadOnly,
-      onOptimisticPermissionModeUpdate,
-      shell.childThreads,
-      thread.branchName,
-      thread.githubRepoFullName,
-      thread.repoBaseBranchName,
-      threadViewModel.threadChatId,
-      threadId,
-      onOpenRepoFile,
-    ],
-  );
 
   const reconcileActiveChatFromServer = useReconcileActiveChatFromServer({
     threadId,
@@ -555,7 +524,6 @@ function ChatUIContent() {
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
-      toolProps,
       lastUsedModel,
       handleOpenArtifact,
       onOpenRepoFile,
@@ -574,7 +542,6 @@ function ChatUIContent() {
       loadAgUiHistoryMessages,
       queuedMessages,
       threadViewModel,
-      toolProps,
     ],
   );
 
@@ -612,8 +579,8 @@ function ChatUIContent() {
   );
 
   const dialogData = useMemo<ChatUIDialogData>(
-    () => ({ redoDialogData, forkDialogData }),
-    [forkDialogData, redoDialogData],
+    () => ({ redoDialogData }),
+    [redoDialogData],
   );
 
   const optimisticHandlers = useMemo<ChatUIOptimisticHandlers>(

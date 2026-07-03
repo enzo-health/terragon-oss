@@ -1,4 +1,3 @@
-import { useThreadRuntime } from "@assistant-ui/react";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
 import type { DBUserMessage } from "@terragon/shared";
@@ -112,12 +111,6 @@ export function usePromptBox({
   supportsMultiAgentPromptSubmission,
 }: UsePromptBoxProps) {
   const isTouchDevice = useTouchDevice();
-  // useThreadRuntime() is null when the hook is rendered outside an
-  // AssistantRuntimeProvider (e.g., dashboard composer, generic composer).
-  // When non-null we route submission through it; when null we fall back
-  // to props.handleSubmit. The runtime path goes through the AG-UI POST
-  // adapter -> followUp() server action (see runtime-owns-writes ADR).
-  const threadRuntime = useThreadRuntime({ optional: true });
   const { storedContent, attachedFiles, setStoredContent, setAttachedFiles } =
     useContentAndAttachedFiles({
       initialContent,
@@ -741,7 +734,6 @@ export function usePromptBox({
           saveAsDraft,
           scheduleAt,
           clientSubmissionId,
-          threadRuntime,
           isAgentWorking,
           isQueueingEnabled,
           submitFallback: handleSubmit,
@@ -780,7 +772,6 @@ export function usePromptBox({
       isQueueingEnabled,
       handleQueueMessage,
       optimisticSubmit,
-      threadRuntime,
     ],
   );
 

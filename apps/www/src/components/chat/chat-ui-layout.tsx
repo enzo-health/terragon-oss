@@ -8,22 +8,15 @@ import {
   ThreadInfoFull,
 } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
-import { ArrowDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import React from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { getLastUserMessageModel } from "@/lib/db-message-helpers";
-import { cn } from "@/lib/utils";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
-import { AssistantRuntimeSession } from "./assistant-ui/assistant-runtime-session";
-import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-error-boundary";
-import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
 import { TranscriptView } from "./transcript-view/transcript-view";
-import { useTranscriptStoreViewEnabled } from "./transcript-view/transcript-view-enabled";
 import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
@@ -37,10 +30,10 @@ const SecondaryPanel = dynamic(
 );
 
 /**
- * Pure presentation: composes the chat header, scroll-area transcript, prompt
- * box, secondary panel, and terminal-panel overlay. All data and dispatchers
- * are passed in by `ChatUIContent` — this component holds no React Query,
- * no transport state, no view-model wiring.
+ * Pure presentation: composes the chat header, transcript, prompt box,
+ * secondary panel, and terminal-panel overlay. All data and dispatchers are
+ * passed in by `ChatUIContent` — this component holds no React Query, no
+ * transport state, no view-model wiring.
  *
  * Props are grouped by concern (coreData, viewModel, scrollState, panelState,
  * dialogData, optimisticHandlers, errorState) so future state additions only
@@ -75,7 +68,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     artifactDescriptors,
     effectiveThreadStatus,
     isAgentCurrentlyWorking,
-    toolProps,
     lastUsedModel,
     handleOpenArtifact,
     onOpenRepoFile,
@@ -83,17 +75,8 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     activeRepoFilePath,
   } = viewModel;
 
-  const {
-    transcriptRef,
-    scrollAreaRef,
-    chatContainerRef,
-    messagesEndRef,
-    promptBoxRef,
-    forceScrollToBottom,
-    scrollToTop,
-    isAtBottom,
-    hasInitialized,
-  } = scrollState;
+  const { chatContainerRef, promptBoxRef, forceScrollToBottom, scrollToTop } =
+    scrollState;
 
   const {
     activeArtifactId,
@@ -104,7 +87,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     platform,
   } = panelState;
 
-  const { redoDialogData, forkDialogData } = dialogData;
+  const { redoDialogData } = dialogData;
 
   const {
     onOptimisticUserSubmit,
@@ -115,8 +98,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = optimisticHandlers;
 
   const { error, setError, isRetrying, handleRetry } = errorState;
-
-  const transcriptStoreViewEnabled = useTranscriptStoreViewEnabled();
 
   return (
     <AgUiAgentProvider agent={agent}>
@@ -132,166 +113,68 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           githubSummary={threadViewModel.githubSummary}
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
-          <AssistantRuntimeSession
-            agent={agent}
-            loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-            chatAgent={chatAgent}
-            isAgentWorking={isAgentCurrentlyWorking}
-            threadId={thread.id}
-            threadChatId={threadChat.id}
-            setReplayCursor={coreData.setReplayCursor}
-            onAppendRejected={onAppendRejected}
-            callerError={error || threadChat.errorMessageInfo || undefined}
-            callerErrorType={threadChat.errorMessage || undefined}
-            callerErrorInfo={error || threadChat.errorMessageInfo || undefined}
-          >
-            {(runtimeProps) => (
-              <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
-                {transcriptStoreViewEnabled ? (
-                  <TranscriptView
-                    agent={agent}
-                    loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-                    lifecycleMessages={threadViewModel.lifecycleMessages}
-                    threadStatus={effectiveThreadStatus}
-                    isAgentWorking={isAgentCurrentlyWorking}
-                    onOpenRepoFile={onOpenRepoFile}
-                    error={error || threadChat.errorMessageInfo}
-                    errorType={runtimeProps.errorType}
-                    errorInfo={runtimeProps.errorInfo}
-                    handleRetry={runtimeProps.handleRetry ?? handleRetry}
-                    isRetrying={runtimeProps.isRetrying ?? isRetrying}
-                    isReadOnly={isReadOnly}
-                    chatAgent={chatAgent}
-                    bootingSubstatus={thread.bootingSubstatus ?? undefined}
-                    metaSnapshot={threadViewModel.meta}
-                    reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
-                    threadChatUpdatedAt={
-                      threadViewModel.lifecycle.threadChatUpdatedAt
-                    }
-                    threadId={thread.id}
-                    threadChatId={threadChat.id}
-                    scheduleAt={threadChat.scheduleAt}
-                    threadChatStatus={threadChat.status}
-                  />
-                ) : (
-                  <div className="relative flex-1 overflow-hidden">
-                    <ScrollArea
-                      ref={scrollAreaRef}
-                      className="w-full h-full overflow-auto"
-                      viewportClassName="[scrollbar-gutter:stable] [overflow-anchor:none]"
-                    >
-                      <div
-                        ref={transcriptRef}
-                        className="min-h-full flex flex-col [overflow-anchor:none]"
-                      >
-                        <TerragonThreadErrorBoundary
-                          threadStatus={effectiveThreadStatus}
-                          isReadOnly={isReadOnly}
-                        >
-                          <TerragonThreadRuntimeContent
-                            lifecycleMessages={
-                              threadViewModel.lifecycleMessages
-                            }
-                            threadStatus={effectiveThreadStatus}
-                            thread={threadWithViewModelStatus}
-                            latestGitDiffTimestamp={
-                              threadViewModel.latestGitDiffTimestamp
-                            }
-                            isAgentWorking={isAgentCurrentlyWorking}
-                            threadChatUpdatedAt={
-                              threadViewModel.lifecycle.threadChatUpdatedAt
-                            }
-                            artifactDescriptors={artifactDescriptors}
-                            onOpenArtifact={handleOpenArtifact}
-                            onOpenRepoFile={onOpenRepoFile}
-                            redoDialogData={redoDialogData}
-                            forkDialogData={forkDialogData}
-                            toolProps={toolProps}
-                            hasCheckpoint={threadViewModel.hasCheckpoint}
-                            error={error || threadChat.errorMessageInfo}
-                            errorType={runtimeProps.errorType}
-                            errorInfo={runtimeProps.errorInfo}
-                            handleRetry={
-                              runtimeProps.handleRetry ?? handleRetry
-                            }
-                            isRetrying={runtimeProps.isRetrying ?? isRetrying}
-                            isReadOnly={isReadOnly}
-                            chatAgent={chatAgent}
-                            bootingSubstatus={
-                              thread.bootingSubstatus ?? undefined
-                            }
-                            metaSnapshot={threadViewModel.meta}
-                            reattemptQueueAt={
-                              threadChat.reattemptQueueAt ?? null
-                            }
-                            threadChatId={threadChat.id}
-                            scheduleAt={threadChat.scheduleAt}
-                            threadChatStatus={threadChat.status}
-                          />
-                        </TerragonThreadErrorBoundary>
-                        <div
-                          ref={messagesEndRef}
-                          className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
-                        />
-                      </div>
-                    </ScrollArea>
-                    {/* Scroll-to-bottom button floating above scroll area */}
-                    <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
-                      <button
-                        type="button"
-                        onClick={forceScrollToBottom}
-                        className={cn(
-                          "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          hasInitialized && !isAtBottom
-                            ? "opacity-100 translate-y-0 scale-100"
-                            : "opacity-0 translate-y-2 scale-95 pointer-events-none",
-                        )}
-                        aria-label="Scroll to bottom"
-                      >
-                        <ArrowDown className="size-4 text-muted-foreground" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {!isReadOnly && (
-                  <ChatPromptBox
-                    threadId={thread.id}
-                    threadChatId={threadChat.id}
-                    threadStatus={effectiveThreadStatus}
-                    bootingSubstatus={thread.bootingSubstatus ?? null}
-                    runStarted={threadViewModel.lifecycle.runStarted}
-                    queuedMessages={queuedMessages}
-                    permissionMode={
-                      threadViewModel.permissionMode ?? "allowAll"
-                    }
-                    prStatus={threadViewModel.githubSummary.prStatus}
-                    prChecksStatus={
-                      threadViewModel.githubSummary.prChecksStatus
-                    }
-                    githubPRNumber={
-                      threadViewModel.githubSummary.githubPRNumber
-                    }
-                    sandboxId={thread.codesandboxId}
-                    repoFullName={thread.githubRepoFullName}
-                    branchName={thread.branchName ?? thread.repoBaseBranchName}
-                    agent={chatAgent}
-                    agentVersion={threadChat.agentVersion}
-                    lastUsedModel={lastUsedModel}
-                    contextLength={threadChat.contextLength ?? null}
-                    setError={setError}
-                    onOptimisticUserSubmit={onOptimisticUserSubmit}
-                    onOptimisticQueuedMessagesUpdate={
-                      onOptimisticQueuedMessagesUpdate
-                    }
-                    onPermissionModeChange={onOptimisticPermissionModeUpdate}
-                    refetch={reconcileActiveChatFromServer}
-                    forceScrollToBottom={forceScrollToBottom}
-                    promptBoxRef={promptBoxRef}
-                  />
-                )}
-              </div>
+          <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
+            <TranscriptView
+              agent={agent}
+              loadAgUiHistoryMessages={loadAgUiHistoryMessages}
+              setReplayCursor={coreData.setReplayCursor}
+              onAppendRejected={onAppendRejected}
+              lifecycleMessages={threadViewModel.lifecycleMessages}
+              threadStatus={effectiveThreadStatus}
+              isAgentWorking={isAgentCurrentlyWorking}
+              thread={thread}
+              latestGitDiffTimestamp={threadViewModel.latestGitDiffTimestamp}
+              artifactDescriptors={artifactDescriptors}
+              onOpenArtifact={handleOpenArtifact}
+              onOpenRepoFile={onOpenRepoFile}
+              callerError={error || threadChat.errorMessageInfo || undefined}
+              callerErrorType={threadChat.errorMessage || undefined}
+              serverRetry={handleRetry}
+              isServerRetrying={isRetrying}
+              isReadOnly={isReadOnly}
+              chatAgent={chatAgent}
+              bootingSubstatus={thread.bootingSubstatus ?? undefined}
+              metaSnapshot={threadViewModel.meta}
+              reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
+              threadChatUpdatedAt={
+                threadViewModel.lifecycle.threadChatUpdatedAt
+              }
+              threadId={thread.id}
+              threadChatId={threadChat.id}
+              scheduleAt={threadChat.scheduleAt}
+              threadChatStatus={threadChat.status}
+            />
+            {!isReadOnly && (
+              <ChatPromptBox
+                threadId={thread.id}
+                threadChatId={threadChat.id}
+                threadStatus={effectiveThreadStatus}
+                bootingSubstatus={thread.bootingSubstatus ?? null}
+                runStarted={threadViewModel.lifecycle.runStarted}
+                queuedMessages={queuedMessages}
+                permissionMode={threadViewModel.permissionMode ?? "allowAll"}
+                prStatus={threadViewModel.githubSummary.prStatus}
+                prChecksStatus={threadViewModel.githubSummary.prChecksStatus}
+                githubPRNumber={threadViewModel.githubSummary.githubPRNumber}
+                sandboxId={thread.codesandboxId}
+                repoFullName={thread.githubRepoFullName}
+                branchName={thread.branchName ?? thread.repoBaseBranchName}
+                agent={chatAgent}
+                agentVersion={threadChat.agentVersion}
+                lastUsedModel={lastUsedModel}
+                contextLength={threadChat.contextLength ?? null}
+                setError={setError}
+                onOptimisticUserSubmit={onOptimisticUserSubmit}
+                onOptimisticQueuedMessagesUpdate={
+                  onOptimisticQueuedMessagesUpdate
+                }
+                onPermissionModeChange={onOptimisticPermissionModeUpdate}
+                refetch={reconcileActiveChatFromServer}
+                forceScrollToBottom={forceScrollToBottom}
+                promptBoxRef={promptBoxRef}
+              />
             )}
-          </AssistantRuntimeSession>
+          </div>
           {shouldRenderSecondaryPanel ? (
             <SecondaryPanel
               thread={threadWithViewModelStatus}
@@ -343,8 +226,8 @@ export type ChatUICoreData = {
 };
 
 /**
- * Derived view-model state: messages, descriptors, status, tool wiring. Widens
- * whenever the AG-UI view model surfaces a new piece of data to the layout.
+ * Derived view-model state: messages, descriptors, status. Widens whenever the
+ * AG-UI view model surfaces a new piece of data to the layout.
  */
 export type ChatUIViewModelData = {
   threadViewModel: ThreadViewModelController;
@@ -353,9 +236,6 @@ export type ChatUIViewModelData = {
   artifactDescriptors: ThreadViewModelController["artifacts"]["descriptors"];
   effectiveThreadStatus: ThreadViewModelController["lifecycle"]["threadStatus"];
   isAgentCurrentlyWorking: boolean;
-  toolProps: React.ComponentProps<
-    typeof TerragonThreadRuntimeContent
-  >["toolProps"];
   lastUsedModel: ReturnType<typeof getLastUserMessageModel>;
   handleOpenArtifact: (artifactId: string) => void;
   /**
@@ -402,13 +282,10 @@ export type ChatUIPanelState = {
 };
 
 /**
- * Pre-built data bundles for the redo and fork confirmation dialogs.
+ * Pre-built data bundle for the redo confirmation dialog.
  */
 export type ChatUIDialogData = {
   redoDialogData: React.ComponentProps<typeof ChatHeader>["redoDialogData"];
-  forkDialogData: React.ComponentProps<
-    typeof TerragonThreadRuntimeContent
-  >["forkDialogData"];
 };
 
 /**

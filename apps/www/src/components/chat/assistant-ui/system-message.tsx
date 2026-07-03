@@ -1,23 +1,31 @@
 "use client";
 
-import { useTerragonThread } from "./thread-context";
+import type { ThreadInfoFull, UISystemMessage } from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { SystemMessage } from "../chat-message-system";
-import type { UISystemMessage } from "@terragon/shared";
 
 /**
- * Renders a system message (git-diff, stop, etc.) within the assistant-ui
- * thread. The caller (`TerragonTranscriptSurface`) only routes
- * `UISystemMessage` lifecycle entries here.
+ * Renders a lifecycle system message (git-diff, stop, etc.) in the transcript.
+ * The caller (`TranscriptView`) routes only `UISystemMessage` entries here and
+ * supplies the artifact/repo affordances the underlying `SystemMessage` needs.
  */
 export function TerragonSystemMessage({
   message,
   messageIndex,
+  thread,
+  latestGitDiffTimestamp,
+  artifactDescriptors,
+  onOpenArtifact,
+  onOpenRepoFile,
 }: {
   message: UISystemMessage;
   messageIndex: number;
+  thread: ThreadInfoFull | null;
+  latestGitDiffTimestamp: string | null;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
 }) {
-  const ctx = useTerragonThread();
-
   return (
     <div
       className="flex flex-col gap-1 [scroll-margin-top:6rem]"
@@ -25,12 +33,11 @@ export function TerragonSystemMessage({
     >
       <SystemMessage
         message={message}
-        thread={ctx.thread}
-        latestGitDiffTimestamp={ctx.latestGitDiffTimestamp}
-        artifactDescriptors={ctx.artifactDescriptors}
-        artifactDescriptorLookup={ctx.artifactDescriptorLookup}
-        onOpenArtifact={ctx.onOpenArtifact}
-        onOpenRepoFile={ctx.onOpenRepoFile}
+        thread={thread}
+        latestGitDiffTimestamp={latestGitDiffTimestamp}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
+        onOpenRepoFile={onOpenRepoFile}
       />
     </div>
   );

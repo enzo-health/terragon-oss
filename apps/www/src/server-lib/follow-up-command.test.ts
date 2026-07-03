@@ -346,10 +346,9 @@ describe("dispatchFollowUpFromAppend", () => {
       );
     });
 
-    it("reads metadata from forwardedProps.runConfig.terragon (assistant-ui runtime layout)", async () => {
-      // useThreadRuntime().append({ runConfig: { custom: { terragon: ... } } })
-      // gets wrapped by @assistant-ui/react into forwardedProps.runConfig.terragon.
-      // The adapter accepts the native assistant-ui forwarded layout.
+    it("reads metadata from forwardedProps.runConfig.terragon (composer POST layout)", async () => {
+      // The composer POSTs encodeRunMetadata() output under
+      // forwardedProps.runConfig.terragon. The adapter reads it from there.
       const body = makeBody({
         forwardedProps: {
           runConfig: {

@@ -105,10 +105,6 @@ vi.mock("./simple-promptbox", () => ({
   },
 }));
 
-vi.mock("@assistant-ui/react", () => ({
-  useThreadRuntime: () => null,
-}));
-
 vi.mock("@/hooks/use-feature-flag", () => ({
   useFeatureFlag: () => false,
 }));

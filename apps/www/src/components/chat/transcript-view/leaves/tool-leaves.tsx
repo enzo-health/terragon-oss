@@ -16,8 +16,8 @@ import {
   ToolTrigger,
 } from "@/components/ai/tool";
 import { cn } from "@/lib/utils";
-import { toolViewProps } from "../../assistant-ui/native-thread-utils";
 import type { ToolCallStatus } from "../../transcript-store";
+import { toolViewProps } from "./tool-view-props";
 import { getToolVerb, summarizeToolResult } from "../../tools/utils";
 import type { Leaf } from "../leaf-props";
 

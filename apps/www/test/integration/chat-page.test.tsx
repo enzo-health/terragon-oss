@@ -2,7 +2,7 @@
  * UI assertion harness tests.
  *
  * Verifies the chat-page harness helpers used by the turn tests. The live
- * transcript renders text through the production `TextPart` (native-thread's
+ * transcript renders text through the production `TextPart` (the text leaf's
  * markdown slot); terminal and delegation parts surface in production as the
  * persisted DB part shape that the live AG-UI mapper consumes, so the harness
  * exposes data-shape query helpers over those parts rather than rendering the

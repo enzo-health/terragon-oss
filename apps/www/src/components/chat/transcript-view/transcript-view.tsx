@@ -3,7 +3,12 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import type { AIAgent } from "@terragon/agent/types";
 import type { BootingSubstatus } from "@terragon/sandbox/types";
-import type { ThreadStatus, UISystemMessage } from "@terragon/shared";
+import type {
+  ThreadInfoFull,
+  ThreadStatus,
+  UISystemMessage,
+} from "@terragon/shared";
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -11,6 +16,7 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai/conversation";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { cn } from "@/lib/utils";
@@ -19,10 +25,10 @@ import { ChatError, isSandboxErrorType } from "../chat-error";
 import { MessageScheduled, WorkingMessage } from "../chat-messages";
 import { LeafLoading } from "../leaf-loading";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
-import { getWorkingMessageSlotClassName } from "../assistant-ui/terragon-transcript-surface";
 import { TerragonSystemMessage } from "../assistant-ui/system-message";
 import {
   getWorkingFooterFreshness,
+  getWorkingMessageSlotClassName,
   shouldSuppressPreStartLifecycleFooter,
 } from "../assistant-ui/working-footer-freshness";
 import { TranscriptItems } from "./transcript-items";
@@ -30,21 +36,32 @@ import {
   type PermissionDecision,
   TranscriptViewContextProvider,
 } from "./transcript-view-context";
-import { useLiveTranscript } from "./use-live-transcript";
+import {
+  type TranscriptAppendRejection,
+  useLiveTranscript,
+} from "./use-live-transcript";
 import { useStoreThreadFlags } from "./store-thread-flags";
 
 export type TranscriptViewProps = {
   agent: AbstractAgent | null;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
+  onAppendRejected?: (rejection: TranscriptAppendRejection) => void;
   lifecycleMessages: UISystemMessage[];
   threadStatus: ThreadStatus | null;
   isAgentWorking: boolean;
+  thread: ThreadInfoFull;
+  latestGitDiffTimestamp: string | null;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
   onOpenRepoFile?: (href: string) => void;
-  error?: string | null;
-  errorType?: string;
-  errorInfo?: string;
-  handleRetry?: () => Promise<void>;
-  isRetrying?: boolean;
+  /** Caller-supplied error (transient banner or persisted thread-chat error). */
+  callerError?: string | null;
+  /** Persisted thread-chat error type, if any. */
+  callerErrorType?: string;
+  /** Server-side retry mutation, used when the error is not transport-derived. */
+  serverRetry: () => Promise<void>;
+  isServerRetrying: boolean;
   isReadOnly?: boolean;
   chatAgent: AIAgent;
   bootingSubstatus?: BootingSubstatus;
@@ -69,15 +86,20 @@ const SCROLL_BUTTON_CLASS = cn(
 export function TranscriptView({
   agent,
   loadAgUiHistoryMessages,
+  setReplayCursor,
+  onAppendRejected,
   lifecycleMessages,
   threadStatus,
   isAgentWorking,
+  thread,
+  latestGitDiffTimestamp,
+  artifactDescriptors,
+  onOpenArtifact,
   onOpenRepoFile,
-  error,
-  errorType,
-  errorInfo,
-  handleRetry,
-  isRetrying,
+  callerError,
+  callerErrorType,
+  serverRetry,
+  isServerRetrying,
   isReadOnly,
   chatAgent,
   bootingSubstatus,
@@ -89,10 +111,19 @@ export function TranscriptView({
   scheduleAt,
   threadChatStatus,
 }: TranscriptViewProps) {
-  const { store, isHydrating } = useLiveTranscript({
-    agent,
-    loadHistory: loadAgUiHistoryMessages,
-  });
+  const { store, isHydrating, errorType, errorInfo, handleRetry, isRetrying } =
+    useLiveTranscript({
+      agent,
+      loadHistory: loadAgUiHistoryMessages,
+      isAgentWorking,
+      setReplayCursor,
+      onAppendRejected,
+      callerError,
+      callerErrorType,
+      callerErrorInfo: callerError ?? undefined,
+      serverRetry,
+      isServerRetrying,
+    });
   const { hasRenderableAgentParts, hasPendingToolCall } =
     useStoreThreadFlags(store);
   const showHydrationIndicator = useDelayedFlag(isHydrating, 250);
@@ -169,6 +200,11 @@ export function TranscriptView({
                       key={`lifecycle-${message.id}`}
                       message={message}
                       messageIndex={index}
+                      thread={thread}
+                      latestGitDiffTimestamp={latestGitDiffTimestamp}
+                      artifactDescriptors={artifactDescriptors}
+                      onOpenArtifact={onOpenArtifact}
+                      onOpenRepoFile={onOpenRepoFile}
                     />
                   ))}
                 </div>
@@ -181,11 +217,11 @@ export function TranscriptView({
               <div className="flex flex-col gap-4">
                 <TranscriptItems store={store} />
               </div>
-              {error || errorType || errorInfo ? (
+              {errorType || errorInfo ? (
                 <ChatError
                   status={threadStatus ?? "error"}
                   errorType={errorType || ""}
-                  errorInfo={error || errorInfo || "An unknown error occurred"}
+                  errorInfo={errorInfo || "An unknown error occurred"}
                   handleRetry={handleRetry ?? (async () => {})}
                   isReadOnly={isReadOnly ?? false}
                   isRetrying={isRetrying}

@@ -1,35 +1,142 @@
 "use client";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import { EventType } from "@ag-ui/core";
-import { useEffect, useRef, useState } from "react";
+import { EventType, type RunErrorEvent } from "@ag-ui/core";
+import type { ThreadErrorType } from "@terragon/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
+import { encodeRunMetadata } from "@/lib/run-metadata";
+import { extractRuntimeErrorPayload } from "../assistant-ui/runtime-error-classification";
 import { TranscriptStore } from "../transcript-store";
 import { hydrateTranscriptFromHistory } from "./hydrate-history";
+
+export type TranscriptAppendRejection = {
+  kind: "rejected" | "lock-held";
+  clientSubmissionId: string | null;
+};
+
+type TransportError = { message: string; code: ThreadErrorType | null };
 
 export type LiveTranscript = {
   readonly store: TranscriptStore;
   readonly isHydrating: boolean;
+  readonly errorType?: string;
+  readonly errorInfo?: string;
+  readonly handleRetry?: () => Promise<void>;
+  readonly isRetrying?: boolean;
+};
+
+export type UseLiveTranscriptArgs = {
+  agent: AbstractAgent | null;
+  loadHistory: () => Promise<AgUiHistoryMessagesResult>;
+  isAgentWorking: boolean;
+  setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
+  onAppendRejected?: (rejection: TranscriptAppendRejection) => void;
+  callerError?: string | null;
+  callerErrorType?: string;
+  callerErrorInfo?: string;
+  serverRetry: () => Promise<void>;
+  isServerRetrying: boolean;
+};
+
+/**
+ * Whether the resume SSE stream should be opened after a history load. Opens
+ * when the server-authoritative run context reports a live run OR the client
+ * status projection says the agent is working. The server signal is primary:
+ * it opens the stream even when the client `isAgentWorking` is stale-false
+ * (the deadlock class the server-authoritative liveness fix targets).
+ */
+export function shouldOpenResumeStream({
+  runActive,
+  isAgentWorking,
+}: {
+  runActive?: boolean;
+  isAgentWorking: boolean;
+}): boolean {
+  return runActive === true || isAgentWorking;
+}
+
+// The resume connect POSTs an explicit resume intent so the server frames it as
+// a live-tail subscription (never a follow-up append), regardless of whether a
+// replay cursor is present yet on the first connect.
+const RESUME_FORWARDED_PROPS = {
+  runConfig: encodeRunMetadata({
+    selectedModel: null,
+    permissionMode: undefined,
+    intent: "resume",
+  }),
 };
 
 export function useLiveTranscript({
   agent,
   loadHistory,
-}: {
-  agent: AbstractAgent | null;
-  loadHistory: () => Promise<AgUiHistoryMessagesResult>;
-}): LiveTranscript {
+  isAgentWorking,
+  setReplayCursor,
+  onAppendRejected,
+  callerError,
+  callerErrorType,
+  callerErrorInfo,
+  serverRetry,
+  isServerRetrying,
+}: UseLiveTranscriptArgs): LiveTranscript {
   const storeRef = useRef<TranscriptStore | null>(null);
   if (storeRef.current === null) storeRef.current = new TranscriptStore();
   const store = storeRef.current;
   const runIdRef = useRef<string | null>(null);
+  const lastRunErrorRef = useRef<{
+    code: string | null;
+    message: string;
+  } | null>(null);
   const [isHydrating, setIsHydrating] = useState(true);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [transportError, setTransportError] = useState<TransportError | null>(
+    null,
+  );
+
+  const isAgentWorkingRef = useRef(isAgentWorking);
+  isAgentWorkingRef.current = isAgentWorking;
+  const onAppendRejectedRef = useRef(onAppendRejected);
+  onAppendRejectedRef.current = onAppendRejected;
+  const setReplayCursorRef = useRef(setReplayCursor);
+  setReplayCursorRef.current = setReplayCursor;
+
+  const classifyTransportError = useCallback((error: Error) => {
+    const captured = lastRunErrorRef.current;
+    lastRunErrorRef.current = null;
+    const capturedTypedCode =
+      captured !== null && captured.message === error.message
+        ? captured.code
+        : null;
+    const payload = extractRuntimeErrorPayload(error, capturedTypedCode);
+    // A `RUN_STARTED`-while-active race (and the symmetric post-finish tail
+    // race) is a benign client lifecycle hiccup — the run is still streaming.
+    if (payload.kind === "transient-lifecycle") return;
+    if (payload.kind === "lock-held") {
+      onAppendRejectedRef.current?.({
+        kind: "lock-held",
+        clientSubmissionId: payload.clientSubmissionId,
+      });
+      setTransportError({ message: error.message, code: null });
+      return;
+    }
+    onAppendRejectedRef.current?.({
+      kind: "rejected",
+      clientSubmissionId: payload.clientSubmissionId,
+    });
+    setTransportError({
+      message: payload.info,
+      code: payload.kind === "run-failure" ? payload.code : null,
+    });
+  }, []);
 
   useEffect(() => {
     if (!agent) return;
     store.reset();
     runIdRef.current = null;
+    lastRunErrorRef.current = null;
     setIsHydrating(true);
+    setTransportError(null);
 
     const subscription = agent.subscribe({
       onEvent: ({ event }) => {
@@ -39,6 +146,15 @@ export function useLiveTranscript({
             if (typeof runId === "string" && runId.length > 0) {
               runIdRef.current = runId;
             }
+          } else if (event.type === EventType.RUN_ERROR) {
+            const runError = event as RunErrorEvent;
+            lastRunErrorRef.current = {
+              code:
+                typeof runError.code === "string" && runError.code.length > 0
+                  ? runError.code
+                  : null,
+              message: runError.message,
+            };
           }
           store.apply({ payload: event, runId: runIdRef.current });
         } catch {}
@@ -46,13 +162,45 @@ export function useLiveTranscript({
     });
 
     let cancelled = false;
+
+    const connectResume = async () => {
+      try {
+        await agent.runAgent({ forwardedProps: RESUME_FORWARDED_PROPS });
+      } catch (error) {
+        if (cancelled) return;
+        classifyTransportError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    };
+
     loadHistory()
       .then((result) => {
         if (cancelled) return;
         if (result.activeRunId) runIdRef.current = result.activeRunId;
         hydrateTranscriptFromHistory(store, result);
+        setReplayCursorRef.current(
+          result.lastCursor ?? { seq: result.lastSeq, projectionIndex: null },
+        );
+        if (
+          shouldOpenResumeStream({
+            runActive: result.runActive,
+            isAgentWorking: isAgentWorkingRef.current,
+          })
+        ) {
+          void connectResume();
+        }
       })
-      .catch(() => {})
+      .catch((error) => {
+        if (cancelled) return;
+        setTransportError({
+          message:
+            error instanceof Error
+              ? error.message
+              : `History load failed: ${String(error)}`,
+          code: null,
+        });
+      })
       .finally(() => {
         if (!cancelled) setIsHydrating(false);
       });
@@ -60,8 +208,57 @@ export function useLiveTranscript({
     return () => {
       cancelled = true;
       subscription.unsubscribe();
+      try {
+        agent.abortRun();
+      } catch {}
     };
-  }, [agent, loadHistory, store]);
+  }, [agent, loadHistory, store, retryNonce, classifyTransportError]);
 
-  return { store, isHydrating };
+  const retryTransport = useCallback(async () => {
+    setTransportError(null);
+    setRetryNonce((nonce) => nonce + 1);
+  }, []);
+
+  const errorProps = useMemo<
+    Pick<
+      LiveTranscript,
+      "errorType" | "errorInfo" | "handleRetry" | "isRetrying"
+    >
+  >(() => {
+    const hasCallerError =
+      Boolean(callerError) ||
+      callerErrorType !== undefined ||
+      callerErrorInfo !== undefined;
+    if (hasCallerError) {
+      return {
+        ...(callerErrorType !== undefined
+          ? { errorType: callerErrorType }
+          : {}),
+        ...(callerErrorInfo !== undefined
+          ? { errorInfo: callerErrorInfo }
+          : {}),
+        handleRetry: serverRetry,
+        isRetrying: isServerRetrying,
+      };
+    }
+    if (transportError) {
+      return {
+        errorType: transportError.code ?? "runtime",
+        errorInfo: transportError.message,
+        handleRetry: retryTransport,
+        isRetrying: false,
+      };
+    }
+    return { handleRetry: serverRetry, isRetrying: isServerRetrying };
+  }, [
+    callerError,
+    callerErrorType,
+    callerErrorInfo,
+    transportError,
+    retryTransport,
+    serverRetry,
+    isServerRetrying,
+  ]);
+
+  return { store, isHydrating, ...errorProps };
 }

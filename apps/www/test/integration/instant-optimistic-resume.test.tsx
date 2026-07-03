@@ -13,17 +13,17 @@
  * — opening the stream with no refresh.
  *
  * This test drives the production seam directly — the real reducer, the real
- * `isAgentWorking` predicate, and the real `resolveRuntimeResumePolicy` — rather
- * than mounting the full TipTap composer under jsdom. It is pure: no jsdom, no
- * network — it exercises the flip's downstream effect, which is what no single
- * assertion holds today.
+ * `isAgentWorking` predicate, and the real `shouldOpenResumeStream` decision the
+ * transport hook applies — rather than mounting the full TipTap composer under
+ * jsdom. It is pure: no jsdom, no network — it exercises the flip's downstream
+ * effect, which is what no single assertion holds today.
  */
 
 import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { describe, expect, it } from "vitest";
 import { isAgentWorking } from "@/agent/thread-status";
-import { resolveRuntimeResumePolicy } from "@/components/chat/assistant-ui/runtime-resume-policy";
+import { shouldOpenResumeStream } from "@/components/chat/transcript-view/use-live-transcript";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,
@@ -110,12 +110,8 @@ describe("instant optimistic resume seam", () => {
 
     expect(working).toBe(false);
 
-    const policy = resolveRuntimeResumePolicy({
-      isAgentWorking: working,
-      threadChatId: "chat-xyz",
-    });
     // The deadlock: idle => the resume stream is never opened.
-    expect(policy.historyMode).toBe("idle-finalized");
+    expect(shouldOpenResumeStream({ isAgentWorking: working })).toBe(false);
   });
 
   it("the optimistic booting flip flips isAgentWorking true and opens the resume stream without a refresh", () => {
@@ -134,12 +130,8 @@ describe("instant optimistic resume seam", () => {
     expect(status).toBe("booting");
     expect(working).toBe(true);
 
-    const policy = resolveRuntimeResumePolicy({
-      isAgentWorking: working,
-      threadChatId: "chat-xyz",
-    });
-    // The fix: booting => active resume, no refresh needed.
-    expect(policy.historyMode).toBe("active-resume");
+    // The fix: booting => the resume stream opens, no refresh needed.
+    expect(shouldOpenResumeStream({ isAgentWorking: working })).toBe(true);
   });
 
   it("server-authoritative runActive opens the stream when isAgentWorking is stale-false (deadlock class)", () => {
@@ -155,18 +147,11 @@ describe("instant optimistic resume seam", () => {
     const working = deriveIsAgentWorking(status);
     expect(working).toBe(false);
 
-    const deadlockedPolicy = resolveRuntimeResumePolicy({
-      isAgentWorking: working,
-      threadChatId: "chat-xyz",
-    });
-    expect(deadlockedPolicy.historyMode).toBe("idle-finalized");
+    expect(shouldOpenResumeStream({ isAgentWorking: working })).toBe(false);
 
-    const serverAuthoritativePolicy = resolveRuntimeResumePolicy({
-      isAgentWorking: working,
-      serverRunActive: true,
-      threadChatId: "chat-xyz",
-    });
-    expect(serverAuthoritativePolicy.historyMode).toBe("active-resume");
+    expect(
+      shouldOpenResumeStream({ isAgentWorking: working, runActive: true }),
+    ).toBe(true);
   });
 
   it("a rejection reverts isAgentWorking back to the closed-stream baseline", () => {
@@ -193,10 +178,6 @@ describe("instant optimistic resume seam", () => {
     const working = deriveIsAgentWorking(status);
 
     expect(working).toBe(false);
-    const policy = resolveRuntimeResumePolicy({
-      isAgentWorking: working,
-      threadChatId: "chat-xyz",
-    });
-    expect(policy.historyMode).toBe("idle-finalized");
+    expect(shouldOpenResumeStream({ isAgentWorking: working })).toBe(false);
   });
 });
