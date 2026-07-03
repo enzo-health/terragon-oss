@@ -1297,6 +1297,55 @@ describe("ag-ui SSE route", () => {
     expect(runStartedCount).toBe(1);
   });
 
+  it("synthesizes a missing TEXT_MESSAGE_START before the first content on a fresh mid-run replay", async () => {
+    const runEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        timestamp: 1,
+        threadId: "thread-1",
+        runId: "run-freshmid",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        timestamp: 2,
+        messageId: "msg-mid",
+        delta: "joined mid-run",
+      } as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        timestamp: 3,
+        messageId: "msg-mid",
+      } as BaseEvent,
+      {
+        type: EventType.RUN_FINISHED,
+        timestamp: 4,
+        threadId: "thread-1",
+        runId: "run-freshmid",
+      } as BaseEvent,
+    ];
+    mockAgUiEventEnvelopesForThreadChat(runEvents);
+
+    const response = await GET(
+      makeRequest(
+        "http://localhost/api/ag-ui/thread-1?threadChatId=chat-1&runId=run-freshmid",
+      ),
+      makeContext("thread-1"),
+    );
+    expect(response.status).toBe(200);
+
+    const received = await readReplayBurst(response, runEvents.length + 1);
+    const startIndex = received.findIndex(
+      (e) =>
+        e.type === EventType.TEXT_MESSAGE_START &&
+        Reflect.get(e, "messageId") === "msg-mid",
+    );
+    const contentIndex = received.findIndex(
+      (e) => e.type === EventType.TEXT_MESSAGE_CONTENT,
+    );
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(startIndex).toBeLessThan(contentIndex);
+  });
+
   it("streams native AG-UI events without trace sideband protocol frames", async () => {
     const runEvents: BaseEvent[] = [
       {

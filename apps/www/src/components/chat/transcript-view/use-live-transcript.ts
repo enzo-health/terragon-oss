@@ -7,7 +7,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { encodeRunMetadata } from "@/lib/run-metadata";
-import { extractRuntimeErrorPayload } from "../assistant-ui/runtime-error-classification";
+import {
+  extractRuntimeErrorPayload,
+  isTransientRunLifecycleError,
+} from "../assistant-ui/runtime-error-classification";
 import { TranscriptStore } from "../transcript-store";
 import { hydrateTranscriptFromHistory } from "./hydrate-history";
 
@@ -68,6 +71,13 @@ const RESUME_FORWARDED_PROPS = {
   }),
 };
 
+const MAX_RESUME_RECONNECT_ATTEMPTS = 3;
+const RESUME_RECONNECT_BASE_DELAY_MS = 300;
+
+function resumeReconnectDelayMs(priorFailures: number): number {
+  return RESUME_RECONNECT_BASE_DELAY_MS * 2 ** (priorFailures - 1);
+}
+
 export function useLiveTranscript({
   agent,
   loadHistory,
@@ -94,6 +104,9 @@ export function useLiveTranscript({
     null,
   );
 
+  const resumeFailureCountRef = useRef(0);
+  const lastTransportErrorRef = useRef<TransportError | null>(null);
+  const connectAgentRef = useRef<AbstractAgent | null>(null);
   const isAgentWorkingRef = useRef(isAgentWorking);
   isAgentWorkingRef.current = isAgentWorking;
   const onAppendRejectedRef = useRef(onAppendRejected);
@@ -117,21 +130,30 @@ export function useLiveTranscript({
         kind: "lock-held",
         clientSubmissionId: payload.clientSubmissionId,
       });
-      setTransportError({ message: error.message, code: null });
+      const next = { message: error.message, code: null };
+      lastTransportErrorRef.current = next;
+      setTransportError(next);
       return;
     }
     onAppendRejectedRef.current?.({
       kind: "rejected",
       clientSubmissionId: payload.clientSubmissionId,
     });
-    setTransportError({
+    const next = {
       message: payload.info,
       code: payload.kind === "run-failure" ? payload.code : null,
-    });
+    };
+    lastTransportErrorRef.current = next;
+    setTransportError(next);
   }, []);
 
   useEffect(() => {
     if (!agent) return;
+    if (connectAgentRef.current !== agent) {
+      connectAgentRef.current = agent;
+      resumeFailureCountRef.current = 0;
+      lastTransportErrorRef.current = null;
+    }
     store.reset();
     runIdRef.current = null;
     lastRunErrorRef.current = null;
@@ -164,13 +186,30 @@ export function useLiveTranscript({
     let cancelled = false;
 
     const connectResume = async () => {
+      const priorFailures = resumeFailureCountRef.current;
+      if (priorFailures >= MAX_RESUME_RECONNECT_ATTEMPTS) {
+        if (lastTransportErrorRef.current !== null) {
+          setTransportError(lastTransportErrorRef.current);
+        }
+        return;
+      }
+      if (priorFailures > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, resumeReconnectDelayMs(priorFailures)),
+        );
+        if (cancelled) return;
+      }
       try {
         await agent.runAgent({ forwardedProps: RESUME_FORWARDED_PROPS });
+        resumeFailureCountRef.current = 0;
       } catch (error) {
         if (cancelled) return;
-        classifyTransportError(
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        const normalized =
+          error instanceof Error ? error : new Error(String(error));
+        if (!isTransientRunLifecycleError(normalized)) {
+          resumeFailureCountRef.current += 1;
+        }
+        classifyTransportError(normalized);
       }
     };
 
@@ -215,6 +254,8 @@ export function useLiveTranscript({
   }, [agent, loadHistory, store, retryNonce, classifyTransportError]);
 
   const retryTransport = useCallback(async () => {
+    resumeFailureCountRef.current = 0;
+    lastTransportErrorRef.current = null;
     setTransportError(null);
     setRetryNonce((nonce) => nonce + 1);
   }, []);

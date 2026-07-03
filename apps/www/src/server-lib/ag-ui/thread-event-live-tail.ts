@@ -76,10 +76,9 @@ export async function replayDurableEventsAfterCursor(params: {
   if (!sse.frameResumeReplayEntries(replayEntries)) {
     return true;
   }
-  const repairedReplayEntries =
-    sse.replayCursorSeq !== null && !sse.hasEmittedAgUiDataEvent
-      ? repairReplayTextMessageLifecycles(replayEntries)
-      : replayEntries;
+  const repairedReplayEntries = !sse.hasEmittedAgUiDataEvent
+    ? repairReplayTextMessageLifecycles(replayEntries)
+    : replayEntries;
   let emittedReplayEntry = false;
   for (const entry of repairedReplayEntries) {
     if (!sse.emitReplayEntry(entry)) {

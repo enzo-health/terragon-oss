@@ -40,6 +40,23 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function applyRunScopedStepIds(
+  steps: EmulatorStep[],
+  runId: string,
+): EmulatorStep[] {
+  return steps.map((step) => {
+    switch (step.type) {
+      case "thinking":
+      case "text":
+        return { ...step, messageId: `${step.messageId}-${runId}` };
+      case "tool-call":
+        return { ...step, toolCallId: `${step.toolCallId}-${runId}` };
+      default:
+        return step;
+    }
+  });
+}
+
 function chunkText(text: string, chunkChars: number): string[] {
   const chunks: string[] = [];
   for (let index = 0; index < text.length; index += chunkChars) {
@@ -231,7 +248,10 @@ export async function runEmulatorStream(
     threadChatId: params.threadChatId,
     timezone: params.timezone,
   });
-  const steps = params.scenario.build(params.prompt);
+  const steps = applyRunScopedStepIds(
+    params.scenario.build(params.prompt),
+    params.runId,
+  );
 
   const finalizeStop = async (): Promise<void> => {
     const result = await postMessages({

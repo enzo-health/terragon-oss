@@ -546,9 +546,7 @@ export async function GET(
         return;
       }
       const streamReplayEntries =
-        replayCursorSeq !== null
-          ? repairReplayTextMessageLifecycles(replayEntries)
-          : replayEntries;
+        repairReplayTextMessageLifecycles(replayEntries);
       if (syntheticTerminalEntry !== null) {
         streamReplayEntries.push(syntheticTerminalEntry);
       }
