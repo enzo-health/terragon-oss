@@ -171,31 +171,6 @@ export function SimplePromptBox({
         />
         <div className="flex flex-row items-center gap-1.5 px-3 py-2">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
-            {!hideModelSelector && (
-              <ModelSelector
-                className="flex-initial"
-                selectedModel={selectedModel}
-                selectedModels={selectedModels}
-                setSelectedModel={setSelectedModel}
-                forcedAgent={forcedAgent}
-                forcedAgentVersion={forcedAgentVersion}
-                isMultiAgentMode={isMultiAgentMode}
-                setIsMultiAgentMode={setIsMultiAgentMode}
-                supportsMultiAgentPromptSubmission={
-                  supportsMultiAgentPromptSubmission
-                }
-              />
-            )}
-            {!hideModeSelector &&
-              showPlanModeSelector &&
-              onPermissionModeChange && (
-                <ModeSelector
-                  mode={permissionMode ?? "allowAll"}
-                  onChange={onPermissionModeChange}
-                />
-              )}
-          </div>
-          <div className="flex flex-shrink-0 flex-row items-center gap-1.5">
             {!hideAddContextButton && (
               <AddContextButton
                 editor={editor}
@@ -210,6 +185,31 @@ export function SimplePromptBox({
               <FileAttachmentButton
                 className="flex-initial hidden xs:flex"
                 onFileAttachment={(file) => handleFilesAttached([file])}
+              />
+            )}
+            {!hideModeSelector &&
+              showPlanModeSelector &&
+              onPermissionModeChange && (
+                <ModeSelector
+                  mode={permissionMode ?? "allowAll"}
+                  onChange={onPermissionModeChange}
+                />
+              )}
+          </div>
+          <div className="flex min-w-0 flex-shrink flex-row items-center gap-1.5">
+            {!hideModelSelector && (
+              <ModelSelector
+                className="flex-initial"
+                selectedModel={selectedModel}
+                selectedModels={selectedModels}
+                setSelectedModel={setSelectedModel}
+                forcedAgent={forcedAgent}
+                forcedAgentVersion={forcedAgentVersion}
+                isMultiAgentMode={isMultiAgentMode}
+                setIsMultiAgentMode={setIsMultiAgentMode}
+                supportsMultiAgentPromptSubmission={
+                  supportsMultiAgentPromptSubmission
+                }
               />
             )}
             <SubmitComboButton

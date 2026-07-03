@@ -1,6 +1,7 @@
 import React, { memo, useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  ArrowUp,
   AudioLines,
   CornerDownLeft,
   Loader2,
@@ -66,7 +67,7 @@ function SendActionIcon({
   if (isSubmitting) {
     return <Loader2 className="size-4 animate-spin" />;
   }
-  return <CornerDownLeft className="size-4" />;
+  return <ArrowUp className="size-4" />;
 }
 
 export type TSubmitForm = ({
@@ -100,7 +101,7 @@ export const SendButton = memo(function SendButton({
       title={title}
       aria-label="Send message"
       disabled={disabled || isSubmitting || isProcessingAudio}
-      className={cn("size-auto h-11 px-3 sm:h-8 sm:px-2", className)}
+      className={cn("size-9 rounded-full sm:size-8", className)}
       size="icon"
     >
       <SendActionIcon
@@ -175,7 +176,7 @@ export const SendComboButton = memo(function SendComboButton({
           title={title}
           disabled={isDisabled}
           className={cn(
-            "h-8 px-2 pr-6 rounded-r-none group active:scale-100",
+            "h-8 px-2.5 pr-6 rounded-l-full rounded-r-none group active:scale-100",
             className,
           )}
           size="sm"
@@ -190,7 +191,7 @@ export const SendComboButton = memo(function SendComboButton({
             <Button
               disabled={isDisabled}
               className={cn(
-                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[transform,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-100",
+                "h-8 w-8 px-0 rounded-l-none rounded-r-full pr-0.5 border-l border-l-background/20 hover:border-l-background/30 transition-[transform,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-100",
                 className,
               )}
               size="sm"
