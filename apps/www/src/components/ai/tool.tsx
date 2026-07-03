@@ -49,7 +49,6 @@ export function ToolTrigger({
         "rounded-outer px-4 py-3 text-muted-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
         "transition-colors",
-        "group-data-[state=pending]/tool:animate-pulse",
         "group-data-[state=error]/tool:text-destructive group-data-[state=error]/tool:hover:text-destructive",
         className,
       )}
@@ -99,6 +98,7 @@ export function ToolIcon({
           "transition-[opacity,transform,filter] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
           "opacity-100 scale-100 blur-0",
           "group-data-[state=running]/tool:opacity-0 group-data-[state=running]/tool:scale-90 group-data-[state=running]/tool:blur-[2px]",
+          "group-data-[state=success]/tool:opacity-0 group-data-[state=success]/tool:scale-90 group-data-[state=success]/tool:blur-[2px]",
         )}
       >
         {children}
@@ -121,6 +121,25 @@ export function ToolIcon({
         )}
       >
         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+      </svg>
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className={cn(
+          "col-start-1 row-start-1 text-muted-foreground/70",
+          "transition-[opacity,transform,filter] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
+          "opacity-0 scale-90 blur-[2px]",
+          "group-data-[state=success]/tool:opacity-100 group-data-[state=success]/tool:scale-100 group-data-[state=success]/tool:blur-0",
+        )}
+      >
+        <path d="M20 6 9 17l-5-5" />
       </svg>
     </span>
   );
@@ -271,7 +290,6 @@ export function ToolArgument({
       entries: obj ? Object.entries(value_ as Record<string, unknown>) : [],
     };
   }, [value]);
-  const isStreaming = state === "streaming";
 
   return (
     <div
@@ -286,10 +304,8 @@ export function ToolArgument({
     >
       {isObject && entries.length > 0 && (
         <div className="flex flex-col">
-          {entries.map(([key, val], index) => {
-            const isLast = index === entries.length - 1;
+          {entries.map(([key, val]) => {
             const formatted = formatValue(val);
-            const multiline = formatted.includes("\n");
             return (
               <div
                 key={key}
@@ -304,11 +320,7 @@ export function ToolArgument({
                 </span>
                 <span
                   data-slot="tool-argument-value"
-                  className={cn(
-                    "min-w-0 text-foreground wrap-break-word",
-                    multiline ? "whitespace-pre" : "whitespace-pre-wrap",
-                    isStreaming && isLast && "animate-pulse",
-                  )}
+                  className="min-w-0 text-foreground wrap-break-word whitespace-pre-wrap"
                 >
                   {formatted}
                 </span>
@@ -320,10 +332,7 @@ export function ToolArgument({
       {!isObject && parsed !== undefined && (
         <pre
           data-slot="tool-argument-raw"
-          className={cn(
-            "max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word",
-            isStreaming && "animate-pulse",
-          )}
+          className="max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word"
         >
           {formatValue(parsed)}
         </pre>
@@ -331,10 +340,7 @@ export function ToolArgument({
       {parsed === undefined && value.trim() && (
         <pre
           data-slot="tool-argument-raw"
-          className={cn(
-            "max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word",
-            isStreaming && "animate-pulse",
-          )}
+          className="max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word"
         >
           {value}
         </pre>

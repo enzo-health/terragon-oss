@@ -28,10 +28,7 @@ export function StopButton({
             handleStop();
           }}
           disabled={disabled}
-          className={cn(
-            disabled ? "size-8" : "size-8 animate-pulse",
-            className,
-          )}
+          className={cn("size-8", className)}
           size="icon"
         >
           <Square className="size-4 fill-background" />

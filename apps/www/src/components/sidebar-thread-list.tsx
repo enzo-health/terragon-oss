@@ -163,7 +163,7 @@ function SidebarThreadItem({ thread, isActive }: SidebarThreadItemProps) {
       className={cn(
         "group/thread relative flex items-center rounded-md text-[13px] transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-sidebar-primary before:content-['']"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
         isOptimistic && "opacity-60",
       )}

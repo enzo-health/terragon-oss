@@ -530,7 +530,7 @@ function getResponseComponents(
     h1(props) {
       const children = getChildren(props);
       return (
-        <h1 className="text-xl font-semibold mb-2 text-foreground">
+        <h1 className="text-2xl font-semibold mb-2 text-foreground">
           {children}
         </h1>
       );
@@ -538,7 +538,7 @@ function getResponseComponents(
     h2(props) {
       const children = getChildren(props);
       return (
-        <h2 className="text-lg font-semibold mb-2 text-foreground">
+        <h2 className="text-xl font-semibold mb-2 text-foreground">
           {children}
         </h2>
       );
@@ -546,7 +546,7 @@ function getResponseComponents(
     h3(props) {
       const children = getChildren(props);
       return (
-        <h3 className="text-base font-semibold mb-2 text-foreground">
+        <h3 className="text-base font-medium mb-2 text-muted-foreground">
           {children}
         </h3>
       );

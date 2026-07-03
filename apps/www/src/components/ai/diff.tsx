@@ -193,7 +193,7 @@ export function DiffFilePanel({
       )}
       {...props}
     >
-      <div className="py-2">{children}</div>
+      <div className="overflow-x-auto py-2">{children}</div>
     </Collapsible.Panel>
   );
 }

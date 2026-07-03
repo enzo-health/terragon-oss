@@ -148,7 +148,7 @@ export function ThreadListItem({
           className={cn(
             "block rounded-md transition-[background-color,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] px-2 py-1 relative pr-8 border focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             isActive && !isSelectionMode
-              ? "bg-primary/[0.06] border-transparent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-primary before:content-['']"
+              ? "bg-primary/[0.06] border-transparent"
               : "hover:bg-accent/60 border-transparent",
             isMenuOpen && "bg-accent",
             isOptimisticThread && [
