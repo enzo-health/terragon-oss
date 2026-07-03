@@ -180,6 +180,27 @@ export const ArgumentStreaming: Story = () => (
   </Surface>
 );
 
+export const ArgumentStreamingScalar: Story = () => (
+  <Surface>
+    <Tool state="running" defaultOpen>
+      <ToolTrigger>
+        <ToolIcon>
+          <TerminalIcon />
+        </ToolIcon>
+        <ToolName>Read</ToolName>
+        <ToolLabel>Streaming path</ToolLabel>
+      </ToolTrigger>
+      <ToolContent>
+        <ToolSubtitle>Arguments</ToolSubtitle>
+        <ToolArgument
+          value={`"apps/www/src/components/ai/too`}
+          state="streaming"
+        />
+      </ToolContent>
+    </Tool>
+  </Surface>
+);
+
 export const ArgumentObject: Story = () => (
   <Surface>
     <Tool state="success" defaultOpen>

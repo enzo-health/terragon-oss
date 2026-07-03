@@ -1,4 +1,5 @@
 import type { Story, StoryDefault } from "@ladle/react";
+import { Loader } from "./loader";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning";
 
 const SHORT_REASONING =
@@ -53,6 +54,24 @@ export const ForcedOpen: Story = () => {
       <Reasoning open>
         <ReasoningTrigger>Reasoning</ReasoningTrigger>
         <ReasoningContent>{SHORT_REASONING}</ReasoningContent>
+      </Reasoning>
+    </div>
+  );
+};
+
+export const StreamingLive: Story = () => {
+  return (
+    <div className="nauval-chat-surface p-6 max-w-2xl">
+      <Reasoning open>
+        <ReasoningTrigger>
+          <Loader variant="shimmer">Thinking</Loader>
+        </ReasoningTrigger>
+        <ReasoningContent>
+          <div className="whitespace-pre-wrap">
+            {`The test failure points at \`resolveSandbox()\` returning \`undefined\` once the session hibernated. First I should reproduce it, then check whether \`getSession(id)\` throws or returns null on a stale id, and`}
+            <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-current align-baseline" />
+          </div>
+        </ReasoningContent>
       </Reasoning>
     </div>
   );

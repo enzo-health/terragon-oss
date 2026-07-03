@@ -25,7 +25,7 @@ export function ExceptionHeader({
   return (
     <header
       data-slot="exception-header"
-      className={cn("flex items-center gap-2.5 px-4 h-11", className)}
+      className={cn("flex items-center gap-2.5 px-4 py-2 min-h-11", className)}
       {...props}
     />
   );

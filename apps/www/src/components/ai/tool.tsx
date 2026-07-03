@@ -270,6 +270,21 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
+function StreamingCaret() {
+  return (
+    <span
+      data-slot="tool-argument-caret"
+      aria-hidden
+      className={cn(
+        "inline-block w-0.5 h-[1em] ml-px align-text-bottom",
+        "bg-current opacity-70",
+        "[animation:caret-pulse_1.1s_var(--ease-standard)_infinite]",
+        "motion-reduce:[animation:none]",
+      )}
+    />
+  );
+}
+
 export function ToolArgument({
   value,
   state,
@@ -290,6 +305,8 @@ export function ToolArgument({
     };
   }, [value]);
 
+  const streaming = state === "streaming";
+
   return (
     <div
       data-slot="tool-argument"
@@ -303,8 +320,9 @@ export function ToolArgument({
     >
       {isObject && entries.length > 0 && (
         <div className="flex flex-col">
-          {entries.map(([key, val]) => {
+          {entries.map(([key, val], index) => {
             const formatted = formatValue(val);
+            const isLast = index === entries.length - 1;
             return (
               <div
                 key={key}
@@ -322,6 +340,7 @@ export function ToolArgument({
                   className="min-w-0 text-foreground wrap-break-word whitespace-pre-wrap"
                 >
                   {formatted}
+                  {streaming && isLast ? <StreamingCaret /> : null}
                 </span>
               </div>
             );
@@ -334,6 +353,7 @@ export function ToolArgument({
           className="max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word"
         >
           {formatValue(parsed)}
+          {streaming ? <StreamingCaret /> : null}
         </pre>
       )}
       {parsed === undefined && value.trim() && (
@@ -342,6 +362,7 @@ export function ToolArgument({
           className="max-h-64 overflow-auto p-3 whitespace-pre-wrap wrap-break-word"
         >
           {value}
+          {streaming ? <StreamingCaret /> : null}
         </pre>
       )}
     </div>

@@ -99,6 +99,47 @@ export const PipelineStates: Story = () => (
   </Surface>
 );
 
+export const ColorOverrides: Story = () => (
+  <Surface>
+    <div className="flex flex-col gap-3">
+      <Loader variant="pulse" dots className="text-primary">
+        Assistant is thinking
+      </Loader>
+      <Loader variant="shimmer" dots className="text-success">
+        Applied the diff cleanly
+      </Loader>
+      <Loader variant="pulse" dots className="text-foreground">
+        Waiting on you
+      </Loader>
+    </div>
+  </Surface>
+);
+
+export const SizeScale: Story = () => (
+  <Surface>
+    <div className="flex flex-col gap-3">
+      <Loader variant="shimmer" dots className="text-xs">
+        text-xs
+      </Loader>
+      <Loader variant="shimmer" dots className="text-sm">
+        text-sm
+      </Loader>
+      <Loader variant="shimmer" dots className="text-base">
+        text-base
+      </Loader>
+      <Loader variant="shimmer" dots className="text-lg">
+        text-lg
+      </Loader>
+      <Loader variant="shimmer" dots className="text-xl">
+        text-xl
+      </Loader>
+      <Loader variant="shimmer" dots className="text-2xl">
+        text-2xl
+      </Loader>
+    </div>
+  </Surface>
+);
+
 export default {
   title: "ai/loader",
 } satisfies StoryDefault;
