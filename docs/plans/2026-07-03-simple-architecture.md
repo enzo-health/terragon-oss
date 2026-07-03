@@ -42,21 +42,23 @@ Zero server edits. Zero schema migrations. Three co-located tests. If a change c
 
 Supporting state, deliberately small: the **status machine** (thread lifecycle), the **optimistic overlay** (the only client write layer), **meta-chips channel** (separate by design). Everything else goes.
 
-## The vocabulary (layer ①→②ʼs contract)
+## The vocabulary (layer ①→②ʼs contract): AG-UI, directly
 
-`TerragonEvent` = today's canonical events, finished:
+**Decision (Tyler, 2026-07-03): there is no separate Terragon event union.** The log already persists AG-UI envelopes; the "canonical event" layer exists only in the daemon→route hop and is a translation tax. End state: **adapters emit AG-UI events directly.**
 
-- lifecycle: `run-started`, `run-terminal{status, recoverable?}`
-- content: `assistant-message`, `reasoning`, deltas (same identity — W-ID holds)
-- tools: `tool-call-start`, `tool-call-result`
-- **`provider-rich-part{richKind, payload}`** — THE extension point. One discriminated union, provider-shaped payloads, schema-versioned, read-tolerant. plan/diff/terminal/image/audio/resource-link/auto-approval/permission/error/compaction/web-search/sub-agent — and every future kind.
+- lifecycle: `RUN_STARTED`, `RUN_FINISHED`/`RUN_ERROR` — operational fields (`recoverable{kind,retryAfterMs}`, usage) ride the events' passthrough fields (the pinned @ag-ui/core schemas are zod passthrough)
+- content: `TEXT_MESSAGE_*`, `REASONING_*` deltas under stable identities (W-ID holds)
+- tools: `TOOL_CALL_START/ARGS/END/RESULT`
+- **`terragon.part{richKind, payload}`** — ONE typed extension event (CUSTOM name fixed forever). The richKind payload union (plan/diff/terminal/image/audio/resource-link/auto-approval/permission/error/compaction/web-search/sub-agent…) IS the extension point. Zod-versioned, read-tolerant.
 - meta: `ThreadMetaEvent` (separate channel, unchanged)
+
+**Why not Vercel AI SDK or TanStack AI as the event pattern** (evaluated 2026-07-03): both are client-side chat SDKs for model→UI streaming — neither models runs, terminal fencing, seq-cursor replay, or server-authoritative resume, which is what Terragon's pipe IS. Adopting one re-imports an assistant-ui-shaped runtime dependency immediately after deleting one, and swaps our pinned AG-UI churn risk for theirs (AI SDK v4→v5 was a hard break). AG-UI stays: it's already the persisted format, and the client fold is ours either way.
 
 Rules that keep it simple:
 
-1. **New content = new richKind.** Never a new top-level canonical type, never a new wire channel, never a CUSTOM name. One union to rule them all; zod-versioned; unknown richKinds pass through the pipe untouched and fold to a `unknown-part` TranscriptItem (renders as a labeled fallback card — nothing is ever silently invisible again).
-2. **The ClaudeMessage union dies.** It's the Anthropic-shaped middle layer adapters currently parse INTO before canonical events are built from it. End state: adapters emit TerragonEvents directly; ClaudeMessage survives only inside the legacy gemini transport until Tier-4 unblocks. (Staged: S3 below.)
-3. **The pipe never learns new types.** Write-time validator is structural (lifecycle pairing), not kind-aware. DBMessage projection uses the shared converter table co-located with the union — adding a richKind that needs DB projection is one entry in THAT table, still zero route edits.
+1. **New content = new richKind.** Never a new AG-UI event name, never a new wire channel. Unknown richKinds pass through the pipe untouched and fold to an `unknown-part` TranscriptItem (labeled fallback card — nothing is ever silently invisible again).
+2. **The middle layers die.** ClaudeMessage (Anthropic-shaped parse target) and the canonical-event wrapper (daemon→route hop) both collapse in S5: adapters build AG-UI rows + terragon.part payloads directly; the ag-ui-mapper's job moves into the adapters. ClaudeMessage survives only inside the legacy gemini transport until Tier-4 unblocks.
+3. **The pipe never learns new types.** Write-time validator is structural (lifecycle pairing), not kind-aware. DBMessage projection uses the shared converter table keyed by richKind, co-located with the payload union — adding a richKind that needs DB projection is one entry in THAT table, still zero route edits.
 
 ## The client (layers ③→④)
 
