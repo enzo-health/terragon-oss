@@ -151,6 +151,7 @@ Rules: one wave at a time on the optimistic-submit/resume seam; every wave gates
 - **Repair-band deletion**: gated on production observe-mode soak of the write-time validator (zero `[agui-write-validation]` repairs across a full daemon-version window), then enforce-by-default.
 - **Two skew fallbacks retire on different triggers**: grep `LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS` (all daemons emit provider-rich-part) and `LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE` (all daemons stamp recoverable) — do not collapse into one cleanup.
 - **Unify the two canonical→DBMessage projections**: `canonicalEventToReplayMessage` (prompt-replay, drops rich/meta) and `deriveDBMessagesFromCanonical` (parity-tested, rich-aware; consumer: Linear activity emission) coexist after Wave 4b. One projection with a fidelity parameter would end the split.
+- **Rate-limit recovery no longer checkpoints WIP**: the old router committed working-tree changes when requeueing on agent rate-limit; the route's recovery path does not. Exposure: sandbox reaped during a long rate-limit wait loses uncommitted work (pause itself preserves disk). Decide whether recovery should checkpoint, and if so where it slots relative to the queued-agent-rate-limit transition.
 
 ## 8. Risks
 
