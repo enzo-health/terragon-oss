@@ -17,13 +17,7 @@ import {
 import { McpConfig } from "./mcp-config";
 import { AIAgent, AIAgentCredentials } from "@terragon/agent/types";
 import { terragonSetupScriptTimeoutMs } from "./constants";
-import { buildAmpSettings } from "./agents/amp-settings";
 import { buildCodexToml } from "./agents/codex-config";
-import { buildGeminiSettings } from "./agents/gemini-settings";
-import {
-  buildOpencodeConfig,
-  OPENCODE_AUTO_APPROVE_PLUGIN_CONTENT,
-} from "./agents/opencode-config";
 import { buildClaudeCodeSettings } from "./agents/claude-settings";
 import { buildQualityCheckScript } from "./agents/quality-check";
 import { getEnv } from "./env";
@@ -898,77 +892,6 @@ async function updateAgentFiles({
               terryArgs: [MCP_SERVER_FILE_PATH],
               terryModelProviderBaseUrl,
             }),
-          },
-        ],
-      });
-      break;
-    }
-    case "amp": {
-      const ampSettingsContent = buildAmpSettings({
-        userMcpConfig: mcpConfig,
-      });
-      await updateAgentFilesShared({
-        session,
-        homeDir,
-        agentConfigDir: ".config",
-        agentCredentialsFilename: null,
-        agentCredentials: null,
-        isCreatingSandbox,
-        customSystemPromptFilename: "AGENTS.md",
-        customSystemPrompt,
-        otherFiles: [
-          {
-            filename: "amp/settings.json",
-            content: ampSettingsContent,
-          },
-        ],
-      });
-      break;
-    }
-    case "opencode": {
-      const opencodeConfigContent = buildOpencodeConfig({
-        publicUrl,
-        userMcpConfig: mcpConfig,
-      });
-      await updateAgentFilesShared({
-        session,
-        homeDir,
-        agentConfigDir: ".config/opencode",
-        agentCredentialsFilename: null,
-        agentCredentials: null,
-        isCreatingSandbox,
-        customSystemPromptFilename: "AGENTS.md",
-        customSystemPrompt,
-        otherFiles: [
-          {
-            filename: "opencode.json",
-            content: opencodeConfigContent,
-          },
-          {
-            filename: "plugin/auto-approve.ts",
-            content: OPENCODE_AUTO_APPROVE_PLUGIN_CONTENT,
-          },
-        ],
-      });
-      break;
-    }
-    case "gemini": {
-      const geminiSettingsContent = buildGeminiSettings({
-        userMcpConfig: mcpConfig,
-      });
-      await updateAgentFilesShared({
-        session,
-        homeDir,
-        agentConfigDir: ".gemini",
-        agentCredentialsFilename: null,
-        agentCredentials: null,
-        isCreatingSandbox,
-        customSystemPromptFilename: "GEMINI.md",
-        customSystemPrompt,
-        otherFiles: [
-          {
-            filename: "settings.json",
-            content: geminiSettingsContent,
           },
         ],
       });

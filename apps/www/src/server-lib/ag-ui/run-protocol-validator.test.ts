@@ -154,7 +154,6 @@ describe("run-protocol-validator — missing START before CONTENT", () => {
       channel: "reasoning",
       messageId: "r1",
     });
-    // reasoning left open at terminal -> also closed by missing_end_at_terminal
     expect(result.violations.map((v) => v.kind)).toEqual([
       "missing_start_before_content",
       "missing_end_at_terminal",
@@ -305,7 +304,6 @@ describe("run-protocol-validator — delayed RUN_STARTED", () => {
     expect(result.violations.map((v) => v.kind)).toContain(
       "delayed_run_started",
     );
-    // RUN_STARTED must be reordered to the front (ahead of the synthesized START).
     expect(plannedEventTypes(result.plannedRows)[0]).toBe(
       EventType.RUN_STARTED,
     );
@@ -354,11 +352,7 @@ describe("run-protocol-validator — cross-batch resumability", () => {
 
 describe("run-protocol-validator — enforced output is a fixpoint", () => {
   test("re-folding enforce-mode planned rows yields zero violations", () => {
-    const rows = [
-      runStarted(),
-      textContent("m1", "hi", "c1"), // missing start
-      runFinished(), // missing end at terminal
-    ];
+    const rows = [runStarted(), textContent("m1", "hi", "c1"), runFinished()];
     const first = validate(rows);
     expect(first.violations.length).toBeGreaterThan(0);
 
@@ -382,7 +376,6 @@ describe("run-protocol-validator — RunProtocolStateStore", () => {
       return prior;
     });
     expect(recovered.openTextMessageIds.has("m1")).toBe(true);
-    // Second call hits the cache, no re-fold.
     store.getOrRecover(RUN_ID, () => {
       recoverCalls += 1;
       return prior;

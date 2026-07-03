@@ -84,10 +84,6 @@ export const OperationalRunTerminalEventSchema = BaseEventEnvelopeSchema.extend(
     errorMessage: z.string().nullable().optional(),
     errorCode: z.string().min(1).nullable().optional(),
     headShaAtCompletion: z.string().min(1).nullable().optional(),
-    // Present when the daemon classified this terminal as a RECOVERABLE failure
-    // (rate-limit re-queue, OAuth refresh+retry, or auto-compact+retry). The
-    // server defers to the message-based recovery path instead of fencing the
-    // run. Absent on non-recoverable terminals and on bundles predating K2.
     recoverable: RecoverableTerminalSchema.optional(),
   },
 );
@@ -261,6 +257,10 @@ const RichCodexDiffPayloadSchema = z.object({ diff: z.string() });
 
 const RichCodexErrorPayloadSchema = z.object({ message: z.string() });
 
+const RichContextCompactionPayloadSchema = z.object({
+  turnId: z.string().optional(),
+});
+
 const RichImagePayloadSchema = z.object({
   mimeType: z.string(),
   data: z.string().optional(),
@@ -384,6 +384,10 @@ export const ProviderRichPartEventSchema = z.discriminatedUnion("richKind", [
   ),
   richPartVariant("codex-diff", RichCodexDiffPayloadSchema),
   richPartVariant("codex-error", RichCodexErrorPayloadSchema),
+  richPartVariant(
+    "codex-context-compaction",
+    RichContextCompactionPayloadSchema,
+  ),
   richPartVariant("acp-image", RichImagePayloadSchema),
   richPartVariant("acp-audio", RichImagePayloadSchema),
   richPartVariant("acp-resource-link", RichResourceLinkPayloadSchema),

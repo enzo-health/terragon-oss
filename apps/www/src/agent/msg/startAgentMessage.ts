@@ -68,6 +68,8 @@ import {
 } from "@/server-lib/process-follow-up-queue";
 import { generateThreadContextResult } from "@/server-lib/thread-context";
 import { getUserCredentials } from "@/server-lib/user-credentials";
+import { isAgentEmulatorEnabled } from "@/server-lib/agent-emulator/enabled";
+import { runEmulatedAgentMessage } from "@/server-lib/agent-emulator/dispatch";
 
 const UPSTREAM_PULL_THROTTLE_MS = 5 * 60 * 1000;
 const LAST_UPSTREAM_PULL_PREFIX = "thread-last-upstream-pull:";
@@ -163,12 +165,6 @@ function runtimeProviderForDispatch({
       switch (agent) {
         case "claudeCode":
           return "legacy-claude";
-        case "gemini":
-          return "legacy-gemini";
-        case "amp":
-          return "legacy-amp";
-        case "opencode":
-          return "legacy-opencode";
         case "codex":
           return "codex-app-server";
         default: {
@@ -233,6 +229,16 @@ export async function startAgentMessage({
   branchName,
   delayMs = 0,
 }: StartAgentMessageParams): Promise<StartAgentMessageResult> {
+  if (isAgentEmulatorEnabled()) {
+    return runEmulatedAgentMessage({
+      db,
+      userId,
+      message,
+      threadId,
+      threadChatId,
+      isNewThread,
+    });
+  }
   let dispatchLaunched = false;
   console.log("Starting agent message", { threadId, threadChatId });
   if (!isNewThread) {
@@ -1018,9 +1024,6 @@ async function preparePromptForModel({
       prompt = await promptWithMessageToSendOnly();
       break;
     }
-    case "amp":
-    case "gemini":
-    case "opencode":
     case "claudeCode": {
       prompt = await promptWithMessageToSendOnly();
       break;

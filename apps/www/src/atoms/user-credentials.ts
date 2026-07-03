@@ -39,17 +39,8 @@ export function useCredentialInfoForAgent(
     case "claudeCode":
       hasCredentials = credentials.hasClaude;
       break;
-    case "amp":
-      hasCredentials = credentials.hasAmp;
-      break;
     case "codex":
       hasCredentials = credentials.hasOpenAI;
-      break;
-    case "gemini":
-      hasCredentials = false;
-      break;
-    case "opencode":
-      hasCredentials = false;
       break;
     default:
       const _exhaustiveCheck: never = agent;

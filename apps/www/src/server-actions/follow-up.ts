@@ -31,11 +31,6 @@ export const followUp = userOnlyAction(
     },
   ) {
     console.log("followUp", { threadId, threadChatId });
-    // Mirror the AG-UI append path's run-lock so this fallback path can't
-    // dispatch a second concurrent run on the same thread chat. When callers
-    // thread a clientSubmissionId (the composer/comment fallbacks now do), this
-    // also gets the same per-submission dedupe the append path relies on; a
-    // duplicate resolves as a silent no-op rather than a second run.
     const guarded = await withFollowUpSubmissionGuard({
       userId,
       threadId,

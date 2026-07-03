@@ -112,6 +112,8 @@ export function toDBMessage(claudeMessage: ClaudeMessage): DBMessage[] {
       return convertCodexDiff(claudeMessage);
     case "codex-error":
       return convertCodexError(claudeMessage);
+    case "codex-compaction":
+      return convertCodexCompaction();
     case "acp-image":
       return convertAcpImage(claudeMessage);
     case "acp-audio":
@@ -301,6 +303,16 @@ function convertCodexError(
     source: "codex",
   };
   return [{ type: "agent", parent_tool_use_id: null, parts: [error] }];
+}
+
+function convertCodexCompaction(): DBMessage[] {
+  return [
+    {
+      type: "agent",
+      parent_tool_use_id: null,
+      parts: [{ type: "context-compaction" }],
+    },
+  ];
 }
 
 function convertAcpDiff(

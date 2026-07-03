@@ -67,7 +67,6 @@ program
   });
 
 const CLI_MODEL_OPTIONS: AIModelExternal[] = [
-  "amp",
   "haiku",
   "opus",
   "opus[1m]",
@@ -93,17 +92,6 @@ const CLI_MODEL_OPTIONS: AIModelExternal[] = [
   "gpt-5.4-nano-medium",
   "gpt-5.4-nano-high",
   "gpt-5.4-nano-xhigh",
-  "grok-code",
-  "qwen3-coder",
-  "kimi-k2.5",
-  "glm-5.1",
-  "opencode/grok-code",
-  "opencode/qwen3-coder",
-  "opencode/kimi-k2.5",
-  "opencode/glm-5.1",
-  "opencode/gemini-2.5-pro",
-  "gemini-3-pro",
-  "gemini-2.5-pro",
 ];
 
 program

@@ -11,12 +11,6 @@ function providersForAgent(agent: AIAgent): DaemonTokenProvider[] {
       return ["anthropic"];
     case "codex":
       return ["openai"];
-    case "gemini":
-      return ["google"];
-    case "amp":
-      return ["anthropic"];
-    case "opencode":
-      return ["openrouter", "openai", "anthropic"];
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(

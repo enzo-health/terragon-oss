@@ -15,9 +15,6 @@ import { ThreadError } from "./error";
 import { handleTransition, ThreadEvent } from "./machine";
 
 export type UpdateThreadChatWithTransitionParams = {
-  // Optional DB handle so callers can run the transition inside an outer
-  // transaction (e.g. the run-terminal choke point fences the run-context and
-  // applies this status transition atomically). Defaults to the shared pool.
   db?: DB;
   threadId: string;
   userId: string;

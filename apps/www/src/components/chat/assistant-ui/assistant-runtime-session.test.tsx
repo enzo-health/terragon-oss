@@ -153,7 +153,7 @@ describe("AssistantRuntimeSession", () => {
     renderToStaticMarkup(
       <SessionHarness
         agent={agent}
-        chatAgent="amp"
+        chatAgent="codex"
         isAgentWorking={true}
         loadAgUiHistoryMessages={async () => ({ messages: [], lastSeq: 0 })}
       />,
@@ -585,8 +585,6 @@ describe("AssistantRuntimeSession", () => {
     const opts = lastRuntimeOptions();
     const repo = await opts.adapters?.history?.load();
 
-    // Idle load still hydrates without resuming a live run, but the cursor is
-    // seeded so a later SSE open replays from `lastSeq`, not the whole run.
     expect(setReplayCursor).toHaveBeenCalledWith({
       seq: 42,
       projectionIndex: null,
@@ -617,8 +615,6 @@ describe("AssistantRuntimeSession", () => {
     const opts = lastRuntimeOptions();
     await opts.adapters?.history?.load();
 
-    // The projectionIndex must survive so a later SSE re-emits the tail payloads
-    // of the last hydrated row (projectionIndex > 3) rather than dropping them.
     expect(setReplayCursor).toHaveBeenCalledWith({
       seq: 42,
       projectionIndex: 3,

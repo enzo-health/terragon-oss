@@ -29,9 +29,6 @@ describe("deriveLatestRunIdFromEnvelopes", () => {
   });
 
   test("returns null when no run carries a RUN_STARTED marker (legacy-shaped)", () => {
-    // A run whose only rows are text/tool events but no start marker is
-    // legacy-shaped and intentionally skipped, matching the SQL started_runs
-    // filter. getLatestRunIdForThreadChat returns null here.
     const envelopes: AgUiEventEnvelope[] = [
       envelope({
         runId: "run-legacy",
@@ -76,8 +73,6 @@ describe("deriveLatestRunIdFromEnvelopes", () => {
   });
 
   test("skips a later legacy run and keeps the latest started run", () => {
-    // run-legacy has the highest seq but no start marker; the eligible run is
-    // run-started, matching the SQL join against started_runs.
     const envelopes: AgUiEventEnvelope[] = [
       envelope({ runId: "run-started", seq: 30, type: EventType.RUN_STARTED }),
       envelope({ runId: "run-started", seq: 31, type: EventType.RUN_FINISHED }),
@@ -91,9 +86,6 @@ describe("deriveLatestRunIdFromEnvelopes", () => {
   });
 
   test("treats canonical run-started rows (mapped to RUN_STARTED) as markers", () => {
-    // readAllAgUiEnvelopes maps canonical `run-started` rows to
-    // EventType.RUN_STARTED payloads, so the in-memory filter matches the
-    // SQL's `eventType IN ('RUN_STARTED','run-started')`.
     const envelopes: AgUiEventEnvelope[] = [
       envelope({
         runId: "run-canonical",

@@ -443,10 +443,6 @@ async function publishAgUiEventsBatch({
   for (const { data } of publishPayloads) {
     pipeline.xadd(streamKey, "*", data, AGUI_XADD_TRIM);
   }
-  // Fold the TTL refresh into the same pipeline so the publish hot path pays
-  // one Upstash round trip instead of a second EXPIRE call. EXPIRE is
-  // best-effort and appended last; its result is sliced off before scanning
-  // for XADD errors so a failed refresh never masquerades as a publish gap.
   pipeline.expire(streamKey, AGUI_STREAM_TTL_SECONDS);
   try {
     const results = await pipeline.exec({ keepErrors: true });
@@ -622,11 +618,9 @@ export async function broadcastAgUiEventEphemeral(params: {
   const data = { event: serializeAgUiEvent(params.event) };
   try {
     if (isLocalRedisHttpMode()) {
-      // Local HTTP redis has no pipeline; fall back to two calls (dev only).
       await redis.xadd(streamKey, "*", data, AGUI_XADD_TRIM);
       refreshStreamTtl(streamKey);
     } else {
-      // Fold XADD + TTL refresh into one Upstash round trip.
       const pipeline = redis.pipeline();
       pipeline.xadd(streamKey, "*", data, AGUI_XADD_TRIM);
       pipeline.expire(streamKey, AGUI_STREAM_TTL_SECONDS);

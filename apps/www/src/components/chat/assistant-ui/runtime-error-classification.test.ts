@@ -50,10 +50,6 @@ describe("isTransientRunLifecycleError", () => {
   });
 });
 
-// Pins the exact `verifyEvents` throw strings we suppress against the installed
-// `@ag-ui/client`. If an upgrade renames these lifecycle messages, this test
-// fails (a caught regression) instead of prod silently surfacing the race as a
-// scary "An error occurred" banner. See runtime-error-classification.ts:19-25.
 describe("verifyEvents throw-string pinning (@ag-ui/client@0.0.52)", () => {
   const installedClientSource = (() => {
     const require = createRequire(import.meta.url);

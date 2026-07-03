@@ -61,6 +61,11 @@ export type ThreadMetaEvent =
       replacement?: string;
     }
   | {
+      kind: "thread.turn_retrying";
+      threadId: string;
+      message: string;
+    }
+  | {
       kind: "session.initialized";
       tools: string[];
       mcpServers: string[];

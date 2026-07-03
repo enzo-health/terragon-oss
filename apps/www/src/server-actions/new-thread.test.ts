@@ -171,7 +171,7 @@ describe("newThread", { timeout: 30_000 }, () => {
         ],
         failedModels: [
           {
-            model: "gemini-2.5-pro",
+            model: "gpt-5.4-mini",
             errorMessage: "rate limited",
           },
         ],
@@ -184,7 +184,7 @@ describe("newThread", { timeout: 30_000 }, () => {
         selectedModels: {
           sonnet: 1,
           "gpt-5.4": 1,
-          "gemini-2.5-pro": 1,
+          "gpt-5.4-mini": 1,
         },
       });
       const data = unwrapResult(result);
@@ -203,7 +203,7 @@ describe("newThread", { timeout: 30_000 }, () => {
       ]);
       expect(data.failedModels).toEqual([
         {
-          model: "gemini-2.5-pro",
+          model: "gpt-5.4-mini",
           errorMessage: "rate limited",
         },
       ]);

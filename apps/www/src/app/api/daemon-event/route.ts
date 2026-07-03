@@ -152,14 +152,9 @@ function requiredDaemonProviderScopesForAgent(
 ): DaemonTokenProvider[] {
   switch (agent) {
     case "claudeCode":
-    case "amp":
       return ["anthropic"];
     case "codex":
       return ["openai"];
-    case "gemini":
-      return ["google"];
-    case "opencode":
-      return ["openrouter", "openai", "anthropic"];
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(
@@ -906,9 +901,6 @@ export async function POST(request: Request) {
   let terminalFenceOutcome: "committed" | "duplicate" | null = null;
   let terminalEventIdForAck: string | null = null;
   let terminalSeqForAck: number | null = null;
-  // Captured from the atomic fence+transition below so the terminal-state
-  // machinery further down (CAS verify, checkpoint gating, metadata) keys off the
-  // transition that already ran inside the fence transaction.
   let terminalChatTransition: Awaited<
     ReturnType<typeof commitTerminalRunAndChatStatus>
   >["transition"] = null;
@@ -929,10 +921,6 @@ export async function POST(request: Request) {
     terminalEventIdForAck = terminalEventId;
     terminalSeqForAck = terminalSeq;
 
-    // Derive the coupled chat transition up front. `terminalRecoveryQueued` is
-    // provably false whenever the fence runs (recoverable terminals are dropped
-    // before this point), so `daemonRunStatusFromMessages` IS the terminal status
-    // for the transition — no need to wait for handleDaemonEvent.
     const terminalThreadForPolicy =
       daemonRunStatusFromMessages === "completed"
         ? await getThreadMinimal({ db, threadId, userId })
@@ -945,9 +933,6 @@ export async function POST(request: Request) {
     });
     terminalCheckpointReadyStatus = terminalPolicy.checkpointReadyStatus;
 
-    // Fence the run-context terminal AND transition thread_chat.status in ONE
-    // transaction. This is the derived-status choke point: no early return or
-    // error between here and the old late transition can split the two surfaces.
     const commit = await commitTerminalRunAndChatStatus({
       db,
       fence: {
@@ -1387,9 +1372,6 @@ export async function POST(request: Request) {
     const terminalOps: Array<Promise<unknown>> = [];
 
     if (fenceTerminalTransition) {
-      // The terminal chat transition already ran atomically with the fence
-      // above; reuse its result. `checkpointReadyStatus` was captured from the
-      // same buildTerminalLifecyclePolicy call.
       const checkpointReadyStatus = terminalCheckpointReadyStatus;
       const didUpdateStatus = terminalChatTransition?.didUpdateStatus ?? false;
       const updatedStatus = terminalChatTransition?.updatedStatus;

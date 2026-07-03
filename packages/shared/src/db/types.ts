@@ -607,7 +607,6 @@ export type UserCreditInsert = typeof schema.userCredits.$inferInsert;
 
 export type UserCredentials = {
   hasClaude: boolean;
-  hasAmp: boolean;
   hasOpenAI: boolean;
   hasOpenAIOAuthCredentials: boolean;
 };

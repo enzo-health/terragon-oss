@@ -27,11 +27,6 @@ export async function stopThread({
       userId,
       threadChatId,
       onBeforeExec: async () => {
-        // Fence the active run-context to `stopped` in the same transaction as
-        // the user.stop chat transition. Without the fence a natural daemon
-        // completion that races the stop would flip the run-context to
-        // `completed` while the chat reads stopped — the stop-vs-natural split.
-        // With the fence, the daemon's later terminal is rejected by the CAS.
         const runContext = await getLatestAgentRunContextForThreadChat({
           db,
           userId,

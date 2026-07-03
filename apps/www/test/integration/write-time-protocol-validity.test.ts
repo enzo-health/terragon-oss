@@ -1,28 +1,3 @@
-/**
- * Harness gate for Wave 5 (write-time AG-UI protocol validity).
- *
- * Folds every integration-harness recording's PERSISTED AG-UI rows through the
- * write-time protocol validator and asserts modern daemons need no protocol
- * repair — the precondition for deleting the read-time repair band
- * (`ag-ui-replay-planner.ts`, plan §3 Tier-3 / Wave 5).
- *
- * Each recording is replayed through the real daemon-event POST handler
- * in-process (same mock scaffolding as `replayer.test.ts`), and the AG-UI rows
- * it persists are captured off the `insert().values()` mock — the authoritative
- * write-side output.
- *
- * One faithfulness caveat is handled explicitly: the mocked DB makes the route's
- * DB-backed terminal END synthesis (`findOpenAgUiMessagesForRun`) return `[]`,
- * so the captured rows lack the `*_MESSAGE_END` rows the real route persists at
- * a run terminal via `buildDeltaRunEndRows`. The gate therefore reconstructs
- * those END rows with the SAME production helper before folding, reproducing the
- * true durable log. Two assertions are made per recording:
- *   1. Raw captured rows have ZERO STRUCTURAL violations (everything except the
- *      terminal END the real route already synthesizes).
- *   2. Reconstructed rows (raw + production terminal ENDs) have ZERO violations
- *      of any kind.
- */
-
 import type { BaseEvent } from "@ag-ui/core";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import path from "node:path";
@@ -101,7 +76,6 @@ vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
 }));
 
 const runContextMocks = vi.hoisted(() => {
-  // runId -> matching run context, populated per recording before replay.
   const contexts = new Map<string, Record<string, unknown>>();
   return { contexts };
 });
@@ -182,7 +156,6 @@ function recordingPath(name: string): string {
   return path.resolve(import.meta.dirname, "recordings", name);
 }
 
-/** Build a run context that matches a recording's first daemon-event body. */
 function contextFromBody(body: DaemonEventAPIBody): Record<string, unknown> {
   return {
     runId: body.runId,
@@ -243,11 +216,6 @@ function groupByRun(rows: CapturedRow[]): Map<string, ProtocolRow[]> {
   return byRun;
 }
 
-/**
- * Reproduce the route's DB-backed terminal END synthesis, which the mocked DB
- * strips: at the first terminal, close any open delta text/reasoning message
- * using the production `buildDeltaRunEndRows`.
- */
 function reconstructPersistedRows(
   runId: string,
   rows: ProtocolRow[],
@@ -298,7 +266,6 @@ describe("write-time protocol validity — harness gate", () => {
       const events = loadRecording(file);
       expect(events.length).toBeGreaterThan(0);
 
-      // Register a matching run context for every runId in the recording.
       for (const event of events) {
         const body = event.body as DaemonEventAPIBody;
         if (body.runId) {
@@ -315,8 +282,6 @@ describe("write-time protocol validity — harness gate", () => {
           coveredEventTypes.add(String(row.event.type));
         }
 
-        // 1. Raw persisted rows: no STRUCTURAL repair needed. The only tolerated
-        //    gap is the terminal END the real route already synthesizes.
         const raw = validateBatch(createRunProtocolState(runId), rows);
         const structural = raw.violations.filter(
           (violation) => violation.kind !== "missing_end_at_terminal",
@@ -326,8 +291,6 @@ describe("write-time protocol validity — harness gate", () => {
           `structural violations for ${recordingName} run ${runId}`,
         ).toEqual([]);
 
-        // 2. Reconstruct the durable log (raw + production terminal ENDs) and
-        //    require it to be fully protocol-valid.
         const reconstructed = reconstructPersistedRows(runId, rows);
         const validated = validateBatch(
           createRunProtocolState(runId),
@@ -342,8 +305,6 @@ describe("write-time protocol validity — harness gate", () => {
   );
 
   it("exercised the run + text lifecycle (guards against a persistence regression that would make the gate vacuous)", () => {
-    // Runs after the it.each cases; the streaming recording drives an open text
-    // message through to a terminal, so these types must have been folded.
     expect([...coveredEventTypes].sort()).toEqual(
       expect.arrayContaining([
         "RUN_STARTED",

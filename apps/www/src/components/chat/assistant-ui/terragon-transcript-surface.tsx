@@ -60,9 +60,6 @@ export function TerragonTranscriptSurface({
   const workingMessageSlotClassName = getWorkingMessageSlotClassName({
     threadStatus,
   });
-  // Suppress the "Connecting to live task…" indicator on fast/warm hydrations:
-  // it only appears once hydration has run past the threshold, so sub-250ms
-  // reconnects go straight to the transcript with no spinner flash.
   const showHydrationIndicator = useDelayedFlag(isRuntimeHydrating, 250);
 
   return (

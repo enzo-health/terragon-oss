@@ -177,11 +177,6 @@ export function AssistantRuntimeSession({
     code: ThreadErrorType | null;
   } | null>(null);
   const [runtimeRecoveryNonce, setRuntimeRecoveryNonce] = useState(0);
-  // Typed `RUN_ERROR.code` captured straight off the AG-UI event, before the
-  // runtime flattens it into a bare `Error` for `onError`. `onRunErrorEvent`
-  // fires during event dispatch, ahead of the run's rejection, so this ref is
-  // populated by the time `handleRuntimeError` runs. Correlated by message and
-  // consumed once so a stale code can't attach to a later unrelated error.
   const lastRunErrorRef = useRef<{
     code: string | null;
     message: string;
@@ -234,13 +229,6 @@ export function AssistantRuntimeSession({
       // Capture server-authoritative liveness for the resume policy. `undefined`
       // (server did not report) leaves the policy on the isAgentWorking fallback.
       setServerRunActive(history.runActive);
-      // Seed the replay cursor from the history response on every load, active
-      // or idle. The idle path used to clear it, which forced any later SSE open
-      // (resume, follow-up, reconnect) to re-scan the whole run from Postgres
-      // even though history already delivered every row — the cold-open
-      // double-read. A finished run has no events past `lastSeq` and a new run
-      // gets higher seqs, so seeding never drops live events; on an empty thread
-      // `lastSeq` is -1 and replays everything, identical to clearing.
       setReplayCursor(
         history.lastCursor ?? { seq: history.lastSeq, projectionIndex: null },
       );

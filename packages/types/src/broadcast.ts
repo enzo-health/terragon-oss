@@ -68,13 +68,7 @@ const BroadcastThreadSourceSchema = z.enum([
   "cli",
 ]);
 
-const BroadcastAIAgentSchema = z.enum([
-  "claudeCode",
-  "gemini",
-  "amp",
-  "codex",
-  "opencode",
-]);
+const BroadcastAIAgentSchema = z.enum(["claudeCode", "codex"]);
 
 export type BroadcastChannelUser = {
   type: "user";

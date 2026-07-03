@@ -3,6 +3,7 @@ import type {
   DBAgentMessagePart,
   DBAudioPart,
   DBAutoApprovalReviewPart,
+  DBContextCompactionPart,
   DBDiffPart,
   DBErrorPart,
   DBImagePart,
@@ -146,6 +147,13 @@ export function providerRichPartToDbMessages(
         source: "codex",
       };
       return [{ type: "agent", parent_tool_use_id: null, parts: [error] }];
+    }
+
+    case "codex-context-compaction": {
+      const compaction: DBContextCompactionPart = {
+        type: "context-compaction",
+      };
+      return [{ type: "agent", parent_tool_use_id: null, parts: [compaction] }];
     }
 
     case "acp-terminal": {

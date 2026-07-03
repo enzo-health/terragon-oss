@@ -27,18 +27,6 @@ function validateApiKeyFormat({
   agent: AIAgent;
 }) {
   switch (agent) {
-    case "amp": {
-      if (!apiKey || !apiKey.startsWith("sgamp_user")) {
-        throw new UserFacingError("Invalid API key format");
-      }
-      break;
-    }
-    case "gemini": {
-      if (!apiKey || !apiKey.startsWith("AIza")) {
-        throw new UserFacingError("Invalid API key format");
-      }
-      break;
-    }
     case "claudeCode": {
       if (!apiKey || !apiKey.startsWith("sk-ant-")) {
         throw new UserFacingError("Invalid API key format");

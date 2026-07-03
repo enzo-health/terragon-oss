@@ -49,6 +49,8 @@ function dbAgentPartToUIPart(part: DBAgentMessagePart): UIPartExtended | null {
       return part; // UIWebSearchResultPart = DBWebSearchResultPart passthrough
     case "error":
       return part; // UIErrorPart = DBErrorPart passthrough (renderer: WS-B)
+    case "context-compaction":
+      return null;
     default: {
       const _exhaustive: never = part;
       void _exhaustive;

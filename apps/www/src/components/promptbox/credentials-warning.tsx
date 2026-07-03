@@ -23,25 +23,10 @@ export function CredentialsWarning({ selectedModel }: CredentialsWarningProps) {
           message: "Claude credentials not configured",
           linkText: "Configure Claude",
         };
-      case "gemini":
-        return {
-          message: "Gemini credentials not configured",
-          linkText: "Configure Gemini",
-        };
-      case "amp":
-        return {
-          message: "Amp credentials not configured",
-          linkText: "Configure Amp",
-        };
       case "codex":
         return {
           message: "OpenAI credentials not configured",
           linkText: "Configure OpenAI",
-        };
-      case "opencode":
-        return {
-          message: "No more quota available for this model",
-          linkText: null,
         };
       default:
         const _exhaustiveCheck: never = selectedAgent;

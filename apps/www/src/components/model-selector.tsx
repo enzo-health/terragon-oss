@@ -37,7 +37,6 @@ import { Check, SettingsIcon } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { AgentIcon } from "@/components/chat/agent-icon";
-import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { AGENT_VERSION } from "@terragon/agent/versions";
 
 function MultiAgentModeToggle({
@@ -91,12 +90,6 @@ function ModelSelectorInner({
 }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
-  const openCodeOpenAIAnthropicModel = useFeatureFlag(
-    "opencodeOpenAIAnthropicModelOption",
-  );
-  const openCodeGemini3ProModel = useFeatureFlag(
-    "opencodeGemini3ProModelOption",
-  );
   const currentlySelectedModels = useMemo(() => {
     const models: AIModel[] = [];
     if (selectedModel) {
@@ -124,16 +117,12 @@ function ModelSelectorInner({
           selectedModels: currentlySelectedModels,
           options: {
             agentVersion: forcedAgentVersion ?? AGENT_VERSION,
-            enableOpenRouterOpenAIAnthropicModel: openCodeOpenAIAnthropicModel,
-            enableOpencodeGemini3ProModelOption: openCodeGemini3ProModel,
           },
         }),
       )
       .filter((group) => group.models.length > 0);
   }, [
     forcedAgentVersion,
-    openCodeOpenAIAnthropicModel,
-    openCodeGemini3ProModel,
     agentsToDisplay,
     userSettings?.agentModelPreferences,
     currentlySelectedModels,

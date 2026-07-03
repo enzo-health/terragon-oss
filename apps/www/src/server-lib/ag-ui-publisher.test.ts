@@ -1030,7 +1030,6 @@ describe("ag-ui-publisher", () => {
         event,
       });
 
-      // One pipeline (XADD + EXPIRE), one exec — a single Upstash round trip.
       expect(redisMocks.xadd).not.toHaveBeenCalled();
       expect(redisMocks.pipelineXadd).toHaveBeenCalledTimes(1);
       expect(redisMocks.pipelineExpire).toHaveBeenCalledTimes(1);

@@ -1,14 +1,6 @@
 import { TZDate } from "@date-fns/tz";
 import type { RecoverableTerminal } from "./canonical-events";
 
-/**
- * The minimal structural shape the recoverable-failure parsers read. The
- * daemon's `ClaudeMessage` union and the server's message arrays are both
- * assignable to it (every member has a string `type` and no conflicting field
- * types), so this module stays pure and free of a dependency on
- * `@terragon/daemon` — which would be circular, since the daemon depends on
- * `@terragon/agent`.
- */
 export interface RecoverableParseMessage {
   type: string;
   subtype?: string;
@@ -18,7 +10,6 @@ export interface RecoverableParseMessage {
   error_info?: string;
 }
 
-// Helper function to parse time in format "3pm" to reset timestamp
 function parseHourlyResetTime(
   hourStr: string,
   amPm: string,
@@ -27,7 +18,6 @@ function parseHourlyResetTime(
   const hour = parseInt(hourStr, 10);
   const isPM = amPm === "pm";
 
-  // Convert to 24-hour format
   let hour24 = hour;
   if (isPM && hour !== 12) {
     hour24 = hour + 12;
@@ -35,14 +25,10 @@ function parseHourlyResetTime(
     hour24 = 0;
   }
 
-  // Get current time
   const now = new Date();
-  // Get the current time in the target timezone
   const tzNow = new TZDate(now, timezone);
-  // Create reset time at the target hour
   let resetTime = new TZDate(now, timezone);
   resetTime.setHours(hour24, 0, 0, 0);
-  // If the target hour has already passed today, schedule for tomorrow
   if (resetTime <= tzNow) {
     resetTime.setDate(resetTime.getDate() + 1);
   }
@@ -65,28 +51,21 @@ export function parseClaudeRateLimitMessageStr({
   if (!result) {
     return null;
   }
-  // Old format: "Claude AI usage limit reached|1752350400"
   const rateLimitMatch = result.match(/^Claude AI usage limit reached\|(\d+)$/);
   if (rateLimitMatch && rateLimitMatch[1]) {
     return {
       isRateLimited: true,
       timezoneIsAmbiguous: false,
-      rateLimitResetTime: parseInt(rateLimitMatch[1], 10) * 1000, // Convert to milliseconds
+      rateLimitResetTime: parseInt(rateLimitMatch[1], 10) * 1000,
     };
   }
 
-  // Format: "5-hour limit reached ∙ resets 3pm"
-  // Format: "Session limit reached ∙ resets 3pm"
-  // Format: "5-hour limit reached · resets 11am (UTC) · /upgrade to Max 20x or turn on /extra-usage"
-  // Format: "Limit reached · resets 3pm (UTC) · ..."
-  // Format: "Usage limit reached · resets 3pm (UTC) · ..."
   const hourOrSessionLimitMatch = result.match(
     /^(\d+-hour limit reached|Session limit reached|Limit reached|Usage limit reached)(?: [∙·] resets (\d{1,2})(am|pm)(?: \(UTC\))?)?(?:.*)?$/,
   );
   if (hourOrSessionLimitMatch) {
     const timeStr = hourOrSessionLimitMatch[2];
     const amPmStr = hourOrSessionLimitMatch[3];
-    // If (UTC) is specified in the message, use UTC timezone; otherwise use provided timezone
     const hasUtcTimezone = result.includes("(UTC)");
     const effectiveTimezone = hasUtcTimezone ? "UTC" : timezone;
     const resetTimeOrNull =
@@ -95,27 +74,17 @@ export function parseClaudeRateLimitMessageStr({
         : null;
     return {
       isRateLimited: true,
-      // Only ambiguous if we have a reset time but no explicit timezone in the message
       timezoneIsAmbiguous: !!resetTimeOrNull && !hasUtcTimezone,
       rateLimitResetTime: resetTimeOrNull,
     };
   }
 
-  // Format: "Weekly limit reached" or "Opus weekly limit reached" or "Sonnet weekly limit reached" with optional reset info
-  // Can have formats like:
-  // - "Weekly limit reached"
-  // - "Weekly limit reached ∙ resets 6pm"
-  // - "Weekly limit reached · resets 6pm (UTC) · /upgrade to Max..."
-  // - "Weekly limit reached ∙ resets Mon 10am"
-  // - "Sonnet weekly limit reached · resets 3pm (UTC)"
-  // - "Opus weekly limit reached · resets 3pm (UTC)"
   const weeklyLimitMatch = result.match(
     /^(?:Opus |Sonnet )?[Ww]eekly limit reached(?: [∙·] resets (\d{1,2})(am|pm)(?: \(UTC\))?)?(?:.*)?$/,
   );
   if (weeklyLimitMatch) {
     const timeStr = weeklyLimitMatch[1];
     const amPmStr = weeklyLimitMatch[2];
-    // If (UTC) is specified in the message, use UTC timezone; otherwise use provided timezone
     const hasUtcTimezone = result.includes("(UTC)");
     const effectiveTimezone = hasUtcTimezone ? "UTC" : timezone;
     const resetTimeOrNull =
@@ -124,7 +93,6 @@ export function parseClaudeRateLimitMessageStr({
         : null;
     return {
       isRateLimited: true,
-      // Only ambiguous if we have a reset time but no explicit timezone in the message
       timezoneIsAmbiguous: !!resetTimeOrNull && !hasUtcTimezone,
       rateLimitResetTime: resetTimeOrNull,
     };
@@ -195,20 +163,13 @@ export function parseClaudePromptTooLongMessage(
   return false;
 }
 
-/**
- * Detect context-window overflow for any agent, including Codex.
- * Codex errors arrive as `result` with `is_error: true` or `custom-error`
- * and use different phrasing than Claude Code's prompt-too-long messages.
- */
 export function parseContextWindowExhausted(
   message: RecoverableParseMessage,
 ): boolean {
-  // Claude Code path (existing)
   if (parseClaudePromptTooLongMessage(message)) {
     return true;
   }
 
-  // Codex path — result with is_error containing context overflow keywords
   if (
     message.type === "result" &&
     message.is_error &&
@@ -223,7 +184,6 @@ export function parseContextWindowExhausted(
     }
   }
 
-  // custom-error with context overflow in error_info
   if (message.type === "custom-error") {
     const info = message.error_info ?? null;
     if (
@@ -254,20 +214,11 @@ export function parseCodexErrorMessage(
   return null;
 }
 
-// Helper function to parse Codex duration strings (e.g., "11 hours 46 minutes")
-// Returns the duration in milliseconds
-// Handles two patterns:
-// 1. Pro/Enterprise/Edu: "Try again in {duration}."
-// 2. Plus/Team/Business: "or try again in {duration}."
 function parseCodexDuration(durationStr: string): number | null {
-  // Handle "less than a minute"
   if (durationStr.includes("less than a minute")) {
-    return 60 * 1000; // 1 minute in milliseconds
+    return 60 * 1000;
   }
 
-  // Parse pattern: Must match at least one time component
-  // Format: "(Try again in|or try again in) [days]? [hours]? [minutes]?[.]"
-  //  where at least one component must be present
   const match = durationStr.match(
     /(?:Try again in|or try again in) (?:(\d+) days?)?(?: )?(?:(\d+) hours?)?(?: )?(?:(\d+) minutes?|less than a minute)?/,
   );
@@ -280,31 +231,21 @@ function parseCodexDuration(durationStr: string): number | null {
   const hours = match[2] ? parseInt(match[2], 10) : 0;
   const minutes = match[3] ? parseInt(match[3], 10) : 0;
 
-  // At least one component must be present (non-zero)
   if (days === 0 && hours === 0 && minutes === 0) {
     return null;
   }
 
-  // Convert to milliseconds
   const totalMs =
     days * 24 * 60 * 60 * 1000 + hours * 60 * 60 * 1000 + minutes * 60 * 1000;
 
   return totalMs > 0 ? totalMs : null;
 }
 
-// Newer Codex usage-limit messages give an absolute reset time instead of a
-// relative duration, e.g. "...or try again at May 30th, 2026 10:36 PM."
-// parseCodexDuration only understands the relative "try again in {duration}"
-// form, so without this the reset time is dropped and the run is mishandled as
-// a generic error rather than a rate limit. The message carries no timezone,
-// so this parses in the runtime's local time (UTC in production) — an
-// approximate reset beats discarding it.
 function parseCodexAbsoluteResetTime(message: string): number | null {
   const match = message.match(/try again at ([^.]+)/i);
   if (!match || !match[1]) {
     return null;
   }
-  // Strip ordinal suffixes ("30th" -> "30") so Date.parse accepts the date.
   const cleaned = match[1].trim().replace(/(\d+)(?:st|nd|rd|th)/gi, "$1");
   const parsed = Date.parse(cleaned);
   return Number.isNaN(parsed) ? null : parsed;
@@ -317,19 +258,13 @@ export function parseCodexRateLimitMessageStr(
     return null;
   }
 
-  // All Codex rate limit messages start with this prefix
   if (!result.startsWith("You've hit your usage limit.")) {
     return null;
   }
 
-  // Try to parse duration for other plan types
-  // Formats:
-  // - Or: "You've hit your usage limit. Try again in {duration}."
-  // - Team/Business: "You've hit your usage limit. To get more access now, send a request to your admin or try again in {duration}."
   const durationMs = parseCodexDuration(result);
 
   if (durationMs !== null) {
-    // Calculate reset time from current time + duration
     return {
       isRateLimited: true,
       timezoneIsAmbiguous: false,
@@ -337,7 +272,6 @@ export function parseCodexRateLimitMessageStr(
     };
   }
 
-  // Fall back to the absolute "try again at {date}" form.
   const absoluteResetTime = parseCodexAbsoluteResetTime(result);
   if (absoluteResetTime !== null) {
     return {
@@ -347,7 +281,6 @@ export function parseCodexRateLimitMessageStr(
     };
   }
 
-  // Rate limited but can't parse a reset time
   return {
     isRateLimited: true,
     timezoneIsAmbiguous: false,
@@ -362,7 +295,6 @@ export function parseCodexRateLimitMessage(
     return null;
   }
 
-  // Handle both success and error_during_execution subtypes
   if (message.subtype === "success" && message.result) {
     return parseCodexRateLimitMessageStr(message.result);
   }
@@ -393,15 +325,6 @@ export function parseClaudeOAuthTokenRevokedMessage(
   return false;
 }
 
-/**
- * Classify a terminal message batch into a typed RECOVERABLE failure, or null
- * when none applies. Mirrors the server's message-sniffing gate
- * (`messagesIndicateRecoverableFailure`): rate-limit → OAuth-token-revoked →
- * context-exhausted, evaluated per message in order, so the daemon-stamped
- * classification and the legacy sniff agree on which terminals defer to the
- * recovery path. The daemon stamps this onto the canonical run-terminal so the
- * server no longer re-parses raw messages to make the same decision.
- */
 export function classifyRecoverableTerminal({
   messages,
   agent,

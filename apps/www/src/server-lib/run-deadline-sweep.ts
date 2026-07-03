@@ -20,15 +20,6 @@ export type RunDeadlineSweepResult = {
   skipped: number;
 };
 
-// Drive a stalled run to terminal through the derived-status choke point: fence the
-// run-context (so a late daemon event from the dead run can't pass the route's
-// active-run guards and append to the swept transcript) AND apply the `system.error`
-// chat transition (with the thread.status_changed broadcast it emits) in ONE
-// transaction. The stalled row carries no runId, so resolve the newest run first.
-// Fenced + idempotent: terminalEventId is keyed to the runId (a re-run returns
-// "duplicate"), and the CAS self-rejects if a newer run has already superseded this
-// one — so it can never stomp a live successor. Rows with no run-context still get the
-// chat transition.
 async function terminateStalledThreadChat(
   db: DB,
   threadChat: SweepThreadChat,
@@ -79,9 +70,6 @@ async function terminateStalledThreadChat(
         ],
       },
     },
-    // The sweep favours a terminal `complete` on the rare reconcile path (a real
-    // terminal landed between the read and the CAS) rather than a checkpoint-pending
-    // state; the sweep never checkpoints.
     disableGitCheckpointing: true,
   });
   return transition?.didUpdateStatus ?? false;

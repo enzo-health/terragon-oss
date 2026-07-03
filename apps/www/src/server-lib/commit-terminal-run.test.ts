@@ -19,7 +19,6 @@ vi.mock("@/agent/update-status", () => ({
 
 import { commitTerminalRunAndChatStatus } from "./commit-terminal-run";
 
-// Passthrough transaction: the model calls are mocked, so the tx handle is opaque.
 const db = {
   transaction: (callback: (tx: unknown) => unknown) => callback({ tx: true }),
 } as never;
@@ -113,8 +112,6 @@ describe("commitTerminalRunAndChatStatus", () => {
   });
 
   it("reconciles the chat to the winning terminal on already_terminal_different_event", async () => {
-    // A user stop fenced `stopped` first; the daemon's later `completed` terminal
-    // loses the CAS but the chat must still reflect the stopped winner.
     runContextMocks.completeAgentRunContextTerminal.mockResolvedValue({
       status: "rejected",
       reason: "already_terminal_different_event",

@@ -1428,18 +1428,6 @@ export async function getRunMaxSeq({
  * Implementation: `pg_advisory_xact_lock(hashtext(key), 0)`, same idiom as
  * `retryGitCommitAndPush` in checkpoint-thread-internal.ts. The 32-bit hash
  * collision risk merely serializes two unrelated thread chats for one tx.
- *
- * ## Single round-trip + lock-before-read ordering
- * The lock and the `MAX(seq)` read are folded into ONE statement so a token
- * delta pays one DB round trip here instead of two. Ordering is load-bearing:
- * the naive `SELECT pg_advisory_xact_lock(...), MAX(seq) FROM ael` is UNSAFE —
- * an Aggregate node scans all rows to compute MAX first, then calls the lock
- * function during final projection, so the counter is read before the lock is
- * held. A JOIN against the lock CTE is also unsafe (a hash join may scan
- * `agent_event_log` before touching the lock CTE). This form puts the lock
- * CTE as the SOLE FROM relation and reads MAX(seq) as a target-list scalar
- * subquery: SQL evaluates FROM (lock acquired) before target-list projection
- * (MAX read), so the read provably happens under the lock.
  */
 export async function peekNextThreadChatSeqLocked({
   tx,
@@ -1457,7 +1445,7 @@ export async function peekNextThreadChatSeqLocked({
   }
   const lockKey = `agent_event_log:thread_chat_seq:${threadChatId}`;
   const result = await tx.execute<{ max_seq: string | null }>(sql`
-    WITH locked AS MATERIALIZED (
+    WITH lock_must_acquire_before_max_seq_read AS MATERIALIZED (
       SELECT pg_advisory_xact_lock(hashtext(${lockKey}), 0)
     )
     SELECT (
@@ -1465,7 +1453,7 @@ export async function peekNextThreadChatSeqLocked({
       FROM ${schema.agentEventLog}
       WHERE ${schema.agentEventLog.threadChatId} = ${threadChatId}
     ) AS max_seq
-    FROM locked
+    FROM lock_must_acquire_before_max_seq_read
   `);
   const maxSeq = result.rows[0]?.max_seq ?? null;
   return maxSeq == null ? 0 : Number(maxSeq) + 1;

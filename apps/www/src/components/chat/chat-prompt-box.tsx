@@ -102,8 +102,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
       setError(null);
       // The optimistic flip is hoisted into routeComposerSubmit, which fires it
       // on every non-queue route before this fallback runs, so this path only
-      // publishes the message. clientSubmissionId is threaded through so the
-      // followUp fallback shares the append path's per-submission dedupe.
+      // publishes the message.
       const isClearContext = plainText.trim() === "/clear";
       try {
         await publish({

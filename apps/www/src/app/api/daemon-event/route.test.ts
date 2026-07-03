@@ -1655,8 +1655,6 @@ describe("daemon-event route", () => {
         runId: "run-1",
         seq: 1,
         messages: [
-          // Text/thinking are the delta stream's — they must NOT reach the
-          // rich-part channel.
           {
             type: "assistant",
             message: {
@@ -1669,7 +1667,6 @@ describe("daemon-event route", () => {
             session_id: "s-1",
             parent_tool_use_id: null,
           },
-          // A genuine rich part (plan) still needs a rich-part row.
           {
             type: "acp-plan",
             session_id: "s-1",
@@ -1688,8 +1685,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // Exactly one rich-part input: the plan. The thinking/text message produces
-    // no rich parts (delta-owned), so it is skipped entirely.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).toHaveBeenCalledTimes(1);
@@ -1699,9 +1694,6 @@ describe("daemon-event route", () => {
     ];
     const inputs = call[0];
     expect(inputs).toHaveLength(1);
-    // messageId derives from the envelope eventId + the running dbMessage index;
-    // the plan is the second message (index 1) so text/thinking still consume an
-    // index slot.
     expect(inputs[0]!.messageId).toMatch(/^event-rich-1:msg:\d+$/);
     const partTypes = inputs[0]!.parts.map((p) => p.type);
     expect(partTypes).toContain("plan");
@@ -1740,8 +1732,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // Thinking is the delta stream's representation; the rich-part channel never
-    // emits text/thinking, so no duplicate rich-part rows here.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();
@@ -1781,10 +1771,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The DBAgentMessage's text/thinking parts are the delta stream's, leaving
-    // no rich parts. The DBToolCall is a separate message type (not "agent") so
-    // it doesn't go through the rich-part path. No rich-part emission should
-    // occur.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();

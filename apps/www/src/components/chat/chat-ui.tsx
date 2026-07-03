@@ -488,11 +488,6 @@ function ChatUIContent() {
       kind: "rejected" | "lock-held";
       clientSubmissionId: string | null;
     }) => {
-      // Prefer the id carried on the error payload (the typed onError seam);
-      // fall back to the reducer's single-in-flight projection when the runtime
-      // did not carry one (older/unpatched runtime path). The rejection fires
-      // only from the async runtime error path, so the optimistic dispatch has
-      // already flushed and the projection reflects the in-flight submit.
       const clientSubmissionId =
         rejection.clientSubmissionId ??
         threadViewModel.pendingClientSubmissionId;

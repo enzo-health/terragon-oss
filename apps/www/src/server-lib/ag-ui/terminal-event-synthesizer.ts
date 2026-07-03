@@ -11,13 +11,6 @@ import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
 
 type RunContext = Awaited<ReturnType<typeof getAgentRunContextByRunId>>;
 
-/**
- * Fabricate an AG-UI terminal frame (RUN_FINISHED/RUN_ERROR) from a run's
- * durable status, or null when the run has no id or has not yet reached a
- * terminal status. Shared by the replay path (synthesizeTerminalEntry) and the
- * live-tail idle poll (reconcileActiveRunFromDurable) so both fabricate the
- * exact same frame from the run-context.
- */
 export function buildTerminalEventFromRunContext(params: {
   runId: string | null;
   runContext: RunContext;

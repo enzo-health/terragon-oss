@@ -38,17 +38,6 @@ export type DurableThreadHistory = {
   activeRunId: string | null;
 };
 
-/**
- * Latest well-formed run for a thread chat, derived in-memory from the durable
- * envelope log the projector already fetched. Mirrors
- * `getLatestRunIdForThreadChat`: among runs that carry a `RUN_STARTED` marker
- * (AG-UI-native rows and canonical `run-started` rows both map to
- * `EventType.RUN_STARTED`), pick the one with the greatest max(seq). Returns
- * null when no run is eligible (zero envelopes, or every run is legacy-shaped
- * without a start marker). Seq is thread-chat-monotonic and non-interleaving
- * across runs, so max-seq selection identifies the latest run identically to
- * the SQL version.
- */
 export function deriveLatestRunIdFromEnvelopes(
   envelopes: readonly AgUiEventEnvelope[],
 ): string | null {
@@ -120,16 +109,11 @@ export async function buildDurableThreadHistory(params: {
 }): Promise<DurableThreadHistory> {
   const { threadChatId, userId } = params;
 
-  // Stage 1: durable envelope log. It doubles as the source of the latest
-  // runId, replacing the former standalone getLatestRunIdForThreadChat scan.
   const envelopes = await getAgUiEventEnvelopesForThreadChat({
     db,
     threadChatId,
   });
 
-  // Stage 2: authoritative liveness for the run derived from stage 1. This is
-  // the only remaining sequential dependency — the run-context read needs the
-  // derived runId, so the two stages cannot be parallelized.
   const liveness = await resolveServerRunLiveness({
     latestRunId: deriveLatestRunIdFromEnvelopes(envelopes),
     userId,

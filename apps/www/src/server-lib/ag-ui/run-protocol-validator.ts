@@ -9,37 +9,6 @@ import {
 import { isTerminalRunEventType } from "./ag-ui-replay-planner";
 import { getStringEventField } from "./ag-ui-stream-entry";
 
-/**
- * Write-time AG-UI protocol validator.
- *
- * The durable `agent_event_log` is not trusted at read time: every SSE
- * connection re-repairs protocol compliance through the read-time band in
- * `ag-ui-replay-planner.ts` (`repairReplayTextMessageLifecycles`,
- * `repairDelayedRunStartedOrdering`, `dropDuplicateRunStarted`,
- * `dropEventsAfterTerminalUntilNextRun`). This module mirrors that band's
- * repair semantics as a per-run incremental state machine that runs on the
- * WRITE path instead, so the log can eventually be trusted and the read-time
- * band deleted (plan §3 Tier-3, Wave 5).
- *
- * ## Repair-semantics mapping (read-time band -> validator equivalent)
- *
- * | read-time repair (ag-ui-replay-planner.ts)                     | validator violation kind + repair                                              |
- * | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
- * | `repairReplayTextMessageLifecycles`: CONTENT w/o open START    | `missing_start_before_content`: synthesize *_MESSAGE_START before the CONTENT  |
- * | `repairReplayTextMessageLifecycles`: END w/o open START (drop)  | `orphan_end`: drop the END row                                                 |
- * | route `buildDeltaRunEndRows` at terminal (write-side already)   | `missing_end_at_terminal`: synthesize *_MESSAGE_END before the terminal        |
- * | `dropDuplicateRunStarted`: 2nd+ RUN_STARTED in a run (drop)     | `duplicate_run_started`: drop the extra RUN_STARTED                            |
- * | `repairDelayedRunStartedOrdering`: RUN_STARTED not first (move) | `delayed_run_started`: reorder RUN_STARTED ahead of leading run content        |
- * | `dropEventsAfterTerminalUntilNextRun`: event after terminal    | `content_after_terminal` (HARD): drop the row                                  |
- *
- * The 6-level `getReplayDedupeKey` cascade has NO validator equivalent by
- * design: it dedupes the same durable event arriving twice across the
- * replay-from-seq / Redis-live-tail seam (a read-path artifact). The durable
- * log holds each event exactly once — `persistAgUiEvents` already enforces
- * that via the `(runId, eventId)` unique index and monotonic seq assignment —
- * so there is nothing to dedupe at write time.
- */
-
 export type ProtocolMessageChannel = "text" | "reasoning";
 
 export type ProtocolViolationKind =
@@ -59,12 +28,6 @@ export const PROTOCOL_VIOLATION_KINDS: readonly ProtocolViolationKind[] = [
   "content_after_terminal",
 ];
 
-/**
- * Only `content_after_terminal` is a hard violation: an event after a run's
- * terminal marker is unrecoverable corruption (AG-UI `verifyEvents` throws on
- * it client-side), so enforce mode drops it. Every other kind is a benign
- * lifecycle repair that produces a still-complete stream.
- */
 export function isHardViolation(kind: ProtocolViolationKind): boolean {
   return kind === "content_after_terminal";
 }
@@ -78,22 +41,11 @@ export type ProtocolViolation = {
   readonly messageId?: string;
 };
 
-/**
- * Minimal shape the validator needs from a persist row. Decoupled from
- * `AgUiPublishRow` so the module has no dependency on `ag-ui-publisher.ts`
- * (the wiring point); the caller maps its rows to/from this shape.
- */
 export type ProtocolRow = {
   readonly event: BaseEvent;
   readonly eventId: string;
 };
 
-/**
- * A row in the enforce-mode output. `keep` carries the caller's original row
- * (generic `TRow`) so no data is lost round-tripping through the validator;
- * `synthetic` is a repair row the caller must persist in this position.
- * Dropped rows are simply absent from the planned list.
- */
 export type PlannedRow<TRow extends ProtocolRow = ProtocolRow> =
   | { readonly kind: "keep"; readonly row: TRow }
   | {
@@ -103,11 +55,6 @@ export type PlannedRow<TRow extends ProtocolRow = ProtocolRow> =
       readonly reason: ProtocolViolationKind;
     };
 
-/**
- * Per-run protocol state. Resumable across POST batches: fold prior rows for
- * the run through `foldRows` to reconstruct it on a cache miss (the fields are
- * a pure function of the run's row prefix).
- */
 export type RunProtocolState = {
   readonly runId: string;
   runStartedCount: number;
@@ -143,10 +90,8 @@ function cloneRunProtocolState(state: RunProtocolState): RunProtocolState {
 }
 
 export type ValidateBatchResult<TRow extends ProtocolRow> = {
-  /** The advanced state; pass it to the next batch for the same run. */
   readonly state: RunProtocolState;
   readonly violations: readonly ProtocolViolation[];
-  /** Enforce-mode persist plan (in order). Ignored by observe mode. */
   readonly plannedRows: readonly PlannedRow<TRow>[];
 };
 
@@ -188,11 +133,6 @@ function syntheticReasoningEnd(messageId: string): ReasoningMessageEndEvent {
   } as ReasoningMessageEndEvent;
 }
 
-/**
- * Deterministic eventIds for synthetic repair rows so retried batches dedupe
- * on `(runId, eventId)` — the first writer wins, later attempts are no-ops in
- * the persist layer (same scheme as the daemon delta START/END rows).
- */
 function syntheticStartEventId(
   runId: string,
   messageId: string,
@@ -209,15 +149,6 @@ function syntheticEndEventId(
   return `validator-end:${runId}:${messageId}:${channel}`;
 }
 
-/**
- * Fold a batch of rows for a single run through the protocol state machine.
- *
- * Pure: does not mutate the passed `state` (it is cloned). Mirrors the
- * composition the read-time band applies in `toReplayEntries`
- * (`dropEventsAfterTerminalUntilNextRun ∘ repairDelayedRunStartedOrdering`)
- * followed by `repairReplayTextMessageLifecycles`, plus the write-side
- * terminal END synthesis the route performs today via `buildDeltaRunEndRows`.
- */
 export function validateBatch<TRow extends ProtocolRow>(
   priorState: RunProtocolState,
   rows: readonly TRow[],
@@ -227,10 +158,6 @@ export function validateBatch<TRow extends ProtocolRow>(
   const planned: PlannedRow<TRow>[] = [];
   const { runId } = state;
 
-  // Index in `planned` of the first row that counts as run content (i.e. not a
-  // leading MESSAGES_SNAPSHOT) seen before the run's first RUN_STARTED. Used to
-  // reorder a delayed RUN_STARTED ahead of that content, mirroring
-  // repairSingleRunStartedOrdering.
   let firstRunContentPlannedIndex = -1;
 
   const noteRunContentBeforeStart = (): void => {
@@ -260,10 +187,6 @@ export function validateBatch<TRow extends ProtocolRow>(
     const type = String(event.type);
     const eventId = row.eventId;
 
-    // Content-after-terminal (hard): everything except a fresh RUN_STARTED is
-    // dropped once the run has a terminal marker. Mirrors
-    // dropEventsAfterTerminalUntilNextRun (which drops until the next run) and
-    // AG-UI verifyEvents' "no events after terminal" invariant.
     if (state.terminalSeen && type !== EventType.RUN_STARTED) {
       pushViolation("content_after_terminal", { eventType: type, eventId });
       continue;
@@ -272,9 +195,6 @@ export function validateBatch<TRow extends ProtocolRow>(
     if (type === EventType.RUN_STARTED) {
       state.runStartedCount += 1;
       if (state.runStartedCount > 1) {
-        // Duplicate RUN_STARTED for the same run — drop (dropDuplicateRunStarted).
-        // A RUN_STARTED that arrives after a terminal also lands here (count > 1)
-        // and is dropped, matching the band's composition order.
         pushViolation("duplicate_run_started", { eventType: type, eventId });
         state.runStartedCount -= 1;
         continue;
@@ -293,8 +213,6 @@ export function validateBatch<TRow extends ProtocolRow>(
     }
 
     if (isTerminalRunEventType(event.type)) {
-      // Close any delta-opened text/reasoning lifecycles before the terminal —
-      // the same rows the route persists via buildDeltaRunEndRows today.
       for (const messageId of state.openTextMessageIds) {
         pushViolation(
           "missing_end_at_terminal",
@@ -329,8 +247,6 @@ export function validateBatch<TRow extends ProtocolRow>(
     }
 
     if (type === EventType.MESSAGES_SNAPSHOT) {
-      // Snapshots are allowed to lead a run (they do not force RUN_STARTED
-      // reordering), so they do not count as pre-run content.
       planned.push({ kind: "keep", row });
       continue;
     }
@@ -455,9 +371,6 @@ export function validateBatch<TRow extends ProtocolRow>(
       continue;
     }
 
-    // Any other run content (TOOL_CALL_ARGS/CHUNK/RESULT, CUSTOM, ...): kept
-    // verbatim; it still counts as pre-run content for delayed-RUN_STARTED
-    // detection.
     noteRunContentBeforeStart();
     planned.push({ kind: "keep", row });
   }
@@ -465,12 +378,6 @@ export function validateBatch<TRow extends ProtocolRow>(
   return { state, violations, plannedRows: planned };
 }
 
-/**
- * Recovery constructor: reconstruct a run's state by folding its prior rows.
- * Used when the in-memory state store misses (cold start, eviction). The
- * result is independent of enforce/observe mode because the state fields are a
- * pure function of the row prefix.
- */
 export function foldRows(
   runId: string,
   rows: readonly ProtocolRow[],
@@ -501,26 +408,10 @@ export function countViolations(
   return counts;
 }
 
-// ---------------------------------------------------------------------------
-// Mode selection + cross-batch state store (wiring helpers)
-// ---------------------------------------------------------------------------
-
 export type ProtocolValidationMode = "off" | "observe" | "enforce";
 
 export const PROTOCOL_VALIDATION_ENV_VAR = "AGUI_WRITE_PROTOCOL_VALIDATION";
 
-/**
- * Read the write-time protocol-validation mode from the environment.
- *
- * Default `observe`: count would-be repairs (plan §8 risk 2 — "observe mode
- * first, count would-be repairs, then enforce") without changing what is
- * persisted. `enforce` applies the repairs and drops hard violations. `off`
- * disables the validator entirely.
- *
- * An env var (not a per-user feature flag) is used deliberately: this is a
- * process-level write-path decision on the daemon-event route, where no user
- * scope is naturally in hand, and it must be uniform across a deploy.
- */
 export function getProtocolValidationMode(
   env: Record<string, string | undefined> = process.env,
 ): ProtocolValidationMode {
@@ -531,19 +422,6 @@ export function getProtocolValidationMode(
   return "observe";
 }
 
-/**
- * In-memory per-run state, keyed by runId, with `foldRows` recovery on miss.
- *
- * Multi-instance caveat: this store is per process. The daemon-event route is
- * effectively single-writer per thread chat (seq assignment holds a
- * transaction-scoped advisory lock keyed on the thread chat), so a given run's
- * batches serialize even across instances — but they may land on DIFFERENT
- * instances, each with a cold store. Recovery is therefore mandatory, not
- * optional: on a miss the caller MUST fold the run's already-persisted rows
- * (e.g. via `getAgUiEventEnvelopesForRun`) through `foldRows` before validating
- * the incoming batch. The store is a latency optimization over that fold, never
- * the source of truth.
- */
 export class RunProtocolStateStore {
   private readonly states = new Map<string, RunProtocolState>();
 
@@ -573,10 +451,6 @@ export class RunProtocolStateStore {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Observe-mode diagnostics
-// ---------------------------------------------------------------------------
-
 export const PROTOCOL_VALIDATION_LOG_PREFIX = "[agui-write-validation]";
 
 export type ProtocolValidationDiagnostic = {
@@ -594,17 +468,9 @@ type ProtocolValidationSink = (
 ) => void;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __terragonAgUiWriteValidationSink: ProtocolValidationSink | undefined;
 }
 
-/**
- * Emit one structured line per batch that had any violation. Follows the
- * `emitStreamDiagnostic` console pattern (stable prefix + structured payload)
- * so production log queries can quantify would-be repairs before enforcement
- * is switched on. A global sink is honored first so tests can capture without
- * scraping stdout.
- */
 export function emitProtocolValidationDiagnostic(
   diagnostic: ProtocolValidationDiagnostic,
 ): void {

@@ -86,11 +86,6 @@ describe("ChatError sandbox error rendering", () => {
   });
 });
 
-// Every ThreadErrorType must render its own specific header, never the generic
-// UnknownChatError fallback. Typing the header map as `Record<ThreadErrorType,
-// _>` makes adding a union member a compile error here — the test-side twin of
-// the `never` exhaustiveness check in chat-error.tsx. Substrings avoid rendered
-// apostrophe escaping (e.g. "Couldn't" -> "Couldn&#x27;t").
 describe("ChatError renders a specific header for every ThreadErrorType", () => {
   const noopRetry = async () => {};
 
@@ -127,7 +122,6 @@ describe("ChatError renders a specific header for every ThreadErrorType", () => 
         />,
       );
       expect(html).toContain(header);
-      // Never the generic fallback headers from UnknownChatError.
       expect(html).not.toContain("An error occurred");
       expect(html).not.toContain("An unexpected error occurred");
     });

@@ -86,7 +86,7 @@ pnpm -C apps/cli uninstall:dev
 - **State Management**: Jotai, React Query (Tanstack Query)
 - **Database**: Drizzle ORM with PostgreSQL
 - **Auth**: Better Auth with GitHub OAuth, Claude OAuth integration
-- **AI**: Anthropic Claude SDK, AI SDK, OpenAI (commit messages and Codex integration), Google Gemini, Amp
+- **AI**: Anthropic Claude SDK, AI SDK, OpenAI (commit messages and Codex integration). Coding-agent providers are Claude and Codex only.
 - **UI Components**: Radix UI primitives with shadcn/ui
 - **Testing**: Vitest
 - **Real-time**: PartySocket for WebSocket communication
@@ -230,7 +230,7 @@ The chat layer is in the middle of a multi-phase consolidation onto `@assistant-
 - **Auth**: GitHub OAuth credentials, internal shared secrets
 - **Development**: ngrok for local tunnel, sandbox provider configs
 - **Sandbox Providers**: `DAYTONA_API_KEY` for Daytona provider
-- **Optional Providers**: Gemini API key, Amp API key, OpenAI OAuth/ChatGPT auth.json
+- **Optional Providers**: OpenAI OAuth/ChatGPT auth.json
 - **Linear Agent**: `LINEAR_WEBHOOK_SECRET`, `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` (OAuth app credentials for the Linear Agent).
 
 ## Package Structure
@@ -310,7 +310,7 @@ pnpm -C packages/debug-scripts e2b-ssh <sandbox-id>
 - **Automations**: Scheduled and PR-triggered automations with cron validation, next-run calculation, and admin visibility
 - **Daytona Provider**: Optional Daytona sandbox provider behind feature flag with `DAYTONA_API_KEY`
 - **MCP Permission Prompt**: Internal MCP tool to handle permission requests in plan mode
-- **Credentials UI**: Gemini and Amp API key storage; OpenAI OAuth and ChatGPT auth.json support
+- **Credentials UI**: OpenAI OAuth and ChatGPT auth.json support
 - **CLI Additions**: `auth`, `list`, and `mcp` commands, plus `--resume` option for `pull`
 - **Linear Agent**: Upgraded Linear integration to a first-class Linear Agent with OAuth 2.0 (`actor=app`), native `AgentSessionEvent` webhooks, agent activities streamed to Linear in real time, automatic repository suggestions, token refresh with DB-level concurrency guard, and separate "disconnect account" vs "uninstall workspace" actions in Settings
 

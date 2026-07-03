@@ -1,8 +1,4 @@
 import type { AIAgent } from "@terragon/agent/types";
-import {
-  claudeAcpRuntimeAdapterContract,
-  legacyRuntimeAdapterContract,
-} from "@terragon/daemon/runtime-contracts";
 import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { claudeCodeImplementationAdapter } from "./claude-code-implementation-adapter";
 import { codexImplementationAdapter } from "./codex-implementation-adapter";
@@ -54,71 +50,6 @@ export interface ImplementationRuntimeAdapter {
   createDispatch(input: ImplementationAdapterInput): ImplementationDispatch;
 }
 
-const genericImplementationAdapter: ImplementationRuntimeAdapter = {
-  contract(input) {
-    const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
-    if (supportsAcp) {
-      return claudeAcpRuntimeAdapterContract;
-    }
-    return legacyRuntimeAdapterContract;
-  },
-  createDispatch(input) {
-    const contract = this.contract(input);
-    const supportsAcp =
-      input.agent !== "gemini" && input.enableAcpTransport !== false;
-
-    if (supportsAcp) {
-      return {
-        transportMode: "acp" as const,
-        protocolVersion: 2 as const,
-        requestedSessionId: null,
-        codexPreviousResponseId: null,
-        message: {
-          type: "claude",
-          model: input.normalizedModel,
-          agent: input.agent,
-          agentVersion: input.agentVersion,
-          prompt: input.prompt,
-          sessionId: null,
-          codexPreviousResponseId: null,
-          permissionMode: input.permissionMode,
-          runId: input.runId,
-          transportMode: "acp" as const,
-          protocolVersion: 2 as const,
-          acpServerId: `terragon-thread-chat-${input.threadChatId}`,
-          acpSessionId: input.sessionId ?? null,
-          runtimeAdapterContract: contract,
-          ...(input.shouldUseCredits ? { useCredits: true } : {}),
-        },
-      };
-    }
-
-    // Gemini: legacy transport (ACP not supported)
-    return {
-      transportMode: "legacy" as const,
-      protocolVersion: 1 as const,
-      requestedSessionId: input.sessionId,
-      codexPreviousResponseId: null,
-      message: {
-        type: "claude",
-        model: input.normalizedModel,
-        agent: input.agent,
-        agentVersion: input.agentVersion,
-        prompt: input.prompt,
-        sessionId: input.sessionId,
-        codexPreviousResponseId: null,
-        permissionMode: input.permissionMode,
-        runId: input.runId,
-        transportMode: "legacy" as const,
-        protocolVersion: 1 as const,
-        runtimeAdapterContract: contract,
-        ...(input.shouldUseCredits ? { useCredits: true } : {}),
-      },
-    };
-  },
-};
-
 export function resolveImplementationRuntimeAdapter(
   agent: AIAgent,
 ): ImplementationRuntimeAdapter {
@@ -127,10 +58,6 @@ export function resolveImplementationRuntimeAdapter(
       return codexImplementationAdapter;
     case "claudeCode":
       return claudeCodeImplementationAdapter;
-    case "amp":
-    case "gemini":
-    case "opencode":
-      return genericImplementationAdapter;
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(
