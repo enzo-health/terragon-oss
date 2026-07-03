@@ -137,3 +137,10 @@ P5  New-surface rendering from §2: web_search → Source cards, plan deltas →
 - Terminal card body stays custom (Console has app-log semantics, not shell); Diff is unified-only (no split view) — acceptable.
 - ACP cancel: adopt protocol `session/cancel` alongside connection teardown when the emulator/stop work lands (daemon change, small).
 - The AGENTS.md invariant "assistant-ui runtime owns the rendered transcript" is superseded by this direction on Tyler's instruction; the consolidated-plan phase numbering freezes (Phases 5-8 of the 04-27 plan are overtaken).
+
+## 6. Addendum — Rust-source cross-check (final delta)
+
+- **`capabilities.experimentalApi: true` is load-bearing, not cosmetic**: the ChatGPT-subscription auth path (`account/login/start.chatgptAuthTokens` + the `account/chatgptAuthTokens/refresh` round-trip) is experimental-gated. Never remove that flag while Terry-credential mode exists.
+- **Two multi-agent mechanisms coexist**: Codex v2's sanctioned path is experimental `multiAgentMode`/`dynamicTools` on thread/turn start; Terragon instead uses exec-CLI `features.multi_agent` flags + the `collabAgentToolCall` item, and ignores the spawned agent's `model`/`reasoning_effort` in `agents_states`. Converging on the sanctioned path is a candidate follow-up, not P0.
+- **file_change drops rename/move too**: `PatchChangeKind::Update { move_path }` carries the rename target; the normalizer coerces to `"update"` and the parser flattens to `"modified"`, losing both the add/delete distinction AND the rename target. P0 item 4 covers all of it — preserve `kind` + `move_path` end-to-end so Diff file headers can show renames.
+- **`experimentalRawEvents` → `rawResponseItem/completed`** is an unused raw-model-stream escape hatch if the TranscriptStore ever needs unmapped fidelity.
