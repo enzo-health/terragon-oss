@@ -30,6 +30,10 @@ import type { ToolCallStatus } from "../../transcript-store";
 import { toolViewProps } from "./tool-view-props";
 import { getToolVerb, summarizeToolResult } from "../../tools/utils";
 import type { Leaf } from "../leaf-props";
+import { useIsSeeded } from "../seeded-context";
+
+const ENTER_ANIMATION =
+  "animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] motion-reduce:animate-none";
 
 function verbStatus(status: ToolCallStatus): "pending" | "completed" | "error" {
   if (status === "error") return "error";
@@ -62,22 +66,27 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
       active,
       failed,
     });
-  const [manualOpen, setManualOpen] = useState(false);
-  const open = defaultOpen || manualOpen;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? defaultOpen;
+  const seeded = useIsSeeded(item.key);
   const receipt =
     item.result !== null && !failed
       ? `${getToolVerb(name, verbStatus(item.status))} · ${summarizeToolResult(
           item.result,
         )}`
       : getToolVerb(name, verbStatus(item.status));
+  const outcome =
+    item.result !== null
+      ? summarizeToolResult(item.result)
+      : getToolVerb(name, verbStatus(item.status));
   const Icon = TOOL_ICONS[name] ?? Wrench;
 
   return (
     <Tool
-      className="my-1"
+      className={cn("my-1", !seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
-      onOpenChange={setManualOpen}
+      onOpenChange={setUserOpen}
     >
       <ToolTrigger>
         <ToolIcon>
@@ -86,6 +95,11 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
         <ToolName>{name || "Tool"}</ToolName>
         {preview ? (
           <ToolLabel className="font-mono">{preview}</ToolLabel>
+        ) : null}
+        {!active && !failed ? (
+          <ToolLabel className="tabular-nums text-muted-foreground/70">
+            {outcome}
+          </ToolLabel>
         ) : null}
       </ToolTrigger>
       <ToolContent keepMounted>
@@ -125,16 +139,17 @@ function terminalState(
 
 export const TerminalLeaf: Leaf<"terminal"> = ({ item }) => {
   const state = terminalState(item.exitCode);
-  const [manualOpen, setManualOpen] = useState(false);
-  const open = state === "running" || manualOpen;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? state === "running";
+  const seeded = useIsSeeded(item.key);
   const body = item.chunks.map((chunk) => chunk.text).join("");
 
   return (
     <Tool
-      className="my-1"
+      className={cn("my-1", !seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
-      onOpenChange={setManualOpen}
+      onOpenChange={setUserOpen}
     >
       <ToolTrigger>
         <ToolIcon>
@@ -188,15 +203,16 @@ function delegationState(
 
 export const DelegationLeaf: Leaf<"delegation"> = ({ item }) => {
   const state = delegationState(item.status);
-  const [manualOpen, setManualOpen] = useState(false);
-  const open = state === "running" || manualOpen;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? state === "running";
+  const seeded = useIsSeeded(item.key);
 
   return (
     <Tool
-      className="my-1"
+      className={cn("my-1", !seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
-      onOpenChange={setManualOpen}
+      onOpenChange={setUserOpen}
     >
       <ToolTrigger>
         <ToolIcon>

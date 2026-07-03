@@ -166,7 +166,7 @@ export const SendComboButton = memo(function SendComboButton({
 
   return (
     <>
-      <div className="relative inline-flex">
+      <div className="relative inline-flex active:scale-[0.97] transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)]">
         <Button
           onClick={(event) => {
             event.preventDefault();
@@ -174,7 +174,10 @@ export const SendComboButton = memo(function SendComboButton({
           }}
           title={title}
           disabled={isDisabled}
-          className={cn("h-8 px-2 pr-6 rounded-r-none group", className)}
+          className={cn(
+            "h-8 px-2 pr-6 rounded-r-none group active:scale-100",
+            className,
+          )}
           size="sm"
         >
           <SendActionIcon
@@ -187,7 +190,7 @@ export const SendComboButton = memo(function SendComboButton({
             <Button
               disabled={isDisabled}
               className={cn(
-                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[transform,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
+                "h-8 w-8 px-0 rounded-l-none border-l border-l-background/20 hover:border-l-background/30 transition-[transform,border-color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] active:scale-100",
                 className,
               )}
               size="sm"

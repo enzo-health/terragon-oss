@@ -546,7 +546,7 @@ function getResponseComponents(
     h3(props) {
       const children = getChildren(props);
       return (
-        <h3 className="text-base font-medium mb-2 text-muted-foreground">
+        <h3 className="text-base font-semibold mb-2 text-foreground">
           {children}
         </h3>
       );

@@ -671,7 +671,7 @@ const TextPart = memo(function TextPart({
       {showStreamdown && hasMarkdownSyntax ? (
         <div
           className={cn(
-            "prose prose-sm max-w-none",
+            "max-w-none text-[length:var(--text-fluid-base)] leading-relaxed",
             streaming && "streaming-cursor",
           )}
           ref={containerRef}

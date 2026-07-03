@@ -48,7 +48,7 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
 
   const triggerClassName = cn(
     "w-fit px-1",
-    "border-none shadow-none hover:bg-transparent text-muted-foreground/70 hover:text-foreground gap-0.5 dark:bg-transparent dark:hover:bg-transparent",
+    "border-none shadow-none hover:bg-transparent text-mid hover:text-strong gap-0.5 dark:bg-transparent dark:hover:bg-transparent",
     className,
   );
 
