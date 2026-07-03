@@ -1925,7 +1925,7 @@ export class TerragonDaemon {
           // earlier visible-message flush. Streaming throttling belongs to the
           // leading-edge flush timer and delta path, not a trailing debounce.
           if (threadEvent.type === "item.completed") {
-            this.scheduleMessageFlush(250);
+            this.scheduleMessageFlush(this.messageFlushDelay);
           }
 
           if (threadEvent.type === "turn.failed") {
