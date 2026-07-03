@@ -1,4 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk";
+import type { AgUiWireEventRow } from "@terragon/agent/ag-ui-rows";
 import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import { AIAgentSchema } from "@terragon/agent/types";
 import * as z from "zod/v4";
@@ -357,6 +358,10 @@ export type ClaudeMessage =
       session_id: string | null;
       message: string;
     }
+  | {
+      type: "codex-compaction";
+      session_id: string | null;
+    }
 
   // ACP image content block
   | {
@@ -463,6 +468,7 @@ export type DaemonEventAPIBody = {
   headShaAtCompletion?: string | null;
   /** Canonical runtime events persisted before legacy thread patch handling. */
   canonicalEvents?: CanonicalEvent[];
+  agUiEvents?: AgUiWireEventRow[];
   /** Token-level deltas for streaming text to clients. */
   deltas?: DaemonDelta[];
   /**

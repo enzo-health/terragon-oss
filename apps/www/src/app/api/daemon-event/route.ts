@@ -47,6 +47,7 @@ import {
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
 import { db } from "@/lib/db";
+import { agUiWireRowsToRows } from "@terragon/agent/ag-ui-rows";
 import {
   type AgUiPublishRow,
   broadcastAgUiEventEphemeral,
@@ -455,6 +456,10 @@ export async function POST(request: Request) {
   const rawCanonicalEvents = Array.isArray(json.canonicalEvents)
     ? json.canonicalEvents
     : null;
+  const agUiStandardRows =
+    Array.isArray(json.agUiEvents) && json.agUiEvents.length > 0
+      ? agUiWireRowsToRows(json.agUiEvents)
+      : null;
   const deltas = json.deltas;
   const metaEvents = Array.isArray(json.metaEvents) ? json.metaEvents : null;
 
@@ -999,6 +1004,7 @@ export async function POST(request: Request) {
     canonicalEventsForPersistence,
     deltas,
     runId: authoritativeRunId,
+    agUiStandardRows,
   });
   let canonicalPersistence: {
     summary: CanonicalPersistenceSummary;

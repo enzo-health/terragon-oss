@@ -174,6 +174,8 @@ export function splitCanonicalEventsForCommit(
   };
 }
 
+export const TOLERATE_CANONICAL_EVENTS_UNTIL_ALL_DAEMONS_EMIT_AGUI_ROWS = true;
+
 export function buildPreLegacyAgUiCommitPlan(params: {
   canPersistCanonicalEvents: boolean;
   envelopeV2: DaemonEventEnvelopeV2 | null;
@@ -181,14 +183,24 @@ export function buildPreLegacyAgUiCommitPlan(params: {
   canonicalEventsForPersistence: CanonicalEventsPayload | null;
   deltas: DaemonDeltasPayload | null | undefined;
   runId: string;
+  agUiStandardRows?: AgUiPublishRow[] | null;
 }): PreLegacyAgUiCommitPlan {
-  const canonicalRows = params.canonicalEventsForPersistence
-    ? canonicalEventsToAgUiRows(params.canonicalEventsForPersistence)
-    : [];
+  const daemonEmittedRows =
+    params.agUiStandardRows && params.agUiStandardRows.length > 0
+      ? params.agUiStandardRows
+      : null;
+  const canonicalRows =
+    daemonEmittedRows !== null
+      ? daemonEmittedRows
+      : params.canonicalEventsForPersistence
+        ? canonicalEventsToAgUiRows(params.canonicalEventsForPersistence)
+        : [];
   const deltaRows =
-    params.deltas && params.deltas.length > 0
-      ? daemonDeltasToAgUiRows({ runId: params.runId, deltas: params.deltas })
-      : [];
+    daemonEmittedRows !== null
+      ? []
+      : params.deltas && params.deltas.length > 0
+        ? daemonDeltasToAgUiRows({ runId: params.runId, deltas: params.deltas })
+        : [];
   const richPartRows = params.canPersistCanonicalEvents
     ? buildRichPartRows({
         envelopeV2: params.envelopeV2,

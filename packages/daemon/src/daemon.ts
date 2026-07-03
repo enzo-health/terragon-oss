@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { buildStandardAgUiWireRows } from "@terragon/agent/ag-ui-rows";
 import {
   type CanonicalEvent,
   EVENT_ENVELOPE_VERSION,
@@ -20,17 +21,11 @@ import {
   buildCanonicalEventsForBatch,
   getMessageFingerprint,
 } from "./daemon-canonical-events";
-import {
-  ClaudeCodeParser,
-  claudeCommand,
-  getAnthropicApiKeyOrNull,
-  maybeFixLogsForSessionId,
-} from "./claude";
+import { maybeFixLogsForSessionId } from "./claude";
 import {
   buildThreadStartParams,
   buildTurnStartParams,
   CODEX_TURN_START_MAX_INPUT_CHARS,
-  codexCommand,
   createCodexParserState,
   estimateTurnStartRequestSizeChars,
   parseCodexLine,
@@ -45,11 +40,6 @@ import {
   type ThreadMetaEvent,
 } from "./codex-app-server";
 import { routeCodexNotification } from "./codex-notification-router";
-import {
-  createGeminiParserState,
-  geminiCommand,
-  parseGeminiLine,
-} from "./gemini";
 import { DEFAULT_RETRY_CONFIG, RetryBackoff, RetryConfig } from "./retry";
 import {
   DaemonServerPostError,
@@ -76,12 +66,7 @@ import {
   RuntimeAdapterContract,
 } from "./shared";
 import { readString, toRecord } from "./json-read";
-import {
-  createIdleWatchdog,
-  IdleWatchdog,
-  killProcessGroup,
-  MessageBufferEntry,
-} from "./utils";
+import { IdleWatchdog, killProcessGroup, MessageBufferEntry } from "./utils";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
@@ -466,14 +451,6 @@ type DaemonEventRunState = {
    * many terminal messages arrive. Committed on ack alongside the seq cursor.
    */
   canonicalTerminalEmitted: boolean;
-  /**
-   * Flipped true the first time this run enqueues a text/thinking delta. It
-   * tells `buildCanonicalEventsForBatch` that assistant text/thinking is already
-   * the delta stream's single persisted representation, so the canonical builder
-   * emits no duplicate `assistant-message` events for it. Owned here by the
-   * delta pipeline; replaces the removed per-message `_codexItemId` /
-   * `_claudeStreamedBlockIndices` flags.
-   */
   streamedAssistantText: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
@@ -552,30 +529,13 @@ export class TerragonDaemon {
   private messageFlushTimerDueAtMs: number | null = null;
   private uptimeReportingInterval: number = 0;
   private uptimeReportingTimer: NodeJS.Timeout | null = null;
-  /**
-   * Per-thread flush chains keyed by threadChatId. Each thread's POSTs run
-   * strictly in order (the server validates per-thread seq), but different
-   * threads flush concurrently so a slow or hung POST on one thread never
-   * blocks another thread's token streaming.
-   */
   private threadFlushChains: Map<string, Promise<void>> = new Map();
-  /**
-   * Per-thread backoff gate: a thread whose flush failed is not re-dispatched
-   * before this timestamp, so unrelated threads streaming at 16ms cannot hammer
-   * a failing thread's POST ahead of its retry/backoff delay.
-   */
   private threadRetryNotBeforeMs: Map<string, number> = new Map();
   private retryBackoffs: Map<string, RetryBackoff> = new Map();
   private retryConfig: RetryConfig;
 
   private featureFlags: FeatureFlags = {} as FeatureFlags;
   private agentFrontmatterReader: AgentFrontmatterReader;
-  /**
-   * Append-only disk journal for the outbound buffer. Closes the only
-   * unrecoverable-loss window: events buffered but not yet server-acked when the
-   * process dies. Best-effort and fully guarded — journal I/O never breaks the
-   * live flush path.
-   */
   private outboxJournal: OutboxJournal;
 
   constructor({
@@ -603,9 +563,6 @@ export class TerragonDaemon {
     this.retryConfig = retryConfig;
     this.mcpConfigPath = mcpConfigPath;
     this.agentFrontmatterReader = new AgentFrontmatterReader(runtime);
-    // Kill-switch: TERRAGON_DAEMON_OUTBOX_JOURNAL=0 disables the journal.
-    // Auto-disable under the test runner unless a journal is injected, so the
-    // suite stays hermetic (no shared /tmp files, no replay cross-talk).
     this.outboxJournal =
       outboxJournal ??
       new OutboxJournal({
@@ -667,8 +624,6 @@ export class TerragonDaemon {
     // Load agent frontmatter
     await this.agentFrontmatterReader.loadAgents();
 
-    // Recover any events the previous process buffered but never got acked,
-    // before accepting new work so recovered events precede new runs.
     await this.replayOutboxJournal();
 
     // Start listening to the unix socket
@@ -942,6 +897,32 @@ export class TerragonDaemon {
     });
   }
 
+  private sendAcpSessionCancel(activeProcessState: ActiveProcessState): void {
+    const { acpUrl, sessionId } = activeProcessState;
+    if (!acpUrl || !sessionId) {
+      return;
+    }
+    fetch(acpUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch((error) => {
+      this.runtime.logger.warn("ACP session/cancel failed", {
+        threadChatId: activeProcessState.threadChatId,
+        sessionId,
+        error: formatError(error),
+      });
+    });
+  }
+
   private killActiveProcess(
     threadChatId: string,
     options: { destroyAcpServer?: boolean } = {},
@@ -957,6 +938,7 @@ export class TerragonDaemon {
         });
         killProcessGroup(this.runtime, processId);
       }
+      this.sendAcpSessionCancel(activeProcessState);
       // Abort ACP transport (SSE loop + unblock Promise.race)
       if (activeProcessState.acpAbortController) {
         this.runtime.logger.info("Aborting ACP transport", { threadChatId });
@@ -1072,16 +1054,6 @@ export class TerragonDaemon {
       this.runtime.logger.info("Feature flags updated", {
         featureFlags: this.featureFlags,
       });
-    }
-    // amp and opencode are served exclusively over the ACP transport; their
-    // legacy stream-json transports were removed. Normalize any non-ACP request
-    // onto ACP so the canonical run metadata matches how the run executes.
-    if (
-      (input.agent === "amp" || input.agent === "opencode") &&
-      input.transportMode !== "acp"
-    ) {
-      input.transportMode = "acp";
-      input.protocolVersion = 2;
     }
     // Kill any existing process for this threadChatId
     this.killActiveProcess(input.threadChatId);
@@ -1205,31 +1177,15 @@ export class TerragonDaemon {
       }
       return;
     }
-    switch (input.agent) {
-      case "claudeCode":
-        await this.runClaudeCodeCommand(input);
-        break;
-      case "codex":
-        await this.runCodexCommand(input);
-        break;
-      case "gemini":
-        await this.runGeminiCommand(input);
-        break;
-      case "amp":
-      case "opencode":
-        // Normalized onto ACP above; the legacy stream-json path was removed.
-        throw new Error(`${input.agent} must run over ACP transport`);
-      default: {
-        // This ensures we handle all model types exhaustively
-        const _exhaustiveCheck: never = input.agent;
-        this.runtime.logger.error("Unknown agent", {
-          agent: _exhaustiveCheck,
-          agentVersion: input.agentVersion,
-          model: input.model,
-        });
-        throw new Error(`Unknown agent: ${input.agent}`);
-      }
-    }
+    this.runtime.logger.error("Unsupported transport mode for dispatch", {
+      agent: input.agent,
+      transportMode: input.transportMode,
+      agentVersion: input.agentVersion,
+      model: input.model,
+    });
+    throw new Error(
+      `Unsupported transport mode for agent ${input.agent}: ${input.transportMode}`,
+    );
   }
 
   private createAppServerRunContext({
@@ -2282,12 +2238,6 @@ export class TerragonDaemon {
           return "claude";
         case "codex":
           return "codex";
-        case "amp":
-          return "amp";
-        case "opencode":
-          return "opencode";
-        case "gemini":
-          throw new Error("ACP transport is not supported for gemini agent");
         default: {
           const _exhaustiveCheck: never = input.agent;
           throw new Error(
@@ -3658,36 +3608,6 @@ export class TerragonDaemon {
     return entries.slice(0, pendingEntryCount);
   }
 
-  private onProcessStderr = (
-    agent: string,
-    line: string,
-    threadChatId: string,
-  ) => {
-    this.runtime.logger.error(`${agent} stderr`, {
-      line,
-      threadChatId,
-    });
-    const activeProcessState = this.activeProcesses.get(threadChatId);
-    if (activeProcessState) {
-      activeProcessState.stderr.push(line);
-      if (activeProcessState.stderr.length > 20) {
-        activeProcessState.stderr.shift();
-      }
-    }
-  };
-
-  private getProcessErrorInfo = (threadChatId: string) => {
-    const activeProcessState = this.activeProcesses.get(threadChatId);
-    if (activeProcessState?.stderr.length) {
-      return activeProcessState.stderr.join("\n");
-    }
-    const appServerContext = this.appServerRunContexts.get(threadChatId);
-    if (appServerContext?.watchdogTriggered) {
-      return "Codex app-server turn hit the watchdog timeout";
-    }
-    return undefined;
-  };
-
   private getProcessDurationMs = (threadChatId: string) => {
     const activeProcessState = this.activeProcesses.get(threadChatId);
     if (activeProcessState?.startTime) {
@@ -3730,484 +3650,10 @@ export class TerragonDaemon {
     });
   };
 
-  private handleProcessClose = ({
-    agent,
-    processId,
-    exitCode,
-    threadChatId,
-    getMockSuccessResult,
-  }: {
-    agent: string;
-    processId: number | undefined;
-    exitCode: number | null;
-    threadChatId: string;
-    getMockSuccessResult?: () => string;
-  }) => {
-    this.runtime.logger.info(`${agent} command finished`, {
-      exitCode,
-      processId,
-      threadChatId,
-    });
-    const activeState = this.activeProcesses.get(threadChatId);
-    if (!activeState || activeState.processId !== processId) {
-      this.runtime.logger.info("Process closed but not handled", {
-        processId,
-        exitCode,
-        threadChatId,
-      });
-      return;
-    }
-    if (exitCode !== 0 && !activeState.isStopping && !activeState.isCompleted) {
-      this.addMessageToBuffer({
-        agent: activeState.agent,
-        message: {
-          type: "custom-error",
-          session_id: null,
-          duration_ms: this.getProcessDurationMs(threadChatId),
-          error_info: this.getProcessErrorInfo(threadChatId),
-        },
-        threadId: activeState.threadId,
-        threadChatId: activeState.threadChatId,
-        token: activeState.token,
-      });
-    }
-    if (exitCode === 0 && typeof getMockSuccessResult === "function") {
-      this.addMessageToBuffer({
-        agent: activeState.agent,
-        message: {
-          type: "result",
-          subtype: "success",
-          total_cost_usd: 0,
-          duration_ms: this.getProcessDurationMs(threadChatId),
-          duration_api_ms: this.getProcessDurationMs(threadChatId),
-          is_error: false,
-          num_turns: 1,
-          session_id: activeState.sessionId ?? "",
-          result: getMockSuccessResult(),
-        },
-        threadId: activeState.threadId,
-        threadChatId: activeState.threadChatId,
-        token: activeState.token,
-      });
-    }
-    // Remove this process from the map
-    this.stopHeartbeat(threadChatId);
-    this.activeProcesses.delete(threadChatId);
-    this.markDaemonEventRunStateForCleanup(threadChatId);
-  };
-
-  private async spawnAgentProcess({
-    agentName,
-    command,
-    env,
-    input,
-    onStdoutLine,
-    onClose,
-    getMockSuccessResult,
-  }: {
-    agentName: string;
-    input: DaemonMessageClaude;
-    command: string;
-    env?: Record<string, string | undefined>;
-    onStdoutLine: (line: string) => void;
-    onClose?: (code: number | null) => void;
-    getMockSuccessResult?: () => string;
-  }): Promise<void> {
-    this.runtime.logger.info("Spawning agent process", {
-      agentName,
-      command,
-    });
-    return new Promise((resolve) => {
-      // Watchdog: kill process if it stops emitting output for too long
-      const watchdogTimeoutMs = (() => {
-        if (process.env.IDLE_TIMEOUT_MS) {
-          const n = Number(process.env.IDLE_TIMEOUT_MS);
-          if (Number.isFinite(n) && n > 0) return n;
-        }
-        return 15 * 60 * 1000; // default 15 minutes
-      })();
-      let spawnedProcessId: number | undefined;
-      const watchdog = createIdleWatchdog({
-        timeoutMs: watchdogTimeoutMs,
-        logger: this.runtime.logger,
-        onTimeout: async () => {
-          const durationMs = this.getProcessDurationMs(input.threadChatId);
-          this.runtime.logger.warn("Idle timeout reached, killing process", {
-            agentName,
-            processId: spawnedProcessId,
-            watchdogTimeoutMs,
-            durationMs,
-          });
-          this.addMessageToBuffer({
-            agent: input.agent,
-            message: {
-              type: "result",
-              subtype: "success",
-              total_cost_usd: 0,
-              duration_ms: durationMs,
-              duration_api_ms: durationMs,
-              is_error: true,
-              num_turns: 1,
-              result: `${agentName} error: no output for ${watchdogTimeoutMs / 1000}s; process killed`,
-              session_id:
-                this.activeProcesses.get(input.threadChatId)?.sessionId ?? "",
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-          this.killActiveProcess(input.threadChatId);
-          await this.flushMessageBuffer();
-        },
-      });
-
-      // Update MCP config with current env vars so the MCP server subprocess
-      // can reach the Terragon API (env vars change per dispatch).
-      if (this.mcpConfigPath) {
-        try {
-          const raw = this.runtime.readFileSync(this.mcpConfigPath);
-          const mcpConfig = JSON.parse(raw);
-          if (mcpConfig?.mcpServers?.terry) {
-            mcpConfig.mcpServers.terry.env = {
-              ...mcpConfig.mcpServers.terry.env,
-              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-              DAEMON_TOKEN: input.token,
-              TERRAGON_THREAD_ID: input.threadId,
-              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-            };
-            this.runtime.writeFileSync(
-              this.mcpConfigPath,
-              JSON.stringify(mcpConfig, null, 2),
-            );
-          }
-        } catch {
-          this.runtime.logger.warn("Failed to update MCP config with env vars");
-        }
-      }
-
-      // Write env vars to a well-known file so the MCP server can read them
-      // even when spawned by codex app-server (which reads ~/.codex/config.toml
-      // and doesn't pass env vars from the JSON MCP config).
-      try {
-        this.runtime.writeFileSync(
-          "/tmp/terragon-mcp-env.json",
-          JSON.stringify({
-            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-            DAEMON_TOKEN: input.token,
-            TERRAGON_THREAD_ID: input.threadId,
-            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-          }),
-        );
-      } catch {
-        this.runtime.logger.warn("Failed to write MCP env file");
-      }
-
-      const { processId, pollInterval } = this.runtime.spawnCommandLine(
-        command,
-        {
-          env: {
-            ...process.env,
-            ...env,
-            DAEMON_TOKEN: input.token,
-            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-            TERRAGON_THREAD_ID: input.threadId,
-            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-          },
-          onStdoutLine: (line) => {
-            this.runtime.logger.debug("Agent output", { processId, line });
-            if (line) {
-              // Any output indicates activity; reset the watchdog
-              watchdog.reset();
-              onStdoutLine(line);
-            }
-          },
-          onStderr: (line) => {
-            watchdog.reset();
-            this.onProcessStderr(agentName, line, input.threadChatId);
-          },
-          onError: (error: any) => {
-            this.runtime.logger.error("Agent command error", {
-              processId,
-              error: formatError(error),
-            });
-          },
-          onClose: (code) => {
-            watchdog.clear();
-            if (onClose) {
-              onClose(code);
-            }
-            this.handleProcessClose({
-              agent: agentName,
-              exitCode: code,
-              processId,
-              threadChatId: input.threadChatId,
-              getMockSuccessResult,
-            });
-            this.flushMessageBuffer();
-            resolve();
-          },
-        },
-      );
-      if (!processId) {
-        this.runtime.logger.error("Spawn failed: child process has no pid", {
-          agentName,
-          threadChatId: input.threadChatId,
-        });
-        // The child "error" event will fire and trigger handleProcessClose,
-        // which will report the failure to the server. No early return here
-        // so that the onClose callback path handles cleanup consistently.
-      } else {
-        this.runtime.logger.info("Spawned agent process", {
-          agentName,
-          processId,
-        });
-      }
-      if (processId) {
-        spawnedProcessId = processId;
-        this.updateActiveProcessState(input.threadChatId, {
-          processId,
-          pollInterval,
-          watchdog,
-        });
-        // Start the watchdog once the process is running
-        watchdog.reset();
-      }
-    });
-  }
-
-  private async runClaudeCodeCommand(
-    input: DaemonMessageClaude,
-  ): Promise<void> {
-    if (input.sessionId) {
-      maybeFixLogsForSessionId(this.runtime, input.sessionId);
-    }
-    const claudeCodeParser = new ClaudeCodeParser();
-    return this.spawnAgentProcess({
-      agentName: "Claude",
-      input,
-      command: claudeCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        sessionId: input.sessionId,
-        model: input.model,
-        mcpConfigPath: this.mcpConfigPath ?? null,
-        permissionMode: input.permissionMode,
-        enableMcpPermissionPrompt: this.getFeatureFlag("mcpPermissionPrompt"),
-      }),
-      env: {
-        ANTHROPIC_API_KEY: getAnthropicApiKeyOrNull(this.runtime),
-        BASH_MAX_TIMEOUT_MS: (60 * 1000).toString(),
-        ...(!!input.useCredits
-          ? {
-              ANTHROPIC_BASE_URL: `${this.runtime.normalizedUrl}/api/proxy/anthropic`,
-              ANTHROPIC_AUTH_TOKEN: input.token,
-            }
-          : {}),
-      },
-      onStdoutLine: (line) => {
-        try {
-          const { messages, metaEvents, deltas } =
-            claudeCodeParser.parseClaudeCodeLine(line);
-
-          // Enqueue meta events (session.initialized, usage.incremental, message.stop)
-          for (const metaEvent of metaEvents) {
-            this.enqueueMetaEvent({
-              metaEvent,
-              threadId: input.threadId,
-              threadChatId: input.threadChatId,
-              token: input.token,
-            });
-          }
-
-          // Push text/thinking deltas into the delta buffer
-          if (deltas.length > 0) {
-            for (const delta of deltas) {
-              if (delta.kind !== "text" && delta.kind !== "thinking") {
-                continue;
-              }
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: delta.messageId,
-                partIndex: delta.partIndex,
-                kind: delta.kind,
-                text: delta.text,
-              });
-            }
-          }
-
-          // Push parsed chat messages into the message buffer
-          for (const outputMessage of messages) {
-            const sessionId = (outputMessage as any).session_id;
-            if (sessionId) {
-              this.updateActiveProcessState(input.threadChatId, {
-                sessionId,
-                isWorking: true,
-              });
-            }
-            if (outputMessage.type === "result") {
-              this.updateActiveProcessState(input.threadChatId, {
-                isCompleted: true,
-              });
-            }
-            this.addMessageToBuffer({
-              agent: "claudeCode",
-              message: outputMessage,
-              threadId: input.threadId,
-              threadChatId: input.threadChatId,
-              token: input.token,
-            });
-          }
-        } catch (e) {
-          this.runtime.logger.error("Failed to parse Claude output line", {
-            line,
-            error: formatError(e),
-          });
-        }
-      },
-    });
-  }
-
-  private async runCodexCommand(input: DaemonMessageClaude): Promise<void> {
-    const parserState = createCodexParserState();
-    return this.spawnAgentProcess({
-      agentName: "Codex",
-      input,
-      command: codexCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        model: input.model,
-        sessionId: input.sessionId,
-        useCredits: !!input.useCredits,
-      }),
-      getMockSuccessResult: () => "Codex successfully completed",
-      onStdoutLine: (line) => {
-        // Parse the line into ClaudeMessage format
-        const parsedMessages = parseCodexLine({
-          line,
-          runtime: this.runtime,
-          state: parserState,
-        });
-        const activeProcessState = this.activeProcesses.get(input.threadChatId);
-        for (const parsedMessage of parsedMessages) {
-          const type = parsedMessage.type;
-          const sessionId = parsedMessage.session_id;
-          if (type === "system" && sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
-            });
-          } else if (
-            activeProcessState?.sessionId &&
-            (type === "assistant" || type === "user")
-          ) {
-            parsedMessage.session_id = activeProcessState.sessionId;
-          }
-          this.addMessageToBuffer({
-            agent: "codex",
-            message: parsedMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-          if (parsedMessage.type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-            if (parsedMessage.is_error) {
-              this.flushMessageBuffer();
-            }
-          }
-        }
-      },
-    });
-  }
-
-  private async runGeminiCommand(input: DaemonMessageClaude): Promise<void> {
-    // Create parser state for accumulating deltas
-    const parserState = createGeminiParserState();
-    return this.spawnAgentProcess({
-      agentName: "Gemini",
-      command: geminiCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        model: input.model,
-        sessionId: input.sessionId,
-      }),
-      env: {
-        GOOGLE_GEMINI_BASE_URL: `${this.runtime.normalizedUrl}/api/proxy/google`,
-        GEMINI_API_KEY: input.token,
-      },
-      input,
-      onStdoutLine: (line) => {
-        // Parse the line into ClaudeMessage format
-        const parsedMessages = parseGeminiLine({
-          line,
-          runtime: this.runtime,
-          state: parserState,
-        });
-        const activeProcessState = this.activeProcesses.get(input.threadChatId);
-        for (const parsedMessage of parsedMessages) {
-          const type = parsedMessage.type;
-          const sessionId = parsedMessage.session_id;
-          if (type === "system" && sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
-            });
-          } else if (
-            activeProcessState?.sessionId &&
-            (type === "assistant" || type === "user")
-          ) {
-            parsedMessage.session_id = activeProcessState.sessionId;
-          }
-          if (type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-          }
-          this.addMessageToBuffer({
-            agent: "gemini",
-            message: parsedMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      },
-      onClose: () => {
-        // Flush any remaining accumulated content
-        if (parserState.accumulatedContent) {
-          const activeProcessState = this.activeProcesses.get(
-            input.threadChatId,
-          );
-          this.addMessageToBuffer({
-            agent: "gemini",
-            message: {
-              type: "assistant",
-              message: {
-                role: "assistant",
-                content: [
-                  { type: "text", text: parserState.accumulatedContent },
-                ],
-              },
-              parent_tool_use_id: null,
-              session_id: activeProcessState?.sessionId || "",
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      },
-    });
-  }
-
   private processMessagesForSending(
     entries: MessageBufferEntry[],
   ): MessageBufferEntry[] {
-    if (entries.find((e) => e.agent === "gemini" || e.agent === "codex")) {
+    if (entries.find((e) => e.agent === "codex")) {
       const errorEntry = entries.find(
         (e) => e.message.type === "result" && e.message.is_error,
       );
@@ -4354,10 +3800,6 @@ export class TerragonDaemon {
     const runState = this.getOrCreateDaemonEventRunState(entry.threadChatId);
     const deltaSeq = runState.nextDeltaSeq;
     runState.nextDeltaSeq += 1;
-    // Text/thinking deltas make this run's assistant text the delta stream's
-    // single representation, so the canonical builder suppresses its duplicate
-    // `assistant-message` events (see DaemonEventRunState.streamedAssistantText).
-    // Tool-output deltas stream into a tool card and don't affect this.
     if (entry.kind === "text" || entry.kind === "thinking") {
       runState.streamedAssistantText = true;
     }
@@ -4411,11 +3853,6 @@ export class TerragonDaemon {
    * Send all buffered messages to the API and clear the buffer
    */
   private flushMessageBuffer(): Promise<void> {
-    // Dispatch a flush for every thread that currently has buffered data. Each
-    // thread runs on its own serialized chain (per-thread seq ordering is
-    // server-validated) while different threads flush concurrently, so a slow
-    // POST on one thread never blocks another thread's streaming. Callers that
-    // `await flushMessageBuffer()` block until the dispatched chains settle.
     if (this.messageFlushTimer) {
       clearTimeout(this.messageFlushTimer);
       this.messageFlushTimer = null;
@@ -4461,11 +3898,6 @@ export class TerragonDaemon {
     });
   }
 
-  /**
-   * Append a flush for `threadChatId` onto that thread's serialized chain. The
-   * chain guarantees only one flush per thread runs at a time, preserving the
-   * server-validated per-thread seq ordering.
-   */
   private enqueueThreadFlush(threadChatId: string): Promise<void> {
     const previous =
       this.threadFlushChains.get(threadChatId) ?? Promise.resolve();
@@ -4481,17 +3913,9 @@ export class TerragonDaemon {
     return next;
   }
 
-  /**
-   * Flush a single thread's buffered messages, deltas, and meta events. All
-   * shared-buffer reads/writes happen synchronously around the `await`ed POSTs,
-   * so concurrent per-thread flushes never interleave buffer access.
-   */
   private async flushThread(threadChatId: string): Promise<void> {
-    // A flush attempt for this thread clears its backoff gate; a fresh failure
-    // below re-arms it.
     this.threadRetryNotBeforeMs.delete(threadChatId);
 
-    // Extract this thread's buffered messages synchronously.
     const groupEntries: MessageBufferEntry[] = [];
     const remainingMessages: MessageBufferEntry[] = [];
     for (const entry of this.messageBuffer) {
@@ -4513,7 +3937,6 @@ export class TerragonDaemon {
     }> = [];
     let requeueForNewData = false;
 
-    // ── Message batch (drains this thread's deltas/meta on the same POST) ──
     if (groupEntries.length > 0) {
       const entriesToSend = this.getPendingBatchEntriesForThread({
         threadChatId,
@@ -4598,9 +4021,6 @@ export class TerragonDaemon {
       }
     }
 
-    // ── Tail deltas / meta events for this thread ──
-    // Handles the delta/meta-only case and deltas re-buffered by a failed
-    // message POST above (which sendMessagesToAPI prepended back on error).
     const myDeltaEntries: typeof this.deltaBuffer = [];
     const remainingDeltas: typeof this.deltaBuffer = [];
     for (const d of this.deltaBuffer) {
@@ -4683,6 +4103,11 @@ export class TerragonDaemon {
           const runState = this.getOrCreateDaemonEventRunState(threadChatId);
           const deltaEnvelope =
             this.createDeltaOnlyDaemonEventEnvelope(threadChatId);
+          const tailAgUiEvents = buildStandardAgUiWireRows({
+            runId: deltaEnvelope.runId,
+            canonicalEvents: [],
+            deltas,
+          });
           const tailPayload: DaemonEventAPIBody = {
             messages: [],
             threadId: tailThreadId,
@@ -4696,6 +4121,9 @@ export class TerragonDaemon {
             eventId: deltaEnvelope.eventId,
             runId: deltaEnvelope.runId,
             seq: deltaEnvelope.seq,
+            ...(tailAgUiEvents.length > 0
+              ? { agUiEvents: tailAgUiEvents }
+              : {}),
             ...(deltas.length > 0 ? { deltas } : {}),
             ...(metaEvents.length > 0 ? { metaEvents } : {}),
           };
@@ -4726,11 +4154,8 @@ export class TerragonDaemon {
       }
     }
 
-    // ── Re-buffer unsent messages and apply per-thread retry/backoff ──
     const authFailure = failures.find((f) => isNonRetryableAuthError(f.error));
     if (authFailure) {
-      // Permanent auth error (401/403) — dropping is correct; retrying an
-      // invalid token never helps.
       this.runtime.logger.error(
         "Permanent auth error — dropping messages (token is invalid, retrying won't help)",
         {
@@ -4841,11 +4266,6 @@ export class TerragonDaemon {
     }
   }
 
-  /**
-   * A daemon-event body is worth journaling only if it carries v2 envelope
-   * identity (so replay reproduces the same `(runId, eventId)` the server
-   * dedupes on) AND recoverable content. Empty heartbeats are skipped.
-   */
   private isJournalableOutboundBody(
     body: DaemonEventAPIBody,
   ): body is DaemonEventAPIBody & {
@@ -4895,13 +4315,6 @@ export class TerragonDaemon {
     });
   }
 
-  /**
-   * On boot, re-POST any journaled events the server never acked before the
-   * previous process died, preserving per-thread order. Verbatim re-POST keeps
-   * the original identity + token, so the server's `(runId, eventId)` dedupe and
-   * terminal CAS make redelivery idempotent. Runs before the unix socket starts
-   * accepting new work so recovered events precede any new run for that thread.
-   */
   private async replayOutboxJournal(): Promise<void> {
     let unacked: Awaited<ReturnType<OutboxJournal["loadUnacked"]>>;
     try {
@@ -4931,8 +4344,6 @@ export class TerragonDaemon {
         });
       } catch (error) {
         if (isNonRetryableAuthError(error)) {
-          // Token died with the previous process (expired/invalid) — the event
-          // is undeliverable; tombstone it so it does not replay forever.
           this.outboxJournal.recordAck({
             threadChatId: record.threadChatId,
             runId: record.runId,
@@ -4944,7 +4355,6 @@ export class TerragonDaemon {
             { eventId: record.eventId, error: formatError(error) },
           );
         } else {
-          // Leave it journaled; a later boot retries. Never block startup.
           this.runtime.logger.warn(
             "Outbox journal replay: re-send failed; will retry next boot",
             { eventId: record.eventId, error: formatError(error) },
@@ -5050,6 +4460,12 @@ export class TerragonDaemon {
       }
       this.metaEventBuffer = remainingMetaEvents;
 
+      const agUiEvents = buildStandardAgUiWireRows({
+        runId: runState.runId,
+        canonicalEvents,
+        deltas: matchingDeltas,
+      });
+
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -5065,6 +4481,7 @@ export class TerragonDaemon {
         ...(envelopeV2 ?? {}),
         ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
         ...(canonicalEvents.length > 0 ? { canonicalEvents } : {}),
+        ...(agUiEvents.length > 0 ? { agUiEvents } : {}),
         ...(matchingDeltas.length > 0 ? { deltas: matchingDeltas } : {}),
         ...(matchingMetaEvents.length > 0
           ? { metaEvents: matchingMetaEvents }
@@ -5199,10 +4616,8 @@ export class TerragonDaemon {
     }
     // Send any remaining messages in the buffer
     this.killAllActiveProcesses();
-    // Wait for any in-progress per-thread flushes to settle before final flush
     await Promise.allSettled([...this.threadFlushChains.values()]);
     await this.flushMessageBuffer();
-    // Clean shutdown: drain pending journal writes and compact acked entries.
     await this.outboxJournal.shutdown();
     // Send a kill message to the unix socket to flush our blocking listeners.
     await writeToUnixSocket({

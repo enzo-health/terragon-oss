@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./canonical-events": "./src/canonical-events.ts",
     "./ag-ui-mapper": "./src/ag-ui-mapper.ts",
+    "./ag-ui-rows": "./src/ag-ui-rows.ts",
     "./utils": "./src/utils.ts",
     "./tool-calls": "./src/tool-calls.ts",
     "./types": "./src/types.ts",

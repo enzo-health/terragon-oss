@@ -1,4 +1,8 @@
 import { EventType } from "@ag-ui/core";
+import {
+  agUiWireRowsToRows,
+  buildStandardAgUiWireRows,
+} from "@terragon/agent/ag-ui-rows";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -247,6 +251,57 @@ describe("daemon runtime event commit planning", () => {
 
     expect(plan.requiresPersistence).toBe(false);
     expect(plan.mergedRows).toEqual([]);
+  });
+
+  it("persists the same rows whether the batch arrives as agUiEvents or canonicalEvents", () => {
+    const canonicalEvents: CanonicalEventsPayload = [
+      createRunStartedEvent(),
+      createProviderRichPlanEvent(),
+      createRunTerminalEvent(),
+    ];
+    const deltas = [createDelta()];
+    const nonTerminal = canonicalEvents.filter(
+      (event) => event.type !== "run-terminal",
+    );
+
+    const canonicalPlan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [],
+      canonicalEventsForPersistence: nonTerminal,
+      deltas,
+      runId: "run-1",
+    });
+
+    const agUiStandardRows = agUiWireRowsToRows(
+      buildStandardAgUiWireRows({
+        runId: "run-1",
+        canonicalEvents,
+        deltas,
+      }),
+    );
+    const daemonPlan = buildPreLegacyAgUiCommitPlan({
+      canPersistCanonicalEvents: true,
+      envelopeV2,
+      messages: [],
+      canonicalEventsForPersistence: nonTerminal,
+      deltas,
+      runId: "run-1",
+      agUiStandardRows,
+    });
+
+    const identity = (rows: typeof canonicalPlan.mergedRows) =>
+      rows.map((row) => ({ eventId: row.eventId, event: row.event }));
+
+    expect(identity(daemonPlan.mergedRows)).toEqual(
+      identity(canonicalPlan.mergedRows),
+    );
+    expect(daemonPlan.requiresPersistence).toBe(
+      canonicalPlan.requiresPersistence,
+    );
+    expect(
+      agUiStandardRows.some((row) => row.event.type === EventType.RUN_FINISHED),
+    ).toBe(false);
   });
 
   it("keeps synthetic delta end rows before terminal canonical rows", () => {

@@ -1,22 +1,26 @@
-import {
-  type BaseEvent,
-  EventType,
-  type ReasoningMessageEndEvent,
-  type ReasoningMessageStartEvent,
-  type TextMessageEndEvent,
-  type TextMessageStartEvent,
-} from "@ag-ui/core";
+import { type BaseEvent } from "@ag-ui/core";
 import {
   dbAgentMessagePartsToAgUi,
-  mapCanonicalEventToAgui,
-  mapDaemonDeltaToAgui,
   mapMetaEventToAgui,
   mapRunErrorToAgui,
   mapRunFinishedToAgui,
   serializeAgUiEvent,
 } from "@terragon/agent/ag-ui-mapper";
-import type { CanonicalEvent } from "@terragon/agent/canonical-events";
+import {
+  type AgUiEventRow,
+  buildAgUiEventId,
+  buildDeltaRunEndRows,
+  canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
+} from "@terragon/agent/ag-ui-rows";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
+
+export {
+  buildAgUiEventId,
+  buildDeltaRunEndRows,
+  canonicalEventsToAgUiRows,
+  daemonDeltasToAgUiRows,
+};
 import type { DBAgentMessagePart } from "@terragon/shared";
 import type { DB } from "@terragon/shared/db";
 import {
@@ -147,12 +151,7 @@ function refreshStreamTtl(streamKey: string): void {
  * from the same source (e.g. progressive TOOL_CALL_ARGS chunks) never
  * collide on insert.
  */
-export type AgUiPublishRow = {
-  event: BaseEvent;
-  eventId: string;
-  timestamp: Date;
-  threadChatMessageSeq?: number;
-};
+export type AgUiPublishRow = AgUiEventRow;
 
 export type PersistAndPublishResult = {
   inserted: number;
@@ -641,163 +640,6 @@ export async function broadcastAgUiEventEphemeral(params: {
 // ---------------------------------------------------------------------------
 
 /**
- * Expand canonical events to AG-UI rows. Each canonical event may produce
- * 1..3 AG-UI rows (e.g. assistant-message → START + CONTENT + END;
- * tool-call-start → START + ARGS + END).
- *
- * Each row gets a stable `eventId` combining the source canonical eventId,
- * the AG-UI event type, and a 0-based expansion index. The index is
- * essential: if a canonical event ever expands to two rows of the same type
- * (progressive TOOL_CALL_ARGS chunks, split content events, etc.), dedupe
- * on (runId, eventId) must still distinguish them.
- */
-export function canonicalEventsToAgUiRows(
-  events: CanonicalEvent[],
-): AgUiPublishRow[] {
-  const rows: AgUiPublishRow[] = [];
-  for (const event of events) {
-    const expanded = mapCanonicalEventToAgui(event);
-    const ts = new Date(event.timestamp);
-    for (let i = 0; i < expanded.length; i++) {
-      const agUi = expanded[i]!;
-      rows.push({
-        event: agUi,
-        eventId: buildAgUiEventId(event.eventId, String(agUi.type), i),
-        timestamp: ts,
-      });
-    }
-  }
-  return rows;
-}
-
-/**
- * Convert a batch of daemon deltas to AG-UI content rows. Each delta becomes
- * one TEXT_MESSAGE_CONTENT or REASONING_MESSAGE_CONTENT row. We synthesize a
- * per-delta eventId from the composite (runId:messageId:partIndex:deltaSeq)
- * so retries from the daemon dedupe on (runId, eventId).
- *
- * AG-UI's strict lifecycle requires every CONTENT event to be bracketed by a
- * matching _START and _END. The daemon delta channel only carries content
- * chunks, so this helper synthesizes a per-(messageId, kind) START event on
- * the FIRST delta seen for that pair within the batch and prepends it to the
- * output. Duplicate STARTs across batches are cheap and client-tolerant (the
- * reducer treats a repeated START for an already-active message as a no-op),
- * so we intentionally skip a DB roundtrip to check for prior STARTs. END
- * events are emitted at run-terminal time in the route handler (see
- * `findOpenAgUiMessagesForRun` in `agent-event-log`).
- */
-export function daemonDeltasToAgUiRows(params: {
-  runId: string;
-  deltas: NonNullable<DaemonEventAPIBody["deltas"]>;
-}): AgUiPublishRow[] {
-  const { runId, deltas } = params;
-  const rows: AgUiPublishRow[] = [];
-  const now = new Date();
-  // Track (messageId, kind) pairs for which we've already emitted a START in
-  // THIS batch. Key format: `${kind}:${messageId}` to keep text vs thinking
-  // lifecycles distinct even when the daemon re-uses the same messageId.
-  const startedPairs = new Set<string>();
-  for (const delta of deltas) {
-    // Tool-output deltas stream INTO an already-open tool card via the tool's
-    // result channel (TOOL_CALL_RESULT) — they have no TEXT/REASONING lifecycle
-    // to bracket, so we emit the event directly without synthesizing a START
-    // (and the terminal delta-END pass below ignores them, since
-    // `findOpenAgUiMessagesForRun` only tracks text/reasoning message ids).
-    if (delta.kind === "tool-output") {
-      const agUi = mapDaemonDeltaToAgui({
-        messageId: delta.messageId,
-        partIndex: delta.partIndex,
-        deltaSeq: delta.deltaSeq,
-        kind: "tool-output",
-        text: delta.text,
-        ...(delta.toolCallId !== undefined
-          ? { toolCallId: delta.toolCallId }
-          : {}),
-        ...(delta.stream !== undefined ? { stream: delta.stream } : {}),
-      });
-      const eventId = `delta:${runId}:${delta.messageId}:${delta.partIndex}:tool-output:${delta.deltaSeq}`;
-      rows.push({ event: agUi, eventId, timestamp: now });
-      continue;
-    }
-    const kind = delta.kind === "thinking" ? "thinking" : "text";
-    const pairKey = `${kind}:${delta.messageId}`;
-    if (!startedPairs.has(pairKey)) {
-      const startEvent: BaseEvent =
-        kind === "thinking"
-          ? ({
-              type: EventType.REASONING_MESSAGE_START,
-              timestamp: now.getTime(),
-              messageId: delta.messageId,
-              role: "reasoning",
-            } as ReasoningMessageStartEvent)
-          : ({
-              type: EventType.TEXT_MESSAGE_START,
-              timestamp: now.getTime(),
-              messageId: delta.messageId,
-              role: "assistant",
-            } as TextMessageStartEvent);
-      // Unique eventId for the synthetic START. Keyed on runId, messageId,
-      // and kind so that retried batches re-attempt an insert that dedupes
-      // on (runId, eventId) — the first writer wins and all further attempts
-      // become no-ops in the persist layer.
-      const startEventId = `delta-start:${runId}:${delta.messageId}:${kind}`;
-      rows.push({ event: startEvent, eventId: startEventId, timestamp: now });
-      startedPairs.add(pairKey);
-    }
-
-    const agUi = mapDaemonDeltaToAgui({
-      messageId: delta.messageId,
-      partIndex: delta.partIndex,
-      deltaSeq: delta.deltaSeq,
-      kind,
-      text: delta.text,
-    });
-    const eventId = `delta:${runId}:${delta.messageId}:${delta.partIndex}:${kind}:${delta.deltaSeq}`;
-    rows.push({ event: agUi, eventId, timestamp: now });
-  }
-  return rows;
-}
-
-/**
- * Build synthetic END rows for (messageId, kind) pairs that were opened by
- * delta STARTs earlier in the run but never closed. Called from the
- * daemon-event route at run-terminal time after scanning the event log via
- * `findOpenAgUiMessagesForRun`.
- *
- * Each END row has a deterministic eventId so retried terminal events dedupe
- * on (runId, eventId).
- */
-export function buildDeltaRunEndRows(params: {
-  runId: string;
-  openMessages: ReadonlyArray<{
-    messageId: string;
-    kind: "text" | "thinking";
-  }>;
-  timestamp?: Date;
-}): AgUiPublishRow[] {
-  const { runId, openMessages } = params;
-  const ts = params.timestamp ?? new Date();
-  const rows: AgUiPublishRow[] = [];
-  for (const { messageId, kind } of openMessages) {
-    const endEvent: BaseEvent =
-      kind === "thinking"
-        ? ({
-            type: EventType.REASONING_MESSAGE_END,
-            timestamp: ts.getTime(),
-            messageId,
-          } as ReasoningMessageEndEvent)
-        : ({
-            type: EventType.TEXT_MESSAGE_END,
-            timestamp: ts.getTime(),
-            messageId,
-          } as TextMessageEndEvent);
-    const endEventId = `delta-end:${runId}:${messageId}:${kind}`;
-    rows.push({ event: endEvent, eventId: endEventId, timestamp: ts });
-  }
-  return rows;
-}
-
-/**
  * Inputs describing one persisted assistant DBMessage whose `parts` array
  * may contain rich, non-canonical variants (thinking, terminal, diff, image,
  * ...). The route ensures `messageId` is stable across daemon retries — it
@@ -881,16 +723,4 @@ export function buildRunTerminalAgUi(params: {
     params.errorMessage ?? "Run failed",
     params.errorCode ?? undefined,
   );
-}
-
-/**
- * Build a stable, collision-safe eventId for an AG-UI row expanded from a
- * canonical source event. Exported so tests can reason about the scheme.
- */
-export function buildAgUiEventId(
-  canonicalEventId: string,
-  agUiEventType: string,
-  expansionIndex: number,
-): string {
-  return `${canonicalEventId}:${agUiEventType}:${expansionIndex}`;
 }

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { buildStandardAgUiWireRows } from "@terragon/agent/ag-ui-rows";
 import { EVENT_ENVELOPE_VERSION } from "@terragon/agent/canonical-events";
 import { buildCanonicalEventsForBatch } from "@terragon/daemon/daemon-canonical-events";
 import type {
@@ -74,6 +75,11 @@ export function buildMessagesBatch(
   state.nextCanonicalSeq = built.nextCanonicalSeqAfterBatch;
   state.canonicalRunStartedEmitted = built.canonicalRunStartedEmittedAfterBatch;
   state.canonicalTerminalEmitted = built.canonicalTerminalEmittedAfterBatch;
+  const agUiEvents = buildStandardAgUiWireRows({
+    runId: state.runId,
+    canonicalEvents: built.canonicalEvents,
+    deltas: [],
+  });
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
@@ -86,6 +92,7 @@ export function buildMessagesBatch(
     runId: state.runId,
     seq,
     canonicalEvents: built.canonicalEvents,
+    ...(agUiEvents.length > 0 ? { agUiEvents } : {}),
   };
 }
 
@@ -119,6 +126,11 @@ export function buildDeltaBatch(
       ...(input.stream !== undefined ? { stream: input.stream } : {}),
     };
   });
+  const agUiEvents = buildStandardAgUiWireRows({
+    runId: state.runId,
+    canonicalEvents: [],
+    deltas,
+  });
   return {
     threadId: state.threadId,
     threadChatId: state.threadChatId,
@@ -130,6 +142,7 @@ export function buildDeltaBatch(
     eventId: envelopeEventId(state.runId, seq, "delta-only"),
     runId: state.runId,
     seq,
+    ...(agUiEvents.length > 0 ? { agUiEvents } : {}),
     deltas,
   };
 }
