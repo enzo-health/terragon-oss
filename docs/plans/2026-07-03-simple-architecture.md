@@ -17,9 +17,11 @@ Zero server edits. Zero schema migrations. Three co-located tests. If a change c
 
 ## The four layers (and what each is forbidden to do)
 
+**Providers (Tyler, 2026-07-03): Claude and Codex ONLY.** Gemini, amp, and opencode are removed — new dispatch is `claudeCode | codex`; historical threads with other agent values stay readable. This unblocks deleting the entire legacy stream-json transport (gemini was its last tenant): two transports remain, claude-acp and codex-app-server (+codex-via-acp).
+
 ```
 ①  PROVIDER ADAPTERS (packages/daemon)
-    codex-app-server | acp | (legacy, dying)  →  TerragonEvent
+    codex-app-server | claude-acp  →  AG-UI events + terragon.part
     One normalization point. Table-shaped: eventKind → builder.
     Forbidden: business logic, retry policy, rendering hints.
 
