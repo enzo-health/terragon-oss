@@ -111,3 +111,12 @@ S5 = adapters emit TerragonEvents directly; ClaudeMessage dies (daemon-internal;
 ```
 
 Gate for S3: the P2 equivalence assertions + the integration harness + the emulator's scenario runs (default, long-stream, rate-limit, stop) all green on the store path with the flag on.
+
+## Status + remaining follow-ups (2026-07-03, end of session)
+
+S0-S4 + S5 hops 1/2a are COMMITTED: assistant-ui and the patched fork deleted (~7,380 LOC); TranscriptView (fold + 16-leaf registry + nauval) is THE transcript; providers are Claude + Codex with the legacy transport gone; the daemon mints AG-UI identity and emits standard rows + terragon.part rich rows directly.
+
+- **Hop 2b (next)**: terminal fence + usage move onto RUN_FINISHED/RUN_ERROR passthrough; then canonicalEvents leaves the wire (grep TOLERATE_CANONICAL_EVENTS_UNTIL_ALL_DAEMONS_EMIT_AGUI_ROWS) after one deploy generation. The completion trust boundary — isolate and harness-gate.
+- Fold one-liner: richKind codex-context-compaction → compaction item (renders unknown-part today).
+- Optional: diffs from TOOL events to the Diff leaf (client fold edit); assistant-narration client-side expander; DBMessage projection reading persisted terragon.part rows once canonical dies.
+- Transport-bound daemon tests (watchdog, custom-error-on-crash, session-id over a live loop) re-cover over an ACP mock rig.
