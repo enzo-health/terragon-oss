@@ -180,7 +180,7 @@ function SidebarThreadItem({ thread, isActive }: SidebarThreadItemProps) {
         <div className="size-3.5 flex-shrink-0 flex items-center justify-center">
           <ThreadStatusIndicator thread={thread} isOptimistic={isOptimistic} />
         </div>
-        <span className="truncate leading-snug text-pretty">{title}</span>
+        <span className="truncate leading-snug">{title}</span>
       </Link>
       {!isOptimistic && (
         <div

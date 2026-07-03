@@ -1,6 +1,16 @@
 "use client";
 
-import { Terminal, Users, Wrench } from "lucide-react";
+import {
+  FilePen,
+  FileText,
+  FolderTree,
+  Globe,
+  type LucideIcon,
+  Search,
+  Terminal,
+  Users,
+  Wrench,
+} from "lucide-react";
 import { useState } from "react";
 import { Task, TaskIcon, TaskItem, TaskLabel } from "@/components/ai/task";
 import {
@@ -27,6 +37,20 @@ function verbStatus(status: ToolCallStatus): "pending" | "completed" | "error" {
   return "pending";
 }
 
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  Bash: Terminal,
+  Edit: FilePen,
+  Write: FilePen,
+  MultiEdit: FilePen,
+  Read: FileText,
+  Grep: Search,
+  Glob: Search,
+  LS: FolderTree,
+  WebFetch: Globe,
+  WebSearch: Globe,
+  Task: Users,
+};
+
 export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
   const active = item.status === "running" || item.status === "pending";
   const failed = item.isError || item.status === "error";
@@ -46,6 +70,7 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
           item.result,
         )}`
       : getToolVerb(name, verbStatus(item.status));
+  const Icon = TOOL_ICONS[name] ?? Wrench;
 
   return (
     <Tool
@@ -56,7 +81,7 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
     >
       <ToolTrigger>
         <ToolIcon>
-          <Wrench />
+          <Icon />
         </ToolIcon>
         <ToolName>{name || "Tool"}</ToolName>
         {preview ? <ToolLabel>{preview}</ToolLabel> : null}

@@ -221,9 +221,6 @@ export function DiffLine({
         "font-mono text-sm leading-6",
         "data-[state=added]:bg-diff-added/15",
         "data-[state=removed]:bg-diff-removed/15",
-        "relative",
-        "data-[state=added]:before:absolute data-[state=added]:before:inset-y-0 data-[state=added]:before:left-0 data-[state=added]:before:w-0.5 data-[state=added]:before:bg-diff-added",
-        "data-[state=removed]:before:absolute data-[state=removed]:before:inset-y-0 data-[state=removed]:before:left-0 data-[state=removed]:before:w-0.5 data-[state=removed]:before:bg-diff-removed",
         className,
       )}
       {...props}

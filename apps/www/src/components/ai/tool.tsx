@@ -86,13 +86,20 @@ export function ToolIcon({
       data-slot="tool-icon"
       aria-hidden
       className={cn(
-        "size-4 inline-flex items-center justify-center shrink-0",
+        "size-4 grid place-items-center shrink-0",
         "[&_svg]:size-4",
         className,
       )}
       {...props}
     >
-      <span className="contents group-data-[state=running]/tool:hidden">
+      <span
+        className={cn(
+          "col-start-1 row-start-1 inline-flex items-center justify-center",
+          "transition-[opacity,transform,filter] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
+          "opacity-100 scale-100 blur-0",
+          "group-data-[state=running]/tool:opacity-0 group-data-[state=running]/tool:scale-90 group-data-[state=running]/tool:blur-[2px]",
+        )}
+      >
         {children}
       </span>
       <svg
@@ -105,7 +112,12 @@ export function ToolIcon({
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        className="hidden animate-spin group-data-[state=running]/tool:block"
+        className={cn(
+          "col-start-1 row-start-1 animate-spin",
+          "transition-[opacity,transform,filter] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
+          "opacity-0 scale-90 blur-[2px]",
+          "group-data-[state=running]/tool:opacity-100 group-data-[state=running]/tool:scale-100 group-data-[state=running]/tool:blur-0",
+        )}
       >
         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
       </svg>

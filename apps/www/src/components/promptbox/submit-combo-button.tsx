@@ -2,6 +2,7 @@ import { useState } from "react";
 import { SendButton, SendComboButton, TSubmitForm } from "./send-button";
 import { StopButton } from "./stop-button";
 import { SpeechToTextButton } from "./speech-to-text-button";
+import { cn } from "@/lib/utils";
 
 export function SubmitComboButton({
   onTranscript,
@@ -44,6 +45,12 @@ export function SubmitComboButton({
     onRecordingChange?.(recording);
   };
 
+  const showStop = showStopButton && !isRecording && !isProcessingAudio;
+  const showSend = isProcessingAudio || !hideSubmitButton;
+  const useComboSend = supportSaveAsDraft || supportSchedule;
+  const crossFade =
+    "col-start-1 row-start-1 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)]";
+
   return (
     <>
       {!hideVoiceInput && !isProcessingAudio && (
@@ -54,10 +61,10 @@ export function SubmitComboButton({
           initialIsRecording={initialIsRecording}
         />
       )}
-      {showStopButton && !isRecording && !isProcessingAudio ? (
-        <StopButton handleStop={handleStop} disabled={isSubmitting} />
-      ) : isProcessingAudio || !hideSubmitButton ? (
-        supportSaveAsDraft || supportSchedule ? (
+      {useComboSend ? (
+        showStop ? (
+          <StopButton handleStop={handleStop} disabled={isSubmitting} />
+        ) : showSend ? (
           <SendComboButton
             isProcessingAudio={isProcessingAudio}
             isSubmitting={isSubmitting}
@@ -67,15 +74,34 @@ export function SubmitComboButton({
             supportSaveAsDraft={supportSaveAsDraft}
             supportSchedule={supportSchedule}
           />
-        ) : (
-          <SendButton
-            isProcessingAudio={isProcessingAudio}
-            isSubmitting={isSubmitting}
-            submitForm={submitForm}
-            disabled={disabled || isProcessingAudio || isRecording}
-            className={className}
-          />
-        )
+        ) : null
+      ) : showStop || showSend ? (
+        <div className="grid place-items-center">
+          <span
+            className={cn(
+              crossFade,
+              showStop && "opacity-0 pointer-events-none",
+            )}
+            aria-hidden={showStop}
+          >
+            <SendButton
+              isProcessingAudio={isProcessingAudio}
+              isSubmitting={isSubmitting}
+              submitForm={submitForm}
+              disabled={disabled || isProcessingAudio || isRecording}
+              className={className}
+            />
+          </span>
+          <span
+            className={cn(
+              crossFade,
+              !showStop && "opacity-0 pointer-events-none",
+            )}
+            aria-hidden={!showStop}
+          >
+            <StopButton handleStop={handleStop} disabled={isSubmitting} />
+          </span>
+        </div>
       ) : null}
     </>
   );

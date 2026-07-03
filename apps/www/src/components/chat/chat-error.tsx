@@ -122,7 +122,7 @@ function ChatErrorContents({
   body: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2 font-mono">
+    <div className="flex flex-col gap-2">
       <p className="text-xs font-medium flex items-center gap-1 text-error">
         {header}
       </p>
@@ -144,7 +144,7 @@ function ChatErrorContentsWithPre({
   const theme = resolvedTheme === "light" ? "light" : "dark";
 
   return (
-    <div className="flex flex-col gap-2 font-mono">
+    <div className="flex flex-col gap-2">
       <p className="text-xs font-medium flex items-center gap-1 text-error">
         {header}
       </p>
@@ -152,13 +152,13 @@ function ChatErrorContentsWithPre({
         <div className="text-xs text-muted-foreground">
           {renderAnsi ? (
             <pre
-              className="whitespace-pre-wrap break-words overflow-hidden"
+              className="font-mono whitespace-pre-wrap break-words overflow-hidden"
               dangerouslySetInnerHTML={{
                 __html: ansiToHtml(errorStr, theme),
               }}
             />
           ) : (
-            <pre className="whitespace-pre-wrap break-words overflow-hidden">
+            <pre className="font-mono whitespace-pre-wrap break-words overflow-hidden">
               {errorStr}
             </pre>
           )}
