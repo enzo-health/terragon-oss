@@ -21,31 +21,71 @@ equivalent of the planned ESLint `no-restricted-imports` rule).
 | -------------------- | ------------------------------------------ |
 | Vendored at SHA      | `9944bcffc7412b27315ce853a49b4ea6035dea98` |
 | Upstream commit date | 2026-05-26                                 |
-| Vendored on          | 2026-06-02                                 |
+| Vendored on          | 2026-06-02 (base 4); 2026-07-02 (P1 set)   |
 | Upstream path        | `src/components/ai/<name>.tsx`             |
+
+**License note.** `nauvalazhar/ai` has NO `LICENSE` file and GitHub reports
+`license: null`. The basis for vendoring is the repo README's explicit
+shadcn-style statement — "Drop the source into your project, restyle with tokens
+or Tailwind, and compose freely" — plus the absence of any npm package (copying
+source is the only intended distribution path). This is a copy-freely reading,
+not a formal grant; if that basis is ever disputed, this whole directory is the
+liability. Re-confirm on each vendor pass.
+
+**P1 refresh check (2026-07-02).** Upstream `main` HEAD is still
+`9944bcf` — identical to the pinned SHA — so the base 4 files (`tool`,
+`reasoning`, `message`, `callout`) had zero upstream deltas to port. The P1 set
+below was fetched at the same SHA.
 
 Every file below maps 1:1 to `github.com/nauvalazhar/ai/blob/9944bcf/src/components/ai/<name>.tsx`.
 
-| File            | Upstream        | Primitive                           | Notes               |
-| --------------- | --------------- | ----------------------------------- | ------------------- |
-| `tool.tsx`      | `tool.tsx`      | `@base-ui/react/collapsible`        | also `partial-json` |
-| `reasoning.tsx` | `reasoning.tsx` | `@base-ui/react/collapsible`        |                     |
-| `message.tsx`   | `message.tsx`   | none (div + `cva`)                  |                     |
-| `callout.tsx`   | `callout.tsx`   | `@base-ui/react/use-render` + `cva` |                     |
+| File                   | Upstream               | Primitive                               | Notes                                                     |
+| ---------------------- | ---------------------- | --------------------------------------- | --------------------------------------------------------- |
+| `tool.tsx`             | `tool.tsx`             | `@base-ui/react/collapsible`            | also `partial-json`                                       |
+| `reasoning.tsx`        | `reasoning.tsx`        | `@base-ui/react/collapsible`            |                                                           |
+| `message.tsx`          | `message.tsx`          | none (div + `cva`)                      |                                                           |
+| `callout.tsx`          | `callout.tsx`          | `@base-ui/react/use-render` + `cva`     |                                                           |
+| `confirmation.tsx`     | `confirmation.tsx`     | `@base-ui/react/use-render` + `cva`     | React context (controllable)                              |
+| `diff.tsx`             | `diff.tsx`             | `@base-ui/react/collapsible`            | also `diff`; exports `useDiff`                            |
+| `todo.tsx`             | `todo.tsx`             | `@base-ui/react/collapsible`            |                                                           |
+| `task.tsx`             | `task.tsx`             | none (div + `cn`)                       |                                                           |
+| `status.tsx`           | `status.tsx`           | `@base-ui/react/use-render` + `cva`     |                                                           |
+| `usage-meter.tsx`      | `usage-meter.tsx`      | `@base-ui/react/meter` + `cva`          | rAF `AnimatedNumber`                                      |
+| `exception.tsx`        | `exception.tsx`        | `@base-ui/react/collapsible`            |                                                           |
+| `conversation.tsx`     | `conversation.tsx`     | `@base-ui/react/use-render`             | exports `useConversation`; ResizeObserver stick-to-bottom |
+| `chain-of-thought.tsx` | `chain-of-thought.tsx` | `@base-ui/react/collapsible`            |                                                           |
+| `loader.tsx`           | `loader.tsx`           | `@base-ui/react/use-render` + `cva`     | keyframes below                                           |
+| `source.tsx`           | `source.tsx`           | `@base-ui/react/use-render` + `cva`     |                                                           |
+| `citation.tsx`         | `citation.tsx`         | `@base-ui/react/popover` + `use-render` | keyframes below                                           |
+| `attachment.tsx`       | `attachment.tsx`       | `@base-ui/react/use-render` + `cva`     | React 19 context-as-provider                              |
+| `agent-run.tsx`        | `agent-run.tsx`        | `@base-ui/react/collapsible`            |                                                           |
+| `action.tsx`           | `action.tsx`           | `@base-ui/react/collapsible`            |                                                           |
 
 ## Dependencies added for these files
 
 Exact-pinned in `apps/www/package.json` (the consolidation invariant forbids
 caret/tilde ranges on chat-layer deps):
 
-| Package          | Version | Used by                                    |
-| ---------------- | ------- | ------------------------------------------ |
-| `@base-ui/react` | `1.5.0` | `tool.tsx`, `reasoning.tsx`, `callout.tsx` |
-| `partial-json`   | `0.1.7` | `tool.tsx` (streaming arg parse)           |
+| Package          | Version | Used by                                                    |
+| ---------------- | ------- | ---------------------------------------------------------- |
+| `@base-ui/react` | `1.5.0` | most leaves (collapsible/use-render/popover/meter)         |
+| `partial-json`   | `0.1.7` | `tool.tsx` (streaming arg parse)                           |
+| `diff`           | `8.0.3` | `diff.tsx` (`diffLines`/`diffWordsWithSpace`/`parsePatch`) |
 
 `class-variance-authority`, `clsx`, `tailwind-merge`, and `lucide-react` were
 already present. None of the vendored files import `lucide-react` — icons are
 inline SVG.
+
+**`diff` (NEW dependency, added for P1).** `diff.tsx` computes line- and
+word-level diffs from either a unified patch or a `{from,to}` string pair.
+Pinned EXACT (`8.0.3` — already resolvable in the monorepo store; ships its own
+types, so no `@types/diff`). This is the only new third-party dependency in the
+P1 set.
+
+**Base UI subpaths used by P1 (verified present in `1.5.0`):**
+`@base-ui/react/popover` (`citation.tsx`) and `@base-ui/react/meter`
+(`usage-meter.tsx`) join the previously-used `/collapsible` and `/use-render`.
+No component references a subpath the pinned version lacks.
 
 **Base UI primitive stack.** Per the program plan (grill-me-glimmering-wolf.md),
 the app is migrating Radix → Base UI app-wide (WS-A), so these components are
@@ -60,10 +100,18 @@ Kept minimal — only what the repo's stricter toolchain requires. Re-running th
 vendor pass overwrites these; reapply the alias rewrite plus the items below.
 
 1. **Import alias.** `#/lib/utils` → `@/lib/utils` (every file).
-2. **`"use client"`.** Prepended to all four files (they lacked it upstream).
-   These components use React hooks / Base UI and render in the client chat tree.
+2. **`"use client"`.** Prepended to every file that lacked it upstream (all
+   except `diff.tsx`, which ships it). These components use React hooks / Base UI
+   and render in the client chat tree.
+3. **`diff.tsx` non-null assertions.** Terragon's tsconfig sets
+   `noUncheckedIndexedAccess: true`; upstream `diff.tsx` indexes arrays inside
+   length-bounded loops without guards, which the stricter config rejects. Added
+   `!` on the loop-bounded index accesses (`lines[i]`/`lines[j]`/`lines[k]` in
+   `collapseContext`, `parts[i]` in `computeFromStrings`, `parsed.hunks[hi]` and
+   `raw[i]` in `computeFromPatch`). Type-level only — zero runtime/logic change.
 
-No other edits — no token hardcoding, no logic changes.
+No other edits — no token hardcoding, no logic changes, no comments added to the
+vendored `.tsx` files (they carry none upstream).
 
 ## Theming: nauval token → existing `@theme` alias (I5)
 
@@ -93,10 +141,38 @@ mappings below are registered in `globals.css` alongside `--color-surface-soft`.
 | `*-inflight` (nauval's in-progress accent, refs in `tool`) | `--color-inflight: var(--info)`                    | maps the streaming/in-flight accent onto the existing info hue; revisit if a distinct accent is wanted |
 | `rounded-outer` (cards/bubbles, refs in `tool`/`message`)  | `--radius-outer: calc(var(--radius) + 8px)` (16px) | nauval wraps cards in `rounded-outer`; undefined → square corners                                      |
 
-That is 4 aliases, matching the plan's "~3–6 `@theme inline` aliases, not a token
-system" estimate. No `:root`/`.dark` duplication is needed — each target token
-(`--card`, `--raised`, `--info`) already carries light + dark values.
+**Added in the P1 pass (2026-07-02):**
+
+| nauval token                                   | alias                                      | rationale                                                                      |
+| ---------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `*-diff-added` (`diff.tsx` green add lines)    | `--color-diff-added: var(--success)`       | maps add-line green onto the app's existing success hue (carries light + dark) |
+| `*-diff-removed` (`diff.tsx` red remove lines) | `--color-diff-removed: var(--destructive)` | maps remove-line red onto the single canonical destructive red                 |
+
+That is 6 aliases total, matching the plan's "~3–6 `@theme inline` aliases, not a
+token system" estimate. No `:root`/`.dark` duplication is needed — each target
+token (`--card`, `--raised`, `--info`, `--success`, `--destructive`) already
+carries light + dark values.
+
+Audit result for the rest of the P1 set: Status/AgentRun/Tool level colors resolve
+via `--color-inflight`/`--color-warning`/`--color-success`/`--color-destructive`;
+Exception accents and UsageMeter over-state resolve via `--color-destructive`;
+UsageMeter fill via `--color-primary`. No further color aliases required.
+
+**Keyframes added to `globals.css` (P1).** Three leaves reference upstream
+`@keyframes` by name via Tailwind arbitrary `animate-[<name>_…]` utilities;
+without the definitions the animations silently no-op. Copied verbatim from
+`nauvalazhar/ai@9944bcf` `src/styles/tokens.css`:
+
+| keyframe                                     | used by        |
+| -------------------------------------------- | -------------- |
+| `text-pulse`, `text-shimmer`, `loading-dot`  | `loader.tsx`   |
+| `citation-enter-next`, `citation-enter-prev` | `citation.tsx` |
+
+nauval's `player-waveform-loading` / `generated-image-pulse` keyframes are NOT
+copied — Player and Generated Image are outside the P1 set.
 
 **Markdown:** streamdown stays (`chat/ai-elements/markdown-renderer.tsx`). nauval
 `markdown.tsx` is NOT vendored — adopting it would lose `parseIncompleteMarkdown`
-streaming. Diff/markdown tokens are intentionally skipped.
+streaming. nauval `diff-rich.tsx` (Shiki-highlighted diff) is also NOT vendored —
+plain `diff.tsx` + `useDiff` covers the P1 need and avoids pulling Shiki as a new
+diff-path dependency.

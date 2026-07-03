@@ -404,6 +404,9 @@ importers:
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
+      diff:
+        specifier: 8.0.3
+        version: 8.0.3
       dotenv:
         specifier: ^16.5.0
         version: 16.5.0
@@ -1725,6 +1728,7 @@ packages:
 
   '@daytonaio/sdk@0.183.0':
     resolution: {integrity: sha512-t+MMlcThxmpOlqdvxY7123qEBRGR1e4X8voARquie6/s0OUXN865XnegujMIDTZg9V41Ld7WBmdWXL0+LUQqYg==}
+    deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@discoveryjs/json-ext@0.5.7':
     resolution: {integrity: sha512-dBVuXR082gk3jsFp7Rd/JI4kytwGHecnCoTtXFb7DB6CNHp4rg5k1bhg0nWdLGLnOV71lmDzGQaLMy8iPLY0pw==}
@@ -10752,6 +10756,7 @@ packages:
   tsconfck@3.1.6:
     resolution: {integrity: sha512-ks6Vjr/jEw0P1gmOVwutM3B7fWxoWBL2KRDb1JfqGVawBmO5UsvmWOQFGHBPl5yxYz4eERr19E6L7NMv+Fej4w==}
     engines: {node: ^18 || >=20}
+    deprecated: unmaintained
     hasBin: true
     peerDependencies:
       typescript: 5.8.3

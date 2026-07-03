@@ -445,6 +445,8 @@
   --color-surface: var(--muted);
   --color-surface-elevated: var(--card);
   --color-inflight: var(--info);
+  --color-diff-added: var(--success);
+  --color-diff-removed: var(--destructive);
   /* Disabled fill for buttons / inputs / chips. The button base class
      references `disabled:bg-disabled` — without this registration that
      utility silently emits nothing and the variant's bg leaks through,
@@ -785,6 +787,58 @@
 
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@keyframes text-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes text-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@keyframes citation-enter-next {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes citation-enter-prev {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* Reconciliation flash - smooth transition when optimistic thread becomes real */
