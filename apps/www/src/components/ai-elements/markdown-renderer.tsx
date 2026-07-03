@@ -554,19 +554,21 @@ function getResponseComponents(
     table(props) {
       const children = getChildren(props);
       return (
-        <div className="overflow-x-auto my-2">
-          <table className="min-w-full border border-border">{children}</table>
+        <div className="overflow-x-auto my-3">
+          <table className="min-w-full border-collapse text-sm [&_tr]:border-b [&_tr]:border-border/60 [&_thead_tr]:border-border [&_tbody_tr:last-child]:border-b-0">
+            {children}
+          </table>
         </div>
       );
     },
     thead(props) {
       const children = getChildren(props);
-      return <thead className="bg-muted">{children}</thead>;
+      return <thead>{children}</thead>;
     },
     th(props) {
       const children = getChildren(props);
       return (
-        <th className="border border-border px-2 py-1 text-left font-medium text-foreground">
+        <th className="px-3 py-2 text-left font-medium text-muted-foreground">
           {children}
         </th>
       );
@@ -574,9 +576,7 @@ function getResponseComponents(
     td(props) {
       const children = getChildren(props);
       return (
-        <td className="border border-border px-2 py-1 text-foreground tabular-nums">
-          {children}
-        </td>
+        <td className="px-3 py-2 text-foreground tabular-nums">{children}</td>
       );
     },
     a(props) {

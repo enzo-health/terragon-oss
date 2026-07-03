@@ -909,29 +909,16 @@
   }
 }
 
-/* Hallmark · studied-DNA (source: github.com/nauvalazhar/ai · src/styles/tokens.css)
- * nauval (ai.nauv.al) chat-transcript surface, re-anchored to Terragon's warm
- * neutral hue (106° dark / 264° light) so the transcript shares the app's
- * color temperature. Keeps nauval's elevation ladder + 1rem outer radius; the
- * brand accent and in-flight color inherit the app tokens (no scoped --primary
- * or --inflight override), so orange stays orange inside the chat.
- */
 .nauval-chat-surface {
-  background: oklch(0.97 0.0022 264.54);
-  --color-surface: oklch(1 0 0);
-  --color-surface-elevated: oklch(0.9781 0.0022 264.54);
-  --color-border: oklch(0.9421 0.0022 264.54);
-  --color-muted: oklch(0.94 0.0022 264.54);
+  --color-surface: oklch(0.972 0.0022 264.54);
+  --color-surface-elevated: oklch(0.955 0.0022 264.54);
+  --color-border: oklch(0.922 0.0022 264.54);
+  --color-muted: oklch(0.945 0.0022 264.54);
   --color-muted-foreground: oklch(0.5 0 0);
   --radius-outer: 1rem;
 }
 
-/* Base anchored to the Codex-dark canvas (--background L 0.2964) so the
- * transcript blends into the page instead of floating as a darker card. The
- * elevation ladder reuses the app's measured dark tokens (card L 0.367,
- * border L 0.40, muted L 0.34) so inner cards still read as raised. */
 .dark .nauval-chat-surface {
-  background: oklch(0.2964 0.0036 106.6);
   --color-surface: oklch(0.31 0.0034 106.6);
   --color-surface-elevated: oklch(0.367 0.0034 106.6);
   --color-border: oklch(0.4 0.0033 106.5);

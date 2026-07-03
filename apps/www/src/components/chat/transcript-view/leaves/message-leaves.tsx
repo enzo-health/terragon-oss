@@ -89,10 +89,7 @@ export const UserLeaf: Leaf<"user"> = ({ item }) => {
       )}
     >
       <MessageContent>
-        <MessageText
-          variant="bubble"
-          className="max-w-[90%] rounded-[calc(var(--radius)+0.15rem)] bg-card px-4 py-3 text-card-foreground shadow-[var(--shadow-warm-lift)] ring-0 sm:max-w-[85%]"
-        >
+        <MessageText variant="bubble">
           {item.content.map((part, index) => {
             if (part.type === "text") {
               return <TextPart key={index} text={part.text} />;

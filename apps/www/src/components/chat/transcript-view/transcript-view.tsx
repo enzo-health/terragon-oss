@@ -192,7 +192,7 @@ export function TranscriptView({
       <div className="relative flex-1 overflow-hidden">
         <Conversation className="size-full">
           <ConversationContent>
-            <div className="nauval-chat-surface flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 py-6 sm:py-8 mt-6 sm:mt-8 mb-8 rounded-[var(--radius-outer)]">
+            <div className="nauval-chat-surface flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 py-6 pb-8">
               {lifecycleMessages.length > 0 ? (
                 <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)] motion-reduce:animate-none">
                   {lifecycleMessages.map((message, index) => (
