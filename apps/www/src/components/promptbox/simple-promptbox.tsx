@@ -137,7 +137,7 @@ export function SimplePromptBox({
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
-          "relative flex flex-col rounded-[17px] border border-hairline bg-card shadow-warm-lift transition-[border-color,background-color,opacity] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-foreground/20 focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-primary/20",
+          "relative flex flex-col rounded-[17px] border border-hairline bg-card shadow-warm-lift transition-[border-color,background-color,opacity] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-foreground/20 focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-foreground/10",
           isSubmitting &&
             "pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
           borderClassName,
