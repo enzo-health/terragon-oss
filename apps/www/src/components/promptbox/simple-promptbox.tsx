@@ -137,14 +137,14 @@ export function SimplePromptBox({
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
-          "relative flex flex-col rounded-[17px] border border-hairline bg-card shadow-warm-lift transition-[border-color,background-color,opacity] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-foreground/20 focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-foreground/10",
+          "relative flex flex-col gap-1 rounded-[var(--radius-outer)] border border-border bg-surface shadow-xs transition-[box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-standard)] focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/40",
           isSubmitting &&
             "pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
           borderClassName,
         )}
       >
         {isSubmitting && (
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[17px]">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/20 overflow-hidden rounded-t-[var(--radius-outer)]">
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
@@ -159,14 +159,17 @@ export function SimplePromptBox({
           <EditorContent
             editor={editor}
             aria-label="Describe a task for the AI"
-            className={cn("min-h-9 px-2 py-1.5", className)}
+            className={cn(
+              "min-h-9 px-3 py-2 text-sm leading-relaxed",
+              className,
+            )}
           />
         </ScrollArea>
         <AttachedFiles
           attachedFiles={attachedFiles}
           onRemoveFile={removeFile}
         />
-        <div className="mx-2 mb-1 flex flex-row items-center gap-1.5">
+        <div className="flex flex-row items-center gap-1.5 px-3 py-2">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
             {!hideModelSelector && (
               <ModelSelector
