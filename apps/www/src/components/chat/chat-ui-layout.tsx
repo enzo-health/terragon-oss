@@ -22,6 +22,8 @@ import { TerragonThreadErrorBoundary } from "./assistant-ui/terragon-thread-erro
 import { TerragonThreadRuntimeContent } from "./assistant-ui/terragon-thread-runtime-content";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
+import { TranscriptView } from "./transcript-view/transcript-view";
+import { useTranscriptStoreViewEnabled } from "./transcript-view/transcript-view-enabled";
 import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
@@ -114,6 +116,8 @@ export function ChatUILayout(props: ChatUILayoutProps) {
 
   const { error, setError, isRetrying, handleRetry } = errorState;
 
+  const transcriptStoreViewEnabled = useTranscriptStoreViewEnabled();
+
   return (
     <AgUiAgentProvider agent={agent}>
       <div className="@container/pane flex flex-col h-full w-full">
@@ -143,78 +147,112 @@ export function ChatUILayout(props: ChatUILayoutProps) {
           >
             {(runtimeProps) => (
               <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
-                <div className="relative flex-1 overflow-hidden">
-                  <ScrollArea
-                    ref={scrollAreaRef}
-                    className="w-full h-full overflow-auto"
-                    viewportClassName="[scrollbar-gutter:stable] [overflow-anchor:none]"
-                  >
-                    <div
-                      ref={transcriptRef}
-                      className="min-h-full flex flex-col [overflow-anchor:none]"
+                {transcriptStoreViewEnabled ? (
+                  <TranscriptView
+                    agent={agent}
+                    loadAgUiHistoryMessages={loadAgUiHistoryMessages}
+                    lifecycleMessages={threadViewModel.lifecycleMessages}
+                    threadStatus={effectiveThreadStatus}
+                    isAgentWorking={isAgentCurrentlyWorking}
+                    onOpenRepoFile={onOpenRepoFile}
+                    error={error || threadChat.errorMessageInfo}
+                    errorType={runtimeProps.errorType}
+                    errorInfo={runtimeProps.errorInfo}
+                    handleRetry={runtimeProps.handleRetry ?? handleRetry}
+                    isRetrying={runtimeProps.isRetrying ?? isRetrying}
+                    isReadOnly={isReadOnly}
+                    chatAgent={chatAgent}
+                    bootingSubstatus={thread.bootingSubstatus ?? undefined}
+                    metaSnapshot={threadViewModel.meta}
+                    reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
+                    threadChatUpdatedAt={
+                      threadViewModel.lifecycle.threadChatUpdatedAt
+                    }
+                    threadId={thread.id}
+                    threadChatId={threadChat.id}
+                    scheduleAt={threadChat.scheduleAt}
+                    threadChatStatus={threadChat.status}
+                  />
+                ) : (
+                  <div className="relative flex-1 overflow-hidden">
+                    <ScrollArea
+                      ref={scrollAreaRef}
+                      className="w-full h-full overflow-auto"
+                      viewportClassName="[scrollbar-gutter:stable] [overflow-anchor:none]"
                     >
-                      <TerragonThreadErrorBoundary
-                        threadStatus={effectiveThreadStatus}
-                        isReadOnly={isReadOnly}
-                      >
-                        <TerragonThreadRuntimeContent
-                          lifecycleMessages={threadViewModel.lifecycleMessages}
-                          threadStatus={effectiveThreadStatus}
-                          thread={threadWithViewModelStatus}
-                          latestGitDiffTimestamp={
-                            threadViewModel.latestGitDiffTimestamp
-                          }
-                          isAgentWorking={isAgentCurrentlyWorking}
-                          threadChatUpdatedAt={
-                            threadViewModel.lifecycle.threadChatUpdatedAt
-                          }
-                          artifactDescriptors={artifactDescriptors}
-                          onOpenArtifact={handleOpenArtifact}
-                          onOpenRepoFile={onOpenRepoFile}
-                          redoDialogData={redoDialogData}
-                          forkDialogData={forkDialogData}
-                          toolProps={toolProps}
-                          hasCheckpoint={threadViewModel.hasCheckpoint}
-                          error={error || threadChat.errorMessageInfo}
-                          errorType={runtimeProps.errorType}
-                          errorInfo={runtimeProps.errorInfo}
-                          handleRetry={runtimeProps.handleRetry ?? handleRetry}
-                          isRetrying={runtimeProps.isRetrying ?? isRetrying}
-                          isReadOnly={isReadOnly}
-                          chatAgent={chatAgent}
-                          bootingSubstatus={
-                            thread.bootingSubstatus ?? undefined
-                          }
-                          metaSnapshot={threadViewModel.meta}
-                          reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
-                          threadChatId={threadChat.id}
-                          scheduleAt={threadChat.scheduleAt}
-                          threadChatStatus={threadChat.status}
-                        />
-                      </TerragonThreadErrorBoundary>
                       <div
-                        ref={messagesEndRef}
-                        className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
-                      />
+                        ref={transcriptRef}
+                        className="min-h-full flex flex-col [overflow-anchor:none]"
+                      >
+                        <TerragonThreadErrorBoundary
+                          threadStatus={effectiveThreadStatus}
+                          isReadOnly={isReadOnly}
+                        >
+                          <TerragonThreadRuntimeContent
+                            lifecycleMessages={
+                              threadViewModel.lifecycleMessages
+                            }
+                            threadStatus={effectiveThreadStatus}
+                            thread={threadWithViewModelStatus}
+                            latestGitDiffTimestamp={
+                              threadViewModel.latestGitDiffTimestamp
+                            }
+                            isAgentWorking={isAgentCurrentlyWorking}
+                            threadChatUpdatedAt={
+                              threadViewModel.lifecycle.threadChatUpdatedAt
+                            }
+                            artifactDescriptors={artifactDescriptors}
+                            onOpenArtifact={handleOpenArtifact}
+                            onOpenRepoFile={onOpenRepoFile}
+                            redoDialogData={redoDialogData}
+                            forkDialogData={forkDialogData}
+                            toolProps={toolProps}
+                            hasCheckpoint={threadViewModel.hasCheckpoint}
+                            error={error || threadChat.errorMessageInfo}
+                            errorType={runtimeProps.errorType}
+                            errorInfo={runtimeProps.errorInfo}
+                            handleRetry={
+                              runtimeProps.handleRetry ?? handleRetry
+                            }
+                            isRetrying={runtimeProps.isRetrying ?? isRetrying}
+                            isReadOnly={isReadOnly}
+                            chatAgent={chatAgent}
+                            bootingSubstatus={
+                              thread.bootingSubstatus ?? undefined
+                            }
+                            metaSnapshot={threadViewModel.meta}
+                            reattemptQueueAt={
+                              threadChat.reattemptQueueAt ?? null
+                            }
+                            threadChatId={threadChat.id}
+                            scheduleAt={threadChat.scheduleAt}
+                            threadChatStatus={threadChat.status}
+                          />
+                        </TerragonThreadErrorBoundary>
+                        <div
+                          ref={messagesEndRef}
+                          className="shrink-0 min-w-[24px] min-h-[24px] [overflow-anchor:auto]"
+                        />
+                      </div>
+                    </ScrollArea>
+                    {/* Scroll-to-bottom button floating above scroll area */}
+                    <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
+                      <button
+                        type="button"
+                        onClick={forceScrollToBottom}
+                        className={cn(
+                          "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          hasInitialized && !isAtBottom
+                            ? "opacity-100 translate-y-0 scale-100"
+                            : "opacity-0 translate-y-2 scale-95 pointer-events-none",
+                        )}
+                        aria-label="Scroll to bottom"
+                      >
+                        <ArrowDown className="size-4 text-muted-foreground" />
+                      </button>
                     </div>
-                  </ScrollArea>
-                  {/* Scroll-to-bottom button floating above scroll area */}
-                  <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none z-10">
-                    <button
-                      type="button"
-                      onClick={forceScrollToBottom}
-                      className={cn(
-                        "pointer-events-auto flex size-10 items-center justify-center rounded-full bg-background border border-border/60 shadow-sm transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        hasInitialized && !isAtBottom
-                          ? "opacity-100 translate-y-0 scale-100"
-                          : "opacity-0 translate-y-2 scale-95 pointer-events-none",
-                      )}
-                      aria-label="Scroll to bottom"
-                    >
-                      <ArrowDown className="size-4 text-muted-foreground" />
-                    </button>
                   </div>
-                </div>
+                )}
                 {!isReadOnly && (
                   <ChatPromptBox
                     threadId={thread.id}

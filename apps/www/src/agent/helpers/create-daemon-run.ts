@@ -39,7 +39,7 @@ export async function createDaemonRunCredentials({
   runId: string;
   tokenNonce: string;
   agent: AIAgent;
-  transportMode: "legacy" | "acp" | "codex-app-server";
+  transportMode: "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
   codexOAuthCredentialId?: string | null;
 }): Promise<{ token: string }> {

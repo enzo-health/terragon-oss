@@ -19,7 +19,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends any
 type RunContext = {
   runId: string;
   tokenNonce: string;
-  transportMode: "legacy" | "acp" | "codex-app-server";
+  transportMode: "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
   agent: AIAgent;
   codexOAuthCredentialId?: string | null;

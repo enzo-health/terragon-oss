@@ -3,7 +3,7 @@ import type { RuntimeAdapterContract } from "@terragon/daemon/shared";
 import { claudeCodeImplementationAdapter } from "./claude-code-implementation-adapter";
 import { codexImplementationAdapter } from "./codex-implementation-adapter";
 
-export type ImplementationTransportMode = "legacy" | "acp" | "codex-app-server";
+export type ImplementationTransportMode = "acp" | "codex-app-server";
 
 export type ImplementationDaemonMessage = {
   type: "claude";
@@ -34,7 +34,6 @@ export type ImplementationAdapterInput = {
   sessionId: string | null;
   codexPreviousResponseId: string | null;
   shouldUseCredits: boolean;
-  enableAcpTransport?: boolean;
 };
 
 export type ImplementationDispatch = {

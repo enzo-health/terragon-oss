@@ -28,6 +28,11 @@ export class TranscriptStore {
 
   getItems = (): readonly TranscriptItem[] => this.state.items;
 
+  getItem = (key: string): TranscriptItem | undefined => {
+    const position = this.state.index[key];
+    return position === undefined ? undefined : this.state.items[position];
+  };
+
   getItemVersion = (key: string): number => this.state.versions[key] ?? 0;
 
   getRevision = (): number => this.state.revision;

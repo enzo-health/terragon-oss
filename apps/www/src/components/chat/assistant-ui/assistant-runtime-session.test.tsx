@@ -162,7 +162,7 @@ describe("AssistantRuntimeSession", () => {
     expect(useAgUiRuntimeSpy).toHaveBeenCalledTimes(1);
     const opts = lastRuntimeOptions();
     expect(opts.agent).toBe(agent);
-    expect(opts.showThinking).toBe(false);
+    expect(opts.showThinking).toBe(true);
     expect(opts.historyLoadKey).toBe("chat-xyz:active");
     expect(opts.externalMessagesStrategy).toBe("merge-after-local-mutations");
     expect(opts.adapters?.history).toBeDefined();

@@ -24,7 +24,6 @@ import { DB } from "@terragon/shared/db";
 import type { AgentRuntimeProvider } from "@terragon/shared/db/types";
 import { upsertAgentRunContext } from "@terragon/shared/model/agent-run-context";
 import { getThreadReplayEntriesFromCanonicalEvents } from "@terragon/shared/model/agent-event-log";
-import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
 import {
   activeThreadStatuses,
   getActiveThreadCount,
@@ -272,14 +271,7 @@ export async function startAgentMessage({
       return { dispatchLaunched: false };
     }
   }
-  const [userCredentials, acpTransportEnabled] = await Promise.all([
-    getUserCredentials({ userId }),
-    getFeatureFlagForUser({
-      db,
-      userId,
-      flagName: "sandboxAgentAcpTransport" as never,
-    }),
-  ]);
+  const userCredentials = await getUserCredentials({ userId });
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   await withThreadChat({
     threadId,
@@ -865,7 +857,6 @@ export async function startAgentMessage({
             sessionId,
             codexPreviousResponseId,
             shouldUseCredits,
-            enableAcpTransport: acpTransportEnabled,
           });
           if (
             implementationDispatch.codexPreviousResponseId !==
