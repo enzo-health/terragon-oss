@@ -425,7 +425,7 @@ function isTerragonCustomPartEvent(event: BaseEvent): event is CustomEvent {
   return (
     event.type === EventType.CUSTOM &&
     typeof name === "string" &&
-    name === "terragon.data-part"
+    (name === "terragon.data-part" || name === "terragon.part")
   );
 }
 

@@ -1168,6 +1168,56 @@ function formatWebSearchResults(rawResults: unknown, query: string): string {
     .join("\n");
 }
 
+function fileChangeAction(
+  kind: "add" | "delete" | "update" | undefined,
+  movePath: string | undefined,
+): "added" | "deleted" | "modified" | "renamed" {
+  if (kind === "add") {
+    return "added";
+  }
+  if (kind === "delete") {
+    return "deleted";
+  }
+  if (movePath) {
+    return "renamed";
+  }
+  return "modified";
+}
+
+function parseCodexPlanEntriesFromText(text: string): Array<{
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+}> {
+  const entries: Array<{
+    content: string;
+    priority: "high" | "medium" | "low";
+    status: "pending" | "in_progress" | "completed";
+  }> = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    const checkbox = line.match(/^[-*]\s*\[([ xX~-])\]\s*(.+)$/);
+    if (checkbox) {
+      const mark = checkbox[1]!.toLowerCase();
+      const content = checkbox[2]!.trim();
+      const status: "pending" | "in_progress" | "completed" =
+        mark === "x"
+          ? "completed"
+          : mark === "~" || mark === "-"
+            ? "in_progress"
+            : "pending";
+      entries.push({ content, priority: "medium", status });
+    }
+  }
+  if (entries.length === 0) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0) {
+      entries.push({ content: trimmed, priority: "medium", status: "pending" });
+    }
+  }
+  return entries;
+}
+
 type AutoApprovalReviewItem = {
   id: string;
   type: "auto_approval_review";
@@ -1234,7 +1284,11 @@ export function parseCodexItem({
     command?: string;
     aggregated_output?: string;
     exit_code?: number;
-    changes?: Array<{ path: string }>;
+    changes?: Array<{
+      path: string;
+      kind?: "add" | "delete" | "update";
+      movePath?: string;
+    }>;
     query?: string;
     message?: string;
     error?: unknown;
@@ -1442,7 +1496,8 @@ export function parseCodexItem({
               input: {
                 files: changes.map((c) => ({
                   path: c.path,
-                  action: "modified",
+                  action: fileChangeAction(c.kind, c.movePath),
+                  ...(c.movePath ? { movePath: c.movePath } : {}),
                 })),
               },
             },
@@ -1572,6 +1627,31 @@ export function parseCodexItem({
     }
     case "auto_approval_review": {
       return transformAutoApprovalReview({ codexMsg, eventType });
+    }
+    case "plan": {
+      if (eventType !== "item.completed") {
+        return messages;
+      }
+      const entries = parseCodexPlanEntriesFromText(item.text ?? "");
+      if (entries.length === 0) {
+        return messages;
+      }
+      messages.push({
+        type: "codex-plan",
+        session_id: null,
+        entries,
+      });
+      return messages;
+    }
+    case "context_compaction": {
+      if (eventType !== "item.completed") {
+        return messages;
+      }
+      messages.push({
+        type: "codex-compaction",
+        session_id: null,
+      });
+      return messages;
     }
     default: {
       runtime.logger.warn("Unknown Codex item type", {

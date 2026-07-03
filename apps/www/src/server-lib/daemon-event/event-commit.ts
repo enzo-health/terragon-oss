@@ -1,5 +1,6 @@
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
 import type { RecoverableTerminal } from "@terragon/agent/canonical-events";
+import { TERRAGON_PART_RICH_KINDS } from "@terragon/agent/ag-ui-mapper";
 import {
   EventType,
   type BaseEvent,
@@ -443,6 +444,9 @@ function richPartRowsFromProviderRichEvents(
   const richPartInputs: AssistantMessagePartsInput[] = [];
   const timestamp = new Date();
   for (const event of events) {
+    if (TERRAGON_PART_RICH_KINDS.has(event.richKind)) {
+      continue;
+    }
     const dbMsgs = providerRichPartToDbMessages(event);
     let indexWithinEvent = 0;
     for (const dbMsg of dbMsgs) {

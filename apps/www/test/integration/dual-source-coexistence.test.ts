@@ -276,7 +276,10 @@ describe("dual-source rich rows — messages[] + canonicalEvents coexistence", (
     }
 
     const rows = captureAgUiRows();
-    const richPrefixes = [...providerRichEventIds].map((id) => `msg:${id}:`);
+    const richPrefixes = [...providerRichEventIds].flatMap((id) => [
+      `msg:${id}:`,
+      `${id}:`,
+    ]);
     const envelopePrefixes = [...envelopeEventIds].map((id) => `msg:${id}:`);
 
     const customRows = rows.filter((row) => row.event.type === "CUSTOM");

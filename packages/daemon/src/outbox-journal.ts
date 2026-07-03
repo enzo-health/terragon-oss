@@ -1,35 +1,9 @@
-/**
- * Append-only disk journal for the daemon's outbound event buffer.
- *
- * The daemon's message/delta/meta buffers are memory-only: a process death
- * (OOM, kill, sandbox restart) between "event enqueued" and "server acked the
- * POST" permanently loses every un-acked event, and the only backstop is the
- * server's ~15-minute deadline sweep marking the run failed. This journal
- * closes that window.
- *
- * Lifecycle: append (just before the POST) -> POST -> drop-on-ack -> replay on
- * restart. The unit journaled is the fully-formed `DaemonEventAPIBody` *with its
- * minted v2 envelope identity* (runId/eventId/seq) plus the daemon token used to
- * send it. Journaling at the send boundary (not raw pre-identity buffer entries)
- * is deliberate: the server dedupes on `(runId, eventId)` and CAS-rejects
- * duplicate terminals, so replaying the *same* identity is idempotent, whereas
- * replaying under a fresh identity would insert duplicate rows. The daemon token
- * is also runId-bound server-side, so a verbatim re-POST is the only replay that
- * survives the claim check.
- *
- * Durability is best-effort: a torn last line (crash mid-write) is skipped, and
- * any journal I/O error is caught and logged so the live flush path degrades to
- * memory-only rather than breaking. A lost tail only shrinks the recovery
- * window; it never corrupts.
- */
-
 import { promises as fsp } from "node:fs";
 import * as path from "node:path";
 import type { DaemonEventAPIBody } from "./shared";
 
 export const DEFAULT_OUTBOX_JOURNAL_DIR = "/tmp/terragon-daemon-outbox";
 
-/** Rewrite a file dropping acked entries once it grows past this many bytes. */
 const DEFAULT_COMPACT_THRESHOLD_BYTES = 1_000_000;
 
 const JOURNAL_RECORD_VERSION = 1 as const;
@@ -71,16 +45,11 @@ export type OutboxJournalOptions = {
   compactThresholdBytes?: number;
 };
 
-/** Filesystem-safe file name for a thread's journal. */
 function journalFileName(threadChatId: string): string {
   const safe = threadChatId.replace(/[^A-Za-z0-9_-]/g, "_");
   return `outbox-${safe}.jsonl`;
 }
 
-/**
- * Parse a JSONL journal buffer into records, tolerating a torn/partial final
- * line and any interior line that fails to parse (skipped, not fatal).
- */
 export function parseJournalBuffer(raw: string): OutboxJournalRecord[] {
   const records: OutboxJournalRecord[] = [];
   const lines = raw.split("\n");
@@ -93,7 +62,6 @@ export function parseJournalBuffer(raw: string): OutboxJournalRecord[] {
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      // Torn last line or otherwise corrupt entry: skip it.
       continue;
     }
     if (!parsed || typeof parsed !== "object") {
@@ -112,11 +80,6 @@ export function parseJournalBuffer(raw: string): OutboxJournalRecord[] {
   return records;
 }
 
-/**
- * Given a file's records, return the unacked event records deduplicated by
- * eventId (identity is reused across retries, so the same event can be
- * journaled more than once) in append order.
- */
 export function selectUnackedEvents(
   records: OutboxJournalRecord[],
 ): OutboxJournalEventRecord[] {
@@ -134,8 +97,6 @@ export function selectUnackedEvents(
     if (ackedEventIds.has(rec.eventId)) {
       continue;
     }
-    // Keep the latest journaled copy for a given identity; insertion order in a
-    // Map is preserved, so re-setting an existing key does not reorder it.
     byEventId.set(rec.eventId, rec);
   }
   return [...byEventId.values()];
@@ -147,9 +108,7 @@ export class OutboxJournal {
   private readonly logger: JournalLogger;
   private readonly compactThresholdBytes: number;
 
-  /** Per-file serialized write chain: guarantees ordered, non-overlapping I/O. */
   private readonly writeChains = new Map<string, Promise<void>>();
-  /** Approximate bytes appended since the last compaction, per file. */
   private readonly appendedBytes = new Map<string, number>();
   private ensuredDir = false;
 
@@ -177,11 +136,6 @@ export class OutboxJournal {
     this.ensuredDir = true;
   }
 
-  /**
-   * Enqueue `work` onto the given file's serialized chain. Failures are caught
-   * and logged; the chain never rejects, so one bad write cannot poison
-   * subsequent writes or surface into the live flush path.
-   */
   private enqueue(
     filePath: string,
     work: () => Promise<void>,
@@ -208,7 +162,6 @@ export class OutboxJournal {
     return next;
   }
 
-  /** Append an event record just before its POST. Fire-and-forget. */
   recordEvent(entry: {
     threadChatId: string;
     runId: string;
@@ -234,7 +187,6 @@ export class OutboxJournal {
     this.appendRecord(record);
   }
 
-  /** Append an ack marker after the server acked the POST. Fire-and-forget. */
   recordAck(entry: {
     threadChatId: string;
     runId: string;
@@ -275,11 +227,6 @@ export class OutboxJournal {
     );
   }
 
-  /**
-   * Rewrite a single file dropping acked events and all ack markers. Runs inside
-   * the file's write chain, so no concurrent append can interleave. If nothing
-   * survives, the file is removed.
-   */
   private async compactFileInline(
     filePath: string,
     threadChatId: string,
@@ -308,17 +255,10 @@ export class OutboxJournal {
     });
   }
 
-  /** Await all pending writes. Used by shutdown and by tests. */
   async flush(): Promise<void> {
     await Promise.allSettled([...this.writeChains.values()]);
   }
 
-  /**
-   * Read every journal file and return the unacked events across all threads.
-   * Per-thread append order (== seq order) is preserved within each file; the
-   * caller replays each thread's events in that order. A file that fails to read
-   * or parse degrades to "no recoverable events" rather than throwing.
-   */
   async loadUnacked(): Promise<OutboxJournalEventRecord[]> {
     if (!this.enabled) {
       return [];
@@ -327,7 +267,6 @@ export class OutboxJournal {
     try {
       fileNames = await fsp.readdir(this.dir);
     } catch {
-      // Directory does not exist yet: nothing to recover.
       return [];
     }
     const out: OutboxJournalEventRecord[] = [];
@@ -349,7 +288,6 @@ export class OutboxJournal {
     return out;
   }
 
-  /** Await pending writes, then compact every file. Called on clean shutdown. */
   async shutdown(): Promise<void> {
     if (!this.enabled) {
       return;

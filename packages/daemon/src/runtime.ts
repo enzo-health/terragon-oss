@@ -27,12 +27,6 @@ import {
   RuntimeAdapterOperation,
 } from "./shared";
 
-/**
- * Abort a daemon `serverPost` that has not completed in this many milliseconds.
- * Without it a hung POST (connection accepted, no response) blocks flushing
- * indefinitely; aborting surfaces the stall as a normal failure that the
- * per-thread retry/backoff machinery re-buffers and retries.
- */
 const SERVER_POST_TIMEOUT_MS = 60_000;
 
 function hasDaemonEventEnvelopeV2(body: DaemonEventAPIBody): boolean {

@@ -1920,3 +1920,92 @@ describe("estimateTurnStartRequestSizeChars", () => {
     expect(size).toBeGreaterThan(CODEX_TURN_START_MAX_INPUT_CHARS);
   });
 });
+
+describe("parseCodexLine — P0 protocol additions", () => {
+  const mockRuntime: IDaemonRuntime = {
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+    },
+    execSync: vi.fn(),
+    readFileSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    appendFileSync: vi.fn(),
+  } as any;
+
+  test("file_change maps kind to add/delete/modified/rename actions", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "patch-1",
+        type: "file_change",
+        status: "completed",
+        changes: [
+          { path: "new.ts", kind: "add" },
+          { path: "gone.ts", kind: "delete" },
+          { path: "edited.ts", kind: "update" },
+          { path: "old.ts", kind: "update", movePath: "renamed.ts" },
+        ],
+      },
+    });
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    const assistant = results.find((r) => r.type === "assistant");
+    expect(assistant).toBeDefined();
+    const toolUse = (assistant as any).message.content[0];
+    expect(toolUse.name).toBe("FileChange");
+    expect(toolUse.input.files).toEqual([
+      { path: "new.ts", action: "added" },
+      { path: "gone.ts", action: "deleted" },
+      { path: "edited.ts", action: "modified" },
+      { path: "old.ts", action: "renamed", movePath: "renamed.ts" },
+    ]);
+  });
+
+  test("plan item is parsed into a codex-plan checklist", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "plan-1",
+        type: "plan",
+        text: "- [ ] first step\n- [x] second step",
+      },
+    });
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    const plan = results.find((r) => r.type === "codex-plan");
+    expect(plan).toBeDefined();
+    expect((plan as any).entries).toEqual([
+      { content: "first step", priority: "medium", status: "pending" },
+      { content: "second step", priority: "medium", status: "completed" },
+    ]);
+  });
+
+  test("plan item without checklist syntax falls back to a single entry", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: { id: "plan-2", type: "plan", text: "Refactor the auth module" },
+    });
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    const plan = results.find((r) => r.type === "codex-plan");
+    expect((plan as any).entries).toEqual([
+      {
+        content: "Refactor the auth module",
+        priority: "medium",
+        status: "pending",
+      },
+    ]);
+  });
+
+  test("context_compaction item becomes a codex-compaction divider message", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: { id: "cc-1", type: "context_compaction" },
+    });
+    const results = parseCodexLine({ line, runtime: mockRuntime });
+    expect(results).toContainEqual({
+      type: "codex-compaction",
+      session_id: null,
+    });
+  });
+});

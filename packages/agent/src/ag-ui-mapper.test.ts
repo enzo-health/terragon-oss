@@ -17,6 +17,7 @@ import {
   type OperationalRunStartedEvent,
   type PermissionRequestEvent,
   type PermissionResponseEvent,
+  type ProviderRichPartEvent,
   type ReasoningMessageEvent,
   type ToolCallProgressEvent as CanonicalToolCallProgressEvent,
   type ToolCallResultEvent as CanonicalToolCallResultEvent,
@@ -383,6 +384,68 @@ describe("mapCanonicalEventToAgui", () => {
       const result = mapCanonicalEventToAgui(event);
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("provider-rich-part", () => {
+    it("emits a terragon.part CUSTOM event for a visual-standalone richKind", () => {
+      const event: ProviderRichPartEvent = {
+        ...baseEnvelope,
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-plan",
+        payload: {
+          entries: [
+            {
+              id: "step-1",
+              content: "Run tests",
+              priority: "medium",
+              status: "pending",
+            },
+          ],
+        },
+      };
+
+      const result = mapCanonicalEventToAgui(event);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: EventType.CUSTOM,
+        name: "terragon.part",
+        value: {
+          richKind: "acp-plan",
+          payload: {
+            entries: [
+              {
+                id: "step-1",
+                content: "Run tests",
+                priority: "medium",
+                status: "pending",
+              },
+            ],
+          },
+        },
+      });
+    });
+
+    it("leaves TOOL/DBMessage-routed richKinds to server synthesis", () => {
+      const event: ProviderRichPartEvent = {
+        ...baseEnvelope,
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-tool-call",
+        payload: {
+          toolCallId: "acp-tool-7",
+          title: "Read file",
+          kind: "read",
+          status: "completed",
+          locations: [],
+          rawInput: "{}",
+          progressChunks: [],
+        },
+      };
+
+      expect(mapCanonicalEventToAgui(event)).toEqual([]);
     });
   });
 });

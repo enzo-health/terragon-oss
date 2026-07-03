@@ -66,6 +66,27 @@ describe("buildCanonicalEventsForBatch", () => {
     expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
   });
 
+  it("maps codex-compaction to a codex-context-compaction rich part", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 3,
+        messages: [{ type: "codex-compaction", session_id: null }],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-context-compaction",
+        payload: {},
+      }),
+    ]);
+    for (const event of result.canonicalEvents) {
+      expect(CanonicalEventSchema.safeParse(event).success).toBe(true);
+    }
+  });
+
   it("emits run-started once then suppresses it on the next batch", () => {
     const first = buildCanonicalEventsForBatch(
       baseParams({
@@ -202,8 +223,6 @@ describe("buildCanonicalEventsForBatch", () => {
       }),
     );
 
-    // Text is delta-owned and suppressed; the tool_use still needs a canonical
-    // event.
     expect(result.canonicalEvents).toEqual([
       expect.objectContaining({
         type: "tool-call-start",

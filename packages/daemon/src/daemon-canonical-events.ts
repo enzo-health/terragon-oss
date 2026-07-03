@@ -140,25 +140,9 @@ export type BuildCanonicalEventsParams = {
   nextCanonicalSeq: number;
   canonicalRunStartedEmitted: boolean;
   canonicalTerminalEmitted: boolean;
-  /**
-   * True once the run's delta pipeline has streamed any assistant text/thinking
-   * as durable deltas. When set, this batch's assistant text/thinking blocks are
-   * already the single persisted representation (delta rows under the streaming
-   * message id), so the builder emits NO `assistant-message` event for them —
-   * a duplicate would stack identical text in the transcript. Owned by the
-   * daemon's per-run state and flipped in `enqueueDelta`; tool_use / tool_result
-   * blocks and the run-terminal are still emitted. This replaces the removed
-   * per-message `_codexItemId` / `_claudeStreamedBlockIndices` flags.
-   */
   streamedAssistantText: boolean;
   threadId: string;
   threadChatId: string;
-  /**
-   * Timezone used only to compute a recoverable rate-limit's `retryAfterMs`;
-   * recoverable-KIND detection is timezone-independent. Defaults to the
-   * runtime's resolved timezone (matching the daemon's `getCurrentTimezone()`),
-   * so the off-limits daemon.ts call site needs no change.
-   */
   timezone?: string;
   messages: ClaudeMessage[];
   onMalformedBlock?: (info: {
@@ -231,6 +215,14 @@ function buildProviderRichPartEvent(
         type: "provider-rich-part",
         richKind: "codex-error",
         payload: { message: message.message },
+      };
+    case "codex-compaction":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-context-compaction",
+        payload: {},
       };
     case "acp-terminal":
       return {
@@ -583,16 +575,8 @@ export function buildCanonicalEventsForBatch(
       continue;
     }
     if (message.type === "assistant") {
-      // When the run's delta pipeline is streaming assistant text/thinking,
-      // those blocks are the single persisted representation (delta rows under
-      // the streaming message id). Emit no `assistant-message` event for them —
-      // only tool_use / tool_result blocks (and the run-terminal) still need
-      // canonical events. Every active streaming transport (ACP, Codex
-      // app-server, legacy Claude stream-json) streams every text/thinking
-      // block, so suppressing all of them matches what the deltas already own.
       const content = message.message.content;
       if (typeof content === "string") {
-        // String content maps to a single text block.
         if (streamedAssistantText) {
           continue;
         }
@@ -669,7 +653,6 @@ export function buildCanonicalEventsForBatch(
         const blockRecord = toRecord(block);
         const blockType = readString(blockRecord, "type");
         if (blockType === "text" || blockType === "thinking") {
-          // Skip text/thinking when the delta pipeline already owns them.
           if (streamedAssistantText) {
             continue;
           }
@@ -754,10 +737,6 @@ export function buildCanonicalEventsForBatch(
     const terminal = deriveRunTerminalFromMessages(messages);
     if (terminal) {
       const baseEvent = allocateBaseEvent();
-      // Carry the recoverable classification as typed data (rate-limit,
-      // OAuth-revoked, context-exhausted) so the server defers to the recovery
-      // path off the field instead of re-parsing raw messages (K2). Absent when
-      // the batch is not a recoverable failure.
       const recoverable = classifyRecoverableTerminal({
         messages,
         agent,

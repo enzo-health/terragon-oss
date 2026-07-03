@@ -166,7 +166,7 @@ describe("daemon runtime event commit planning", () => {
     ]);
   });
 
-  it("sources rich-part rows from provider-rich-part canonical events and ignores messages[]", () => {
+  it("emits a terragon.part row for a provider-rich-part plan carrier and leaves richPartRows empty", () => {
     const plan = buildPreLegacyAgUiCommitPlan({
       canPersistCanonicalEvents: true,
       envelopeV2,
@@ -179,9 +179,27 @@ describe("daemon runtime event commit planning", () => {
       runId: "run-1",
     });
 
-    expect(plan.richPartRows.map((row) => row.eventId)).toEqual([
-      "msg:canonical-rich-plan:msg:0:CUSTOM:0",
+    expect(plan.richPartRows).toEqual([]);
+    expect(plan.canonicalRows.map((row) => row.eventId)).toEqual([
+      "canonical-start:RUN_STARTED:0",
+      "canonical-rich-plan:CUSTOM:0",
     ]);
+    const planRow = plan.canonicalRows[1]!;
+    expect(planRow.event.type).toBe(EventType.CUSTOM);
+    expect(Reflect.get(planRow.event, "name")).toBe("terragon.part");
+    expect(Reflect.get(planRow.event, "value")).toEqual({
+      richKind: "acp-plan",
+      payload: {
+        entries: [
+          {
+            id: "step-1",
+            content: "Run tests",
+            priority: "medium",
+            status: "pending",
+          },
+        ],
+      },
+    });
   });
 
   it("expands an ACP tool-call carrier to tool-call rows keyed on the canonical eventId", () => {

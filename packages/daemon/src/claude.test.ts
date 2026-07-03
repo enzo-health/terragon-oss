@@ -383,9 +383,6 @@ describe("Task 4.6: MCP tool metadata on assistant tool_use blocks", () => {
     ).toBe(true);
   });
 
-  // Text/thinking are streamed as deltas; the parser leaves the assistant
-  // message unannotated. Delta-vs-canonical dedup is owned by the daemon run
-  // state (`streamedAssistantText`), not per-message flags.
   it("streams text/thinking deltas without annotating the assistant message", () => {
     const parser = makeParser();
 

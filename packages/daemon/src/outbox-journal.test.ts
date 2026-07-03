@@ -58,7 +58,7 @@ describe("parseJournalBuffer", () => {
       "",
       "   ",
       "not json",
-      JSON.stringify({ t: "event" }), // missing required fields
+      JSON.stringify({ t: "event" }),
       JSON.stringify({
         v: 1,
         t: "ack",
@@ -78,7 +78,6 @@ describe("selectUnackedEvents", () => {
   it("drops acked events and dedupes reused identity, preserving order", () => {
     const records = parseJournalBuffer(
       [
-        // event 0 journaled twice (retry reused identity), then acked
         JSON.stringify({
           v: 1,
           t: "event",
@@ -103,7 +102,6 @@ describe("selectUnackedEvents", () => {
           eventId: "e0",
           seq: 0,
         }),
-        // event 1 and 2 unacked
         JSON.stringify({
           v: 1,
           t: "event",
@@ -219,7 +217,6 @@ describe("OutboxJournal", () => {
       token: "tok",
       body: makeBody({ eventId: "e1", seq: 1 }),
     });
-    // ack e0 with a tiny threshold -> triggers inline compaction
     journal.recordAck({
       threadChatId: "chat-1",
       runId: "run-1",
@@ -231,7 +228,6 @@ describe("OutboxJournal", () => {
     const file = join(dir, "outbox-chat-1.jsonl");
     const raw = await fsp.readFile(file, "utf8");
     const records = parseJournalBuffer(raw);
-    // Compaction rewrites the file to only the surviving unacked event, no acks.
     expect(records).toHaveLength(1);
     expect(records[0]!.t).toBe("event");
     expect(records[0]!.eventId).toBe("e1");
@@ -283,7 +279,6 @@ describe("OutboxJournal", () => {
   });
 
   it("degrades to memory-only when journal I/O fails, never throwing", async () => {
-    // Point the journal at a path whose parent is a file, so mkdir fails.
     const filePath = join(dir, "not-a-dir");
     await fsp.writeFile(filePath, "x", "utf8");
     const badDir = join(filePath, "journal");
@@ -293,7 +288,6 @@ describe("OutboxJournal", () => {
       logger: { error: (_m, d) => errors.push(d) },
     });
 
-    // recordEvent is fire-and-forget: must not throw synchronously.
     expect(() =>
       journal.recordEvent({
         threadChatId: "chat-1",
@@ -304,9 +298,7 @@ describe("OutboxJournal", () => {
         body: makeBody(),
       }),
     ).not.toThrow();
-    // flush awaits the failed write without rejecting.
     await expect(journal.flush()).resolves.toBeUndefined();
-    // loadUnacked on a missing dir degrades to [].
     expect(await journal.loadUnacked()).toEqual([]);
     expect(errors.length).toBeGreaterThan(0);
   });
@@ -341,7 +333,6 @@ describe("daemon outbox journal replay on restart", () => {
   });
 
   it("re-POSTs journaled unacked events verbatim before accepting new work", async () => {
-    // Pre-seed the journal with two unacked events for one thread + one acked.
     const journal = new OutboxJournal({ dir });
     const body0 = makeBody({ eventId: "e0", seq: 0 });
     const body1 = makeBody({ eventId: "e1", seq: 1 });
@@ -382,7 +373,6 @@ describe("daemon outbox journal replay on restart", () => {
       .spyOn(runtime, "serverPost")
       .mockResolvedValue(undefined);
 
-    // Fresh journal instance (simulating a new process) reading the same dir.
     const replayJournal = new OutboxJournal({ dir });
     const daemon = new TerragonDaemon({
       runtime,
@@ -390,13 +380,11 @@ describe("daemon outbox journal replay on restart", () => {
     });
     await daemon.start();
 
-    // Only the two unacked events replay, in order, with their original token.
     expect(serverPostMock).toHaveBeenCalledTimes(2);
     expect(serverPostMock.mock.calls[0]![0].eventId).toBe("e0");
     expect(serverPostMock.mock.calls[0]![1]).toBe("tok-a");
     expect(serverPostMock.mock.calls[1]![0].eventId).toBe("e1");
 
-    // After a successful replay the events are acked -> nothing left to recover.
     await replayJournal.flush();
     expect(await replayJournal.loadUnacked()).toEqual([]);
   });

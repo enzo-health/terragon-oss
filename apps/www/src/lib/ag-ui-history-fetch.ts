@@ -42,7 +42,7 @@ function isTerragonCustomPartEvent(
     isRecord(value) &&
     value.type === EventType.CUSTOM &&
     typeof value.name === "string" &&
-    value.name === "terragon.data-part"
+    (value.name === "terragon.data-part" || value.name === "terragon.part")
   );
 }
 

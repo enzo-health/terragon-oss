@@ -70,8 +70,10 @@ function isTranscriptEvent(event: BaseEvent): boolean {
     case EventType.TOOL_CALL_END:
     case EventType.TOOL_CALL_RESULT:
       return true;
-    case EventType.CUSTOM:
-      return Reflect.get(event, "name") === "terragon.data-part";
+    case EventType.CUSTOM: {
+      const name = Reflect.get(event, "name");
+      return name === "terragon.data-part" || name === "terragon.part";
+    }
     default:
       return false;
   }
