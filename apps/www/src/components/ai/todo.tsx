@@ -114,8 +114,8 @@ export function TodoItemIcon({
         "inline-flex size-4 shrink-0 items-center justify-center rounded-full ring ring-border",
         "in-data-[status=progress]:text-foreground in-data-[status=progress]:ring-transparent",
         "in-data-[status=completed]:bg-primary in-data-[status=completed]:text-primary-foreground in-data-[status=completed]:ring-primary",
-        "transition-all duration-150 relative",
-        "[&>svg]:absolute [&>svg]:transition-all",
+        "transition-[color,background-color,box-shadow] duration-150 relative",
+        "[&>svg]:absolute [&>svg]:transition-[opacity,transform]",
         className,
       )}
       {...props}
@@ -176,7 +176,7 @@ export function TodoItemLabel({
       className={cn(
         "min-w-0 flex-1 leading-5 text-foreground",
         "in-data-[status=completed]:text-muted-foreground in-data-[status=completed]:line-through",
-        "transition-all",
+        "transition-colors",
         className,
       )}
       {...props}

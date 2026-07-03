@@ -87,7 +87,7 @@ export function ChatError({
     !isReadOnly
   );
   return (
-    <div className="p-2 border border-error/70 bg-error/12 rounded-md text-sm animate-in fade-in slide-in-from-bottom-1 duration-200">
+    <div className="p-3 ring ring-error/40 bg-error/5 rounded-outer text-sm animate-in fade-in slide-in-from-bottom-1 duration-200">
       <div className="flex gap-2 mb-1 justify-between items-start">
         <div className="min-w-0 flex-1">
           <ChatContent errorType={errorType} errorInfo={errorInfo} />

@@ -68,7 +68,7 @@ export function QueuedMessages({
                       variant="ghost"
                       size="icon"
                       aria-label="Remove queued message"
-                      className="size-6 hover:bg-transparent cursor-pointer shrink-0 py-5 -ml-8 z-10 opacity-75 hover:opacity-100"
+                      className="size-10 hover:bg-sunken/60 cursor-pointer shrink-0 -ml-10 z-10 opacity-75 hover:opacity-100"
                       onClick={() => onRemove?.(index)}
                     >
                       <X className="size-4" />

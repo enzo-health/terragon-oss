@@ -84,7 +84,9 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
           <Icon />
         </ToolIcon>
         <ToolName>{name || "Tool"}</ToolName>
-        {preview ? <ToolLabel>{preview}</ToolLabel> : null}
+        {preview ? (
+          <ToolLabel className="font-mono">{preview}</ToolLabel>
+        ) : null}
       </ToolTrigger>
       <ToolContent keepMounted>
         <Task>
@@ -148,9 +150,9 @@ export const TerminalLeaf: Leaf<"terminal"> = ({ item }) => {
           <pre
             data-slot="terminal-body"
             className={cn(
-              "max-h-80 overflow-auto rounded bg-surface-elevated ring ring-border p-3",
+              "max-h-80 overflow-auto rounded bg-surface-dark ring ring-border p-3",
               "text-sm font-mono whitespace-pre-wrap wrap-break-word",
-              state === "error" ? "text-destructive" : "text-foreground",
+              state === "error" ? "text-red-400" : "text-on-dark",
             )}
           >
             {item.chunks.map((chunk, index) => (
@@ -158,9 +160,9 @@ export const TerminalLeaf: Leaf<"terminal"> = ({ item }) => {
                 key={`${chunk.streamSeq}-${index}`}
                 className={
                   chunk.stream === "stderr"
-                    ? "text-destructive"
+                    ? "text-red-400"
                     : chunk.stream === "interaction"
-                      ? "text-muted-foreground"
+                      ? "text-on-dark-soft"
                       : undefined
                 }
               >

@@ -18,6 +18,7 @@ export function Tool({ state, className, ...props }: ToolProps) {
       data-state={state}
       className={cn(
         "group/tool flex flex-col rounded-outer bg-surface border border-border",
+        "transition-[border-color,box-shadow] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
         "animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]",
         "data-[state=approval]:ring-2",
         "data-[state=approval]:ring-primary/40",

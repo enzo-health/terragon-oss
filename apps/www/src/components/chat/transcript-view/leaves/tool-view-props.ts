@@ -107,11 +107,6 @@ export type ToolViewProps = {
   readonly defaultOpen: boolean;
 };
 
-/**
- * Plain view props for one tool-call leaf. `errorText` carries the failure
- * result only; the `error` state already styles the card, so a failed call with
- * no result body shows no body rather than mislabeling its input args.
- */
 export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
   const { toolName, argsText, result, active, failed } = input;
   const resultText = toolCallResultText(result);
@@ -123,6 +118,6 @@ export const toolViewProps = (input: ToolViewInput): ToolViewProps => {
     stream: { text: toolArgsDisplayText(argsText, active), streaming: active },
     resultText,
     errorText: state === "error" ? resultText : "",
-    defaultOpen: active,
+    defaultOpen: failed,
   };
 };

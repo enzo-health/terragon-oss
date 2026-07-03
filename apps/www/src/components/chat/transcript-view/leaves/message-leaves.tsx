@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -33,6 +33,10 @@ export const TextLeaf: Leaf<"text"> = ({ item }) => (
 
 export const ReasoningLeaf: Leaf<"reasoning"> = ({ item }) => {
   const [open, setOpen] = useState(item.streaming);
+
+  useEffect(() => {
+    if (!item.streaming) setOpen(false);
+  }, [item.streaming]);
 
   if (item.steps.length > 0) {
     return (
@@ -68,7 +72,7 @@ export const ReasoningLeaf: Leaf<"reasoning"> = ({ item }) => {
 export const UserLeaf: Leaf<"user"> = ({ item }) => (
   <Message
     type="outgoing"
-    className="py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)] motion-reduce:animate-none"
+    className="mt-4 py-2 animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)] motion-reduce:animate-none sm:mt-6"
   >
     <MessageContent>
       <MessageText
