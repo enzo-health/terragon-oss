@@ -24,18 +24,10 @@ import {
 import { useAtomValue } from "jotai";
 import { useAgentsToDisplay, userSettingsAtom } from "@/atoms/user";
 import React from "react";
-import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer";
-import { Check, SettingsIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
+import { Switch } from "@/components/ai/switch";
 import { AgentIcon } from "@/components/chat/agent-icon";
 import { AGENT_VERSION } from "@terragon/agent/versions";
 
@@ -63,6 +55,7 @@ function MultiAgentModeToggle({
       </label>
       <Switch
         id="multi-agent-toggle"
+        size="sm"
         checked={isMultiAgentMode}
         onCheckedChange={(checked) => {
           setIsMultiAgentMode(!!checked);
@@ -93,7 +86,6 @@ function ModelSelectorInner({
   forcedAgent: AIAgent | null;
   forcedAgentVersion: number | null;
 }) {
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
   const currentlySelectedModels = useMemo(() => {
     const models: AIModel[] = [];
@@ -133,10 +125,10 @@ function ModelSelectorInner({
 
   const [agentGroups, setAgentGroups] = useState(agentGroupsRaw);
   useEffect(() => {
-    if (!isSelectorOpen && !isDrawerOpen) {
+    if (!isSelectorOpen) {
       setAgentGroups(agentGroupsRaw);
     }
-  }, [agentGroupsRaw, isDrawerOpen, isSelectorOpen]);
+  }, [agentGroupsRaw, isSelectorOpen]);
 
   const triggerLabel = useMemo(() => {
     const defaultLabel = (
@@ -182,12 +174,6 @@ function ModelSelectorInner({
   }, [isMultiAgentMode, selectedModels, selectedModel, forcedAgent]);
 
   const triggerClassName = cn(
-    "h-8 w-fit max-w-full min-w-0 rounded-md px-1.5",
-    "border-none shadow-none text-mid gap-0.5 hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground dark:bg-transparent",
-    className,
-  );
-
-  const nauvalTriggerClassName = cn(
     "h-8 w-auto max-w-full min-w-0 rounded-md px-1.5 gap-1 text-muted-foreground",
     "hover:not-[[data-disabled]]:bg-muted hover:text-foreground",
     "data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
@@ -195,150 +181,53 @@ function ModelSelectorInner({
   );
 
   return (
-    <>
-      <Drawer
-        open={isDrawerOpen}
-        onOpenChange={setIsDrawerOpen}
-        dismissible
-        modal
-      >
-        <DrawerTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(triggerClassName, "flex sm:hidden")}
-            aria-expanded={isDrawerOpen}
-            aria-haspopup="dialog"
-          >
-            {triggerLabel}
-          </Button>
-        </DrawerTrigger>
-        <DrawerContent>
-          <DrawerHeader className="text-left pb-2 flex-row justify-between">
-            <DrawerTitle>Select Model</DrawerTitle>
-            {supportsMultiAgentPromptSubmission && (
-              <MultiAgentModeToggle
-                isMultiAgentMode={isMultiAgentMode}
-                setIsMultiAgentMode={setIsMultiAgentMode}
-              />
-            )}
-          </DrawerHeader>
-          <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
-            {agentGroups.map((group) => {
-              return (
-                <div key={group.agent} className="space-y-2">
-                  <p className="text-[12px] font-medium text-mid uppercase tracking-[0.13em]">
-                    {group.label}
-                  </p>
-                  <div className="space-y-1">
-                    {group.models.map((model) => {
-                      const isSelected = isMultiAgentMode
-                        ? !!selectedModels[model]
-                        : selectedModel === model;
-                      if (isMultiAgentMode) {
-                        const checkboxId = `model-selector-checkbox-${model}`;
-                        return (
-                          <label
-                            key={model}
-                            htmlFor={checkboxId}
-                            className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                          >
-                            <Checkbox
-                              id={checkboxId}
-                              checked={isSelected}
-                              onClick={() => {
-                                setSelectedModel({ model, action: "toggle" });
-                              }}
-                            />
-                            <div className="flex flex-col gap-1">
-                              <ModelDisplay model={model} />
-                            </div>
-                          </label>
-                        );
-                      }
-                      return (
-                        <button
-                          key={model}
-                          type="button"
-                          onClick={() => {
-                            setSelectedModel({ model });
-                            setIsDrawerOpen(false);
-                          }}
-                          className="flex w-full gap-2 items-start justify-start rounded-md border border-transparent px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                        >
-                          <Check
-                            className={cn(
-                              "size-4",
-                              isSelected ? "opacity-100" : "opacity-0",
-                            )}
-                          />
-                          <div className="flex flex-col gap-1">
-                            <ModelDisplay model={model} />
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="p-4 border-t">
-            <AgentConfigButton forcedAgent={forcedAgent} />
-          </div>
-        </DrawerContent>
-      </Drawer>
-      <Select
-        value={selectedModel ?? undefined}
-        open={isSelectorOpen}
-        onOpenChange={setIsSelectorOpen}
-        isItemEqualToValue={(a: unknown, b: unknown) =>
-          optionValue(a) === optionValue(b)
+    <Select
+      value={selectedModel ?? undefined}
+      open={isSelectorOpen}
+      onOpenChange={setIsSelectorOpen}
+      isItemEqualToValue={(a: unknown, b: unknown) =>
+        optionValue(a) === optionValue(b)
+      }
+      onValueChange={(value: unknown) => {
+        if (!isMultiAgentMode) {
+          setSelectedModel({ model: optionValue(value) as AIModel });
         }
-        onValueChange={(value: unknown) => {
-          if (!isMultiAgentMode) {
-            setSelectedModel({ model: optionValue(value) as AIModel });
-          }
-        }}
-      >
-        <SelectTrigger
-          variant="plain"
-          className={cn(nauvalTriggerClassName, "hidden sm:flex")}
-        >
-          {typeof triggerLabel === "string" ? (
-            <span>{triggerLabel}</span>
-          ) : (
-            triggerLabel
-          )}
-        </SelectTrigger>
-        <SelectPopup side="top" className="w-fit">
-          {supportsMultiAgentPromptSubmission && (
-            <MultiAgentModeToggle
-              isMultiAgentMode={isMultiAgentMode}
-              setIsMultiAgentMode={setIsMultiAgentMode}
-              className="flex items-center gap-2 justify-between px-2 py-2 border-b w-[180px] sm:w-full"
-            />
-          )}
-          <SelectList>
-            {agentGroups.map((group, index) => (
-              <React.Fragment key={group.agent}>
-                <ModelGroup
-                  group={group}
-                  isMultiAgentMode={isMultiAgentMode}
-                  selectedModels={selectedModels}
-                  setSelectedModel={setSelectedModel}
-                />
-                {index < agentGroups.length - 1 && <SelectSeparator />}
-              </React.Fragment>
-            ))}
-          </SelectList>
-          <SelectSeparator />
-          <div className="px-2 py-1.5">
-            <AgentConfigButton forcedAgent={forcedAgent} />
-          </div>
-        </SelectPopup>
-      </Select>
-    </>
+      }}
+    >
+      <SelectTrigger variant="plain" className={triggerClassName}>
+        {typeof triggerLabel === "string" ? (
+          <span>{triggerLabel}</span>
+        ) : (
+          triggerLabel
+        )}
+      </SelectTrigger>
+      <SelectPopup side="top" className="w-fit">
+        {supportsMultiAgentPromptSubmission && (
+          <MultiAgentModeToggle
+            isMultiAgentMode={isMultiAgentMode}
+            setIsMultiAgentMode={setIsMultiAgentMode}
+            className="flex items-center gap-2 justify-between px-2 py-2 border-b w-[180px] sm:w-full"
+          />
+        )}
+        <SelectList>
+          {agentGroups.map((group, index) => (
+            <React.Fragment key={group.agent}>
+              <ModelGroup
+                group={group}
+                isMultiAgentMode={isMultiAgentMode}
+                selectedModels={selectedModels}
+                setSelectedModel={setSelectedModel}
+              />
+              {index < agentGroups.length - 1 && <SelectSeparator />}
+            </React.Fragment>
+          ))}
+        </SelectList>
+        <SelectSeparator />
+        <div className="px-2 py-1.5">
+          <AgentConfigButton forcedAgent={forcedAgent} />
+        </div>
+      </SelectPopup>
+    </Select>
   );
 }
 
@@ -376,6 +265,7 @@ function ModelGroup({
       <SelectGroupLabel>{group.label}</SelectGroupLabel>
       {group.models.map((model: AIModel) => {
         const isSelected = isMultiAgentMode && !!selectedModels[model];
+        const agent = modelToAgent(model)!;
         if (isMultiAgentMode) {
           return (
             <div
@@ -386,20 +276,20 @@ function ModelGroup({
                 setSelectedModel({ model, action: "toggle" });
               }}
               className={cn(
-                "relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none transition-colors",
-                "hover:bg-accent hover:text-accent-foreground",
+                "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded py-1.5 px-3 text-sm outline-none transition-colors",
+                "hover:bg-accent",
               )}
             >
-              <Checkbox checked={!!isSelected} className="mr-2" />
-              <div className="flex flex-col items-start w-full">
-                <ModelDisplay model={model} />
-              </div>
+              <Checkbox checked={!!isSelected} />
+              <AgentIcon agent={agent} sessionId={null} />
+              <ModelDisplay model={model} />
             </div>
           );
         }
 
         return (
           <SelectItem key={model} value={model}>
+            <AgentIcon agent={agent} sessionId={null} />
             <ModelDisplay model={model} />
           </SelectItem>
         );
