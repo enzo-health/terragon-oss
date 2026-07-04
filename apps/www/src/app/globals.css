@@ -447,6 +447,7 @@
   --color-inflight: var(--info);
   --color-diff-added: var(--success);
   --color-diff-removed: var(--destructive);
+  --color-scrollbar: var(--mid);
   /* Disabled fill for buttons / inputs / chips. The button base class
      references `disabled:bg-disabled` — without this registration that
      utility silently emits nothing and the variant's bg leaks through,
@@ -815,6 +816,28 @@
     opacity: 0;
   }
   40% {
+    opacity: 1;
+  }
+}
+
+@keyframes player-waveform-loading {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes generated-image-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
     opacity: 1;
   }
 }
