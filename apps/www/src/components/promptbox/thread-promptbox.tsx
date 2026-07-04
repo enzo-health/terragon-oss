@@ -132,7 +132,7 @@ export function getThreadPromptPlaceholder(params: {
   if (status !== null && isAgentRunLive(status)) {
     return WORKING_QUEUE_PLACEHOLDER;
   }
-  return "Describe a task — @ to reference files, / for commands";
+  return "Ask anything. Type / for commands, @ to mention.";
 }
 
 export const ThreadPromptBox = React.forwardRef<

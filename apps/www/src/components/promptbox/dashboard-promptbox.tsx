@@ -80,7 +80,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     if (!repoFullName || !branchName) {
       return "Pick a repo and branch to start a task…";
     }
-    return "Describe a task — @ to reference files, Enter to send";
+    return "Ask anything. Type / for commands, @ to mention.";
   }, [placeholder, repoFullName, branchName]);
 
   const wrappedHandleSubmit: UsePromptBoxHandleSubmit = useCallback(

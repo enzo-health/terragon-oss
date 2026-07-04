@@ -173,7 +173,7 @@ export function SimplePromptBox({
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
-          "relative flex flex-col gap-1 rounded-[var(--radius-outer)] border border-border bg-surface shadow-xs transition-[box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-standard)] focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/40",
+          "nauval-composer relative flex flex-col gap-1 rounded-[var(--radius-outer)] border border-border bg-background shadow-xs transition-[box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-standard)] focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/40",
           isSubmitting &&
             "pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
           borderClassName,

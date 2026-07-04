@@ -936,6 +936,15 @@
   }
 }
 
+.nauval-composer {
+  --primary: oklch(0.55 0.1906 259.23);
+  --primary-foreground: oklch(1 0 0);
+}
+
+.dark .nauval-composer {
+  --primary: oklch(0.6 0.1906 259.23);
+}
+
 .nauval-chat-surface {
   --surface: oklch(0.972 0.0022 264.54);
   --surface-elevated: oklch(0.955 0.0022 264.54);
