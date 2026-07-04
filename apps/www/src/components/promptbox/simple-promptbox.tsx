@@ -1,18 +1,25 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import type { SetSelectedModel } from "@/hooks/use-selected-model";
-
-// Tiptap imports
-import { EditorContent, Editor } from "@tiptap/react";
 
 import {
   isImageUploadSupported,
   isPlanModeSupported,
 } from "@terragon/agent/utils";
+import {
+  Composer,
+  ComposerToolbar,
+  ComposerToolbarSpacer,
+} from "@/components/ai/composer";
+import {
+  ComposerRichInput,
+  ComposerSuggestions,
+  type ComposerTrigger,
+  type ComposerValue,
+} from "@/components/ai/composer-rich";
 import { AttachedFiles } from "@/components/promptbox/attached-files";
 import { DragDropWrapper } from "@/components/promptbox/drag-drop-wrapper";
 import { ModelSelector } from "../model-selector";
@@ -23,9 +30,18 @@ import { FileAttachmentButton } from "./file-attachment-button";
 import { Typeahead } from "./typeahead/typeahead";
 import { ModeSelector } from "@/components/promptbox/mode-selector";
 import { TSubmitForm } from "./send-button";
+import type { ComposerHandle } from "./use-promptbox";
 
 export function SimplePromptBox({
-  editor,
+  value,
+  onValueChange,
+  triggers,
+  placeholder,
+  autoFocus,
+  composerRef,
+  insertText,
+  insertMention,
+  insertSlashCommand,
   attachedFiles,
   handleFilesAttached,
   removeFile,
@@ -59,7 +75,15 @@ export function SimplePromptBox({
 }: {
   forcedAgent: AIAgent | null;
   forcedAgentVersion: number | null;
-  editor: Editor | null;
+  value: ComposerValue;
+  onValueChange: (value: ComposerValue) => void;
+  triggers: Record<string, ComposerTrigger>;
+  placeholder: string;
+  autoFocus: boolean;
+  composerRef: React.RefObject<ComposerHandle | null>;
+  insertText: (text: string) => void;
+  insertMention: (name: string) => void;
+  insertSlashCommand: (name: string) => void;
   attachedFiles: Attachment[];
   isSubmitting: boolean;
   submitForm: TSubmitForm;
@@ -89,6 +113,21 @@ export function SimplePromptBox({
   hideFileAttachmentButton?: boolean;
   hideVoiceInput?: boolean;
 }) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    composerRef.current = {
+      focus: () => {
+        wrapperRef.current
+          ?.querySelector<HTMLElement>('[data-slot="composer-rich-input"]')
+          ?.focus();
+      },
+    };
+    return () => {
+      composerRef.current = null;
+    };
+  }, [composerRef]);
+
   const showPlanModeSelector = useMemo(() => {
     if (isMultiAgentMode) {
       const selectedModelsArr = Object.keys(selectedModels) as AIModel[];
@@ -112,16 +151,9 @@ export function SimplePromptBox({
 
   const handleSpeechTranscript = useCallback(
     (transcript: string) => {
-      if (!editor) {
-        return;
-      }
-      editor.commands.insertContent({
-        type: "text",
-        text: transcript + " ",
-      });
-      editor.commands.focus();
+      insertText(transcript + " ");
     },
-    [editor],
+    [insertText],
   );
 
   const handleFormSubmit = useCallback(
@@ -131,6 +163,10 @@ export function SimplePromptBox({
     },
     [submitForm],
   );
+
+  const handleSubmitValue = useCallback(() => {
+    submitForm({ saveAsDraft: false, scheduleAt: null });
+  }, [submitForm]);
 
   return (
     <form onSubmit={handleFormSubmit}>
@@ -148,84 +184,85 @@ export function SimplePromptBox({
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
-        <ScrollArea
-          className="max-h-[min(40dvh,18rem)] overflow-auto"
-          onClick={() => {
-            if (editor && !editor.isFocused) {
-              editor.commands.focus("end");
-            }
-          }}
-        >
-          <EditorContent
-            editor={editor}
-            aria-label="Describe a task for the AI"
-            className={cn(
-              "min-h-9 px-3 py-2 text-sm leading-relaxed",
-              className,
-            )}
-          />
-        </ScrollArea>
-        <AttachedFiles
-          attachedFiles={attachedFiles}
-          onRemoveFile={removeFile}
-        />
-        <div className="flex flex-row items-center gap-1.5 px-3 py-2">
-          <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
-            {!hideAddContextButton && (
-              <AddContextButton
-                editor={editor}
-                typeahead={typeahead ?? undefined}
-                selectedModel={selectedModel}
-                onAttachImages={
-                  !showImageUploads ? undefined : handleFilesAttached
-                }
-              />
-            )}
-            {!hideFileAttachmentButton && showImageUploads && (
-              <FileAttachmentButton
-                className="flex-initial hidden xs:flex"
-                onFileAttachment={(file) => handleFilesAttached([file])}
-              />
-            )}
-            {!hideModeSelector &&
-              showPlanModeSelector &&
-              onPermissionModeChange && (
-                <ModeSelector
-                  mode={permissionMode ?? "allowAll"}
-                  onChange={onPermissionModeChange}
-                />
-              )}
-          </div>
-          <div className="flex min-w-0 flex-shrink flex-row items-center gap-1.5">
-            {!hideModelSelector && (
-              <ModelSelector
-                className="flex-initial"
-                selectedModel={selectedModel}
-                selectedModels={selectedModels}
-                setSelectedModel={setSelectedModel}
-                forcedAgent={forcedAgent}
-                forcedAgentVersion={forcedAgentVersion}
-                isMultiAgentMode={isMultiAgentMode}
-                setIsMultiAgentMode={setIsMultiAgentMode}
-                supportsMultiAgentPromptSubmission={
-                  supportsMultiAgentPromptSubmission
-                }
-              />
-            )}
-            <SubmitComboButton
-              onTranscript={handleSpeechTranscript}
-              isSubmitting={isSubmitting}
-              submitForm={submitForm}
-              handleStop={handleStop}
-              disabled={isSubmitDisabled}
-              hideSubmitButton={hideSubmitButton}
-              showStopButton={showStopButton}
-              onRecordingChange={onRecordingChange}
-              supportSaveAsDraft={!!supportSaveAsDraft}
-              supportSchedule={!!supportSchedule}
-              hideVoiceInput={hideVoiceInput}
+        <div ref={wrapperRef} className="flex flex-col gap-1">
+          <Composer
+            disabled={isSubmitting}
+            className="rounded-none border-0 bg-transparent shadow-none focus-within:ring-0 focus-within:border-transparent"
+          >
+            <ComposerRichInput
+              value={value}
+              onValueChange={onValueChange}
+              onSubmit={handleSubmitValue}
+              triggers={triggers}
+              placeholder={placeholder}
+              autoFocus={autoFocus}
+              className={cn("text-sm leading-relaxed", className)}
             />
-          </div>
+            <ComposerSuggestions />
+            <AttachedFiles
+              attachedFiles={attachedFiles}
+              onRemoveFile={removeFile}
+            />
+            <ComposerToolbar className="px-3 py-2">
+              <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5">
+                {!hideAddContextButton && (
+                  <AddContextButton
+                    onInsertMention={insertMention}
+                    onInsertSlashCommand={insertSlashCommand}
+                    typeahead={typeahead ?? undefined}
+                    selectedModel={selectedModel}
+                    onAttachImages={
+                      !showImageUploads ? undefined : handleFilesAttached
+                    }
+                  />
+                )}
+                {!hideFileAttachmentButton && showImageUploads && (
+                  <FileAttachmentButton
+                    className="flex-initial hidden xs:flex"
+                    onFileAttachment={(file) => handleFilesAttached([file])}
+                  />
+                )}
+                {!hideModeSelector &&
+                  showPlanModeSelector &&
+                  onPermissionModeChange && (
+                    <ModeSelector
+                      mode={permissionMode ?? "allowAll"}
+                      onChange={onPermissionModeChange}
+                    />
+                  )}
+              </div>
+              <ComposerToolbarSpacer className="flex min-w-0 flex-shrink flex-row items-center gap-1.5">
+                {!hideModelSelector && (
+                  <ModelSelector
+                    className="flex-initial"
+                    selectedModel={selectedModel}
+                    selectedModels={selectedModels}
+                    setSelectedModel={setSelectedModel}
+                    forcedAgent={forcedAgent}
+                    forcedAgentVersion={forcedAgentVersion}
+                    isMultiAgentMode={isMultiAgentMode}
+                    setIsMultiAgentMode={setIsMultiAgentMode}
+                    supportsMultiAgentPromptSubmission={
+                      supportsMultiAgentPromptSubmission
+                    }
+                  />
+                )}
+                <SubmitComboButton
+                  onTranscript={handleSpeechTranscript}
+                  isSubmitting={isSubmitting}
+                  submitForm={submitForm}
+                  handleStop={handleStop}
+                  disabled={isSubmitDisabled}
+                  hideSubmitButton={hideSubmitButton}
+                  showStopButton={showStopButton}
+                  onRecordingChange={onRecordingChange}
+                  supportSaveAsDraft={!!supportSaveAsDraft}
+                  supportSchedule={!!supportSchedule}
+                  hideVoiceInput={hideVoiceInput}
+                />
+              </ComposerToolbarSpacer>
+            </ComposerToolbar>
+          </Composer>
         </div>
       </DragDropWrapper>
     </form>

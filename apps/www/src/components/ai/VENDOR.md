@@ -181,11 +181,18 @@ vendor pass overwrites these; reapply the alias rewrite plus the items below.
    `composer-rich.tsx` index arrays inside length-bounded loops / after
    presence checks that the stricter config cannot narrow, so `!` was added on
    those loop-bounded accesses. Type-level only — zero runtime/logic change.
+5. **`composer-rich.tsx` `immediatelyRender: false`.** Upstream targets Vite
+   (client-only); under Next.js SSR, TipTap's `useEditor` without
+   `immediatelyRender: false` logs a hydration-mismatch error on every mount.
+   Added the option to the `useEditor` call. Next-specific integration delta,
+   zero client-side behavior change.
+6. **Comment strip.** The three short upstream comments in `player.tsx` and the
+   two `eslint-disable-next-line` directives in `composer.tsx`/`composer-rich.tsx`
+   were removed post-vendor (repo zero-comment rule; the repo lints with Biome,
+   so the ESLint directives were dead). Re-strip on regeneration.
 
 No other edits to the vendored `.tsx` files — no token hardcoding, no logic
-changes. The base-4/P1 files carry no comments; `player.tsx` retains the three
-short upstream comments present in its nauval source (two on the RAF vs
-`timeupdate` playhead loop, one on pointer release) — verbatim, not added here.
+changes.
 
 Story-fixture deltas (not vendored source): `console.stories.tsx` gained one `!`
 on a modulo-indexed `levels[i % levels.length]` fixture access — the same

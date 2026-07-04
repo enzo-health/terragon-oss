@@ -9,7 +9,6 @@ import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
 import { MentionListContent } from "./mention-list";
 import { SlashCommandListContent } from "./slash-command-list";
 import { Typeahead } from "./typeahead/typeahead";
-import { Editor } from "@tiptap/react";
 import {
   Popover,
   PopoverTrigger,
@@ -120,13 +119,13 @@ function MainMenuView({
 
 // Private component for mention list view
 function MentionListView({
-  editor,
+  onInsertMention,
   typeahead,
   onClose,
   onBack,
   isDrawer = false,
 }: {
-  editor: Editor | null;
+  onInsertMention: (name: string) => void;
   typeahead: Typeahead;
   onClose: () => void;
   onBack: () => void;
@@ -183,25 +182,12 @@ function MentionListView({
   const handleSelectItem = useCallback(
     (index: number) => {
       const item = items[index];
-      if (item && editor) {
-        editor.commands.insertContent([
-          {
-            type: "mention",
-            attrs: {
-              id: item.name,
-              label: item.name,
-            },
-          },
-          {
-            type: "text",
-            text: " ",
-          },
-        ]);
-        editor.commands.focus();
+      if (item) {
+        onInsertMention(item.name);
         onClose();
       }
     },
-    [editor, items, onClose],
+    [onInsertMention, items, onClose],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -268,14 +254,14 @@ function MentionListView({
 // Private component for slash command view
 function SlashCommandView({
   agent,
-  editor,
+  onInsertSlashCommand,
   typeahead,
   onClose,
   onBack,
   isDrawer = false,
 }: {
   agent: AIAgent;
-  editor: Editor | null;
+  onInsertSlashCommand: (name: string) => void;
   typeahead?: Typeahead;
   onClose: () => void;
   onBack: () => void;
@@ -350,16 +336,12 @@ function SlashCommandView({
   const handleExecuteCommand = useCallback(
     (index: number) => {
       const command = commandItems[index];
-      if (command && !command.isLoading && editor) {
-        editor.commands.insertContent({
-          type: "text",
-          text: `/${command.name} `,
-        });
-        editor.commands.focus();
+      if (command && !command.isLoading) {
+        onInsertSlashCommand(command.name);
         onClose();
       }
     },
-    [editor, commandItems, onClose],
+    [onInsertSlashCommand, commandItems, onClose],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -422,13 +404,15 @@ function SlashCommandView({
 }
 
 export function AddContextButton({
-  editor,
+  onInsertMention,
+  onInsertSlashCommand,
   typeahead,
   selectedModel,
   className,
   onAttachImages,
 }: {
-  editor: Editor | null;
+  onInsertMention: (name: string) => void;
+  onInsertSlashCommand: (name: string) => void;
   typeahead?: Typeahead;
   selectedModel: AIModel;
   className?: string;
@@ -476,7 +460,7 @@ export function AddContextButton({
     } else if (view === "files") {
       return (
         <MentionListView
-          editor={editor}
+          onInsertMention={onInsertMention}
           typeahead={typeahead!}
           onClose={onClose}
           onBack={handleBack}
@@ -487,7 +471,7 @@ export function AddContextButton({
       return (
         <SlashCommandView
           agent={modelToAgent(selectedModel)}
-          editor={editor}
+          onInsertSlashCommand={onInsertSlashCommand}
           typeahead={typeahead}
           onClose={onClose}
           onBack={handleBack}

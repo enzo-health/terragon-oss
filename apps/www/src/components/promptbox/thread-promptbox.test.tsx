@@ -2,10 +2,10 @@
 
 import type { AIModel } from "@terragon/agent/types";
 import type { DBUserMessage } from "@terragon/shared";
-import type { JSONContent } from "@tiptap/react";
 import { act, createElement, useReducer } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComposerValue } from "@/components/ai/composer-rich";
 import { createEmptyThreadViewSnapshot } from "../chat/thread-view-model/snapshot-adapter";
 import {
   createInitialThreadViewModelState,
@@ -19,6 +19,7 @@ import type { HandleSubmit } from "./use-promptbox";
 type SimplePromptBoxCapture = {
   permissionMode: "allowAll" | "plan";
   onPermissionModeChange: (mode: "allowAll" | "plan") => void;
+  onValueChange: (value: ComposerValue) => void;
   submitForm: (args: {
     saveAsDraft: boolean;
     scheduleAt: number | null;
@@ -26,20 +27,13 @@ type SimplePromptBoxCapture = {
 };
 
 const selectedModel = "claude-3-5-sonnet-20241022" as AIModel;
-const editorJson: JSONContent = {
-  type: "doc",
-  content: [
-    {
-      type: "paragraph",
-      content: [{ type: "text", text: "toggle plan mode" }],
-    },
-  ],
+const nonEmptyValue: ComposerValue = {
+  text: "toggle plan mode",
+  segments: [{ type: "text", value: "toggle plan mode" }],
 };
 
 const mocks = vi.hoisted(() => ({
   latestPromptBox: null as SimplePromptBoxCapture | null,
-  clearContent: vi.fn(),
-  dispatch: vi.fn(),
 }));
 
 vi.mock("next/dynamic", () => ({
@@ -76,27 +70,6 @@ vi.mock("./typeahead/repository-cache", () => ({
     getSuggestions: async () => [],
   }),
 }));
-
-vi.mock("@tiptap/react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tiptap/react")>();
-  return {
-    ...actual,
-    useEditor: () => ({
-      getText: () => "toggle plan mode",
-      getJSON: () => editorJson,
-      getHTML: () => "<p>toggle plan mode</p>",
-      isEmpty: false,
-      isFocused: false,
-      commands: {
-        clearContent: mocks.clearContent,
-        focus: vi.fn(),
-      },
-      extensionManager: { extensions: [] },
-      view: { dispatch: mocks.dispatch },
-      state: { tr: {} },
-    }),
-  };
-});
 
 vi.mock("./simple-promptbox", () => ({
   SimplePromptBox: (props: SimplePromptBoxCapture) => {
@@ -226,6 +199,11 @@ describe("ThreadPromptBox fallback submit path", () => {
     });
 
     await act(async () => {
+      mocks.latestPromptBox?.onValueChange(nonEmptyValue);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
       mocks.latestPromptBox?.submitForm({
         saveAsDraft: false,
         scheduleAt: null,
@@ -258,6 +236,11 @@ describe("ThreadPromptBox fallback submit path", () => {
           onUpdateQueuedMessage: (msgs) => queueChanges.push(msgs),
         }),
       );
+    });
+
+    await act(async () => {
+      mocks.latestPromptBox?.onValueChange(nonEmptyValue);
+      await Promise.resolve();
     });
 
     await act(async () => {
@@ -296,6 +279,11 @@ describe("ThreadPromptBox permission mode ownership", () => {
     });
 
     expect(mocks.latestPromptBox?.permissionMode).toBe("plan");
+
+    await act(async () => {
+      mocks.latestPromptBox?.onValueChange(nonEmptyValue);
+      await Promise.resolve();
+    });
 
     await act(async () => {
       mocks.latestPromptBox?.submitForm({

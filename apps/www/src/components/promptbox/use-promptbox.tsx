@@ -1,15 +1,15 @@
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
 import { getAgentSlashCommands, modelToAgent } from "@terragon/agent/utils";
 import type { DBUserMessage } from "@terragon/shared";
-import Placeholder from "@tiptap/extension-placeholder";
-import { JSONContent, ReactRenderer, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+import { File as FileIcon, Folder as FolderIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import tippy, { Instance as TippyInstance } from "tippy.js";
 import { useLocalStorage } from "usehooks-ts";
-import { MentionList } from "@/components/promptbox/mention-list";
-import { mentionPillStyle } from "@/components/shared/mention-pill-styles";
+import type {
+  ComposerItem,
+  ComposerTrigger,
+  ComposerValue,
+} from "@/components/ai/composer-rich";
 import { useSelectedModel } from "@/hooks/use-selected-model";
 import { useTouchDevice } from "@/hooks/useTouchDevice";
 import { Attachment } from "@/lib/attachment-types";
@@ -23,15 +23,20 @@ import {
   type ComposerOptimisticSubmit,
   routeComposerSubmit,
 } from "./composer-submit-routing";
+import { composerValueToRichText } from "./composer-richtext";
 import {
-  FolderAwareMention,
-  folderAwareMentionPluginKey,
-} from "./folder-aware-mention";
+  appendChip,
+  appendSlashCommand,
+  appendText,
+  EMPTY_COMPOSER_VALUE,
+  isComposerValueEmpty,
+} from "./composer-value";
 import { TSubmitForm } from "./send-button";
-import { SlashCommand, slashCommandPluginKey } from "./slash-command-extension";
-import { SlashCommandList } from "./slash-command-list";
-import { tiptapToRichText } from "./tiptap-to-richtext";
 import { Typeahead } from "./typeahead/typeahead";
+
+export type ComposerHandle = {
+  focus: () => void;
+};
 
 export type HandleSubmitArgs = {
   userMessage: DBUserMessage;
@@ -58,7 +63,7 @@ interface UsePromptBoxProps {
   branchName: string | null;
   forcedAgent: AIAgent | null;
   forcedAgentVersion: number | null;
-  initialContent?: JSONContent;
+  initialContent?: ComposerValue;
   initialSelectedModel: AIModel | null;
   persistSelectedModelToUserFlags?: boolean;
   handleStop: HandleStop;
@@ -111,7 +116,7 @@ export function usePromptBox({
   supportsMultiAgentPromptSubmission,
 }: UsePromptBoxProps) {
   const isTouchDevice = useTouchDevice();
-  const { storedContent, attachedFiles, setStoredContent, setAttachedFiles } =
+  const { value, setValue, attachedFiles, setAttachedFiles } =
     useContentAndAttachedFiles({
       initialContent,
       initialFiles,
@@ -128,11 +133,12 @@ export function usePromptBox({
     setPermissionMode(initialPermissionMode);
   }, [initialPermissionMode]);
 
-  // Store the query string for the current results so that we can display a
-  // different message when the query string changes and the previous query
-  // had no results.
-  const queryStrForCurrentResultsRef = useRef<string | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  const composerRef = useRef<ComposerHandle | null>(null);
+  const focusComposer = useCallback(() => {
+    composerRef.current?.focus();
+  }, []);
 
   const {
     selectedModel,
@@ -148,325 +154,81 @@ export function usePromptBox({
     persistToUserFlags: persistSelectedModelToUserFlags,
   });
 
-  // Store selectedModel in a ref so the items function can access the latest value
   const selectedModelRef = useRef(selectedModel);
   useEffect(() => {
     selectedModelRef.current = selectedModel;
   }, [selectedModel]);
 
-  const editor = useEditor({
-    immediatelyRender: false,
-    autofocus: !isTouchDevice,
-    extensions: [
-      StarterKit.configure({
-        paragraph: {
-          HTMLAttributes: {
-            class: "mb-0",
-          },
-        },
-        // Disable specific extensions to prevent markdown shortcuts
-        bold: false,
-        italic: false,
-        code: false,
-        strike: false,
-        blockquote: false,
-        bulletList: false,
-        orderedList: false,
-        heading: false,
-        codeBlock: false,
-        horizontalRule: false,
-      }),
-      Placeholder.configure({
-        placeholder: placeholderText,
-      }),
-      FolderAwareMention.configure({
-        HTMLAttributes: {
-          class: mentionPillStyle,
-        },
-        suggestion: {
-          items: async ({ query }) => {
-            setIsLoadingFiles(true);
-            let results: { name: string }[] = [];
-            try {
-              results = await typeahead.getSuggestions(query);
-            } catch (error) {
-              console.error("Failed to get suggestions:", error);
-            } finally {
-              setIsLoadingFiles(false);
-            }
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
-            queryStrForCurrentResultsRef.current = query;
-
-            return results || [];
-          },
-          render: () => {
-            let component: ReactRenderer<{
-              onKeyDown: (props: { event: KeyboardEvent }) => boolean;
-            }>;
-            let popup: TippyInstance[];
-
-            return {
-              onStart: (props) => {
-                component = new ReactRenderer(MentionList, {
-                  props: {
-                    ...props,
-                    isLoadingFiles,
-                    queryForCurrentResults:
-                      queryStrForCurrentResultsRef.current,
-                  },
-                  editor: props.editor,
-                });
-
-                popup = tippy("body", {
-                  getReferenceClientRect: props.clientRect as () => DOMRect,
-                  appendTo: () => document.body,
-                  content: component.element,
-                  showOnCreate: true,
-                  interactive: true,
-                  trigger: "manual",
-                  placement: "bottom-start",
-                  // Keep the popover inside the viewport on narrow screens.
-                  maxWidth: "calc(100vw - 16px)",
-                  popperOptions: {
-                    modifiers: [
-                      { name: "preventOverflow", options: { padding: 8 } },
-                      {
-                        name: "flip",
-                        options: {
-                          fallbackPlacements: ["top-start", "bottom-start"],
-                        },
-                      },
-                    ],
-                  },
-                });
-              },
-
-              onUpdate(props) {
-                component.updateProps({
-                  ...props,
-                  isLoadingFiles,
-                  queryForCurrentResults: queryStrForCurrentResultsRef.current,
-                });
-
-                popup[0]?.setProps({
-                  getReferenceClientRect: props.clientRect as () => DOMRect,
-                });
-              },
-
-              onKeyDown(props) {
-                if (props.event.key === "Escape") {
-                  props.event.stopPropagation();
-                  popup[0]?.hide();
-                  return true;
-                }
-
-                return component?.ref?.onKeyDown(props) ?? false;
-              },
-
-              onExit() {
-                popup[0]?.destroy();
-                component.destroy();
-              },
-            };
-          },
-        },
-      }),
-      SlashCommand.configure({
-        HTMLAttributes: {
-          class: "text-primary",
-        },
-        suggestion: {
-          items: async ({ query }: { query: string }) => {
-            const lowercaseQuery = query.toLowerCase();
-            const agent = modelToAgent(selectedModelRef.current);
-            const commands = getAgentSlashCommands(agent);
-            const dynamicCommands = typeahead
-              ? await getDynamicSlashCommands({
-                  typeahead,
-                  agent,
-                })
-              : [];
-            return [...commands, ...dynamicCommands].filter((command) =>
-              command.name.toLowerCase().startsWith(lowercaseQuery),
-            );
-          },
-          command: ({ editor, range, props }: any) => {
-            // Delete the range of the suggestion and insert the command as plain text
-            // Adding a space after the command ensures the suggestion mode exits
-            editor
-              .chain()
-              .focus()
-              .deleteRange(range)
-              .insertContent(`/${props.id} `)
-              .run();
-          },
-          render: () => {
-            let component: ReactRenderer<{
-              onKeyDown: (props: { event: KeyboardEvent }) => boolean;
-            }>;
-            let popup: TippyInstance[];
-
-            return {
-              onStart: (props: any) => {
-                component = new ReactRenderer(SlashCommandList, {
-                  props: { ...props, selectedModel: selectedModelRef.current },
-                  editor: props.editor,
-                });
-
-                popup = tippy("body", {
-                  getReferenceClientRect: props.clientRect as () => DOMRect,
-                  appendTo: () => document.body,
-                  content: component.element,
-                  showOnCreate: true,
-                  interactive: true,
-                  trigger: "manual",
-                  placement: "bottom-start",
-                  // Keep the popover inside the viewport on narrow screens.
-                  maxWidth: "calc(100vw - 16px)",
-                  popperOptions: {
-                    modifiers: [
-                      { name: "preventOverflow", options: { padding: 8 } },
-                      {
-                        name: "flip",
-                        options: {
-                          fallbackPlacements: ["top-start", "bottom-start"],
-                        },
-                      },
-                    ],
-                  },
-                });
-              },
-
-              onUpdate(props: any) {
-                component.updateProps({
-                  ...props,
-                  selectedModel: selectedModelRef.current,
-                });
-
-                popup[0]?.setProps({
-                  getReferenceClientRect: props.clientRect as () => DOMRect,
-                });
-              },
-
-              onKeyDown(props: any) {
-                if (props.event.key === "Escape") {
-                  props.event.stopPropagation();
-                  popup[0]?.hide();
-                  return true;
-                }
-
-                return component?.ref?.onKeyDown(props) ?? false;
-              },
-
-              onExit() {
-                popup[0]?.destroy();
-                component.destroy();
-              },
-            };
-          },
-        },
-      }),
-    ],
-    content: initialContent ?? storedContent,
-    onUpdate: ({ editor }) => {
-      const htmlStr = editor.getHTML();
-      const isEmpty = editor.getText().length === 0;
-      setStoredContent({ htmlStr, isEmpty });
-      onUpdate?.({
-        userMessage: getUserMessage({
-          json: editor.getJSON(),
-          model: selectedModel,
-          attachedFiles,
-        }),
-      });
-    },
-    editorProps: {
-      attributes: {
-        class:
-          "prose prose-sm max-w-none focus:outline-none min-h-[40px] px-4 py-4 cursor-text",
-        // On touch Enter inserts a newline (handled below), so hint "enter"
-        // rather than "send". Disable auto-capitalize/correct for code & paths.
-        enterKeyHint: "enter",
-        autocapitalize: "off",
-        autocorrect: "off",
-        spellcheck: "true",
-      },
-      handleKeyDown: (view, event) => {
-        // On touch devices, we don't want to submit the form on Enter
-        if (isTouchDevice) {
-          return false;
-        }
-        if (event.key === "Enter" && !event.shiftKey) {
-          const isMentionActive = folderAwareMentionPluginKey.getState(
-            view.state,
-          ).active;
-          const isSlashCommandActive = slashCommandPluginKey.getState(
-            view.state,
-          ).active;
-          if (!isMentionActive && !isSlashCommandActive) {
-            // On desktop devices, Enter or Cmd+Enter submits the form
-            event.preventDefault();
-            submitForm({ saveAsDraft: false, scheduleAt: null });
-            return true;
+  const triggers = useMemo<Record<string, ComposerTrigger>>(
+    () => ({
+      "@": {
+        action: "insert",
+        filter: () => true,
+        items: async (query: string): Promise<ComposerItem[]> => {
+          setIsLoadingFiles(true);
+          let results: { name: string; type?: "blob" | "tree" }[] = [];
+          try {
+            results = await typeahead.getSuggestions(query);
+          } catch (error) {
+            console.error("Failed to get suggestions:", error);
+          } finally {
+            setIsLoadingFiles(false);
           }
-        }
-        // Let Tiptap handle all other key events naturally (including Shift+Enter for newlines)
-        return false;
+          return (results || []).map((item) => {
+            const isFolder = item.type === "tree" || item.name.endsWith("/");
+            return {
+              id: item.name,
+              label: item.name,
+              icon: isFolder ? (
+                <FolderIcon className="size-4" />
+              ) : (
+                <FileIcon className="size-4" />
+              ),
+            };
+          });
+        },
       },
-      handlePaste: (view, event, slice) => {
-        // Get the clipboard data
-        const clipboardData = event.clipboardData;
-        if (!clipboardData) {
-          return false;
-        }
-        // Check if we have HTML content
-        const textContent = clipboardData.getData("text/plain");
-        if (textContent) {
-          event.preventDefault();
-          // Use editor commands to insert content
-          // This ensures all TipTap extensions process the content
-          if (editor) {
-            // Instead of using insertContent, we need to insert each line
-            // then add a hard break to ensure that the lines are separated
-            // properly.
-            // If you edit this, please test pasting a string with newlines and then
-            // editing it via backspace.
-            // See also: https://github.com/ueberdosis/tiptap/issues/5501
-            const lines = textContent.split("\n");
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i]!;
-              editor.commands.insertContent({ type: "text", text: line });
-              if (i < lines.length - 1) {
-                editor.commands.setHardBreak();
-              }
-            }
-            editor.commands.scrollIntoView();
-            // Ensure the editor is properly focused after paste
-            setTimeout(() => {
-              editor.commands.focus();
-            }, 0);
-          }
-
-          return true;
-        }
-
-        // Let TipTap handle other paste events (like images)
-        return false;
+      "/": {
+        action: "execute",
+        filter: (item, query) =>
+          item.id.toLowerCase().startsWith(query.toLowerCase()),
+        items: async (): Promise<ComposerItem[]> => {
+          const agent = modelToAgent(selectedModelRef.current);
+          const commands = getAgentSlashCommands(agent);
+          const dynamicCommands = await getDynamicSlashCommands({
+            typeahead,
+            agent,
+          });
+          return [...commands, ...dynamicCommands].map((command) => ({
+            id: command.name,
+            label: command.name,
+            description: command.description,
+          }));
+        },
+        onSelect: (item, ctx) => {
+          ctx.close();
+          setValue((prev) => appendSlashCommand(prev, ctx.query, item.id));
+          focusComposer();
+        },
       },
-    },
-  });
+    }),
+    [typeahead, setValue, focusComposer],
+  );
 
   const getUserMessage = useCallback(
     ({
-      json,
+      value,
       model,
       attachedFiles,
     }: {
-      json: JSONContent;
+      value: ComposerValue;
       model: AIModel;
       attachedFiles: Attachment[];
     }): DBUserMessage => {
-      const richText = tiptapToRichText(json);
+      const richText = composerValueToRichText(value);
       const parts: DBUserMessage["parts"] = [richText];
       if (attachedFiles && attachedFiles.length > 0) {
         attachedFiles.forEach((file) => {
@@ -507,18 +269,17 @@ export function usePromptBox({
     [permissionMode],
   );
 
-  const editorText = editor?.getText();
+  const isEmpty = isComposerValueEmpty(value);
   const isSubmitDisabled = useMemo(() => {
-    const content = editorText || "";
     return (
-      content.length === 0 ||
+      isEmpty ||
       isSubmitting ||
       isRecording ||
       (isAgentWorking && !isQueueingEnabled) ||
       (!isSandboxProvisioned && !isQueueingEnabled)
     );
   }, [
-    editorText,
+    isEmpty,
     isSubmitting,
     isRecording,
     isAgentWorking,
@@ -636,8 +397,7 @@ export function usePromptBox({
   }, [handleStop]);
 
   const clearContent = useCallback(() => {
-    editor?.commands.clearContent();
-    setStoredContent({ htmlStr: "", isEmpty: true });
+    setValue(EMPTY_COMPOSER_VALUE);
     setAttachedFiles([]);
     onUpdate?.({
       userMessage: {
@@ -646,55 +406,46 @@ export function usePromptBox({
         parts: [{ type: "rich-text", nodes: [] }],
       },
     });
-  }, [editor, setStoredContent, setAttachedFiles, onUpdate, selectedModel]);
+  }, [setValue, setAttachedFiles, onUpdate, selectedModel]);
+
+  const insertText = useCallback(
+    (text: string) => {
+      setValue((prev) => appendText(prev, text));
+      focusComposer();
+    },
+    [setValue, focusComposer],
+  );
+
+  const insertMention = useCallback(
+    (name: string) => {
+      const item: ComposerItem = { id: name, label: name };
+      setValue((prev) => appendChip(prev, item));
+      focusComposer();
+    },
+    [setValue, focusComposer],
+  );
+
+  const insertSlashCommand = useCallback(
+    (name: string) => {
+      setValue((prev) => appendText(prev, `/${name} `));
+      focusComposer();
+    },
+    [setValue, focusComposer],
+  );
 
   useEffect(() => {
-    if (!editor) {
-      return;
-    }
     onUpdate?.({
       userMessage: getUserMessage({
-        json: editor.getJSON(),
+        value,
         model: selectedModel,
         attachedFiles,
       }),
     });
-  }, [selectedModel, editor, onUpdate, attachedFiles, getUserMessage]);
-
-  const getOnSubmitError = useCallback(
-    ({ json, html }: { json: JSONContent; html: string }) => {
-      const selectedModelCopy = selectedModel;
-      const attachedFilesCopy = [...attachedFiles];
-      return () => {
-        editor?.commands.setContent(json);
-        setStoredContent({ htmlStr: html, isEmpty: false });
-        setAttachedFiles(attachedFilesCopy);
-        onUpdate?.({
-          userMessage: getUserMessage({
-            json,
-            attachedFiles: attachedFilesCopy,
-            model: selectedModelCopy,
-          }),
-        });
-      };
-    },
-    [
-      editor,
-      selectedModel,
-      attachedFiles,
-      setStoredContent,
-      setAttachedFiles,
-      onUpdate,
-      getUserMessage,
-    ],
-  );
+  }, [value, selectedModel, attachedFiles, onUpdate, getUserMessage]);
 
   const submitForm = useCallback<TSubmitForm>(
     async ({ saveAsDraft, scheduleAt }) => {
       if (isSubmitDisabled || isSubmittingRef.current) {
-        return;
-      }
-      if (!editor) {
         return;
       }
       if (requireRepoAndBranch && (!repoFullName || !branchName)) {
@@ -709,9 +460,20 @@ export function usePromptBox({
         toast.error("Please select at least one model to continue");
         return;
       }
-      const json = editor.getJSON();
-      const html = editor.getHTML();
-      const onSubmitError = getOnSubmitError({ json, html });
+      const submittedValue = valueRef.current;
+      const submittedFiles = [...attachedFiles];
+      const submittedModel = selectedModel;
+      const onSubmitError = () => {
+        setValue(submittedValue);
+        setAttachedFiles(submittedFiles);
+        onUpdate?.({
+          userMessage: getUserMessage({
+            value: submittedValue,
+            attachedFiles: submittedFiles,
+            model: submittedModel,
+          }),
+        });
+      };
       try {
         isSubmittingRef.current = true;
         setIsSubmitting(true);
@@ -720,9 +482,9 @@ export function usePromptBox({
         }
 
         const userMessage = getUserMessage({
-          json,
-          model: selectedModel,
-          attachedFiles,
+          value: submittedValue,
+          model: submittedModel,
+          attachedFiles: submittedFiles,
         });
         const clientSubmissionId = crypto.randomUUID();
 
@@ -753,7 +515,6 @@ export function usePromptBox({
       }
     },
     [
-      editor,
       getUserMessage,
       handleSubmit,
       repoFullName,
@@ -765,7 +526,9 @@ export function usePromptBox({
       clearContentOnSubmit,
       selectedModel,
       selectedModels,
-      getOnSubmitError,
+      setValue,
+      setAttachedFiles,
+      onUpdate,
       clearContent,
       isMultiAgentMode,
       isAgentWorking,
@@ -774,19 +537,6 @@ export function usePromptBox({
       optimisticSubmit,
     ],
   );
-
-  // Update editor placeholder when it changes
-  useEffect(() => {
-    if (editor) {
-      const placeholderExtension = editor.extensionManager.extensions.find(
-        (extension) => extension.name === "placeholder",
-      );
-      if (placeholderExtension && placeholderExtension.options) {
-        placeholderExtension.options.placeholder = placeholderText;
-        editor.view.dispatch(editor.state.tr);
-      }
-    }
-  }, [editor, placeholderText]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -802,7 +552,18 @@ export function usePromptBox({
   }, [handleStop, isAgentWorking]);
 
   return {
-    editor,
+    value,
+    setValue,
+    triggers,
+    placeholder: placeholderText,
+    autoFocus: !isTouchDevice,
+    composerRef,
+    focusComposer,
+    insertText,
+    insertMention,
+    insertSlashCommand,
+    isLoadingFiles,
+    isEmpty,
     attachedFiles,
     isSubmitting,
     isSubmitDisabled,
@@ -831,7 +592,7 @@ function getStorageKey({
   storageKeyPrefix: string;
   kind: "contents" | "attachments";
 }) {
-  const versionSuffix = "2";
+  const versionSuffix = kind === "contents" ? "3" : "2";
 
   if (kind === "contents") {
     return threadId
@@ -844,6 +605,19 @@ function getStorageKey({
   }
 }
 
+function parseStoredValue(raw: string): ComposerValue {
+  if (!raw) return EMPTY_COMPOSER_VALUE;
+  try {
+    const parsed = JSON.parse(raw) as ComposerValue;
+    if (parsed && Array.isArray(parsed.segments)) {
+      return parsed;
+    }
+  } catch {
+    return EMPTY_COMPOSER_VALUE;
+  }
+  return EMPTY_COMPOSER_VALUE;
+}
+
 function useContentAndAttachedFiles({
   initialContent,
   initialFiles,
@@ -851,7 +625,7 @@ function useContentAndAttachedFiles({
   storageKeyPrefix,
   disableLocalStorage,
 }: {
-  initialContent?: JSONContent;
+  initialContent?: ComposerValue;
   initialFiles: Attachment[];
   threadId: string | null;
   storageKeyPrefix: string;
@@ -865,22 +639,21 @@ function useContentAndAttachedFiles({
     getStorageKey({ threadId, storageKeyPrefix, kind: "contents" }),
     "",
   );
-  const [storedContentState, setStoredContentState] = useState<
-    JSONContent | string
-  >(initialContent ?? storedContentLocalStorage);
-  const [pendingStoredContent, setPendingStoredContent] = useState<{
-    htmlStr: string;
-    isEmpty: boolean;
-  } | null>(null);
-  const flushStoredContent = useCallback(
-    (nextValue: { htmlStr: string; isEmpty: boolean } | null) => {
-      if (!nextValue || disableLocalStorage) {
+  const [value, setValue] = useState<ComposerValue>(
+    () => initialContent ?? parseStoredValue(storedContentLocalStorage),
+  );
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const persist = useCallback(
+    (next: ComposerValue) => {
+      if (disableLocalStorage) {
         return;
       }
-      if (nextValue.isEmpty) {
+      if (isComposerValueEmpty(next)) {
         deleteStoredContentLocalStorage();
       } else {
-        setStoredContentLocalStorage(nextValue.htmlStr);
+        setStoredContentLocalStorage(JSON.stringify(next));
       }
     },
     [
@@ -889,30 +662,25 @@ function useContentAndAttachedFiles({
       setStoredContentLocalStorage,
     ],
   );
-  const setStoredContent = useCallback(
-    ({ htmlStr, isEmpty }: { htmlStr: string; isEmpty: boolean }) => {
-      setStoredContentState(htmlStr);
-      setPendingStoredContent({ htmlStr, isEmpty });
-    },
-    [],
-  );
+
   useEffect(() => {
-    if (!pendingStoredContent || disableLocalStorage) {
+    if (disableLocalStorage) {
       return;
     }
     const timeout = window.setTimeout(() => {
-      flushStoredContent(pendingStoredContent);
-      setPendingStoredContent(null);
+      persist(value);
     }, 500);
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [disableLocalStorage, flushStoredContent, pendingStoredContent]);
+  }, [disableLocalStorage, persist, value]);
+
   useEffect(() => {
     return () => {
-      flushStoredContent(pendingStoredContent);
+      persist(valueRef.current);
     };
-  }, [flushStoredContent, pendingStoredContent]);
+  }, [persist]);
+
   const [
     attachedFilesLocalStorage,
     setAttachedFilesLocalStorage,
@@ -963,8 +731,8 @@ function useContentAndAttachedFiles({
     };
   }, [attachedFilesState, persistAttachedFiles]);
   return {
-    storedContent: storedContentState,
-    setStoredContent,
+    value,
+    setValue,
     attachedFiles: attachedFilesState,
     setAttachedFiles: setAttachedFilesState,
   };

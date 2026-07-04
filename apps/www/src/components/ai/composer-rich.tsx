@@ -722,6 +722,7 @@ export function ComposerRichInput({
 
   const editor = useEditor({
     extensions,
+    immediatelyRender: false,
     autofocus: autoFocus,
     editable: !ctx.disabled,
     editorProps: {
