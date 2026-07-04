@@ -2,11 +2,11 @@
 
 import {
   Select,
-  SelectContent,
   SelectItem,
+  SelectList,
+  SelectPopup,
   SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ai/select";
 import { cn } from "@/lib/utils";
 import { memo } from "react";
 import { NotebookPen, FileCode, Check } from "lucide-react";
@@ -27,6 +27,11 @@ interface ModeSelectorProps {
   onChange: (mode: PermissionMode) => void;
   className?: string;
 }
+
+const optionValue = (value: unknown): string | undefined =>
+  typeof value === "object" && value !== null && "value" in value
+    ? String((value as { value: unknown }).value)
+    : (value as string | undefined);
 
 const modeConfig = {
   allowAll: {
@@ -49,6 +54,13 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
   const triggerClassName = cn(
     "h-8 w-fit rounded-md px-1.5",
     "border-none shadow-none text-mid gap-0.5 hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground dark:bg-transparent",
+    className,
+  );
+
+  const nauvalTriggerClassName = cn(
+    "h-8 w-auto rounded-md px-1.5 gap-1 text-muted-foreground",
+    "hover:not-[[data-disabled]]:bg-muted hover:text-foreground",
+    "data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
     className,
   );
 
@@ -123,43 +135,48 @@ function ModeSelectorInner({ mode, onChange, className }: ModeSelectorProps) {
       </Drawer>
       <Select
         value={mode}
-        onValueChange={(value) => onChange(value as PermissionMode)}
+        isItemEqualToValue={(a: unknown, b: unknown) =>
+          optionValue(a) === optionValue(b)
+        }
+        onValueChange={(value: unknown) =>
+          onChange(optionValue(value) as PermissionMode)
+        }
       >
         <SelectTrigger
-          className={cn(triggerClassName, "hidden sm:flex")}
-          size="sm"
+          variant="plain"
+          className={cn(nauvalTriggerClassName, "hidden sm:flex")}
         >
-          <SelectValue asChild>
-            <span className="flex items-center gap-1">
-              <Icon className="size-3.5 text-inherit" />
-              <span className="hidden sm:inline">{currentConfig.label}</span>
-            </span>
-          </SelectValue>
+          <span className="flex items-center gap-1">
+            <Icon className="size-3.5 text-inherit" />
+            <span>{currentConfig.label}</span>
+          </span>
         </SelectTrigger>
-        <SelectContent className="w-fit">
-          <SelectItem value="allowAll">
-            <span className="flex flex-col items-start">
-              <span className="text-sm text-foreground/90 flex items-center gap-1">
-                <FileCode className="size-3.5 text-inherit" />
-                Execute
+        <SelectPopup side="top" className="w-fit">
+          <SelectList>
+            <SelectItem value="allowAll">
+              <span className="flex flex-col items-start">
+                <span className="text-sm text-foreground/90 flex items-center gap-1">
+                  <FileCode className="size-3.5 text-inherit" />
+                  Execute
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Implement immediately
+                </span>
               </span>
-              <span className="text-xs text-muted-foreground">
-                Implement immediately
+            </SelectItem>
+            <SelectItem value="plan">
+              <span className="flex flex-col items-start">
+                <span className="text-sm text-foreground/90 flex items-center gap-1">
+                  <NotebookPen className="size-3.5 text-inherit" />
+                  Plan
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Approve before making changes
+                </span>
               </span>
-            </span>
-          </SelectItem>
-          <SelectItem value="plan">
-            <span className="flex flex-col items-start">
-              <span className="text-sm text-foreground/90 flex items-center gap-1">
-                <NotebookPen className="size-3.5 text-inherit" />
-                Plan
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Approve before making changes
-              </span>
-            </span>
-          </SelectItem>
-        </SelectContent>
+            </SelectItem>
+          </SelectList>
+        </SelectPopup>
       </Select>
     </>
   );

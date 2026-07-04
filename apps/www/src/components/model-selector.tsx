@@ -2,14 +2,14 @@
 
 import {
   Select,
-  SelectContent,
   SelectGroup,
+  SelectGroupLabel,
   SelectItem,
-  SelectLabel,
+  SelectList,
+  SelectPopup,
   SelectSeparator,
   SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ai/select";
 import { memo, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { AIAgent, AIModel, SelectedAIModels } from "@terragon/agent/types";
@@ -38,6 +38,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { AgentIcon } from "@/components/chat/agent-icon";
 import { AGENT_VERSION } from "@terragon/agent/versions";
+
+const optionValue = (value: unknown): string | undefined =>
+  typeof value === "object" && value !== null && "value" in value
+    ? String((value as { value: unknown }).value)
+    : (value as string | undefined);
 
 function MultiAgentModeToggle({
   isMultiAgentMode,
@@ -101,12 +106,10 @@ function ModelSelectorInner({
     return models;
   }, [selectedModel, selectedModels, isMultiAgentMode]);
 
-  // Compute the agents to display based on current selection
   const agentsToDisplay = useAgentsToDisplay({
     forcedAgent,
     selectedModels: currentlySelectedModels,
   });
-  // Use the stable ref value during the component's lifetime
   const userSettings = useAtomValue(userSettingsAtom);
   const agentGroupsRaw = useMemo(() => {
     return agentsToDisplay
@@ -128,7 +131,6 @@ function ModelSelectorInner({
     currentlySelectedModels,
   ]);
 
-  // Don't re-compute the agent/model groups until we re-open the selector.
   const [agentGroups, setAgentGroups] = useState(agentGroupsRaw);
   useEffect(() => {
     if (!isSelectorOpen && !isDrawerOpen) {
@@ -147,7 +149,6 @@ function ModelSelectorInner({
         return defaultLabel;
       }
       if (selectedModelArr.length > 1) {
-        // Get unique agents from selected models
         const agentsArr = selectedModelArr.map((model) => modelToAgent(model));
         agentsArr.sort(sortByAgents);
         return (
@@ -183,6 +184,13 @@ function ModelSelectorInner({
   const triggerClassName = cn(
     "h-8 w-fit max-w-full min-w-0 rounded-md px-1.5",
     "border-none shadow-none text-mid gap-0.5 hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground dark:bg-transparent",
+    className,
+  );
+
+  const nauvalTriggerClassName = cn(
+    "h-8 w-auto max-w-full min-w-0 rounded-md px-1.5 gap-1 text-muted-foreground",
+    "hover:not-[[data-disabled]]:bg-muted hover:text-foreground",
+    "data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
     className,
   );
 
@@ -284,26 +292,26 @@ function ModelSelectorInner({
         value={selectedModel ?? undefined}
         open={isSelectorOpen}
         onOpenChange={setIsSelectorOpen}
-        onValueChange={(value) => {
+        isItemEqualToValue={(a: unknown, b: unknown) =>
+          optionValue(a) === optionValue(b)
+        }
+        onValueChange={(value: unknown) => {
           if (!isMultiAgentMode) {
-            setSelectedModel({ model: value as AIModel });
+            setSelectedModel({ model: optionValue(value) as AIModel });
           }
         }}
       >
         <SelectTrigger
-          className={cn(triggerClassName, "hidden sm:flex")}
-          size="sm"
+          variant="plain"
+          className={cn(nauvalTriggerClassName, "hidden sm:flex")}
         >
-          <SelectValue asChild placeholder="Select a Model">
-            {/* There's a bug in radix related to SSR so we use asChild here and render the value manually */}
-            {typeof triggerLabel === "string" ? (
-              <span>{triggerLabel}</span>
-            ) : (
-              triggerLabel
-            )}
-          </SelectValue>
+          {typeof triggerLabel === "string" ? (
+            <span>{triggerLabel}</span>
+          ) : (
+            triggerLabel
+          )}
         </SelectTrigger>
-        <SelectContent className="w-fit">
+        <SelectPopup side="top" className="w-fit">
           {supportsMultiAgentPromptSubmission && (
             <MultiAgentModeToggle
               isMultiAgentMode={isMultiAgentMode}
@@ -311,22 +319,24 @@ function ModelSelectorInner({
               className="flex items-center gap-2 justify-between px-2 py-2 border-b w-[180px] sm:w-full"
             />
           )}
-          {agentGroups.map((group, index) => (
-            <React.Fragment key={group.agent}>
-              <ModelGroup
-                group={group}
-                isMultiAgentMode={isMultiAgentMode}
-                selectedModels={selectedModels}
-                setSelectedModel={setSelectedModel}
-              />
-              {index < agentGroups.length - 1 && <SelectSeparator />}
-            </React.Fragment>
-          ))}
+          <SelectList>
+            {agentGroups.map((group, index) => (
+              <React.Fragment key={group.agent}>
+                <ModelGroup
+                  group={group}
+                  isMultiAgentMode={isMultiAgentMode}
+                  selectedModels={selectedModels}
+                  setSelectedModel={setSelectedModel}
+                />
+                {index < agentGroups.length - 1 && <SelectSeparator />}
+              </React.Fragment>
+            ))}
+          </SelectList>
           <SelectSeparator />
           <div className="px-2 py-1.5">
             <AgentConfigButton forcedAgent={forcedAgent} />
           </div>
-        </SelectContent>
+        </SelectPopup>
       </Select>
     </>
   );
@@ -363,7 +373,7 @@ function ModelGroup({
 }) {
   return (
     <SelectGroup>
-      <SelectLabel>{group.label}</SelectLabel>
+      <SelectGroupLabel>{group.label}</SelectGroupLabel>
       {group.models.map((model: AIModel) => {
         const isSelected = isMultiAgentMode && !!selectedModels[model];
         if (isMultiAgentMode) {

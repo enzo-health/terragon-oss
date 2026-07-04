@@ -124,6 +124,11 @@ What this changes concretely:
 
 The three-edit recipe survives unchanged; edit 3 (registry leaf) gets cheaper because leaves are now thin JSX over nauval parts.
 
+**Two nativization exceptions — do NOT re-attempt (correctness over component-purity):**
+
+- **Terminal body stays a `<pre>`, not nauval `Console`.** `Console` is a structured log viewer (one `ConsoleEntry` `<li>` per leveled line, `divide-y`, mandatory per-line icon, non-dark palette). Our `TerminalItem.chunks` is a raw PTY byte stream (`{streamSeq, stream, text}`, not line-aligned). Swapping fragments partial mid-stream lines into separate boxed rows, can't color interleaved stdout/stderr without splitting a single PTY line, and loses exact whitespace / no-trailing-newline (`ConsoleEntry` wraps in a flex `<div>`, not `<pre>`). The `Tool` shell around it is already nauval; only the raw-scrollback body stays custom.
+- **Markdown code fences stay streamdown, not nauval `CodeBlock`.** Swapping loses `parseIncompleteMarkdown` streaming — the AGENTS.md justified divergence. `markdown.tsx`/`diff-rich.tsx` are vendored for library parity only.
+
 ## Status + remaining follow-ups (2026-07-03, end of session)
 
 S0-S4 + S5 hops 1/2a are COMMITTED: assistant-ui and the patched fork deleted (~7,380 LOC); TranscriptView (fold + 16-leaf registry + nauval) is THE transcript; providers are Claude + Codex with the legacy transport gone; the daemon mints AG-UI identity and emits standard rows + terragon.part rich rows directly.
