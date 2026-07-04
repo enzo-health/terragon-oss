@@ -25,6 +25,8 @@
   --secondary-foreground: oklch(1 0 0);
   --muted: oklch(0.967 0.0029 264.5419);
   --muted-foreground: oklch(0.551 0.0234 264.3637);
+  --surface: var(--muted);
+  --surface-elevated: var(--card);
   --accent: oklch(0.9491 0 0);
   --accent-foreground: oklch(0.2101 0.0318 264.6645);
   --destructive: oklch(0.6368 0.2078 25.3313);
@@ -69,6 +71,7 @@
      so warning/success/info chips still render with correct hue. */
   --warning: oklch(0.62 0.095 54);
   --success: oklch(0.58 0.075 150);
+  --diff-added: oklch(0.62 0.15 150);
   --error: var(--destructive);
   --info: oklch(0.58 0.1 230);
 
@@ -245,6 +248,7 @@
      both themes. Teal lives on --secondary/--chart-1, never on danger. */
   --warning: oklch(0.65 0.1 54);
   --success: oklch(0.68 0.08 150);
+  --diff-added: oklch(0.72 0.16 150);
   --error: var(--destructive);
   --info: oklch(0.68 0.11 230);
 
@@ -442,10 +446,10 @@
      ring/border-inflight. Tailwind v4 silently emits nothing for unregistered
      tokens, so without these the leaves fall back to a transparent surface and
      a currentColor in-flight border. Mappings per components/ai/VENDOR.md. */
-  --color-surface: var(--muted);
-  --color-surface-elevated: var(--card);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-inflight: var(--info);
-  --color-diff-added: var(--success);
+  --color-diff-added: var(--diff-added);
   --color-diff-removed: var(--destructive);
   --color-scrollbar: var(--mid);
   /* Disabled fill for buttons / inputs / chips. The button base class
@@ -933,18 +937,18 @@
 }
 
 .nauval-chat-surface {
-  --color-surface: oklch(0.972 0.0022 264.54);
-  --color-surface-elevated: oklch(0.955 0.0022 264.54);
-  --color-border: oklch(0.922 0.0022 264.54);
-  --color-muted: oklch(0.945 0.0022 264.54);
-  --color-muted-foreground: oklch(0.5 0 0);
+  --surface: oklch(0.972 0.0022 264.54);
+  --surface-elevated: oklch(0.955 0.0022 264.54);
+  --border: oklch(0.922 0.0022 264.54);
+  --muted: oklch(0.945 0.0022 264.54);
+  --muted-foreground: oklch(0.5 0 0);
   --radius-outer: 1rem;
 }
 
 .dark .nauval-chat-surface {
-  --color-surface: oklch(0.31 0.0034 106.6);
-  --color-surface-elevated: oklch(0.367 0.0034 106.6);
-  --color-border: oklch(0.4 0.0033 106.5);
-  --color-muted: oklch(0.34 0.0034 106.6);
-  --color-muted-foreground: oklch(0.6328 0.0029 106.5);
+  --surface: oklch(0.31 0.0034 106.6);
+  --surface-elevated: oklch(0.367 0.0034 106.6);
+  --border: oklch(0.4 0.0033 106.5);
+  --muted: oklch(0.34 0.0034 106.6);
+  --muted-foreground: oklch(0.6328 0.0029 106.5);
 }
