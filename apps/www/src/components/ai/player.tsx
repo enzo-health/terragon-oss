@@ -136,8 +136,6 @@ export function Player({ children }: { children?: React.ReactNode }) {
     setVolumeState(mediaEl.volume);
     setMutedState(mediaEl.muted);
 
-    // timeupdate covers paused-seek and native-control changes; the RAF loop
-    // below upgrades to ~60Hz during playback.
     const onTimeUpdate = () => writeTime(mediaEl.currentTime);
     const onDuration = () => readDuration();
     const onPlay = () => setIsPlaying(true);
@@ -461,9 +459,7 @@ function useDragSeek(
       const finish = () => {
         try {
           target.releasePointerCapture(pointerId);
-        } catch {
-          // pointer may already be released
-        }
+        } catch {}
         target.removeEventListener("pointermove", onMove);
         target.removeEventListener("pointerup", finish);
         target.removeEventListener("pointercancel", finish);
