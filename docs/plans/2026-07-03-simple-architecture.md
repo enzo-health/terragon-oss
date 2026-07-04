@@ -112,6 +112,18 @@ S5 = adapters emit TerragonEvents directly; ClaudeMessage dies (daemon-internal;
 
 Gate for S3: the P2 equivalence assertions + the integration harness + the emulator's scenario runs (default, long-stream, rate-limit, stop) all green on the store path with the flag on.
 
+## Nauval-native addendum (2026-07-03, Tyler)
+
+**Goal restated:** stop maintaining custom chat-surface UI — AG-UI events feed nauval components natively. Upstream's own design doc confirms the integration pattern: nauval is deliberately store-less/transport-less ("no built-in store, no required hook, no transport"), so the fold IS the intended binding; there is no upstream SDK adapter to adopt (`packages/ai` is only their CLI installer).
+
+What this changes concretely:
+
+1. **Library parity (DONE, `97bb4039`):** all 48 upstream components vendored at `9944bcf` into `components/ai/` with full-state Ladle stories. `markdown.tsx`/`diff-rich.tsx` are library-parity only — production markdown stays streamdown (justified divergence holds).
+2. **Composer goes nauval-native (in flight):** `SimplePromptBox`/`use-promptbox` rebuild on `Composer` + `ComposerRichInput` (still TipTap; the routeComposerSubmit seam and clientSubmissionId idempotency are unchanged). Async `@` items come from the existing Typeahead, `/` from agent slash commands. `FolderAwareMention` + tippy popovers + custom mention/slash list UIs retire. Compatibility contract: `composerValueToRichText()` must produce the exact persisted `DBUserMessage` rich-text shape `tiptapToRichText()` produces today (parity-tested).
+3. **Leaves become composition-only (next):** fold output carries nauval-shaped props (Tool state strings, Message roles, AgentRun status); leaves stop hand-rolling UI nauval covers — terminal body → `Console`, markdown code fences → `CodeBlock`, attachments → `Attachment`/`Uploader`, model picker → `ModelSelector`/`Select`, chat scroll → nauval `scroll-area`. Terragon logic in leaves shrinks to real business rules (verb maps, path-tail truncation, permission actions).
+
+The three-edit recipe survives unchanged; edit 3 (registry leaf) gets cheaper because leaves are now thin JSX over nauval parts.
+
 ## Status + remaining follow-ups (2026-07-03, end of session)
 
 S0-S4 + S5 hops 1/2a are COMMITTED: assistant-ui and the patched fork deleted (~7,380 LOC); TranscriptView (fold + 16-leaf registry + nauval) is THE transcript; providers are Claude + Codex with the legacy transport gone; the daemon mints AG-UI identity and emits standard rows + terragon.part rich rows directly.
