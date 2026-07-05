@@ -7,7 +7,8 @@ import {
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import React, { useState } from "react";
-import { cn } from "@/lib/utils";
+import { CodeBlock, CodeBlockContent } from "@/components/ai/code-block";
+import { Status } from "@/components/ai/status";
 import { GitDiffPart } from "../../git-diff-part";
 import type { ArtifactDescriptorLookup } from "../../secondary-panel-helpers";
 
@@ -62,7 +63,7 @@ export function SystemMessage({
     }
   };
 
-  const getDotClassName = () => {
+  const getStatusState = () => {
     switch (message.message_type) {
       case "retry-git-commit-and-push":
       case "fix-github-checks":
@@ -72,16 +73,15 @@ export function SystemMessage({
       case "follow-up-retry-failed":
       case "auto-fix-ci-failure":
       case "auto-respond-changes-requested":
-        // Semantic destructive — uses theme token, dark-mode safe
-        return "bg-error";
+        return "error" as const;
       case "clear-context":
       case "compact-result":
-        return "bg-success";
+        return "active" as const;
       case "cancel-schedule":
-        return "bg-muted-foreground";
+        return "pending" as const;
       case "stop":
       case "git-diff":
-        return "";
+        return "neutral" as const;
       default:
         const _exhaustiveCheck: never = message;
         return _exhaustiveCheck;
@@ -91,7 +91,11 @@ export function SystemMessage({
   const showMoreButton = message.parts.length > 0;
 
   if (message.message_type === "stop") {
-    return <div className="p-2">Execution interrupted by user.</div>;
+    return (
+      <div className="p-2 text-sm text-muted-foreground">
+        Execution interrupted by user.
+      </div>
+    );
   }
   if (message.message_type === "git-diff") {
     if (!thread) {
@@ -113,43 +117,37 @@ export function SystemMessage({
     );
   }
   return (
-    <div className="py-2 px-4 rounded-xl mr-auto w-fit flex flex-col gap-2">
-      <div className="flex flex-col gap-2">
-        <div
-          className="grid grid-cols-[auto_1fr] gap-3 text-muted-foreground/70 transition-colors hover:text-muted-foreground cursor-pointer group/system"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-        >
-          <span className="h-5 flex items-center">
-            <span
-              className={cn(
-                "shrink-0 size-1.5 rounded-full inline-block",
-                getDotClassName(),
-              )}
-              aria-hidden="true"
+    <div className="py-2 px-4 mr-auto w-fit flex flex-col gap-2">
+      <Status
+        state={getStatusState()}
+        size="sm"
+        render={
+          showMoreButton ? (
+            <button
+              type="button"
+              onClick={() => setIsCollapsed(!isCollapsed)}
             />
+          ) : undefined
+        }
+      >
+        <span className="tracking-[0.14px]">{getLabel()}</span>
+        {showMoreButton && (
+          <span className="opacity-60 select-none">
+            ({isCollapsed ? "Show more" : "Show less"})
           </span>
-          <span className="text-[13px] font-sans tracking-[0.14px]">
-            <span>{getLabel()}</span>
-            {showMoreButton && (
-              <>
-                &nbsp;
-                <span className="inline-block opacity-60 group-hover/system:opacity-100 transition-opacity select-none">
-                  ({isCollapsed ? "Show more" : "Show less"})
-                </span>
-              </>
-            )}
-          </span>
-        </div>
-        {!isCollapsed && showMoreButton && (
-          <div className="max-h-[200px] overflow-auto rounded-xl p-3 bg-muted/40 dark:bg-muted/30 shadow-inset-edge">
+        )}
+      </Status>
+      {!isCollapsed && showMoreButton && (
+        <CodeBlock>
+          <CodeBlockContent className="max-h-[200px] overflow-auto">
             <pre className="whitespace-pre-wrap text-[11px] font-mono leading-relaxed text-muted-foreground/80">
               {message.parts.map((part) => {
                 return part.text;
               })}
             </pre>
-          </div>
-        )}
-      </div>
+          </CodeBlockContent>
+        </CodeBlock>
+      )}
     </div>
   );
 }

@@ -51,7 +51,7 @@ import {
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
-import { LeafLoading } from "./conversation/chrome/leaf-loading";
+import { Loader } from "@/components/ai/loader";
 import type { ScrollController } from "./conversation/scroll-bridge";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
@@ -593,7 +593,9 @@ function ChatUIContent() {
     // agent.
     return (
       <div className="flex flex-col h-full w-full items-center justify-center">
-        <LeafLoading message="Loading task…" />
+        <Loader variant="shimmer" dots className="text-sm">
+          Loading task…
+        </Loader>
       </div>
     );
   }

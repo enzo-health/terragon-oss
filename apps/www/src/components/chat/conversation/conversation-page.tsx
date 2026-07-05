@@ -29,7 +29,7 @@ import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { respondToPermission } from "@/server-actions/respond-to-permission";
 import { ChatError, isSandboxErrorType } from "./chrome/chat-error";
 import { MessageScheduled, WorkingMessage } from "./chrome/working-message";
-import { LeafLoading } from "./chrome/leaf-loading";
+import { Loader } from "@/components/ai/loader";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
 import { TerragonSystemMessage } from "./chrome/lifecycle-message";
 import {
@@ -211,7 +211,9 @@ export function ConversationPage({
               ) : null}
               {isHydrating && showHydrationIndicator ? (
                 <div className="pt-2 animate-in fade-in duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] motion-reduce:animate-none">
-                  <LeafLoading message="Connecting to live task…" />
+                  <Loader variant="shimmer" dots className="text-sm">
+                    Connecting to live task…
+                  </Loader>
                 </div>
               ) : null}
               <TranscriptItems store={store} />

@@ -3,7 +3,9 @@ import { ThreadStatus } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { BootChecklist } from "./boot-checklist";
-import { LeafLoading } from "./leaf-loading";
+import { Button } from "@/components/ai/button";
+import { Loader } from "@/components/ai/loader";
+import { Status } from "@/components/ai/status";
 import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
 import Link from "next/link";
 import {
@@ -190,14 +192,12 @@ export function WorkingMessage({
   // The booting status renders a persistent checklist instead of a single line.
   if (status === "booting") {
     return (
-      <LeafLoading
-        message={
-          <BootChecklist
-            currentSubstatus={bootingSubstatus ?? null}
-            metaSnapshot={metaSnapshot}
-          />
-        }
-      />
+      <div className="px-2 py-1">
+        <BootChecklist
+          currentSubstatus={bootingSubstatus ?? null}
+          metaSnapshot={metaSnapshot}
+        />
+      </div>
     );
   }
 
@@ -208,7 +208,15 @@ export function WorkingMessage({
     reattemptQueueAt,
     isTouchDevice,
   });
-  return <LeafLoading message={message} />;
+  return (
+    <output
+      aria-live="polite"
+      className="flex items-center gap-2.5 px-2 text-muted-foreground text-sm"
+    >
+      <Loader variant="shimmer" dots aria-label="Assistant is working" />
+      <span className="flex items-center gap-1">{message}</span>
+    </output>
+  );
 }
 
 export function MessageScheduled({
@@ -227,43 +235,39 @@ export function MessageScheduled({
     mutationFn: cancelScheduledThread,
   });
   return (
-    <div className="flex flex-col gap-1">
-      <LeafLoading
-        message={
-          <div className="flex flex-col gap-0">
-            Scheduled to run at{" "}
-            {scheduleAt?.toLocaleString(undefined, {
-              dateStyle: "short",
-              timeStyle: "short",
-            })}
-            .
-            <div className="space-x-2 text-muted-foreground">
-              <button
-                className="text-xs underline cursor-pointer"
-                onClick={async () => {
-                  await runScheduledThreadMutation.mutateAsync({
-                    threadId,
-                    threadChatId,
-                  });
-                }}
-              >
-                Run now
-              </button>
-              <button
-                className="text-xs underline cursor-pointer"
-                onClick={async () => {
-                  await cancelScheduledThreadMutation.mutateAsync({
-                    threadId,
-                    threadChatId,
-                  });
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        }
-      />
+    <div className="flex flex-col items-start gap-2 px-2">
+      <Status state="pending">
+        Scheduled to run at{" "}
+        {scheduleAt?.toLocaleString(undefined, {
+          dateStyle: "short",
+          timeStyle: "short",
+        })}
+        .
+      </Status>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            await runScheduledThreadMutation.mutateAsync({
+              threadId,
+              threadChatId,
+            });
+          }}
+        >
+          Run now
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            await cancelScheduledThreadMutation.mutateAsync({
+              threadId,
+              threadChatId,
+            });
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

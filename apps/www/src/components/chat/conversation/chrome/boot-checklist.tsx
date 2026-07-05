@@ -3,6 +3,7 @@
 import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
 import { Check, Loader2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
+import { Task, TaskIcon, TaskItem, TaskLabel } from "@/components/ai/task";
 import { cn } from "@/lib/utils";
 import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
 
@@ -197,17 +198,7 @@ export function BootChecklist({
     : currentStepIndex(currentSubstatus);
 
   return (
-    <div
-      className="relative flex flex-col py-1"
-      role="list"
-      aria-label="Boot progress"
-    >
-      {/* Timeline rail connecting the step icons. Sits behind the
-          icon chips; icons use z-10 + bg-background to "mask" it. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-2 top-4 bottom-4 w-px bg-border"
-      />
+    <Task role="list" aria-label="Boot progress" className="py-1">
       {BOOT_STEPS.map((step, index) => {
         const isCompleted = index < activeIndex;
         const isActive = index === activeIndex;
@@ -218,63 +209,37 @@ export function BootChecklist({
         const durationMs = metaStep?.durationMs;
         const startedAt = metaStep?.startedAt;
 
-        return (
-          <div key={step.substatus} role="listitem" className="relative">
-            <div className="flex items-center gap-2.5 py-1 min-h-[26px]">
-              <span
-                className={cn(
-                  "relative z-10 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-background transition-[color,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
-                  {
-                    "text-primary": isCompleted,
-                    "text-foreground": isActive,
-                    "text-muted-foreground opacity-30": isPending,
-                  },
-                )}
-                aria-hidden
-              >
-                <span
-                  className="absolute w-1.5 h-1.5 rounded-full bg-current transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
-                  style={{
-                    opacity: isPending ? 1 : 0,
-                    transform: isPending ? "scale(1)" : "scale(0.25)",
-                    filter: isPending ? "blur(0px)" : "blur(4px)",
-                  }}
-                />
-                <span
-                  className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
-                  style={{
-                    opacity: isActive ? 1 : 0,
-                    transform: isActive ? "scale(1)" : "scale(0.25)",
-                    filter: isActive ? "blur(0px)" : "blur(4px)",
-                  }}
-                >
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                </span>
-                <span
-                  className="absolute inline-flex transition-[opacity,transform,filter] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]"
-                  style={{
-                    opacity: isCompleted ? 1 : 0,
-                    transform: isCompleted ? "scale(1)" : "scale(0.25)",
-                    filter: isCompleted ? "blur(0px)" : "blur(4px)",
-                  }}
-                >
-                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                </span>
-              </span>
+        const showInstallProgress =
+          (step.substatus === "installing-agent" ||
+            step.substatus === "running-setup-script") &&
+          isActive;
 
-              {/* Step label */}
-              <span
-                className={cn(
-                  "flex-1 text-sm transition-colors duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
-                  {
-                    "text-foreground font-medium": isActive,
-                    "text-muted-foreground": isCompleted,
-                    "text-muted-foreground opacity-40": isPending,
-                  },
-                )}
+        return (
+          <React.Fragment key={step.substatus}>
+            <TaskItem role="listitem">
+              <TaskIcon
+                className={cn({
+                  "text-primary": isCompleted,
+                  "text-foreground": isActive,
+                  "text-muted-foreground/40": isPending,
+                })}
+              >
+                {isCompleted ? (
+                  <Check className="size-3.5 stroke-[2.5]" />
+                ) : isActive ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : undefined}
+              </TaskIcon>
+
+              <TaskLabel
+                className={cn("text-sm", {
+                  "text-foreground font-medium": isActive,
+                  "text-muted-foreground": isCompleted,
+                  "text-muted-foreground opacity-40": isPending,
+                })}
               >
                 {step.label}
-              </span>
+              </TaskLabel>
 
               {isCompleted && durationMs !== undefined && (
                 <span
@@ -287,22 +252,18 @@ export function BootChecklist({
               {isActive && startedAt !== undefined && (
                 <ActiveStepTimer startedAt={startedAt} />
               )}
-            </div>
+            </TaskItem>
 
-            {/* Install progress bar — only shown when this step is active */}
-            {(step.substatus === "installing-agent" ||
-              step.substatus === "running-setup-script") &&
-              isActive &&
-              installProgress !== null && (
-                <InstallProgressBar
-                  resolved={installProgress.resolved}
-                  total={installProgress.total}
-                  currentPackage={installProgress.currentPackage}
-                />
-              )}
-          </div>
+            {showInstallProgress && installProgress && (
+              <InstallProgressBar
+                resolved={installProgress.resolved}
+                total={installProgress.total}
+                currentPackage={installProgress.currentPackage}
+              />
+            )}
+          </React.Fragment>
         );
       })}
-    </div>
+    </Task>
   );
 }

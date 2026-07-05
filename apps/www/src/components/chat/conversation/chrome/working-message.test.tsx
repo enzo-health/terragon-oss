@@ -20,8 +20,8 @@ describe("WorkingMessage passive-wait rendering", () => {
     expect(html).toContain("Waiting for PR merge");
     expect(html).not.toContain("esc to interrupt");
     expect(html).not.toContain("Assistant is working");
-    // Passive footer should not render the typing-dots animation.
-    expect(html).not.toContain("typing-dots");
+    // Passive footer should not render the animated loader indicator.
+    expect(html).not.toContain('data-slot="loader"');
   });
 
   it("falls through to the default 'Assistant is working' footer when passiveWait is null", () => {
@@ -34,7 +34,7 @@ describe("WorkingMessage passive-wait rendering", () => {
       />,
     );
     expect(html).toContain("Assistant is working");
-    expect(html).toContain("typing-dots");
+    expect(html).toContain('data-slot="loader"');
   });
 
   it("renders the blocked reason as secondary text when provided", () => {

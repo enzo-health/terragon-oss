@@ -25,7 +25,7 @@ import {
   threadShellQueryOptions,
 } from "@/queries/thread-queries";
 import { ChatError } from "./conversation/chrome/chat-error";
-import { LeafLoading } from "./conversation/chrome/leaf-loading";
+import { Loader } from "@/components/ai/loader";
 import { useThreadPageRealtimeSync } from "./use-thread-page-realtime-sync";
 
 /**
@@ -93,7 +93,7 @@ export function useThreadContext(): ThreadContextValue {
 
 /**
  * Owns React Query bootstrap for a thread page: shell + primary thread-chat
- * queries, collection seeding, and the loading gate. Renders a `LeafLoading`
+ * queries, collection seeding, and the loading gate. Renders a `Loader`
  * skeleton until both feeds settle and agree on `primaryThreadChatId`, then
  * mounts `children` with a stable React `key` so the consumer's lazy
  * initializers see a fully hydrated context on first render.
@@ -215,7 +215,9 @@ export function ThreadProvider({
   ) {
     return (
       <div className="flex flex-col h-full w-full items-center justify-center">
-        <LeafLoading message="Loading task…" />
+        <Loader variant="shimmer" dots className="text-sm">
+          Loading task…
+        </Loader>
       </div>
     );
   }

@@ -1,9 +1,17 @@
 import { Thread, ThreadErrorType } from "@terragon/shared";
-import { GitBranch, Loader2, RotateCcw } from "lucide-react";
+import { GitBranch, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { isAgentWorking } from "@/agent/thread-status";
-import { Button } from "../../../ui/button";
+import { Button } from "@/components/ai/button";
+import { Callout, CalloutContent } from "@/components/ai/callout";
+import {
+  Exception,
+  ExceptionContent,
+  ExceptionFrames,
+  ExceptionHeader,
+  ExceptionTrigger,
+} from "@/components/ai/exception";
 import { ansiToHtml } from "../../tools/utils";
 
 const ERROR_TYPES_THAT_HIDE_RETRY_BUTTON = new Set<ThreadErrorType>([
@@ -87,30 +95,28 @@ export function ChatError({
     !isReadOnly
   );
   return (
-    <div className="p-3 ring ring-error/40 bg-error/5 rounded-outer text-sm animate-in fade-in slide-in-from-bottom-1 duration-200">
-      <div className="flex gap-2 mb-1 justify-between items-start">
-        <div className="min-w-0 flex-1">
-          <ChatContent errorType={errorType} errorInfo={errorInfo} />
-        </div>
-        {showRetryButton && (
-          <Button
-            onClick={handleRetry}
-            size="icon"
-            variant="ghost"
-            className="size-6 hover:bg-transparent hover:text-foreground flex-shrink-0"
-            title="Retry"
-            aria-label="Retry"
-            disabled={isRetrying}
-          >
-            {isRetrying ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <RotateCcw className="size-4" />
-            )}
-          </Button>
-        )}
-      </div>
-    </div>
+    <Callout
+      tone="danger"
+      role="alert"
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200"
+    >
+      <CalloutContent>
+        <ChatContent errorType={errorType} errorInfo={errorInfo} />
+      </CalloutContent>
+      {showRetryButton && (
+        <Button
+          onClick={handleRetry}
+          variant="ghost"
+          iconOnly
+          loading={isRetrying}
+          className="size-6 shrink-0"
+          title="Retry"
+          aria-label="Retry"
+        >
+          <RotateCcw />
+        </Button>
+      )}
+    </Callout>
   );
 }
 
@@ -148,23 +154,33 @@ function ChatErrorContentsWithPre({
       <p className="text-xs font-medium flex items-center gap-1 text-error">
         {header}
       </p>
-      {errorStr && (
-        <div className="text-xs text-muted-foreground">
-          {renderAnsi ? (
-            <pre
-              className="font-mono whitespace-pre-wrap break-words overflow-hidden"
-              dangerouslySetInnerHTML={{
-                __html: ansiToHtml(errorStr, theme),
-              }}
-            />
-          ) : (
-            <pre className="font-mono whitespace-pre-wrap break-words overflow-hidden">
-              {errorStr}
-            </pre>
-          )}
-        </div>
-      )}
+      {errorStr &&
+        (renderAnsi ? (
+          <ExceptionFrames
+            className="whitespace-pre-wrap break-words p-3 leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: ansiToHtml(errorStr, theme) }}
+          />
+        ) : (
+          <ExceptionFrames className="whitespace-pre-wrap break-words p-3 leading-relaxed">
+            {errorStr}
+          </ExceptionFrames>
+        ))}
     </div>
+  );
+}
+
+function ErrorDetails({ errorInfo }: { errorInfo: string }) {
+  return (
+    <Exception className="mt-2">
+      <ExceptionHeader className="min-h-0 px-3 py-1.5">
+        <ExceptionTrigger>Details</ExceptionTrigger>
+      </ExceptionHeader>
+      <ExceptionContent keepMounted>
+        <ExceptionFrames className="whitespace-pre-wrap break-words p-3 leading-relaxed">
+          {errorInfo}
+        </ExceptionFrames>
+      </ExceptionContent>
+    </Exception>
   );
 }
 
@@ -331,16 +347,7 @@ function ChatContent({
           body={
             <>
               We couldn&apos;t complete the request. Retry to try again.
-              {errorInfo ? (
-                <details className="mt-2 text-muted-foreground/80">
-                  <summary className="cursor-pointer select-none">
-                    Details
-                  </summary>
-                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
-                    {errorInfo}
-                  </pre>
-                </details>
-              ) : null}
+              {errorInfo ? <ErrorDetails errorInfo={errorInfo} /> : null}
             </>
           }
         />
@@ -376,17 +383,7 @@ function ChatContent({
               >
                 status page
               </Link>
-              .
-              {errorInfo ? (
-                <details className="mt-2 text-muted-foreground/80">
-                  <summary className="cursor-pointer select-none">
-                    Details
-                  </summary>
-                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
-                    {errorInfo}
-                  </pre>
-                </details>
-              ) : null}
+              .{errorInfo ? <ErrorDetails errorInfo={errorInfo} /> : null}
             </>
           }
         />
@@ -400,16 +397,7 @@ function ChatContent({
             <>
               The sandbox failed to come back online. Retry to create a fresh
               one and continue where you left off.
-              {errorInfo ? (
-                <details className="mt-2 text-muted-foreground/80">
-                  <summary className="cursor-pointer select-none">
-                    Details
-                  </summary>
-                  <pre className="whitespace-pre-wrap break-words overflow-hidden mt-1">
-                    {errorInfo}
-                  </pre>
-                </details>
-              ) : null}
+              {errorInfo ? <ErrorDetails errorInfo={errorInfo} /> : null}
             </>
           }
         />
