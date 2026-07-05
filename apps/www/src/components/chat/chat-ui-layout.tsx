@@ -17,6 +17,7 @@ import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
 import { ConversationPage } from "./conversation/conversation-page";
+import type { ScrollController } from "./conversation/scroll-bridge";
 import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
@@ -75,8 +76,13 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     activeRepoFilePath,
   } = viewModel;
 
-  const { chatContainerRef, promptBoxRef, forceScrollToBottom, scrollToTop } =
-    scrollState;
+  const {
+    chatContainerRef,
+    scrollController,
+    promptBoxRef,
+    forceScrollToBottom,
+    scrollToTop,
+  } = scrollState;
 
   const {
     activeArtifactId,
@@ -143,6 +149,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
               threadChatId={threadChat.id}
               scheduleAt={threadChat.scheduleAt}
               threadChatStatus={threadChat.status}
+              scrollController={scrollController}
             />
             {!isReadOnly && (
               <ChatPromptBox
@@ -254,18 +261,14 @@ export type ChatUIViewModelData = {
  * scroll choreography.
  */
 export type ChatUIScrollState = {
-  transcriptRef: React.RefObject<HTMLDivElement | null>;
-  scrollAreaRef: React.RefObject<HTMLDivElement | null>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  scrollController: React.RefObject<ScrollController | null>;
   promptBoxRef: React.RefObject<{
     focus: () => void;
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>;
   forceScrollToBottom: () => void;
   scrollToTop: () => void;
-  isAtBottom: boolean;
-  hasInitialized: boolean;
 };
 
 /**

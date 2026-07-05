@@ -10,7 +10,14 @@ import type {
 } from "@terragon/shared";
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { ArrowDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type RefObject,
+} from "react";
+import { Button } from "@/components/ai/button";
 import {
   Conversation,
   ConversationContent,
@@ -19,7 +26,6 @@ import {
 import type { AgUiReplayCursor } from "@/hooks/use-ag-ui-transport";
 import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
-import { cn } from "@/lib/utils";
 import { respondToPermission } from "@/server-actions/respond-to-permission";
 import { ChatError, isSandboxErrorType } from "./chrome/chat-error";
 import { MessageScheduled, WorkingMessage } from "./chrome/working-message";
@@ -32,6 +38,7 @@ import {
   shouldSuppressPreStartLifecycleFooter,
 } from "./chrome/working-footer-freshness";
 import { TranscriptItems } from "./transcript-items";
+import { ScrollBridge, type ScrollController } from "./scroll-bridge";
 import {
   type PermissionDecision,
   ConversationContextProvider,
@@ -72,16 +79,8 @@ export type ConversationPageProps = {
   threadChatId?: string;
   scheduleAt?: Date | null;
   threadChatStatus?: ThreadStatus;
+  scrollController: RefObject<ScrollController | null>;
 };
-
-const SCROLL_BUTTON_CLASS = cn(
-  "absolute bottom-5 left-1/2 -translate-x-1/2 z-10",
-  "flex size-10 items-center justify-center rounded-full",
-  "bg-card border border-border/60 shadow-md",
-  "transition-[opacity,transform] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
-  "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-  "data-[at-bottom=true]:opacity-0 data-[at-bottom=true]:translate-y-2 data-[at-bottom=true]:pointer-events-none",
-);
 
 export function ConversationPage({
   agent,
@@ -110,6 +109,7 @@ export function ConversationPage({
   threadChatId,
   scheduleAt,
   threadChatStatus,
+  scrollController,
 }: ConversationPageProps) {
   const { store, isHydrating, errorType, errorInfo, handleRetry, isRetrying } =
     useLiveTranscript({
@@ -191,8 +191,8 @@ export function ConversationPage({
     <ConversationContextProvider value={contextValue}>
       <div className="relative flex-1 overflow-hidden">
         <Conversation className="size-full">
-          <ConversationContent>
-            <div className="nauval-chat-surface flex flex-col flex-1 gap-6 w-full max-w-chat mx-auto px-4 sm:px-6 py-6 pb-8">
+          <ConversationContent className="pt-10 pb-12 px-2.5">
+            <div className="nauval-chat-surface mx-auto flex w-full max-w-chat flex-col gap-6 px-4 sm:px-6">
               {lifecycleMessages.length > 0 ? (
                 <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)] motion-reduce:animate-none">
                   {lifecycleMessages.map((message, index) => (
@@ -214,9 +214,7 @@ export function ConversationPage({
                   <LeafLoading message="Connecting to live task…" />
                 </div>
               ) : null}
-              <div className="flex flex-col gap-4">
-                <TranscriptItems store={store} />
-              </div>
+              <TranscriptItems store={store} />
               {errorType || errorInfo ? (
                 <ChatError
                   status={threadStatus ?? "error"}
@@ -256,11 +254,18 @@ export function ConversationPage({
               ) : null}
             </div>
           </ConversationContent>
+          <ScrollBridge controller={scrollController} />
           <ConversationScrollButton
-            className={SCROLL_BUTTON_CLASS}
-            aria-label="Scroll to bottom"
+            render={
+              <Button
+                iconOnly
+                variant="outline"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 size-9 rounded-full bg-surface-elevated shadow-md transition-all data-[at-bottom=true]:pointer-events-none data-[at-bottom=true]:translate-y-1 data-[at-bottom=true]:opacity-0"
+                aria-label="Scroll to bottom"
+              />
+            }
           >
-            <ArrowDown className="size-4 text-muted-foreground" />
+            <ArrowDown className="size-4" />
           </ConversationScrollButton>
         </Conversation>
       </div>

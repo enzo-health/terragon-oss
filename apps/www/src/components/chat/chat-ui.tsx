@@ -34,7 +34,6 @@ import {
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
-import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
@@ -53,6 +52,7 @@ import {
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
 import { LeafLoading } from "./conversation/chrome/leaf-loading";
+import type { ScrollController } from "./conversation/scroll-bridge";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
@@ -150,28 +150,18 @@ function ChatUIContent() {
   } = useThreadContext();
   const queryClient = useQueryClient();
 
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const scrollControllerRef = useRef<ScrollController | null>(null);
   const promptBoxRef = useRef<{
     focus: () => void;
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const { messagesEndRef, isAtBottom, forceScrollToBottom } = useScrollToBottom(
-    { observedRef: transcriptRef },
-  );
   const platform = usePlatform();
   const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
-  const [hasInitialized, setHasInitialized] = useState(false);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setHasInitialized(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   const {
     shouldAutoOpenSecondaryPanel,
@@ -397,14 +387,10 @@ function ChatUIContent() {
   });
 
   const scrollToTop = useCallback(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector(
-        '[data-slot="scroll-area-viewport"]',
-      );
-      if (scrollViewport) {
-        scrollViewport.scrollTop = 0;
-      }
-    }
+    scrollControllerRef.current?.scrollToTop();
+  }, []);
+  const forceScrollToBottom = useCallback(() => {
+    scrollControllerRef.current?.scrollToBottom();
   }, []);
   const { handleRetry, isRetrying } = useRetryThreadMutation({
     threadId,
@@ -547,23 +533,13 @@ function ChatUIContent() {
 
   const scrollState = useMemo<ChatUIScrollState>(
     () => ({
-      transcriptRef,
-      scrollAreaRef,
       chatContainerRef,
-      messagesEndRef,
+      scrollController: scrollControllerRef,
       promptBoxRef,
       forceScrollToBottom,
       scrollToTop,
-      isAtBottom,
-      hasInitialized,
     }),
-    [
-      forceScrollToBottom,
-      hasInitialized,
-      isAtBottom,
-      messagesEndRef,
-      scrollToTop,
-    ],
+    [forceScrollToBottom, scrollToTop],
   );
 
   const panelState = useMemo<ChatUIPanelState>(
