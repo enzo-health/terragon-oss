@@ -87,7 +87,7 @@ export const ToolLeaf: Leaf<"tool"> = ({ item }) => {
 
   return (
     <Tool
-      className={cn("my-1", !seeded && ENTER_ANIMATION)}
+      className={cn(!seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
       onOpenChange={setUserOpen}
@@ -151,7 +151,7 @@ export const TerminalLeaf: Leaf<"terminal"> = ({ item }) => {
 
   return (
     <Tool
-      className={cn("my-1", !seeded && ENTER_ANIMATION)}
+      className={cn(!seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
       onOpenChange={setUserOpen}
@@ -214,7 +214,7 @@ export const DelegationLeaf: Leaf<"delegation"> = ({ item }) => {
 
   return (
     <Tool
-      className={cn("my-1", !seeded && ENTER_ANIMATION)}
+      className={cn(!seeded && ENTER_ANIMATION)}
       state={state}
       open={open}
       onOpenChange={setUserOpen}

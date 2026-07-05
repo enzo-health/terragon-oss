@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ShieldAlert, X } from "lucide-react";
+import { Button } from "@/components/ai/button";
 import {
   Confirmation,
   ConfirmationAccept,
@@ -15,16 +16,9 @@ import {
   ConfirmationStatus,
   ConfirmationTitle,
 } from "@/components/ai/confirmation";
-import { cn } from "@/lib/utils";
 import type { PermissionItem } from "../../transcript-store";
 import type { Leaf } from "../leaf-props";
 import { useConversationContext } from "../conversation-context";
-
-const DECISION_BUTTON = cn(
-  "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-  "transition-colors disabled:opacity-50 disabled:pointer-events-none",
-);
 
 function confirmationState(
   status: PermissionItem["status"],
@@ -39,11 +33,7 @@ export const PermissionLeaf: Leaf<"permission"> = ({ item }) => {
   const disabled = isReadOnly || !respondToPermission;
 
   return (
-    <Confirmation
-      className="my-2"
-      tone="danger"
-      state={confirmationState(item.status)}
-    >
+    <Confirmation tone="danger" state={confirmationState(item.status)}>
       <ConfirmationHeader>
         <ConfirmationIcon>
           <ShieldAlert />
@@ -56,29 +46,23 @@ export const PermissionLeaf: Leaf<"permission"> = ({ item }) => {
       <ConfirmationPending>
         <ConfirmationAction>
           <ConfirmationReject
-            className={cn(
-              DECISION_BUTTON,
-              "bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
+            render={<Button variant="ghost" />}
             disabled={disabled}
             onClick={() =>
               respondToPermission?.(item.permissionRequestId, "denied")
             }
           >
-            <X className="size-4" />
+            <X />
             Deny
           </ConfirmationReject>
           <ConfirmationAccept
-            className={cn(
-              DECISION_BUTTON,
-              "bg-primary text-primary-foreground hover:bg-primary/90",
-            )}
+            render={<Button variant="primary" />}
             disabled={disabled}
             onClick={() =>
               respondToPermission?.(item.permissionRequestId, "approved")
             }
           >
-            <Check className="size-4" />
+            <Check />
             Approve
           </ConfirmationAccept>
         </ConfirmationAction>

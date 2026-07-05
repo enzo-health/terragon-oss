@@ -12,7 +12,7 @@ function hostname(url: string): string {
 }
 
 export const SourcesLeaf: Leaf<"sources"> = ({ item }) => (
-  <div className="my-2 flex flex-col gap-2">
+  <div className="flex flex-col gap-2">
     {item.query ? (
       <div className="text-xs text-muted-foreground">
         Searched: {item.query}

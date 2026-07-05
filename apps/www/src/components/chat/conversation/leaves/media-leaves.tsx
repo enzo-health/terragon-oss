@@ -23,11 +23,7 @@ function imageSrc(item: LeafItem<"image">): string | null {
 export const ImageLeaf: Leaf<"image"> = ({ item }) => {
   const src = imageSrc(item);
   if (!src) return null;
-  return (
-    <div className="my-2">
-      <ImagePart imageUrl={src} />
-    </div>
-  );
+  return <ImagePart imageUrl={src} />;
 };
 
 function formatSize(size: number | null): string | null {
@@ -56,17 +52,11 @@ export const AttachmentLeaf: Leaf<"attachment"> = ({ item }) => {
     </>
   );
 
-  return (
-    <div className="my-2">
-      {item.url ? (
-        <Attachment
-          render={<a href={item.url} target="_blank" rel="noreferrer" />}
-        >
-          {body}
-        </Attachment>
-      ) : (
-        <Attachment>{body}</Attachment>
-      )}
-    </div>
+  return item.url ? (
+    <Attachment render={<a href={item.url} target="_blank" rel="noreferrer" />}>
+      {body}
+    </Attachment>
+  ) : (
+    <Attachment>{body}</Attachment>
   );
 };

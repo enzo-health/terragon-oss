@@ -19,7 +19,7 @@ export const ErrorLeaf: Leaf<"error"> = ({ item }) => {
   const message = item.message || "An error occurred.";
   if (item.stack) {
     return (
-      <Exception className="my-2">
+      <Exception>
         <ExceptionHeader>
           <ExceptionType>Error</ExceptionType>
           <ExceptionMessage>{message}</ExceptionMessage>
@@ -34,7 +34,7 @@ export const ErrorLeaf: Leaf<"error"> = ({ item }) => {
     );
   }
   return (
-    <Callout className="my-2" tone="danger" role="alert">
+    <Callout tone="danger" role="alert">
       <CalloutIcon>
         <AlertCircle />
       </CalloutIcon>
@@ -44,7 +44,7 @@ export const ErrorLeaf: Leaf<"error"> = ({ item }) => {
 };
 
 export const TransientRetryLeaf: Leaf<"transient-retry"> = ({ item }) => (
-  <div className="my-2 flex items-center gap-2">
+  <div className="flex items-center gap-2">
     <Status state="pending" pulse>
       <Loader variant="pulse">{item.message ?? "Retrying"}</Loader>
     </Status>
@@ -53,7 +53,7 @@ export const TransientRetryLeaf: Leaf<"transient-retry"> = ({ item }) => (
 
 export const CompactionLeaf: Leaf<"compaction"> = () => (
   <div
-    className="my-3 flex items-center gap-3 text-xs text-muted-foreground animate-in fade-in duration-[var(--duration-base)] motion-reduce:animate-none"
+    className="flex items-center gap-3 text-xs text-muted-foreground animate-in fade-in duration-[var(--duration-base)] motion-reduce:animate-none"
     role="separator"
   >
     <span className="h-px flex-1 bg-border" />
@@ -63,7 +63,7 @@ export const CompactionLeaf: Leaf<"compaction"> = () => (
 );
 
 export const UnknownPartLeaf: Leaf<"unknown-part"> = ({ item }) => (
-  <Callout className="my-2" tone="warning">
+  <Callout tone="warning">
     <CalloutIcon>
       <AlertTriangle />
     </CalloutIcon>

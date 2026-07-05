@@ -1,6 +1,8 @@
 "use client";
 
+import { Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ai/button";
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -8,7 +10,12 @@ import {
   ChainOfThoughtStepStatic,
   ChainOfThoughtIcon,
 } from "@/components/ai/chain-of-thought";
-import { Message, MessageContent, MessageText } from "@/components/ai/message";
+import {
+  Message,
+  MessageAction,
+  MessageContent,
+  MessageText,
+} from "@/components/ai/message";
 import {
   Reasoning,
   ReasoningContent,
@@ -19,6 +26,29 @@ import { ImagePart } from "../../image-part";
 import { TextPart } from "../../text-part";
 import type { Leaf } from "../leaf-props";
 import { useIsSeeded } from "../seeded-context";
+
+function CopyMessageAction({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = () => {
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <MessageAction className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100">
+      <Button
+        variant="ghost"
+        iconOnly
+        onClick={onCopy}
+        aria-label="Copy message"
+      >
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </MessageAction>
+  );
+}
 
 export const TextLeaf: Leaf<"text"> = ({ item }) => {
   const seeded = useIsSeeded(item.key);
@@ -34,6 +64,7 @@ export const TextLeaf: Leaf<"text"> = ({ item }) => {
         <MessageText variant="plain">
           <TextPart text={item.text} streaming={item.streaming} />
         </MessageText>
+        {item.streaming ? null : <CopyMessageAction text={item.text} />}
       </MessageContent>
     </Message>
   );
@@ -49,7 +80,6 @@ export const ReasoningLeaf: Leaf<"reasoning"> = ({ item }) => {
   if (item.steps.length > 0) {
     return (
       <ChainOfThought
-        className="my-2"
         open={open}
         onOpenChange={setOpen}
         defaultOpen={item.streaming}
@@ -68,7 +98,7 @@ export const ReasoningLeaf: Leaf<"reasoning"> = ({ item }) => {
   }
 
   return (
-    <Reasoning className="my-2" open={open} onOpenChange={setOpen}>
+    <Reasoning open={open} onOpenChange={setOpen}>
       <ReasoningTrigger>Thinking</ReasoningTrigger>
       <ReasoningContent keepMounted>
         <TextPart text={item.text} streaming={item.streaming} />
@@ -79,11 +109,14 @@ export const ReasoningLeaf: Leaf<"reasoning"> = ({ item }) => {
 
 export const UserLeaf: Leaf<"user"> = ({ item }) => {
   const seeded = useIsSeeded(item.key);
+  const copyText = item.content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
   return (
     <Message
       type="outgoing"
       className={cn(
-        "mt-4 py-2 sm:mt-6",
+        "py-2",
         !seeded &&
           "animate-in fade-in slide-in-from-bottom-2 duration-[var(--duration-base)] ease-[var(--ease-emphasis)] motion-reduce:animate-none",
       )}
@@ -100,6 +133,7 @@ export const UserLeaf: Leaf<"user"> = ({ item }) => {
             return null;
           })}
         </MessageText>
+        {copyText ? <CopyMessageAction text={copyText} /> : null}
       </MessageContent>
     </Message>
   );

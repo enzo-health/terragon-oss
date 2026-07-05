@@ -26,7 +26,7 @@ export const PlanLeaf: Leaf<"plan"> = ({ item }) => {
   ).length;
 
   return (
-    <Todo defaultOpen className="my-2">
+    <Todo defaultOpen>
       <TodoHeader>
         <TodoTitle>
           Plan ({completed}/{item.entries.length})

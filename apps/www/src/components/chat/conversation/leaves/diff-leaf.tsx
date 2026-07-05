@@ -26,7 +26,7 @@ export const DiffLeaf: Leaf<"diff"> = ({ item }) => {
   const name = item.filePath || result.name || "File";
 
   return (
-    <Diff className="my-2">
+    <Diff>
       <DiffContent>
         <DiffFile>
           <DiffFileHeader>
