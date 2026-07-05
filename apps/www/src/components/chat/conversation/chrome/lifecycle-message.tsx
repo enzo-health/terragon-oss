@@ -5,30 +5,23 @@ import {
   UIGitDiffPart,
   UISystemMessage,
 } from "@terragon/shared";
-import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
-import React, { useState } from "react";
+import { useState } from "react";
 import { CodeBlock, CodeBlockContent } from "@/components/ai/code-block";
 import { Status } from "@/components/ai/status";
 import { GitDiffPart } from "../../git-diff-part";
-import type { ArtifactDescriptorLookup } from "../../secondary-panel-helpers";
+import { useConversationContext } from "../conversation-context";
 
 export function SystemMessage({
   message,
   thread,
   latestGitDiffTimestamp,
-  artifactDescriptors,
-  artifactDescriptorLookup,
-  onOpenArtifact,
-  onOpenRepoFile,
 }: {
   message: UISystemMessage;
   thread: ThreadInfoFull | null;
   latestGitDiffTimestamp: string | null;
-  artifactDescriptors: ArtifactDescriptor[];
-  artifactDescriptorLookup?: ArtifactDescriptorLookup;
-  onOpenArtifact: (artifactId: string) => void;
-  onOpenRepoFile?: (filePath: string) => void;
 }) {
+  const { onOpenArtifact, artifactDescriptors, onOpenRepoFile } =
+    useConversationContext();
   const [isCollapsed, setIsCollapsed] = useState(true);
   const getLabel = () => {
     switch (message.message_type) {
@@ -109,7 +102,6 @@ export function SystemMessage({
           thread={thread}
           isLatest={latestGitDiffTimestamp === gitDiffPart.timestamp}
           artifactDescriptors={artifactDescriptors}
-          artifactDescriptorLookup={artifactDescriptorLookup}
           onOpenArtifact={onOpenArtifact}
           onOpenRepoFile={onOpenRepoFile}
         />
@@ -157,17 +149,11 @@ export function TerragonSystemMessage({
   messageIndex,
   thread,
   latestGitDiffTimestamp,
-  artifactDescriptors,
-  onOpenArtifact,
-  onOpenRepoFile,
 }: {
   message: UISystemMessage;
   messageIndex: number;
   thread: ThreadInfoFull | null;
   latestGitDiffTimestamp: string | null;
-  artifactDescriptors: ArtifactDescriptor[];
-  onOpenArtifact: (artifactId: string) => void;
-  onOpenRepoFile?: (href: string) => void;
 }) {
   return (
     <div
@@ -178,9 +164,6 @@ export function TerragonSystemMessage({
         message={message}
         thread={thread}
         latestGitDiffTimestamp={latestGitDiffTimestamp}
-        artifactDescriptors={artifactDescriptors}
-        onOpenArtifact={onOpenArtifact}
-        onOpenRepoFile={onOpenRepoFile}
       />
     </div>
   );

@@ -36,21 +36,24 @@ const SecondaryPanel = dynamic(
  * passed in by `ChatUIContent` — this component holds no React Query, no
  * transport state, no view-model wiring.
  *
- * Props are grouped by concern (coreData, viewModel, scrollState, panelState,
- * dialogData, optimisticHandlers, errorState) so future state additions only
- * widen the relevant group rather than the whole signature. Each group is
- * `useMemo`-stabilized in `ChatUIContent` to keep referential identity stable
- * across parent re-renders.
+ * Props are grouped by concern (coreData, viewModel, panelState,
+ * optimisticHandlers, errorState) so future state additions only widen the
+ * relevant group rather than the whole signature. Each group is
+ * `useMemo`-stabilized in `ChatUIContent`; identity-stable scroll refs and
+ * callbacks are passed flat.
  */
 export function ChatUILayout(props: ChatUILayoutProps) {
   const {
     coreData,
     viewModel,
-    scrollState,
     panelState,
-    dialogData,
     optimisticHandlers,
     errorState,
+    chatContainerRef,
+    scrollController,
+    promptBoxRef,
+    forceScrollToBottom,
+    scrollToTop,
   } = props;
 
   const {
@@ -60,6 +63,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     threadChat,
     thread,
     threadWithViewModelStatus,
+    redoDialogData,
   } = coreData;
 
   const {
@@ -77,14 +81,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
   } = viewModel;
 
   const {
-    chatContainerRef,
-    scrollController,
-    promptBoxRef,
-    forceScrollToBottom,
-    scrollToTop,
-  } = scrollState;
-
-  const {
     activeArtifactId,
     setActiveArtifactId,
     showTerminal,
@@ -92,8 +88,6 @@ export function ChatUILayout(props: ChatUILayoutProps) {
     shouldRenderSecondaryPanel,
     platform,
   } = panelState;
-
-  const { redoDialogData } = dialogData;
 
   const {
     onOptimisticUserSubmit,
@@ -121,35 +115,42 @@ export function ChatUILayout(props: ChatUILayoutProps) {
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
             <ConversationPage
-              agent={agent}
-              loadAgUiHistoryMessages={loadAgUiHistoryMessages}
-              setReplayCursor={coreData.setReplayCursor}
-              onAppendRejected={onAppendRejected}
-              lifecycleMessages={threadViewModel.lifecycleMessages}
-              threadStatus={effectiveThreadStatus}
-              isAgentWorking={isAgentCurrentlyWorking}
-              thread={thread}
-              latestGitDiffTimestamp={threadViewModel.latestGitDiffTimestamp}
-              artifactDescriptors={artifactDescriptors}
+              transport={{
+                agent,
+                loadAgUiHistoryMessages,
+                setReplayCursor: coreData.setReplayCursor,
+                onAppendRejected,
+              }}
+              run={{
+                threadId: thread.id,
+                threadChatId: threadChat.id,
+                thread,
+                chatAgent,
+                threadStatus: effectiveThreadStatus,
+                threadChatStatus: threadChat.status,
+                isAgentWorking: isAgentCurrentlyWorking,
+                bootingSubstatus: thread.bootingSubstatus ?? undefined,
+                scheduleAt: threadChat.scheduleAt,
+                reattemptQueueAt: threadChat.reattemptQueueAt ?? null,
+                threadChatUpdatedAt:
+                  threadViewModel.lifecycle.threadChatUpdatedAt,
+                metaSnapshot: threadViewModel.meta,
+              }}
+              errors={{
+                callerError: error || threadChat.errorMessageInfo || undefined,
+                callerErrorType: threadChat.errorMessage || undefined,
+                serverRetry: handleRetry,
+                isServerRetrying: isRetrying,
+              }}
+              lifecycle={{
+                messages: threadViewModel.lifecycleMessages,
+                latestGitDiffTimestamp: threadViewModel.latestGitDiffTimestamp,
+              }}
+              scrollController={scrollController}
+              isReadOnly={isReadOnly}
               onOpenArtifact={handleOpenArtifact}
               onOpenRepoFile={onOpenRepoFile}
-              callerError={error || threadChat.errorMessageInfo || undefined}
-              callerErrorType={threadChat.errorMessage || undefined}
-              serverRetry={handleRetry}
-              isServerRetrying={isRetrying}
-              isReadOnly={isReadOnly}
-              chatAgent={chatAgent}
-              bootingSubstatus={thread.bootingSubstatus ?? undefined}
-              metaSnapshot={threadViewModel.meta}
-              reattemptQueueAt={threadChat.reattemptQueueAt ?? null}
-              threadChatUpdatedAt={
-                threadViewModel.lifecycle.threadChatUpdatedAt
-              }
-              threadId={thread.id}
-              threadChatId={threadChat.id}
-              scheduleAt={threadChat.scheduleAt}
-              threadChatStatus={threadChat.status}
-              scrollController={scrollController}
+              artifactDescriptors={artifactDescriptors}
             />
             {!isReadOnly && (
               <ChatPromptBox
@@ -230,6 +231,7 @@ export type ChatUICoreData = {
   thread: ThreadInfoFull;
   threadWithViewModelStatus: ThreadInfoFull;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
+  redoDialogData: React.ComponentProps<typeof ChatHeader>["redoDialogData"];
 };
 
 /**
@@ -257,21 +259,6 @@ export type ChatUIViewModelData = {
 };
 
 /**
- * DOM refs and scroll-position primitives for the transcript / prompt-box
- * scroll choreography.
- */
-export type ChatUIScrollState = {
-  chatContainerRef: React.RefObject<HTMLDivElement | null>;
-  scrollController: React.RefObject<ScrollController | null>;
-  promptBoxRef: React.RefObject<{
-    focus: () => void;
-    setPermissionMode: (mode: "allowAll" | "plan") => void;
-  } | null>;
-  forceScrollToBottom: () => void;
-  scrollToTop: () => void;
-};
-
-/**
  * Visibility / selection state for the secondary (artifact) panel and terminal
  * overlay, plus the platform hint that drives mobile-vs-desktop behaviour.
  */
@@ -282,13 +269,6 @@ export type ChatUIPanelState = {
   setShowTerminal: (show: boolean) => void;
   shouldRenderSecondaryPanel: boolean;
   platform: "unknown" | "mobile" | "desktop";
-};
-
-/**
- * Pre-built data bundle for the redo confirmation dialog.
- */
-export type ChatUIDialogData = {
-  redoDialogData: React.ComponentProps<typeof ChatHeader>["redoDialogData"];
 };
 
 /**
@@ -321,9 +301,15 @@ export type ChatUIErrorState = {
 export type ChatUILayoutProps = {
   coreData: ChatUICoreData;
   viewModel: ChatUIViewModelData;
-  scrollState: ChatUIScrollState;
   panelState: ChatUIPanelState;
-  dialogData: ChatUIDialogData;
   optimisticHandlers: ChatUIOptimisticHandlers;
   errorState: ChatUIErrorState;
+  chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  scrollController: React.RefObject<ScrollController | null>;
+  promptBoxRef: React.RefObject<{
+    focus: () => void;
+    setPermissionMode: (mode: "allowAll" | "plan") => void;
+  } | null>;
+  forceScrollToBottom: () => void;
+  scrollToTop: () => void;
 };

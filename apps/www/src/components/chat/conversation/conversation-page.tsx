@@ -49,68 +49,83 @@ import {
 } from "../transcript-data/use-live-transcript";
 import { useStoreThreadFlags } from "../transcript-data/store-thread-flags";
 
-export type ConversationPageProps = {
+export type ConversationPageTransport = {
   agent: AbstractAgent | null;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
   onAppendRejected?: (rejection: TranscriptAppendRejection) => void;
-  lifecycleMessages: UISystemMessage[];
-  threadStatus: ThreadStatus | null;
-  isAgentWorking: boolean;
-  thread: ThreadInfoFull;
-  latestGitDiffTimestamp: string | null;
-  artifactDescriptors: ArtifactDescriptor[];
-  onOpenArtifact: (artifactId: string) => void;
-  onOpenRepoFile?: (href: string) => void;
-  /** Caller-supplied error (transient banner or persisted thread-chat error). */
-  callerError?: string | null;
-  /** Persisted thread-chat error type, if any. */
-  callerErrorType?: string;
-  /** Server-side retry mutation, used when the error is not transport-derived. */
-  serverRetry: () => Promise<void>;
-  isServerRetrying: boolean;
-  isReadOnly?: boolean;
-  chatAgent: AIAgent;
-  bootingSubstatus?: BootingSubstatus;
-  metaSnapshot: ThreadMetaSnapshot;
-  reattemptQueueAt: Date | null;
-  threadChatUpdatedAt?: Date | string | null;
+};
+
+export type ConversationPageRun = {
   threadId: string;
   threadChatId?: string;
-  scheduleAt?: Date | null;
+  thread: ThreadInfoFull;
+  chatAgent: AIAgent;
+  threadStatus: ThreadStatus | null;
   threadChatStatus?: ThreadStatus;
+  isAgentWorking: boolean;
+  bootingSubstatus?: BootingSubstatus;
+  scheduleAt?: Date | null;
+  reattemptQueueAt: Date | null;
+  threadChatUpdatedAt?: Date | string | null;
+  metaSnapshot: ThreadMetaSnapshot;
+};
+
+export type ConversationPageErrors = {
+  callerError?: string | null;
+  callerErrorType?: string;
+  serverRetry: () => Promise<void>;
+  isServerRetrying: boolean;
+};
+
+export type ConversationPageLifecycle = {
+  messages: UISystemMessage[];
+  latestGitDiffTimestamp: string | null;
+};
+
+export type ConversationPageProps = {
+  transport: ConversationPageTransport;
+  run: ConversationPageRun;
+  errors: ConversationPageErrors;
+  lifecycle: ConversationPageLifecycle;
   scrollController: RefObject<ScrollController | null>;
+  isReadOnly?: boolean;
+  onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
+  artifactDescriptors: ArtifactDescriptor[];
 };
 
 export function ConversationPage({
-  agent,
-  loadAgUiHistoryMessages,
-  setReplayCursor,
-  onAppendRejected,
-  lifecycleMessages,
-  threadStatus,
-  isAgentWorking,
-  thread,
-  latestGitDiffTimestamp,
-  artifactDescriptors,
+  transport,
+  run,
+  errors,
+  lifecycle,
+  scrollController,
+  isReadOnly,
   onOpenArtifact,
   onOpenRepoFile,
-  callerError,
-  callerErrorType,
-  serverRetry,
-  isServerRetrying,
-  isReadOnly,
-  chatAgent,
-  bootingSubstatus,
-  metaSnapshot,
-  reattemptQueueAt,
-  threadChatUpdatedAt,
-  threadId,
-  threadChatId,
-  scheduleAt,
-  threadChatStatus,
-  scrollController,
+  artifactDescriptors,
 }: ConversationPageProps) {
+  const { agent, loadAgUiHistoryMessages, setReplayCursor, onAppendRejected } =
+    transport;
+  const {
+    threadId,
+    threadChatId,
+    thread,
+    chatAgent,
+    threadStatus,
+    threadChatStatus,
+    isAgentWorking,
+    bootingSubstatus,
+    scheduleAt,
+    reattemptQueueAt,
+    threadChatUpdatedAt,
+    metaSnapshot,
+  } = run;
+  const { callerError, callerErrorType, serverRetry, isServerRetrying } =
+    errors;
+  const { messages: lifecycleMessages, latestGitDiffTimestamp } = lifecycle;
+
   const { store, isHydrating, errorType, errorInfo, handleRetry, isRetrying } =
     useLiveTranscript({
       agent,
@@ -153,8 +168,10 @@ export function ConversationPage({
       isReadOnly: isReadOnly ?? false,
       respondToPermission: respond,
       onOpenRepoFile,
+      onOpenArtifact,
+      artifactDescriptors,
     }),
-    [isReadOnly, respond, onOpenRepoFile],
+    [isReadOnly, respond, onOpenRepoFile, onOpenArtifact, artifactDescriptors],
   );
 
   const hasSandboxError = isSandboxErrorType(errorType ?? null);
@@ -202,9 +219,6 @@ export function ConversationPage({
                       messageIndex={index}
                       thread={thread}
                       latestGitDiffTimestamp={latestGitDiffTimestamp}
-                      artifactDescriptors={artifactDescriptors}
-                      onOpenArtifact={onOpenArtifact}
-                      onOpenRepoFile={onOpenRepoFile}
                     />
                   ))}
                 </div>

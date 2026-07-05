@@ -1,5 +1,6 @@
 "use client";
 
+import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import { createContext, use } from "react";
 
 export type PermissionDecision = "approved" | "denied";
@@ -11,6 +12,8 @@ export type ConversationContextValue = {
     optionId: PermissionDecision,
   ) => void;
   readonly onOpenRepoFile?: (href: string) => void;
+  readonly onOpenArtifact?: (artifactId: string) => void;
+  readonly artifactDescriptors?: ArtifactDescriptor[];
 };
 
 const ConversationContext = createContext<ConversationContextValue>({

@@ -38,12 +38,10 @@ import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
   type ChatUICoreData,
-  type ChatUIDialogData,
   type ChatUIErrorState,
   ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
-  type ChatUIScrollState,
   type ChatUIViewModelData,
 } from "./chat-ui-layout";
 import {
@@ -468,9 +466,10 @@ function ChatUIContent() {
     ],
   );
 
-  // Group props by concern so `<ChatUILayout/>` sees a stable ~7-prop signature
-  // instead of 49 individual fields. Each group is `useMemo`-wrapped so its
-  // identity is stable across re-renders that don't touch the underlying data.
+  // Group props by concern so `<ChatUILayout/>` sees a small grouped signature
+  // instead of dozens of individual fields. Each group is `useMemo`-wrapped so
+  // its identity is stable across re-renders that don't touch the underlying
+  // data; identity-stable scroll refs and callbacks are passed flat.
   // The `agent` early-null guard below is intentionally placed AFTER the hooks
   // (the conditional `null` flows through the memo dependency arrays via the
   // typed-narrowing assertion at the render site).
@@ -487,6 +486,7 @@ function ChatUIContent() {
             thread,
             threadWithViewModelStatus,
             setReplayCursor: agUiTransport.setReplayCursor,
+            redoDialogData,
           }
         : null,
     [
@@ -499,6 +499,7 @@ function ChatUIContent() {
       threadId,
       threadWithViewModelStatus,
       agUiTransport.setReplayCursor,
+      redoDialogData,
     ],
   );
 
@@ -531,17 +532,6 @@ function ChatUIContent() {
     ],
   );
 
-  const scrollState = useMemo<ChatUIScrollState>(
-    () => ({
-      chatContainerRef,
-      scrollController: scrollControllerRef,
-      promptBoxRef,
-      forceScrollToBottom,
-      scrollToTop,
-    }),
-    [forceScrollToBottom, scrollToTop],
-  );
-
   const panelState = useMemo<ChatUIPanelState>(
     () => ({
       activeArtifactId,
@@ -552,11 +542,6 @@ function ChatUIContent() {
       platform,
     }),
     [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
-  );
-
-  const dialogData = useMemo<ChatUIDialogData>(
-    () => ({ redoDialogData }),
-    [redoDialogData],
   );
 
   const optimisticHandlers = useMemo<ChatUIOptimisticHandlers>(
@@ -605,11 +590,14 @@ function ChatUIContent() {
       <ChatUILayout
         coreData={coreData}
         viewModel={viewModel}
-        scrollState={scrollState}
         panelState={panelState}
-        dialogData={dialogData}
         optimisticHandlers={optimisticHandlers}
         errorState={errorState}
+        chatContainerRef={chatContainerRef}
+        scrollController={scrollControllerRef}
+        promptBoxRef={promptBoxRef}
+        forceScrollToBottom={forceScrollToBottom}
+        scrollToTop={scrollToTop}
       />
     </ThreadIntentProvider>
   );
