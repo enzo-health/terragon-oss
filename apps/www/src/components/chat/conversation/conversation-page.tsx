@@ -21,28 +21,28 @@ import { useDelayedFlag } from "@/hooks/use-delayed-flag";
 import type { AgUiHistoryMessagesResult } from "@/lib/ag-ui-history-types";
 import { cn } from "@/lib/utils";
 import { respondToPermission } from "@/server-actions/respond-to-permission";
-import { ChatError, isSandboxErrorType } from "../chat-error";
-import { MessageScheduled, WorkingMessage } from "../chat-messages";
-import { LeafLoading } from "../leaf-loading";
+import { ChatError, isSandboxErrorType } from "./chrome/chat-error";
+import { MessageScheduled, WorkingMessage } from "./chrome/working-message";
+import { LeafLoading } from "./chrome/leaf-loading";
 import type { ThreadMetaSnapshot } from "../meta-chips/use-thread-meta-events";
-import { TerragonSystemMessage } from "../assistant-ui/system-message";
+import { TerragonSystemMessage } from "./chrome/lifecycle-message";
 import {
   getWorkingFooterFreshness,
   getWorkingMessageSlotClassName,
   shouldSuppressPreStartLifecycleFooter,
-} from "../assistant-ui/working-footer-freshness";
+} from "./chrome/working-footer-freshness";
 import { TranscriptItems } from "./transcript-items";
 import {
   type PermissionDecision,
-  TranscriptViewContextProvider,
-} from "./transcript-view-context";
+  ConversationContextProvider,
+} from "./conversation-context";
 import {
   type TranscriptAppendRejection,
   useLiveTranscript,
-} from "./use-live-transcript";
-import { useStoreThreadFlags } from "./store-thread-flags";
+} from "../transcript-data/use-live-transcript";
+import { useStoreThreadFlags } from "../transcript-data/store-thread-flags";
 
-export type TranscriptViewProps = {
+export type ConversationPageProps = {
   agent: AbstractAgent | null;
   loadAgUiHistoryMessages: () => Promise<AgUiHistoryMessagesResult>;
   setReplayCursor: (cursor: AgUiReplayCursor | null) => void;
@@ -83,7 +83,7 @@ const SCROLL_BUTTON_CLASS = cn(
   "data-[at-bottom=true]:opacity-0 data-[at-bottom=true]:translate-y-2 data-[at-bottom=true]:pointer-events-none",
 );
 
-export function TranscriptView({
+export function ConversationPage({
   agent,
   loadAgUiHistoryMessages,
   setReplayCursor,
@@ -110,7 +110,7 @@ export function TranscriptView({
   threadChatId,
   scheduleAt,
   threadChatStatus,
-}: TranscriptViewProps) {
+}: ConversationPageProps) {
   const { store, isHydrating, errorType, errorInfo, handleRetry, isRetrying } =
     useLiveTranscript({
       agent,
@@ -188,7 +188,7 @@ export function TranscriptView({
   const shouldRenderWorkingMessage = baseShowWorking || passiveWait !== null;
 
   return (
-    <TranscriptViewContextProvider value={contextValue}>
+    <ConversationContextProvider value={contextValue}>
       <div className="relative flex-1 overflow-hidden">
         <Conversation className="size-full">
           <ConversationContent>
@@ -264,6 +264,6 @@ export function TranscriptView({
           </ConversationScrollButton>
         </Conversation>
       </div>
-    </TranscriptViewContextProvider>
+    </ConversationContextProvider>
   );
 }

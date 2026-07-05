@@ -1,7 +1,7 @@
 import type { Story, StoryDefault } from "@ladle/react";
-import { WorkingMessage } from "./chat-messages";
+import { WorkingMessage } from "./working-message";
 import { BootChecklist } from "./boot-checklist";
-import { createInitialThreadMetaSnapshot } from "./thread-view-model/snapshot-adapter";
+import { createInitialThreadMetaSnapshot } from "../../thread-view-model/snapshot-adapter";
 
 export default {
   title: "Chat/Chat Message",

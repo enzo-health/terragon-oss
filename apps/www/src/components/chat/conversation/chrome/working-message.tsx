@@ -4,7 +4,7 @@ import { AIAgent } from "@terragon/agent/types";
 import { BootingSubstatus } from "@terragon/sandbox/types";
 import { BootChecklist } from "./boot-checklist";
 import { LeafLoading } from "./leaf-loading";
-import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
+import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
 import Link from "next/link";
 import {
   runScheduledThread,

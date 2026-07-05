@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { PermissionItem } from "../../transcript-store";
 import type { Leaf } from "../leaf-props";
-import { useTranscriptViewContext } from "../transcript-view-context";
+import { useConversationContext } from "../conversation-context";
 
 const DECISION_BUTTON = cn(
   "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium",
@@ -35,7 +35,7 @@ function confirmationState(
 }
 
 export const PermissionLeaf: Leaf<"permission"> = ({ item }) => {
-  const { respondToPermission, isReadOnly } = useTranscriptViewContext();
+  const { respondToPermission, isReadOnly } = useConversationContext();
   const disabled = isReadOnly || !respondToPermission;
 
   return (

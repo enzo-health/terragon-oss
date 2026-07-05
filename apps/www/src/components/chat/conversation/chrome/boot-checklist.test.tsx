@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BootChecklist, formatDuration } from "./boot-checklist";
-import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
+import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
 import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
 
 const mockSnapshot: ThreadMetaSnapshot = {

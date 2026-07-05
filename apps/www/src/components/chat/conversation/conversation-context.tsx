@@ -4,7 +4,7 @@ import { createContext, use } from "react";
 
 export type PermissionDecision = "approved" | "denied";
 
-export type TranscriptViewContextValue = {
+export type ConversationContextValue = {
   readonly isReadOnly: boolean;
   readonly respondToPermission?: (
     permissionRequestId: string,
@@ -13,12 +13,12 @@ export type TranscriptViewContextValue = {
   readonly onOpenRepoFile?: (href: string) => void;
 };
 
-const TranscriptViewContext = createContext<TranscriptViewContextValue>({
+const ConversationContext = createContext<ConversationContextValue>({
   isReadOnly: false,
 });
 
-export const TranscriptViewContextProvider = TranscriptViewContext.Provider;
+export const ConversationContextProvider = ConversationContext.Provider;
 
-export function useTranscriptViewContext(): TranscriptViewContextValue {
-  return use(TranscriptViewContext);
+export function useConversationContext(): ConversationContextValue {
+  return use(ConversationContext);
 }

@@ -23,7 +23,7 @@ import type { DBMessage, DBUserMessage } from "@terragon/shared";
 import type { ThreadPageChat } from "@terragon/shared/db/types";
 import { describe, expect, it } from "vitest";
 import { isAgentWorking } from "@/agent/thread-status";
-import { shouldOpenResumeStream } from "@/components/chat/transcript-view/use-live-transcript";
+import { shouldOpenResumeStream } from "@/components/chat/transcript-data/use-live-transcript";
 import {
   createInitialThreadViewModelState,
   projectThreadViewModel,

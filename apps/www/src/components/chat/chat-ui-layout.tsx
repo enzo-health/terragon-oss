@@ -16,7 +16,7 @@ import { getLastUserMessageModel } from "@/lib/db-message-helpers";
 import { AgUiAgentProvider } from "./ag-ui-agent-context";
 import { ChatHeader } from "./chat-header";
 import { ChatPromptBox } from "./chat-prompt-box";
-import { TranscriptView } from "./transcript-view/transcript-view";
+import { ConversationPage } from "./conversation/conversation-page";
 import type { ThreadViewModelController } from "./use-thread-view-model";
 
 const TerminalPanel = dynamic(
@@ -114,7 +114,7 @@ export function ChatUILayout(props: ChatUILayoutProps) {
         />
         <div ref={chatContainerRef} className="flex flex-1 overflow-hidden">
           <div className="@container/chat flex-1 flex flex-col overflow-hidden min-w-0">
-            <TranscriptView
+            <ConversationPage
               agent={agent}
               loadAgUiHistoryMessages={loadAgUiHistoryMessages}
               setReplayCursor={coreData.setReplayCursor}

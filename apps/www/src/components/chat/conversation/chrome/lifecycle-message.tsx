@@ -8,8 +8,8 @@ import {
 import type { ArtifactDescriptor } from "@terragon/shared/db/artifact-descriptors";
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
-import { GitDiffPart } from "./git-diff-part";
-import type { ArtifactDescriptorLookup } from "./secondary-panel-helpers";
+import { GitDiffPart } from "../../git-diff-part";
+import type { ArtifactDescriptorLookup } from "../../secondary-panel-helpers";
 
 export function SystemMessage({
   message,
@@ -150,6 +150,40 @@ export function SystemMessage({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+export function TerragonSystemMessage({
+  message,
+  messageIndex,
+  thread,
+  latestGitDiffTimestamp,
+  artifactDescriptors,
+  onOpenArtifact,
+  onOpenRepoFile,
+}: {
+  message: UISystemMessage;
+  messageIndex: number;
+  thread: ThreadInfoFull | null;
+  latestGitDiffTimestamp: string | null;
+  artifactDescriptors: ArtifactDescriptor[];
+  onOpenArtifact: (artifactId: string) => void;
+  onOpenRepoFile?: (href: string) => void;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-1 [scroll-margin-top:6rem]"
+      data-message-index={messageIndex}
+    >
+      <SystemMessage
+        message={message}
+        thread={thread}
+        latestGitDiffTimestamp={latestGitDiffTimestamp}
+        artifactDescriptors={artifactDescriptors}
+        onOpenArtifact={onOpenArtifact}
+        onOpenRepoFile={onOpenRepoFile}
+      />
     </div>
   );
 }

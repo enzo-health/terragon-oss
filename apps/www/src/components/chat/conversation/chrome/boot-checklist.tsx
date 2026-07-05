@@ -4,7 +4,7 @@ import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-even
 import { Check, Loader2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { ThreadMetaSnapshot } from "./meta-chips/use-thread-meta-events";
+import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
 
 // ----- ordered step definitions -----
 

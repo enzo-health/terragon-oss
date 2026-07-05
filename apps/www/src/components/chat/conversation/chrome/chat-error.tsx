@@ -3,8 +3,8 @@ import { GitBranch, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { isAgentWorking } from "@/agent/thread-status";
-import { Button } from "../ui/button";
-import { ansiToHtml } from "./tools/utils";
+import { Button } from "../../../ui/button";
+import { ansiToHtml } from "../../tools/utils";
 
 const ERROR_TYPES_THAT_HIDE_RETRY_BUTTON = new Set<ThreadErrorType>([
   "no-user-message",

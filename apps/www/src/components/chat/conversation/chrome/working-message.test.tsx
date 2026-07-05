@@ -1,8 +1,8 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { WorkingMessage } from "./chat-messages";
-import { createInitialThreadMetaSnapshot } from "./thread-view-model/snapshot-adapter";
+import { WorkingMessage } from "./working-message";
+import { createInitialThreadMetaSnapshot } from "../../thread-view-model/snapshot-adapter";
 
 const metaSnapshot = createInitialThreadMetaSnapshot();
 

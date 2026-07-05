@@ -52,7 +52,7 @@ import {
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
-import { LeafLoading } from "./leaf-loading";
+import { LeafLoading } from "./conversation/chrome/leaf-loading";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,

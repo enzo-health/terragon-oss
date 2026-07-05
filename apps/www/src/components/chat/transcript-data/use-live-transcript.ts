@@ -10,7 +10,7 @@ import { encodeRunMetadata } from "@/lib/run-metadata";
 import {
   extractRuntimeErrorPayload,
   isTransientRunLifecycleError,
-} from "../assistant-ui/runtime-error-classification";
+} from "./runtime-error-classification";
 import { TranscriptStore } from "../transcript-store";
 import { hydrateTranscriptFromHistory } from "./hydrate-history";
 

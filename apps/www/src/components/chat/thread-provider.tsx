@@ -24,8 +24,8 @@ import {
   threadChatQueryOptions,
   threadShellQueryOptions,
 } from "@/queries/thread-queries";
-import { ChatError } from "./chat-error";
-import { LeafLoading } from "./leaf-loading";
+import { ChatError } from "./conversation/chrome/chat-error";
+import { LeafLoading } from "./conversation/chrome/leaf-loading";
 import { useThreadPageRealtimeSync } from "./use-thread-page-realtime-sync";
 
 /**
