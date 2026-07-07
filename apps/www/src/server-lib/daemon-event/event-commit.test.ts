@@ -4,7 +4,7 @@ import {
   buildStandardAgUiWireRows,
 } from "@terragon/agent/ag-ui-rows";
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildPreLegacyAgUiCommitPlan,
   buildTerminalAgUiCommitPlan,
@@ -141,6 +141,17 @@ function createProviderRichToolCallEvent(
 }
 
 describe("daemon runtime event commit planning", () => {
+  // Delta rows are stamped with `new Date()` deep in the row builders, sampled
+  // independently by the agUiEvents and canonicalEvents paths. Without a frozen
+  // clock a wall-clock tick between the two builds makes their timestamps differ
+  // by 1ms and the deep-equality parity assertion flakes.
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date("2026-05-31T00:00:00.000Z") });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("builds a single pre-legacy commit plan for canonical, delta, and rich rows", () => {
     const plan = buildPreLegacyAgUiCommitPlan({
       canPersistCanonicalEvents: true,
