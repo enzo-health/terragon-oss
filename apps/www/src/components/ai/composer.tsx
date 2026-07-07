@@ -214,7 +214,7 @@ export function ComposerInput({
 
   useLayoutEffect(() => {
     if (autoFocus && !ctx.disabled) inputRef.current?.focus();
-  }, []);
+  }, [autoFocus, ctx.disabled]);
 
   const doSubmit = useCallback(() => {
     const text = valueRef.current;

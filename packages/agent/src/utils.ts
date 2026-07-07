@@ -4,7 +4,7 @@ import {
   AIAgentSlashCommand,
   AgentModelPreferences,
   AIModelSchema,
-  AIModelExternal,
+  AIModelExternalSchema,
 } from "./types";
 
 const defaultAgent: AIAgent = "claudeCode";
@@ -899,8 +899,11 @@ export function parseModelOrNull({
   if (!modelName) {
     return null;
   }
-  // Make sure we handle all the supported AIModelExternal types
-  const modelAsExternal = modelName as AIModelExternal;
+  const parsedExternalModel = AIModelExternalSchema.safeParse(modelName);
+  if (!parsedExternalModel.success) {
+    return null;
+  }
+  const modelAsExternal = parsedExternalModel.data;
   if (isExactModelMatch(modelAsExternal)) {
     return modelAsExternal;
   }

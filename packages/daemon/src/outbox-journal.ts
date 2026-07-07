@@ -50,6 +50,14 @@ function journalFileName(threadChatId: string): string {
   return `outbox-${safe}.jsonl`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isDaemonEventAPIBody(value: unknown): value is DaemonEventAPIBody {
+  return isRecord(value);
+}
+
 export function parseJournalBuffer(raw: string): OutboxJournalRecord[] {
   const records: OutboxJournalRecord[] = [];
   const lines = raw.split("\n");
@@ -64,17 +72,45 @@ export function parseJournalBuffer(raw: string): OutboxJournalRecord[] {
     } catch {
       continue;
     }
-    if (!parsed || typeof parsed !== "object") {
+    if (!isRecord(parsed)) {
       continue;
     }
-    const rec = parsed as Partial<OutboxJournalRecord>;
     if (
-      (rec.t === "event" || rec.t === "ack") &&
-      typeof rec.eventId === "string" &&
-      typeof rec.runId === "string" &&
-      typeof rec.threadChatId === "string"
+      parsed.v !== JOURNAL_RECORD_VERSION ||
+      typeof parsed.eventId !== "string" ||
+      typeof parsed.runId !== "string" ||
+      typeof parsed.threadChatId !== "string" ||
+      typeof parsed.seq !== "number" ||
+      typeof parsed.ts !== "number"
     ) {
-      records.push(rec as OutboxJournalRecord);
+      continue;
+    }
+    if (
+      parsed.t === "event" &&
+      typeof parsed.token === "string" &&
+      isDaemonEventAPIBody(parsed.body)
+    ) {
+      records.push({
+        v: JOURNAL_RECORD_VERSION,
+        t: "event",
+        threadChatId: parsed.threadChatId,
+        runId: parsed.runId,
+        eventId: parsed.eventId,
+        seq: parsed.seq,
+        token: parsed.token,
+        body: parsed.body,
+        ts: parsed.ts,
+      });
+    } else if (parsed.t === "ack") {
+      records.push({
+        v: JOURNAL_RECORD_VERSION,
+        t: "ack",
+        threadChatId: parsed.threadChatId,
+        runId: parsed.runId,
+        eventId: parsed.eventId,
+        seq: parsed.seq,
+        ts: parsed.ts,
+      });
     }
   }
   return records;

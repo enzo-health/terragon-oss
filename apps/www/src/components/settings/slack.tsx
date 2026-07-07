@@ -47,11 +47,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   useEffect(() => {
     setDefaultRepo(account.settings?.defaultRepoFullName || "");
     setDefaultModel(account.settings?.defaultModel || null);
-  }, [
-    account.id,
-    account.settings?.defaultModel,
-    account.settings?.defaultRepoFullName,
-  ]);
+  }, [account.settings?.defaultModel, account.settings?.defaultRepoFullName]);
 
   const handleInstallApp = async () => {
     setIsInstallRedirecting(true);

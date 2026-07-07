@@ -269,6 +269,24 @@ export type CodexContextCompactionItem = {
   id: string;
 };
 
+type CodexSyntheticItem = Record<string, unknown> & {
+  id: string;
+  type: string;
+};
+
+type CodexNormalizedItem =
+  | ThreadItem
+  | CodexDelegationItem
+  | CodexFileChangeItem
+  | CodexPlanItem
+  | CodexContextCompactionItem
+  | CodexSyntheticItem;
+
+type DaemonCodexItemEvent = {
+  type: CodexItemEventType;
+  item: CodexNormalizedItem;
+};
+
 /**
  * Synthetic event types that extend the SDK `ThreadEvent` union.
  * Used for methods that have no direct SDK equivalent (e.g., turn/diff/updated).
@@ -287,7 +305,8 @@ export type CodexTurnPlanUpdatedEvent = {
  * Extended ThreadEvent union that includes daemon-local synthetic events.
  */
 export type DaemonCodexEvent =
-  | ThreadEvent
+  | Exclude<ThreadEvent, { type: CodexItemEventType }>
+  | DaemonCodexItemEvent
   | CodexTurnDiffUpdatedEvent
   | CodexTurnPlanUpdatedEvent;
 
@@ -542,13 +561,7 @@ function normalizePatchChangeKind(rawKind: unknown): {
 function normalizeThreadItem(
   rawItem: Record<string, unknown>,
   eventType: CodexItemEventType,
-):
-  | ThreadItem
-  | CodexDelegationItem
-  | CodexFileChangeItem
-  | CodexPlanItem
-  | CodexContextCompactionItem
-  | null {
+): CodexNormalizedItem | null {
   const itemId = readString(rawItem, "id");
   const rawItemType = readString(rawItem, "type");
   if (!itemId || !rawItemType) {
@@ -978,7 +991,7 @@ function extractThreadEventFromMethod({
         changes: [],
         status: "completed",
         _delta: delta,
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -997,7 +1010,7 @@ function extractThreadEventFromMethod({
         type: "reasoning",
         text: delta,
         _deltaKind: "summaryText",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1022,7 +1035,7 @@ function extractThreadEventFromMethod({
         text: partContent,
         _deltaKind: "summaryPart",
         _summaryPart: summaryPart ?? {},
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1041,7 +1054,7 @@ function extractThreadEventFromMethod({
         type: "reasoning",
         text: delta,
         _deltaKind: "text",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1064,7 +1077,7 @@ function extractThreadEventFromMethod({
         arguments: {},
         status: normalizeMcpStatus(status, "item.updated"),
         _progress: progress ?? {},
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1094,7 +1107,7 @@ function extractThreadEventFromMethod({
         riskLevel,
         action,
         status: "pending",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1130,7 +1143,7 @@ function extractThreadEventFromMethod({
         decision,
         rationale,
         status: decision === "approved" ? "approved" : "denied",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1148,7 +1161,7 @@ function extractThreadEventFromMethod({
         type: "plan",
         text: delta,
         _deltaKind: "plan",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1162,7 +1175,7 @@ function extractThreadEventFromMethod({
       item: {
         id: itemId,
         type: "context_compaction",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1245,7 +1258,7 @@ function extractThreadEventFromMethod({
       }
       return {
         type: eventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error": {
@@ -1259,7 +1272,7 @@ function extractThreadEventFromMethod({
 
 function extractThreadEventFromCodexMessage(
   message: Record<string, unknown>,
-): ThreadEvent | null {
+): DaemonCodexEvent | null {
   const messageType = readString(message, "type");
   if (!messageType) {
     return null;
@@ -1310,7 +1323,7 @@ function extractThreadEventFromCodexMessage(
       }
       return {
         type: eventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error": {
@@ -1324,7 +1337,7 @@ function extractThreadEventFromCodexMessage(
 
 function extractRawThreadEvent(
   value: Record<string, unknown>,
-): ThreadEvent | null {
+): DaemonCodexEvent | null {
   const threadEventType = readString(value, "type");
   if (!threadEventType) {
     return null;
@@ -1368,7 +1381,7 @@ function extractRawThreadEvent(
       }
       return {
         type: threadEventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error":
@@ -1428,7 +1441,7 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
     const rateLimits = toRecord(params.rateLimits) ?? params;
     return {
       kind: "account.rate_limits_updated",
-      rateLimits: rateLimits as Record<string, unknown>,
+      rateLimits,
     };
   }
 

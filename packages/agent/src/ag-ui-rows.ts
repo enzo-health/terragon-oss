@@ -89,13 +89,13 @@ export function daemonDeltasToAgUiRows(params: {
               timestamp: now.getTime(),
               messageId: delta.messageId,
               role: "reasoning",
-            } as ReasoningMessageStartEvent)
+            } satisfies ReasoningMessageStartEvent)
           : ({
               type: EventType.TEXT_MESSAGE_START,
               timestamp: now.getTime(),
               messageId: delta.messageId,
               role: "assistant",
-            } as TextMessageStartEvent);
+            } satisfies TextMessageStartEvent);
       const startEventId = `delta-start:${runId}:${delta.messageId}:${kind}`;
       rows.push({ event: startEvent, eventId: startEventId, timestamp: now });
       startedPairs.add(pairKey);
@@ -132,12 +132,12 @@ export function buildDeltaRunEndRows(params: {
             type: EventType.REASONING_MESSAGE_END,
             timestamp: ts.getTime(),
             messageId,
-          } as ReasoningMessageEndEvent)
+          } satisfies ReasoningMessageEndEvent)
         : ({
             type: EventType.TEXT_MESSAGE_END,
             timestamp: ts.getTime(),
             messageId,
-          } as TextMessageEndEvent);
+          } satisfies TextMessageEndEvent);
     const endEventId = `delta-end:${runId}:${messageId}:${kind}`;
     rows.push({ event: endEvent, eventId: endEventId, timestamp: ts });
   }

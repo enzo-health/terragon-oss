@@ -55,17 +55,19 @@ export function emitThreadIntegrationActivitiesForCanonicalBatch({
     }
   }
 
-  emissions.push(
-    emitSlackActivitiesForCanonicalBatch({
-      threadId,
-      threadChatId,
-      canonicalEvents,
-      isDone,
-      isError,
-      isRecoveryFire,
-      customErrorMessage,
-    }),
-  );
+  if (thread?.sourceType === "slack-mention") {
+    emissions.push(
+      emitSlackActivitiesForCanonicalBatch({
+        threadId,
+        threadChatId,
+        canonicalEvents,
+        isDone,
+        isError,
+        isRecoveryFire,
+        customErrorMessage,
+      }),
+    );
+  }
 
   return emissions;
 }

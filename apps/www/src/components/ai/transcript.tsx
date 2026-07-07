@@ -85,10 +85,9 @@ export function Transcript({
     };
   }, []);
 
-  const sortedItems = useMemo(
-    () =>
-      Array.from(itemsRef.current.values()).sort((a, b) => a.start - b.start),
-    [itemsVersion],
+  void itemsVersion;
+  const sortedItems = Array.from(itemsRef.current.values()).sort(
+    (a, b) => a.start - b.start,
   );
 
   const activeId = useMemo(() => {

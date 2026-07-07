@@ -14,8 +14,51 @@ import { db } from "@/lib/db";
 import { withThreadChat, withThreadSandboxSession } from "./thread-resource";
 import { ThreadError } from "./error";
 import { waitUntilResolved, mockWaitUntil } from "@/test-helpers/mock-next";
-import { hibernateSandbox } from "@terragon/sandbox";
+import { maybeHibernateSandbox } from "./sandbox";
 import { nanoid } from "nanoid/non-secure";
+
+vi.mock("./sandbox", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sandbox")>();
+  return {
+    ...actual,
+    getSandboxForThreadOrNull: vi.fn(
+      async ({
+        db,
+        threadId,
+        userId,
+      }: {
+        db: typeof import("@/lib/db").db;
+        threadId: string;
+        userId: string;
+      }) => {
+        const { getThreadMinimal } = await import(
+          "@terragon/shared/model/threads"
+        );
+        const thread = await getThreadMinimal({ db, threadId, userId });
+        return {
+          sandboxId: thread?.codesandboxId ?? "mock-sandbox-id",
+          sandboxProvider: "mock",
+          repoDir: "/tmp/mock-repo",
+          runCommand: vi.fn(),
+          readTextFile: vi.fn(),
+          writeTextFile: vi.fn(),
+        };
+      },
+    ),
+    maybeHibernateSandbox: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+vi.mock("./sandbox-resource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sandbox-resource")>();
+  return {
+    ...actual,
+    withSandboxResource: vi.fn(
+      async ({ callback }: { callback: () => Promise<unknown> }) =>
+        await callback(),
+    ),
+  };
+});
 
 describe("thread-resource", () => {
   let user: User;
@@ -134,7 +177,7 @@ describe("thread-resource", () => {
       const onExit = vi.fn();
       const onError = vi.fn();
       const onBeforeExec = vi.fn().mockResolvedValue(true);
-      expect(hibernateSandbox).not.toHaveBeenCalled();
+      expect(maybeHibernateSandbox).not.toHaveBeenCalled();
       const result = await withThreadSandboxSession({
         label: "test-label",
         threadId,
@@ -156,7 +199,7 @@ describe("thread-resource", () => {
         `Hello, ${threadChatId} ${threadId}, ${thread?.codesandboxId}`,
       );
       await waitUntilResolved();
-      expect(hibernateSandbox).toHaveBeenCalledOnce();
+      expect(maybeHibernateSandbox).toHaveBeenCalledOnce();
       expect(onBeforeExec).toHaveBeenCalledOnce();
       expect(onBeforeExec).toHaveBeenCalledWith({
         threadChat: expect.objectContaining({ id: threadChatId, threadId }),
@@ -172,7 +215,7 @@ describe("thread-resource", () => {
       const onError = vi.fn();
       const onExit = vi.fn();
       const onBeforeExec = vi.fn().mockResolvedValue(true);
-      expect(hibernateSandbox).not.toHaveBeenCalled();
+      expect(maybeHibernateSandbox).not.toHaveBeenCalled();
       const result = await withThreadSandboxSession({
         label: "test-label",
         threadId,
@@ -187,7 +230,7 @@ describe("thread-resource", () => {
       });
       expect(result).toBeUndefined();
       await waitUntilResolved();
-      expect(hibernateSandbox).toHaveBeenCalledOnce();
+      expect(maybeHibernateSandbox).toHaveBeenCalledOnce();
       const threadChat = await getThreadChat({
         db,
         threadId,
@@ -213,7 +256,7 @@ describe("thread-resource", () => {
       const onError = vi.fn();
       const onExit = vi.fn();
       const onBeforeExec = vi.fn().mockResolvedValue(true);
-      expect(hibernateSandbox).not.toHaveBeenCalled();
+      expect(maybeHibernateSandbox).not.toHaveBeenCalled();
       const result = await withThreadSandboxSession({
         label: "test-label",
         threadId,
@@ -228,7 +271,7 @@ describe("thread-resource", () => {
       });
       expect(result).toBeUndefined();
       await waitUntilResolved();
-      expect(hibernateSandbox).toHaveBeenCalledOnce();
+      expect(maybeHibernateSandbox).toHaveBeenCalledOnce();
       const threadChat = await getThreadChat({
         db,
         threadId,

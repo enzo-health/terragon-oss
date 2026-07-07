@@ -148,6 +148,7 @@ export function useLiveTranscript({
   }, []);
 
   useEffect(() => {
+    void retryNonce;
     if (!agent) return;
     if (connectAgentRef.current !== agent) {
       connectAgentRef.current = agent;

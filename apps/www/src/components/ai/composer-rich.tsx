@@ -700,6 +700,8 @@ export function ComposerRichInput({
     },
   });
 
+  const triggerChars = useMemo(() => Object.keys(triggers), [triggers]);
+
   const extensions = useMemo(() => {
     const list = [
       StarterKit.configure({
@@ -714,11 +716,11 @@ export function ComposerRichInput({
       Placeholder.configure({ placeholder: placeholder ?? "" }),
       ComposerChipNode,
     ];
-    for (const char of Object.keys(triggers)) {
+    for (const char of triggerChars) {
       list.push(buildTriggerExtension(char, ctlRef));
     }
     return list;
-  }, [Object.keys(triggers).join(""), placeholder]);
+  }, [placeholder, triggerChars]);
 
   const editor = useEditor({
     extensions,
