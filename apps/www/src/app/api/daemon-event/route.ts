@@ -1557,7 +1557,7 @@ export async function POST(request: Request) {
   if (
     (daemonRunStatusFromMessages === "stopped" ||
       daemonRunStatusFromMessages === "failed") &&
-    terminalFenceOutcome === "committed"
+    terminalFenceOutcome !== null
   ) {
     try {
       const openToolCalls = await findOpenAgUiToolCallsForRun({
@@ -1586,6 +1586,15 @@ export async function POST(request: Request) {
         runId: authoritativeRunId,
         error,
       });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_interrupted_tool_result_persist_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
     }
   }
 
@@ -1619,7 +1628,7 @@ export async function POST(request: Request) {
   if (
     routeOwnsRecovery &&
     recoveryPlan?.outcome === "fire" &&
-    terminalFenceOutcome === "committed"
+    terminalFenceOutcome !== null
   ) {
     try {
       await applyRouteRecoveryFire({
@@ -1645,6 +1654,15 @@ export async function POST(request: Request) {
         runId: authoritativeRunId,
         error,
       });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_route_recovery_fire_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
     }
   }
 
@@ -1665,6 +1683,15 @@ export async function POST(request: Request) {
           runId: authoritativeRunId,
           error,
         },
+      );
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_route_recovery_rate_limit_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
       );
     }
   }

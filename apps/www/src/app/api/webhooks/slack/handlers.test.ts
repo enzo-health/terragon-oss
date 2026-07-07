@@ -13,6 +13,7 @@ import {
 } from "@terragon/shared/model/slack";
 import * as slackWebApi from "@slack/web-api";
 import * as schema from "@terragon/shared/db/schema";
+import { eq } from "drizzle-orm";
 
 const getDefaultWebClientMock = (overrides?: {
   messages?: any[];
@@ -485,6 +486,14 @@ describe("handleAppMentionEvent", () => {
         thread_ts: "1234567890.123456",
         text: `Sorry <@${slackUserId}>, I couldn't create a Terragon task from this message. Please try again in a moment or check your Slack integration settings.`,
       });
+      const delivery = await db.query.slackTaskDeliveries.findFirst({
+        where: eq(
+          schema.slackTaskDeliveries.deliveryKey,
+          `${teamId}:${channelId}:1234567890.123456`,
+        ),
+      });
+      expect(delivery?.status).toBe("failed");
+      expect(delivery?.lastError).toBe("thread creation failed");
     });
   });
 

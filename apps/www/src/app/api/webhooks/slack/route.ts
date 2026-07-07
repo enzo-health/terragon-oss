@@ -6,9 +6,13 @@ import { waitUntil } from "@vercel/functions";
 
 function verifySlackSignature(req: NextRequest, body: string): boolean {
   if (!env.SLACK_SIGNING_SECRET) {
-    if (process.env.VERCEL_ENV) {
+    const isLocalDev =
+      !process.env.VERCEL_ENV &&
+      (process.env.NODE_ENV === "development" ||
+        process.env.NODE_ENV === "test");
+    if (!isLocalDev) {
       console.error(
-        "[slack webhook] SLACK_SIGNING_SECRET is not set in production, rejecting",
+        "[slack webhook] SLACK_SIGNING_SECRET is not set, rejecting Slack webhook",
       );
       return false;
     }
@@ -22,9 +26,13 @@ function verifySlackSignature(req: NextRequest, body: string): boolean {
   if (!timestamp || !slackSig) {
     return false;
   }
+  const timestampNumber = Number(timestamp);
+  if (!Number.isFinite(timestampNumber)) {
+    return false;
+  }
   // Replay protection (5 minutes)
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 60 * 5) {
+  if (Math.abs(now - timestampNumber) > 60 * 5) {
     return false;
   }
   const basestring = `v0:${timestamp}:${body}`;
@@ -79,11 +87,17 @@ function parseRetryActionValue(value: unknown) {
     const ts = parsed.ts;
     const team = parsed.team;
     const threadTs = parsed.thread_ts;
+    const messageTs =
+      typeof ts === "string"
+        ? ts
+        : typeof threadTs === "string"
+          ? threadTs
+          : null;
     if (
       typeof text !== "string" ||
       typeof channel !== "string" ||
       typeof user !== "string" ||
-      typeof ts !== "string" ||
+      messageTs === null ||
       typeof team !== "string"
     ) {
       return null;
@@ -92,7 +106,7 @@ function parseRetryActionValue(value: unknown) {
       text,
       channel,
       user,
-      ts,
+      ts: messageTs,
       team,
       thread_ts: typeof threadTs === "string" ? threadTs : undefined,
     };
@@ -162,10 +176,13 @@ export async function POST(req: NextRequest) {
         });
         return new Response("ok", { status: 200 });
       }
-      console.log(
-        "[slack webhook] Retrying task creation with data:",
-        retryData,
-      );
+      console.log("[slack webhook] Retrying task creation", {
+        team: retryData.team,
+        channel: retryData.channel,
+        user: retryData.user,
+        ts: retryData.ts,
+        threadTs: retryData.thread_ts,
+      });
 
       // Trigger the app mention handler again with the stored event data
       waitUntil(

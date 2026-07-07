@@ -564,6 +564,43 @@ describe("daemon-event route", () => {
     );
   });
 
+  it("returns a retriable error when interrupted tool-result injection fails", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([
+      { toolCallId: "tool-open-1", parentToolUseId: null },
+    ]);
+    sideEffectMocks.persistSideEffectAgUiMessages.mockRejectedValueOnce(
+      new Error("side-effect write failed"),
+    );
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-fails",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-fails",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        error: "daemon_event_interrupted_tool_result_persist_failed",
+      }),
+    );
+    expect(response.status).toBe(503);
+  });
+
   it("does not inject interrupted tool-results when no tool calls are open", async () => {
     canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([]);
 
@@ -908,6 +945,56 @@ describe("daemon-event route", () => {
       expect.objectContaining({ eventType: "system.agent-rate-limit" }),
     );
     expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("returns a retriable error when the route-owned rate-limit transition fails", async () => {
+    vi.mocked(updateThreadChatWithTransition)
+      .mockResolvedValueOnce({
+        didUpdateStatus: true,
+        updatedStatus: "working",
+        chatSequence: undefined,
+      })
+      .mockRejectedValueOnce(new Error("rate-limit transition failed"));
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "Claude AI usage limit reached|1752350400",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "rate-limit-terminal-fails",
+            seq: 10,
+            status: "completed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "rate-limit-terminal-fails",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        error: "daemon_event_route_recovery_rate_limit_failed",
+      }),
+    );
+    expect(response.status).toBe(503);
   });
 
   it("recovers an OAuth-token-revoked result: retry marker before queued Continue, then re-dispatch", async () => {

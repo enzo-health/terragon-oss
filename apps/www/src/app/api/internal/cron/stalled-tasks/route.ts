@@ -5,8 +5,10 @@ import {
   getStaleBootingThreadChats,
   requeueStaleBootingThreadChats,
 } from "@/server-lib/booting-recovery";
+import { runDeadlineSweep } from "@/server-lib/run-deadline-sweep";
 
 const STALE_BOOTING_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+const STALLED_THREAD_CHAT_CUTOFF_SECS = 60 * 60; // 1 hour
 
 async function requeueStaleBootingThreadChatsTask() {
   console.log("Processing stale booting thread chats");
@@ -40,6 +42,13 @@ export async function GET(request: NextRequest) {
   }
   console.log("Stalled tasks cron task triggered");
   await requeueStaleBootingThreadChatsTask();
+  const sweepResult = await runDeadlineSweep({
+    db,
+    cutoffSecs: STALLED_THREAD_CHAT_CUTOFF_SECS,
+  });
+  console.log(
+    `Stalled tasks run deadline sweep completed. Scanned: ${sweepResult.scanned}, Terminated: ${sweepResult.terminated}, Skipped: ${sweepResult.skipped}`,
+  );
   console.log("Stalled tasks cron task completed");
   return Response.json({ success: true });
 }

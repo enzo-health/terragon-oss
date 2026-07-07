@@ -101,6 +101,13 @@ describe("Slack webhook route", () => {
     expect(mocks.handleAppMentionEvent).not.toHaveBeenCalled();
   });
 
+  it("rejects signed routes with missing Slack signature headers", async () => {
+    const response = await POST(makeRequest("{}"));
+
+    expect(response.status).toBe(401);
+    expect(mocks.handleAppMentionEvent).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed JSON after signature verification", async () => {
     const response = await POST(makeSignedRequest("{"));
 
@@ -194,6 +201,41 @@ describe("Slack webhook route", () => {
         user: "U123",
         team: "T123",
         ts: "1234567890.123456",
+      }),
+    );
+  });
+
+  it("accepts legacy retry payloads that only stored thread_ts", async () => {
+    const payload = {
+      type: "block_actions",
+      user: { id: "U123" },
+      team: { id: "T123" },
+      actions: [
+        {
+          action_id: "retry_task_creation",
+          value: JSON.stringify({
+            user: "U123",
+            team: "T123",
+            channel: "C123",
+            text: "<@B123> fix this",
+            thread_ts: "1234567890.123456",
+          }),
+        },
+      ],
+    };
+    const body = new URLSearchParams({
+      payload: JSON.stringify(payload),
+    }).toString();
+
+    const response = await POST(makeSignedRequest(body));
+
+    expect(response.status).toBe(200);
+    expect(mocks.handleAppMentionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: "U123",
+        team: "T123",
+        ts: "1234567890.123456",
+        thread_ts: "1234567890.123456",
       }),
     );
   });

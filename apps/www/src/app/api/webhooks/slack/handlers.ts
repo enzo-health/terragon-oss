@@ -373,6 +373,17 @@ export async function handleAppMentionEvent(
   let slack: WebClient | null = null;
   let threadTs: string | null = null;
   let createdThreadId: string | null = null;
+  let claimedDelivery: {
+    deliveryKey: string;
+    claimantToken: string;
+    teamId: string;
+    channel: string;
+    messageTs: string;
+  } | null = null;
+  let createdThread: {
+    threadId: string;
+    threadChatId: string | null;
+  } | null = null;
   try {
     const context = await resolveSlackMentionContext({ event });
     if (!context) {
@@ -400,6 +411,13 @@ export async function handleAppMentionEvent(
       });
       return;
     }
+    claimedDelivery = {
+      deliveryKey: claimResult.deliveryKey,
+      claimantToken: claimResult.claimantToken!,
+      teamId: context.teamId,
+      channel: event.channel,
+      messageTs: event.ts,
+    };
     const hasFiles = Array.isArray(event.files) && event.files.length > 0;
     let fileConversion: SlackFileConversionResult = { parts: [], skipped: [] };
     if (context.slackAttachmentsEnabled && hasFiles) {
@@ -498,6 +516,7 @@ export async function handleAppMentionEvent(
       },
     });
     createdThreadId = threadId;
+    createdThread = { threadId, threadChatId };
     const slackThreadLink = context.slackLiveSessionsEnabled
       ? await ensureSlackThreadLinkForMention({
           slackAccount: context.slackAccount,
@@ -526,6 +545,38 @@ export async function handleAppMentionEvent(
     console.log("[slack webhook] Successfully created thread", threadId);
   } catch (error) {
     console.error("[slack webhook] Error handling app mention:", error);
+    if (claimedDelivery) {
+      if (createdThread) {
+        await completeSlackTaskDelivery({
+          db,
+          teamId: claimedDelivery.teamId,
+          channel: claimedDelivery.channel,
+          messageTs: claimedDelivery.messageTs,
+          deliveryKey: claimedDelivery.deliveryKey,
+          threadId: createdThread.threadId,
+          threadChatId: createdThread.threadChatId,
+          claimantToken: claimedDelivery.claimantToken,
+        }).catch((completeError) => {
+          console.error(
+            "[slack webhook] Failed to complete claimed Slack task delivery after error:",
+            completeError,
+          );
+        });
+      } else {
+        await markSlackTaskDeliveryFailed({
+          db,
+          deliveryKey: claimedDelivery.deliveryKey,
+          claimantToken: claimedDelivery.claimantToken,
+          lastError:
+            error instanceof Error ? error.message : "slack-task-create-failed",
+        }).catch((markError) => {
+          console.error(
+            "[slack webhook] Failed to mark Slack task delivery failed:",
+            markError,
+          );
+        });
+      }
+    }
     if (slack && threadTs && !createdThreadId) {
       await slack.chat
         .postMessage({
