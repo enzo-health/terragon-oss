@@ -1199,6 +1199,9 @@ function extractThreadEventFromMethod({
 
   const eventType = METHOD_TO_THREAD_EVENT_TYPE[method];
   if (!eventType) {
+    if (method.startsWith("codex/event/")) {
+      return null;
+    }
     recordUnknownEvent({
       transport: "codex",
       method,
@@ -1567,10 +1570,14 @@ export function extractThreadEvent(message: unknown): DaemonCodexEvent | null {
   if (!method.startsWith("codex/event/")) {
     return null;
   }
-  const codexMessage = toRecord(params.msg);
-  if (!codexMessage) {
-    return null;
-  }
+  const codexMessage =
+    toRecord(params.msg) ??
+    toRecord(params.message) ??
+    toRecord(params.event) ??
+    ({
+      ...params,
+      type: method.slice("codex/event/".length),
+    } satisfies Record<string, unknown>);
   return extractThreadEventFromCodexMessage(codexMessage);
 }
 

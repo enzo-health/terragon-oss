@@ -33,20 +33,53 @@ function makeBody(
   };
 }
 
+function makeJournalEventRecord({
+  eventId,
+  seq,
+}: {
+  eventId: string;
+  seq: number;
+}) {
+  return {
+    v: 1,
+    t: "event",
+    threadChatId: "c",
+    runId: "r",
+    eventId,
+    seq,
+    token: "tok",
+    body: makeBody({ threadChatId: "c", eventId, runId: "r", seq }),
+    ts: 1,
+  };
+}
+
+function makeJournalAckRecord({
+  eventId,
+  seq,
+}: {
+  eventId: string;
+  seq: number;
+}) {
+  return {
+    v: 1,
+    t: "ack",
+    threadChatId: "c",
+    runId: "r",
+    eventId,
+    seq,
+    ts: 1,
+  };
+}
+
 async function mkTmpDir(): Promise<string> {
   return fsp.mkdtemp(join(tmpdir(), "outbox-journal-test-"));
 }
 
 describe("parseJournalBuffer", () => {
   it("skips a torn/partial final line without dropping earlier records", () => {
-    const good = JSON.stringify({
-      v: 1,
-      t: "event",
-      threadChatId: "c",
-      runId: "r",
-      eventId: "e0",
-      seq: 0,
-    });
+    const good = JSON.stringify(
+      makeJournalEventRecord({ eventId: "e0", seq: 0 }),
+    );
     const raw = `${good}\n{"v":1,"t":"event","threadChatId":"c","runId":"r","eventId":"e1`;
     const records = parseJournalBuffer(raw);
     expect(records).toHaveLength(1);
@@ -59,14 +92,7 @@ describe("parseJournalBuffer", () => {
       "   ",
       "not json",
       JSON.stringify({ t: "event" }),
-      JSON.stringify({
-        v: 1,
-        t: "ack",
-        threadChatId: "c",
-        runId: "r",
-        eventId: "e0",
-        seq: 0,
-      }),
+      JSON.stringify(makeJournalAckRecord({ eventId: "e0", seq: 0 })),
     ].join("\n");
     const records = parseJournalBuffer(raw);
     expect(records).toHaveLength(1);
@@ -78,46 +104,11 @@ describe("selectUnackedEvents", () => {
   it("drops acked events and dedupes reused identity, preserving order", () => {
     const records = parseJournalBuffer(
       [
-        JSON.stringify({
-          v: 1,
-          t: "event",
-          threadChatId: "c",
-          runId: "r",
-          eventId: "e0",
-          seq: 0,
-        }),
-        JSON.stringify({
-          v: 1,
-          t: "event",
-          threadChatId: "c",
-          runId: "r",
-          eventId: "e0",
-          seq: 0,
-        }),
-        JSON.stringify({
-          v: 1,
-          t: "ack",
-          threadChatId: "c",
-          runId: "r",
-          eventId: "e0",
-          seq: 0,
-        }),
-        JSON.stringify({
-          v: 1,
-          t: "event",
-          threadChatId: "c",
-          runId: "r",
-          eventId: "e1",
-          seq: 1,
-        }),
-        JSON.stringify({
-          v: 1,
-          t: "event",
-          threadChatId: "c",
-          runId: "r",
-          eventId: "e2",
-          seq: 2,
-        }),
+        JSON.stringify(makeJournalEventRecord({ eventId: "e0", seq: 0 })),
+        JSON.stringify(makeJournalEventRecord({ eventId: "e0", seq: 0 })),
+        JSON.stringify(makeJournalAckRecord({ eventId: "e0", seq: 0 })),
+        JSON.stringify(makeJournalEventRecord({ eventId: "e1", seq: 1 })),
+        JSON.stringify(makeJournalEventRecord({ eventId: "e2", seq: 2 })),
       ].join("\n"),
     );
     const unacked = selectUnackedEvents(records);

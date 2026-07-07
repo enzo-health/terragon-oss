@@ -301,6 +301,29 @@ describe("extractThreadEvent", () => {
     });
   });
 
+  test("extracts codex/event envelopes that carry payload fields directly in params", () => {
+    const event = extractThreadEvent({
+      method: "codex/event/turn_completed",
+      params: {
+        thread_id: "thread-direct",
+        usage: {
+          input_tokens: 11,
+          cached_input_tokens: 3,
+          output_tokens: 5,
+        },
+      },
+    });
+
+    expect(event).toEqual({
+      type: "turn.completed",
+      usage: {
+        input_tokens: 11,
+        cached_input_tokens: 3,
+        output_tokens: 5,
+      },
+    });
+  });
+
   test("extracts app-server error notifications", () => {
     const event = extractThreadEvent({
       method: "error",
