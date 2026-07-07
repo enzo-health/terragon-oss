@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     SLACK_SIGNING_SECRET: "slack-signing-secret",
   },
   handleAppMentionEvent: vi.fn(async (): Promise<void> => undefined),
+  handleSlackMessageEvent: vi.fn(async (): Promise<void> => undefined),
   waitUntil: vi.fn(),
 }));
 
@@ -20,6 +21,10 @@ vi.mock("@vercel/functions", () => ({
 
 vi.mock("./handlers", () => ({
   handleAppMentionEvent: mocks.handleAppMentionEvent,
+}));
+
+vi.mock("@/server-lib/slack/slack-router", () => ({
+  handleSlackMessageEvent: mocks.handleSlackMessageEvent,
 }));
 
 import { POST } from "./route";
@@ -168,6 +173,51 @@ describe("Slack webhook route", () => {
         slackEventId: "Ev123",
       }),
     );
+  });
+
+  it("schedules valid Slack message events with normalized routing fields", async () => {
+    const files = [{ id: "F123", name: "trace.log" }];
+    const edited = { user: "UEDITOR", ts: "1234567890.222222" };
+    const body = JSON.stringify({
+      type: "event_callback",
+      event_id: "EvMessage123",
+      team_id: "T123",
+      event: {
+        type: "message",
+        user: "U123",
+        text: "follow-up from Slack",
+        ts: "1234567890.123456",
+        channel: "C123",
+        thread_ts: "1234567890.000001",
+        subtype: "file_share",
+        hidden: false,
+        files,
+        edited,
+      },
+    });
+
+    const response = await POST(makeSignedRequest(body));
+
+    expect(response.status).toBe(200);
+    expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
+    await mocks.waitUntil.mock.calls[0]?.[0];
+    expect(mocks.handleSlackMessageEvent).toHaveBeenCalledWith({
+      event: {
+        type: "message",
+        user: "U123",
+        text: "follow-up from Slack",
+        ts: "1234567890.123456",
+        channel: "C123",
+        thread_ts: "1234567890.000001",
+        team: "T123",
+        bot_id: undefined,
+        subtype: "file_share",
+        hidden: false,
+        files,
+        edited,
+      },
+      slackEventId: "EvMessage123",
+    });
   });
 
   it("preserves retry timestamps and binds retries to the Slack actor", async () => {

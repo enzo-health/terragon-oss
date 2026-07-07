@@ -15,6 +15,14 @@ import * as slackWebApi from "@slack/web-api";
 import * as schema from "@terragon/shared/db/schema";
 import { eq } from "drizzle-orm";
 
+const featureFlagMocks = vi.hoisted(() => ({
+  getFeatureFlagForUser: vi.fn(),
+}));
+
+const slackFileMocks = vi.hoisted(() => ({
+  convertSlackFilesToMessageParts: vi.fn(),
+}));
+
 const getDefaultWebClientMock = (overrides?: {
   messages?: any[];
   postMessageFn?: () => any;
@@ -56,6 +64,17 @@ vi.mock("@slack/web-api", () => ({
 
 vi.mock("@/server-lib/new-thread-internal", () => ({
   newThreadInternal: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/feature-flags", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  getFeatureFlagForUser: featureFlagMocks.getFeatureFlagForUser,
+}));
+
+vi.mock("@/server-lib/slack/slack-files", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  convertSlackFilesToMessageParts:
+    slackFileMocks.convertSlackFilesToMessageParts,
 }));
 
 describe("handleAppMentionEvent", () => {
@@ -117,6 +136,11 @@ describe("handleAppMentionEvent", () => {
       threadId: "new-thread-created-id",
       threadChatId: "new-thread-chat-created-id",
       model: "sonnet",
+    });
+    featureFlagMocks.getFeatureFlagForUser.mockResolvedValue(false);
+    slackFileMocks.convertSlackFilesToMessageParts.mockResolvedValue({
+      parts: [],
+      skipped: [],
     });
   });
 
@@ -494,6 +518,100 @@ describe("handleAppMentionEvent", () => {
       });
       expect(delivery?.status).toBe("failed");
       expect(delivery?.lastError).toBe("thread creation failed");
+    });
+
+    it("should mark delivery failed and notify Slack when attachment import fails", async () => {
+      featureFlagMocks.getFeatureFlagForUser.mockImplementation(
+        async ({ flagName }: { flagName: string }) =>
+          flagName === "slackAttachmentsEnabled",
+      );
+      slackFileMocks.convertSlackFilesToMessageParts.mockRejectedValueOnce(
+        new Error("download failed"),
+      );
+      const postMessageFn = vi.fn().mockResolvedValue({ ok: true });
+      vi.mocked(slackWebApi.WebClient).mockImplementation(() => {
+        return getDefaultWebClientMock({ postMessageFn });
+      });
+
+      await handleAppMentionEvent(
+        createBasicEvent({
+          files: [
+            {
+              id: "F123",
+              name: "trace.log",
+              mimetype: "text/plain",
+              url_private_download: "https://files.slack.test/trace.log",
+            },
+          ],
+        }),
+      );
+
+      expect(newThreadInternal).not.toHaveBeenCalled();
+      expect(postMessageFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: channelId,
+          thread_ts: "1234567890.123456",
+          text: expect.stringContaining("couldn't import"),
+        }),
+      );
+      const delivery = await db.query.slackTaskDeliveries.findFirst({
+        where: eq(
+          schema.slackTaskDeliveries.deliveryKey,
+          `${teamId}:${channelId}:1234567890.123456`,
+        ),
+      });
+      expect(delivery?.status).toBe("failed");
+      expect(delivery?.lastError).toBe("slack-attachment-import-failed");
+    });
+
+    it("should omit attachment-only mentions when no files can be attached", async () => {
+      featureFlagMocks.getFeatureFlagForUser.mockImplementation(
+        async ({ flagName }: { flagName: string }) =>
+          flagName === "slackAttachmentsEnabled",
+      );
+      slackFileMocks.convertSlackFilesToMessageParts.mockResolvedValueOnce({
+        parts: [],
+        skipped: [{ fileName: "trace.log", reason: "unsupported-type" }],
+      });
+      const postMessageFn = vi.fn().mockResolvedValue({ ok: true });
+      vi.mocked(slackWebApi.WebClient).mockImplementation(() => {
+        return getDefaultWebClientMock({ postMessageFn });
+      });
+
+      await handleAppMentionEvent(
+        createBasicEvent({
+          text: "<@B123456789>",
+          files: [
+            {
+              id: "F123",
+              name: "trace.log",
+              mimetype: "application/x-unsupported",
+              url_private_download: "https://files.slack.test/trace.log",
+            },
+          ],
+        }),
+      );
+
+      expect(newThreadInternal).not.toHaveBeenCalled();
+      expect(postMessageFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: channelId,
+          thread_ts: "1234567890.123456",
+          text: expect.stringContaining(
+            "can't start a task from attachments alone",
+          ),
+        }),
+      );
+      const delivery = await db.query.slackTaskDeliveries.findFirst({
+        where: eq(
+          schema.slackTaskDeliveries.deliveryKey,
+          `${teamId}:${channelId}:1234567890.123456`,
+        ),
+      });
+      expect(delivery?.status).toBe("omitted");
+      expect(delivery?.omittedReason).toBe(
+        "unsupported-attachments-empty-mention",
+      );
     });
   });
 

@@ -1316,6 +1316,63 @@ describe("daemon-event route", () => {
     );
   });
 
+  it("persists daemon-emitted AG-UI wire rows alongside canonical and delta payloads", async () => {
+    const timestampMs = Date.parse("2026-04-27T00:00:00.000Z");
+    const agUiEvent = {
+      type: EventType.TEXT_MESSAGE_START,
+      timestamp: timestampMs,
+      messageId: "daemon-agui-message",
+      role: "assistant",
+    };
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-agui-wire",
+        runId: "run-1",
+        seq: 8,
+        messages: [],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        agUiEvents: [
+          {
+            event: agUiEvent,
+            eventId: "daemon-agui-row-1",
+            timestampMs,
+          },
+        ],
+        deltas: [
+          {
+            messageId: "m",
+            partIndex: 0,
+            deltaSeq: 10,
+            kind: "text",
+            text: "ignored because agUiEvents are authoritative",
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(agUiPublisherMocks.daemonDeltasToAgUiRows).not.toHaveBeenCalled();
+    expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        rows: [
+          {
+            event: agUiEvent,
+            eventId: "daemon-agui-row-1",
+            timestamp: new Date(timestampMs),
+          },
+        ],
+      }),
+    );
+  });
+
   it("persists completed ACP tool-call snapshots as native rows in delta batches", async () => {
     const response = await POST(
       createDaemonRequest({
