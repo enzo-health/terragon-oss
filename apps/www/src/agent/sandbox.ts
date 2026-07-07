@@ -18,6 +18,7 @@ import {
   getDecryptedGlobalEnvironmentVariables,
   hashEnvironmentVariables,
   hashSnapshotValue,
+  updateEnvironmentSnapshot,
 } from "@terragon/shared/model/environments";
 import { env } from "@terragon/env/apps-www";
 import type {
@@ -36,7 +37,10 @@ import { wrapError } from "./error";
 import { nonLocalhostPublicAppUrl } from "@/lib/server-utils";
 import { generateBranchName } from "@/server-lib/generate-branch-name";
 import { getSetupScriptFromRepo } from "@/server-lib/environment";
-import { maybeWarmEnvironmentSnapshot } from "@/server-lib/environment-snapshot-lifecycle";
+import {
+  maybeWarmEnvironmentSnapshot,
+  triggerEnvironmentSnapshotBuild,
+} from "@/server-lib/environment-snapshot-lifecycle";
 import { sandboxTimeoutMs } from "@terragon/sandbox/constants";
 import { trackSandboxCreation } from "@/lib/rate-limit";
 import { getAndVerifyCredentials } from "./credentials";
@@ -725,6 +729,74 @@ async function getOrCreateSandboxForThread({
     );
   };
 
+  const isInactiveDaytonaSnapshotError = (error: unknown): boolean => {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    return message.includes("snapshot") && message.includes("inactive");
+  };
+
+  const markSelectedDaytonaSnapshotFailed = async (
+    context: BootstrapContext,
+    plan: ReturnType<typeof resolveDaytonaSandboxBootPlan>,
+    error: unknown,
+  ): Promise<void> => {
+    if (!context.repositoryEnvironment || !plan.selectedSnapshot) {
+      return;
+    }
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    try {
+      await updateEnvironmentSnapshot({
+        db,
+        userId,
+        environmentId: context.repositoryEnvironment.id,
+        snapshot: {
+          ...plan.selectedSnapshot,
+          status: "failed",
+          error: `Provider rejected stored snapshot during boot: ${errorMessage}`,
+          builtAt: new Date().toISOString(),
+        },
+      });
+      void triggerEnvironmentSnapshotBuild({
+        db,
+        userId,
+        environmentId: context.repositoryEnvironment.id,
+        baseBranch: thread.repoBaseBranchName,
+        size: thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE,
+        force: true,
+      });
+    } catch (markError) {
+      console.warn(
+        "[sandbox] failed to mark inactive Daytona snapshot failed",
+        {
+          threadId,
+          snapshotName: plan.selectedSnapshot.snapshotName,
+          error:
+            markError instanceof Error ? markError.message : String(markError),
+        },
+      );
+    }
+  };
+
+  const resolveDaytonaPlanForContext = (context: BootstrapContext) =>
+    resolveDaytonaSandboxBootPlan({
+      sandboxProvider: thread.sandboxProvider,
+      existingSandboxId: thread.codesandboxId,
+      userId,
+      environmentId: context.repositoryEnvironment?.id ?? null,
+      threadId,
+      repoFullName: context.repositoryEnvironment?.repoFullName ?? null,
+      volumeEnabled: env.DAYTONA_VOLUME_ENABLED,
+      volumeName: env.DAYTONA_VOLUME_NAME,
+      sandboxSize: thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE,
+      baseBranch: thread.repoBaseBranchName,
+      setupScript: context.resolvedSetupScript,
+      snapshots: context.repositoryEnvironment?.snapshots ?? null,
+      environmentVariablesHash: context.environmentVariablesHash,
+      mcpConfigHash: context.mcpConfigHash,
+    });
+
   const buildSandboxOptions = (
     context: BootstrapContext,
   ): CreateSandboxOptions => {
@@ -738,22 +810,7 @@ async function getOrCreateSandboxForThread({
         ? localDockerPublicUrl
         : nonLocalhostPublicAppUrl();
     const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
-    const daytonaPlan = resolveDaytonaSandboxBootPlan({
-      sandboxProvider: thread.sandboxProvider,
-      existingSandboxId: thread.codesandboxId,
-      userId,
-      environmentId: context.repositoryEnvironment?.id ?? null,
-      threadId,
-      repoFullName: context.repositoryEnvironment?.repoFullName ?? null,
-      volumeEnabled: env.DAYTONA_VOLUME_ENABLED,
-      volumeName: env.DAYTONA_VOLUME_NAME,
-      sandboxSize,
-      baseBranch: thread.repoBaseBranchName,
-      setupScript: context.resolvedSetupScript,
-      snapshots: context.repositoryEnvironment?.snapshots ?? null,
-      environmentVariablesHash: context.environmentVariablesHash,
-      mcpConfigHash: context.mcpConfigHash,
-    });
+    const daytonaPlan = resolveDaytonaPlanForContext(context);
     const environmentVariablesWithVolumeDefaults = [
       ...daytonaPlan.volumeEnvironmentEntries,
       ...context.finalEnvironmentVariables,
@@ -868,6 +925,7 @@ async function getOrCreateSandboxForThread({
   const sandboxSize = thread.sandboxSize ?? DEFAULT_SANDBOX_SIZE;
   const bootstrap = await getBootstrapContext();
   const bootstrapOptions = buildSandboxOptions(bootstrap);
+  const daytonaPlan = resolveDaytonaPlanForContext(bootstrap);
   let session: ISandboxSession;
   try {
     session = await getOrCreateSandboxWithTimeout(thread.codesandboxId, {
@@ -883,7 +941,19 @@ async function getOrCreateSandboxForThread({
     // which left regular cold boots in a retry loop producing chat errors
     // reading "Sandbox not found" while the runtime status kept the thread
     // active indefinitely.
-    if (isRecoverableSandboxIdError(error)) {
+    if (
+      thread.sandboxProvider === "daytona" &&
+      !thread.codesandboxId &&
+      daytonaPlan.selectedSnapshot &&
+      isInactiveDaytonaSnapshotError(error)
+    ) {
+      await markSelectedDaytonaSnapshotFailed(bootstrap, daytonaPlan, error);
+      session = await getOrCreateSandboxWithTimeout(null, {
+        ...bootstrapOptions,
+        snapshotTemplateId: undefined,
+        fastResume: false,
+      });
+    } else if (isRecoverableSandboxIdError(error)) {
       session = await getOrCreateSandboxWithTimeout(null, {
         ...bootstrapOptions,
         fastResume: false,

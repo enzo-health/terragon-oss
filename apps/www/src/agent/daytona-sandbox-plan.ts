@@ -16,6 +16,7 @@ export type DaytonaSandboxBootPlan = {
   daytonaVolume: DaytonaVolumeLayout | undefined;
   volumeEnvironmentEntries: Array<{ key: string; value: string }>;
   snapshotTemplateId: string | undefined;
+  selectedSnapshot: EnvironmentSnapshot | undefined;
   snapshotFingerprint: SnapshotRecipeFingerprint | undefined;
 };
 
@@ -55,6 +56,7 @@ export function resolveDaytonaSandboxBootPlan({
       daytonaVolume: undefined,
       volumeEnvironmentEntries: [],
       snapshotTemplateId: undefined,
+      selectedSnapshot: undefined,
       snapshotFingerprint: undefined,
     };
   }
@@ -90,6 +92,7 @@ export function resolveDaytonaSandboxBootPlan({
     daytonaVolume,
     volumeEnvironmentEntries: getDaytonaVolumeEnvironmentEntries(daytonaVolume),
     snapshotTemplateId: snapshot?.snapshotName ?? undefined,
+    selectedSnapshot: snapshot ?? undefined,
     snapshotFingerprint,
   };
 }
