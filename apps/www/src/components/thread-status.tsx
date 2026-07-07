@@ -81,9 +81,12 @@ export const ThreadStatusIndicator = memo(function ThreadStatusIndicator({
   // For optimistic threads, show creating state
   if (isOptimistic) {
     return (
-      <div className="flex-shrink-0" title="Creating">
+      <div
+        className="flex-shrink-0 inline-flex items-center justify-center size-3.5"
+        title="Creating"
+      >
         <span className="relative flex h-2.5 w-2.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral/30 opacity-60" />
+          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-coral/30 opacity-60" />
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-coral/50" />
         </span>
       </div>
@@ -135,26 +138,48 @@ function MinimalStatusIndicator({
       <Calendar strokeWidth={strokeWidth} className={cn("text-mid", size)} />
     ),
     pending: (
-      <Clock strokeWidth={strokeWidth} className={cn("text-warning", size)} />
-    ),
-    active: (
-      <CircleDashed
-        strokeWidth={2}
-        className={cn("text-strong/60 animate-[spin_2s_linear_infinite]", size)}
+      <Clock
+        strokeWidth={strokeWidth}
+        className={cn("text-warning-strong", size)}
       />
     ),
+    active: (
+      <span
+        className={cn("relative inline-flex items-center justify-center", size)}
+      >
+        <span className="absolute size-2.5 rounded-full bg-active-accent/30 motion-safe:animate-ping" />
+        <CircleDashed
+          strokeWidth={2}
+          className={cn(
+            "relative text-active-accent motion-safe:animate-[spin_2s_linear_infinite]",
+            size,
+          )}
+        />
+      </span>
+    ),
     finishing: (
-      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
+      <Check
+        strokeWidth={strokeWidth}
+        className={cn("text-success-strong", size)}
+      />
     ),
     complete: (
-      <Check strokeWidth={strokeWidth} className={cn("text-success", size)} />
+      <Check
+        strokeWidth={strokeWidth}
+        className={cn("text-success-strong", size)}
+      />
     ),
-    error: <X strokeWidth={strokeWidth} className={cn("text-error", size)} />,
-    unread: <div className="w-2 h-2 rounded-full bg-info" />,
+    error: (
+      <X strokeWidth={strokeWidth} className={cn("text-error-strong", size)} />
+    ),
+    unread: <div className="size-2 rounded-full bg-info-strong" />,
   };
   return (
     <div
-      className={cn("flex-shrink-0", className)}
+      className={cn(
+        "flex-shrink-0 inline-flex items-center justify-center size-3.5",
+        className,
+      )}
       title={getStatusLabel({ status, isError })}
     >
       {icons[minimalStatus]}

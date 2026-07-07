@@ -210,42 +210,44 @@ export function Dashboard({
   return (
     <div
       className={cn(
-        "flex flex-col h-full max-w-chat w-full mx-auto gap-8 justify-center py-16 px-6",
+        "flex flex-col h-full max-w-chat w-full mx-auto justify-center py-12 sm:py-16 px-5 sm:px-6",
         "animate-in fade-in duration-300",
       )}
     >
-      <div className="flex flex-col gap-3">
-        <h1 className="font-display text-3xl sm:text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
-          What would you like to build?
-        </h1>
-        <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
-          Describe what you want changed, and the agent runs it in a sandbox.
-        </p>
-      </div>
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-2.5">
+          <h1 className="font-display text-3xl sm:text-[40px] font-normal tracking-[-0.035em] leading-[1.05] text-foreground text-balance">
+            What would you like to build?
+          </h1>
+          <p className="text-[15px] leading-relaxed text-muted-foreground text-pretty">
+            Describe what you want changed, and the agent runs it in a sandbox.
+          </p>
+        </div>
 
-      <div className="space-y-3">
-        <DashboardPromptBox
-          placeholder={placeholder}
-          status={null}
-          threadId={null}
-          onUpdate={onUpdate}
-          handleStop={handleStop}
-          handleSubmit={handlePromptSubmit}
-          promptText={promptText ?? undefined}
-        />
-        <div
-          className={cn(
-            "grid transition-[grid-template-rows,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
-            isLaunching
-              ? "grid-rows-[1fr] opacity-100"
-              : "grid-rows-[0fr] opacity-0",
-          )}
-          aria-hidden={!isLaunching}
-        >
-          <div className="overflow-hidden">
-            {visibleLaunchState ? (
-              <DashboardLaunchStatus state={visibleLaunchState} />
-            ) : null}
+        <div className="space-y-3">
+          <DashboardPromptBox
+            placeholder={placeholder}
+            status={null}
+            threadId={null}
+            onUpdate={onUpdate}
+            handleStop={handleStop}
+            handleSubmit={handlePromptSubmit}
+            promptText={promptText ?? undefined}
+          />
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
+              isLaunching
+                ? "grid-rows-[1fr] opacity-100"
+                : "grid-rows-[0fr] opacity-0",
+            )}
+            aria-hidden={!isLaunching}
+          >
+            <div className="overflow-hidden">
+              {visibleLaunchState ? (
+                <DashboardLaunchStatus state={visibleLaunchState} />
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -259,7 +261,7 @@ export function Dashboard({
         aria-hidden={!showRecommendedExpanded}
       >
         <div className="overflow-hidden">
-          <div className="space-y-3">
+          <div className="space-y-3 pt-10">
             <h2 className="text-[12px] uppercase tracking-[0.13em] font-medium text-muted-foreground">
               Suggested tasks
             </h2>
@@ -270,7 +272,7 @@ export function Dashboard({
           </div>
         </div>
       </div>
-      <div className="md:hidden">
+      <div className="md:hidden pt-8">
         <ThreadListMain
           queryFilters={threadListQueryFilters}
           viewFilter={showArchived ? "archived" : "active"}

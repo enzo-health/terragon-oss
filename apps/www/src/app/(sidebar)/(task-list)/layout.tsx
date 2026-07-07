@@ -9,8 +9,8 @@ export default async function TaskListLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0">
-      <div className="flex min-h-0 flex-1 overflow-hidden bg-background md:border-l md:border-hairline">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex flex-col h-full min-w-0 flex-1">
           <Suspense fallback={<BannerSkeleton />}>
             <BannerContainer />

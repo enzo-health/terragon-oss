@@ -39,18 +39,19 @@
   --chart-3: oklch(0.8721 0.0864 68.5474);
   --chart-4: oklch(0.6268 0 0);
   --chart-5: oklch(0.683 0 0);
-  --sidebar: var(--background);
+  /* Shell surface — the sidebar and the page gutter share this soft gray so
+     the white content card (--card) reads as a raised, offset container. */
+  --sidebar: oklch(0.965 0.003 264.54);
   --sidebar-foreground: oklch(0.2101 0.0318 264.6645);
   --sidebar-primary: oklch(0.6716 0.1368 48.513);
   --sidebar-primary-foreground: oklch(1 0 0);
-  /* Active nav item highlight — must be visible against the sidebar.
-     Now that sidebar matches background (white), accent flips to the
-     muted gray that the previous sidebar surface used. */
-  --sidebar-accent: oklch(0.967 0.0029 264.5419);
+  /* Active/hover highlight — one step darker than the gray shell so it stays
+     visible on the sidebar surface. */
+  --sidebar-accent: oklch(0.93 0.004 264.54);
   --sidebar-accent-foreground: oklch(0.2101 0.0318 264.6645);
   --sidebar-border: oklch(0.9276 0.0058 264.5313);
   --sidebar-ring: oklch(0.6716 0.1368 48.513);
-  --app-background: var(--background);
+  --app-background: var(--sidebar);
 
   /* === Canonical 11-token bridge ===
      Existing utilities (bg-canvas, text-strong, bg-coral, ...) are
@@ -167,6 +168,13 @@
 
   /* Chat layout */
   --chat-max-width: 720px;
+
+  /* Layout polish — sidebar↔content linkage. One active-accent hue shared by
+     the sidebar active row/rail and the main-content active header so the
+     seam reads as a single surface. Resolves per-theme via --coral. */
+  --active-accent: var(--coral);
+  --active-accent-soft: color-mix(in oklch, var(--coral) 12%, transparent);
+  --sidebar-rail-width: 2px;
 
   /* Motion system */
   --duration-instant: 80ms;
@@ -340,6 +348,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-app-background: var(--app-background);
+  --color-active-accent: var(--active-accent);
+  --color-active-accent-soft: var(--active-accent-soft);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);

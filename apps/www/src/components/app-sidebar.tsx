@@ -25,7 +25,6 @@ import React, { Suspense, useSyncExternalStore } from "react";
 import { userAtom } from "@/atoms/user";
 import { signOut } from "@/components/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,7 +49,7 @@ import {
 import { cn } from "@/lib/utils";
 import { headerClassName } from "./shared/header";
 import { SidebarThreadListLoading } from "./sidebar-thread-list-skeleton";
-import { Wordmark, WordmarkLogo } from "./shared/wordmark";
+import { Wordmark } from "./shared/wordmark";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 
@@ -72,25 +71,20 @@ function useIsClient() {
 }
 
 function SidebarHeaderContent() {
-  const { open, isMobile, toggleSidebar } = useSidebar();
+  const { open, isMobile } = useSidebar();
   if (!open && !isMobile) {
     return (
-      <div className="flex items-center justify-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleSidebar}
+      <div className="flex items-center justify-center motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-90 motion-safe:duration-[var(--duration-base)] motion-safe:ease-[var(--ease-emphasis)]">
+        <SidebarTrigger
           aria-label="Expand sidebar"
-          className="size-8 rounded-md text-foreground transition-[background-color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-sidebar-accent active:scale-[0.96]"
-        >
-          <WordmarkLogo size="md" />
-        </Button>
+          className="text-foreground active:scale-[0.96]"
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-left-1 motion-safe:duration-[var(--duration-base)] motion-safe:ease-[var(--ease-emphasis)]">
       <Wordmark href="/dashboard" />
       <SidebarTrigger />
     </div>
@@ -121,7 +115,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-1.5 pb-2 pt-0 group-data-[collapsible=icon]:px-1.5">
-        <SidebarGroup className="py-1">
+        <SidebarGroup className="pb-0 pt-1">
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -132,7 +126,12 @@ export function AppSidebar() {
                 >
                   <Link href="/dashboard" className="font-medium text-xs">
                     <SquarePen className="size-4" />
-                    <span>New Task</span>
+                    <span className="group-data-[collapsible=icon]:hidden">
+                      New Task
+                    </span>
+                    <kbd className="ml-auto rounded border border-primary-foreground/25 bg-primary-foreground/10 px-1.5 py-px text-[10px] font-medium leading-none text-primary-foreground/80 group-data-[collapsible=icon]:hidden">
+                      N
+                    </kbd>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -140,7 +139,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup className="py-0.5">
+        <SidebarGroup className="pb-1 pt-0.5">
           <SidebarGroupContent>
             <SidebarMenu>
               <NavItem
@@ -153,7 +152,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup className="flex-1 min-h-0 overflow-hidden">
+        <SidebarGroup className="flex-1 min-h-0 overflow-hidden pt-0">
           <SidebarGroupLabel className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
             Tasks
           </SidebarGroupLabel>
@@ -165,15 +164,15 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border/70 px-2 pb-2 pt-2 group-data-[collapsible=icon]:px-1.5">
-        <SidebarMenu>
+      <SidebarFooter className="border-t border-sidebar-border/70 px-2 pb-1.5 pt-1.5 group-data-[collapsible=icon]:px-1.5">
+        <SidebarMenu className="gap-0.5">
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
                   size="lg"
                   tooltip="Settings"
-                  className="transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  className="h-10 transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
                   <Settings className="size-4 text-muted-foreground" />
                   <span className="flex-1 truncate text-left text-sm font-medium leading-tight group-data-[collapsible=icon]:hidden">
@@ -261,7 +260,11 @@ export function AppSidebar() {
           </SidebarMenuItem>
 
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" tooltip={user?.name ?? "Account"}>
+            <SidebarMenuButton
+              size="lg"
+              tooltip={user?.name ?? "Account"}
+              className="h-10"
+            >
               <Avatar className="size-7 rounded-md">
                 <AvatarImage src={user?.image ?? undefined} />
                 <AvatarFallback className="rounded-md bg-[var(--warm-stone)] text-foreground text-xs font-semibold">

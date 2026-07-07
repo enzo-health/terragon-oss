@@ -32,7 +32,7 @@ export function ThreadListMain({
     push(query ? `${pathname}?${query}` : pathname);
   };
   return (
-    <div className="flex-1 pb-2 flex flex-col animate-in fade-in duration-500">
+    <div className="flex-1 pb-2 flex flex-col gap-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--duration-slow)]">
       <ThreadListHeader
         className="sticky top-0 bg-sidebar z-20 px-0 "
         viewFilter={viewFilter}
