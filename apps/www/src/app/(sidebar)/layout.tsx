@@ -20,7 +20,7 @@ export default function SidebarLayout({
           <AppSidebar />
         </SidebarAuthWrapper>
       </Suspense>
-      <SidebarInset className="!m-0 !overflow-hidden !rounded-none !shadow-none max-h-svh min-w-0 bg-app-background">
+      <SidebarInset className="overflow-hidden max-h-svh min-w-0 bg-card">
         {children}
       </SidebarInset>
     </>

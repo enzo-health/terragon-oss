@@ -35,6 +35,9 @@ import {
 import { useServerActionMutation } from "@/queries/server-action-helpers";
 import type { DBUserMessage } from "@terragon/shared";
 
+const menuItemClassName =
+  "motion-safe:transition-colors motion-safe:duration-[var(--duration-quick)] motion-safe:ease-[var(--ease-emphasis)] data-[highlighted]:[&_svg:not([class*='text-'])]:text-strong";
+
 export function ThreadMenuDropdown({
   thread,
   trigger,
@@ -118,6 +121,7 @@ export function ThreadMenuDropdown({
           type: "button" as const,
           label: "Create Pull Request",
           icon: ExternalLink,
+          className: menuItemClassName,
           onSelect: async () => {
             await openPullRequestMutation.mutateAsync({ threadId: thread.id });
           },
@@ -146,6 +150,7 @@ export function ThreadMenuDropdown({
         label: "Share",
         icon: getShareIcon(),
         rightIcon: ChevronRight,
+        className: menuItemClassName,
         onSelect: () => {
           onShareClick?.();
         },
@@ -169,6 +174,7 @@ export function ThreadMenuDropdown({
           type: "button",
           label: "Mark as read",
           icon: MailOpen,
+          className: menuItemClassName,
           onSelect: () => {
             readMutation.mutate({
               threadId: thread.id,
@@ -181,6 +187,7 @@ export function ThreadMenuDropdown({
           type: "button",
           label: "Mark as unread",
           icon: Mail,
+          className: menuItemClassName,
           onSelect: () => {
             unreadMutation.mutate({ threadId: thread.id });
           },
@@ -194,6 +201,7 @@ export function ThreadMenuDropdown({
         type: "button" as const,
         label: "Rename",
         icon: Pencil,
+        className: menuItemClassName,
         onSelect: onRenameClick,
       });
     }
@@ -204,6 +212,7 @@ export function ThreadMenuDropdown({
         type: "button" as const,
         label: "Retry",
         icon: RotateCcw,
+        className: menuItemClassName,
         onSelect: () => setShowRedoTaskDialog(true),
       });
     }
@@ -213,6 +222,7 @@ export function ThreadMenuDropdown({
       type: "button" as const,
       label: thread.archived ? "Unarchive" : "Archive",
       icon: thread.archived ? ArchiveRestore : Archive,
+      className: menuItemClassName,
       onSelect: async () => {
         const isArchiving = !thread.archived;
         // Use mutateAsync to wait for the mutation to complete instead of onSuccess
@@ -233,6 +243,7 @@ export function ThreadMenuDropdown({
         type: "button" as const,
         label: "Terminal",
         icon: Terminal,
+        className: menuItemClassName,
         onSelect: onTerminalClick,
       });
     }
@@ -243,6 +254,7 @@ export function ThreadMenuDropdown({
       label: "Delete",
       icon: Trash,
       destructive: true,
+      className: menuItemClassName,
       onSelect: () => {
         setShowDeleteDialogState(true);
       },
@@ -267,6 +279,7 @@ export function ThreadMenuDropdown({
         items.push({
           type: "button" as const,
           label: "View Debug Info",
+          className: menuItemClassName,
           onSelect: async () => {
             window.open(`/internal/admin/thread/${thread.id}`, "_blank");
           },
@@ -275,6 +288,7 @@ export function ThreadMenuDropdown({
           items.push({
             type: "button" as const,
             label: "View Agent Logs",
+            className: menuItemClassName,
             onSelect: async () => {
               window.open(
                 `/internal/admin/sandbox/${thread.sandboxProvider}/${thread.codesandboxId}`,

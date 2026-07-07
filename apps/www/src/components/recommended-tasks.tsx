@@ -26,14 +26,14 @@ function ListRecommendedTaskItem({
     <button
       type="button"
       onClick={() => onTaskSelect(task.prompt)}
-      className="group flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)] hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-[background-color,color] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
     >
-      <span className="flex-1 text-[14px] font-medium text-mid group-hover:text-strong">
+      <span className="flex-1 truncate text-[13px] font-medium text-mid group-hover:text-strong">
         {task.label}
       </span>
       <ArrowRight
         aria-hidden
-        className="size-4 shrink-0 -translate-x-1 text-muted-foreground/40 transition-[color,transform] duration-[var(--duration-quick)] ease-[var(--ease-standard)] group-hover:translate-x-0 group-hover:text-coral"
+        className="size-4 shrink-0 -translate-x-1 text-muted-foreground/40 transition-[color,transform] duration-[var(--duration-quick)] ease-[var(--ease-emphasis)] group-hover:translate-x-0 group-hover:text-coral motion-reduce:transition-none"
       />
     </button>
   );
@@ -46,7 +46,7 @@ export function RecommendedTasks({
   const tasks = tasksForModel(selectedModel);
 
   return (
-    <ul className="flex w-full flex-col divide-y divide-hairline-soft">
+    <ul className="flex w-full flex-col gap-0.5">
       {tasks.map((task) => (
         <li key={task.id}>
           <ListRecommendedTaskItem task={task} onTaskSelect={onTaskSelect} />
