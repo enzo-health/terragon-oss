@@ -132,7 +132,7 @@ export const ChatHeader = memo(function ChatHeader({
         }
         style={isMobile ? { cursor: "pointer" } : undefined}
       >
-        <div className="mx-auto flex w-full min-w-0 max-w-chat items-center justify-between gap-4 px-4 sm:px-6">
+        <div className="flex w-full min-w-0 items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {isMobile && <SidebarTrigger className="px-0 size-auto w-fit" />}
             {canCollapseThreadList && isThreadListCollapsed && (
