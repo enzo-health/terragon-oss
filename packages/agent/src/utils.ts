@@ -85,6 +85,7 @@ export function modelToAgent(model: AIModel | null): AIAgent {
     case "opus":
     case "opus[1m]":
     case "haiku":
+    case "fable":
     case "sonnet":
     case "sonnet[1m]": {
       return "claudeCode";
@@ -109,7 +110,7 @@ export function agentToModels(
   agent = agent ?? defaultAgent;
   switch (agent) {
     case "claudeCode": {
-      return ["haiku", "sonnet", "sonnet[1m]", "opus", "opus[1m]"];
+      return ["haiku", "sonnet", "sonnet[1m]", "opus", "opus[1m]", "fable"];
     }
     case "codex": {
       if (options.agentVersion === "latest" || options.agentVersion >= 6) {
@@ -348,33 +349,39 @@ export function getModelDisplayName(model: AIModel): ModelDisplayName {
   switch (model) {
     case "opus":
       return {
-        fullName: "Opus 4.7",
+        fullName: "Opus 4.8",
         mainName: "Opus",
-        subName: "4.7",
+        subName: "4.8",
       };
     case "opus[1m]":
       return {
-        fullName: "Opus 4.7 (1M Context)",
+        fullName: "Opus 4.8 (1M Context)",
         mainName: "Opus",
-        subName: "4.7 (1M)",
+        subName: "4.8 (1M)",
       };
     case "sonnet":
       return {
-        fullName: "Sonnet 4.6",
+        fullName: "Sonnet 5",
         mainName: "Sonnet",
-        subName: "4.6",
+        subName: "5",
       };
     case "sonnet[1m]":
       return {
-        fullName: "Sonnet 4.6 (1M Context)",
+        fullName: "Sonnet 5 (1M Context)",
         mainName: "Sonnet",
-        subName: "4.6 (1M)",
+        subName: "5 (1M)",
       };
     case "haiku":
       return {
         fullName: "Haiku 4.5",
         mainName: "Haiku",
         subName: "4.5",
+      };
+    case "fable":
+      return {
+        fullName: "Fable 5",
+        mainName: "Fable",
+        subName: "5",
       };
     case "gpt-5":
       return {
@@ -796,6 +803,7 @@ export function isModelEnabledByDefault({
     case "sonnet":
     case "sonnet[1m]":
     case "haiku":
+    case "fable":
       return true;
     case "gpt-5.1-codex-max":
     case "gpt-5.1-codex-max-low":
@@ -862,6 +870,8 @@ export function getModelInfo(model: AIModel): string {
       return "Recommended for large codebases";
     case "opus[1m]":
       return "Deep reasoning with a 1M context window";
+    case "fable":
+      return "Highest capability for long-running agentic work";
     case "gpt-5.5":
       return "Best for complex coding and agentic work";
     case "gpt-5.4":
@@ -930,10 +940,10 @@ export function parseModelOrNull({
 
 export function normalizedModelForDaemon(model: AIModel): string {
   if (model === "opus[1m]") {
-    return "claude-opus-4-7[1m]";
+    return "claude-opus-4-8[1m]";
   }
   if (model === "sonnet[1m]") {
-    return "claude-sonnet-4-6[1m]";
+    return "claude-sonnet-5[1m]";
   }
   return model;
 }

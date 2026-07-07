@@ -1,6 +1,9 @@
 import { generateFileUploadUrlForUser } from "@/server-lib/r2-file-upload";
 import { DBUserMessage } from "@terragon/shared";
 
+export type UserAttachmentUploadType = "image" | "pdf" | "text-file";
+type UploadableBytes = ArrayBuffer | Uint8Array | Blob | string;
+
 async function base64ToFile(base64: string): Promise<File> {
   const blob = await fetch(base64).then((res) => res.blob());
   const mime = blob.type;
@@ -15,24 +18,50 @@ async function base64ToFile(base64: string): Promise<File> {
   return new File([bytes], `${hashHex}.${ext}`, { type: mime });
 }
 
-async function uploadImageForUser({
+function getUploadSizeInBytes(contents: UploadableBytes) {
+  if (typeof contents === "string") {
+    return Buffer.byteLength(contents);
+  }
+  if (contents instanceof ArrayBuffer) {
+    return contents.byteLength;
+  }
+  if (contents instanceof Blob) {
+    return contents.size;
+  }
+  return contents.byteLength;
+}
+
+function toFetchBody(contents: UploadableBytes): BodyInit {
+  if (contents instanceof ArrayBuffer) {
+    return new Uint8Array(contents);
+  }
+  return contents;
+}
+
+export async function uploadUserAttachmentBytes({
   userId,
-  base64Image,
+  fileType,
+  contentType,
+  contents,
+  fileNamePrefix,
 }: {
   userId: string;
-  base64Image: string;
+  fileType: UserAttachmentUploadType;
+  contentType: string;
+  contents: UploadableBytes;
+  fileNamePrefix?: string;
 }): Promise<string> {
-  const file = await base64ToFile(base64Image);
   const { presignedUrl, publicUrl } = await generateFileUploadUrlForUser({
     userId,
-    fileType: "image",
-    contentType: file.type,
-    sizeInBytes: file.size,
+    fileType,
+    contentType,
+    sizeInBytes: getUploadSizeInBytes(contents),
+    fileNamePrefix,
   });
   const uploadResponse = await fetch(presignedUrl, {
     method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
+    headers: { "Content-Type": contentType },
+    body: toFetchBody(contents),
   });
   if (!uploadResponse.ok) {
     throw new Error(`Upload failed: ${await uploadResponse.text()}`);
@@ -41,6 +70,22 @@ async function uploadImageForUser({
     throw new Error("No public URL found");
   }
   return publicUrl;
+}
+
+async function uploadImageForUser({
+  userId,
+  base64Image,
+}: {
+  userId: string;
+  base64Image: string;
+}): Promise<string> {
+  const file = await base64ToFile(base64Image);
+  return uploadUserAttachmentBytes({
+    userId,
+    fileType: "image",
+    contentType: file.type,
+    contents: file,
+  });
 }
 
 async function uploadPdfForUser({
@@ -51,24 +96,12 @@ async function uploadPdfForUser({
   base64Pdf: string;
 }): Promise<string> {
   const file = await base64ToFile(base64Pdf);
-  const { presignedUrl, publicUrl } = await generateFileUploadUrlForUser({
+  return uploadUserAttachmentBytes({
     userId,
     fileType: "pdf",
     contentType: file.type,
-    sizeInBytes: file.size,
+    contents: file,
   });
-  const uploadResponse = await fetch(presignedUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
-  });
-  if (!uploadResponse.ok) {
-    throw new Error(`Upload failed: ${await uploadResponse.text()}`);
-  }
-  if (!publicUrl) {
-    throw new Error("No public URL found");
-  }
-  return publicUrl;
 }
 
 async function uploadTextFileForUser({
@@ -79,24 +112,12 @@ async function uploadTextFileForUser({
   base64TextFile: string;
 }): Promise<string> {
   const file = await base64ToFile(base64TextFile);
-  const { presignedUrl, publicUrl } = await generateFileUploadUrlForUser({
+  return uploadUserAttachmentBytes({
     userId,
     fileType: "text-file",
     contentType: file.type,
-    sizeInBytes: file.size,
+    contents: file,
   });
-  const uploadResponse = await fetch(presignedUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
-  });
-  if (!uploadResponse.ok) {
-    throw new Error(`Upload failed: ${await uploadResponse.text()}`);
-  }
-  if (!publicUrl) {
-    throw new Error("No public URL found");
-  }
-  return publicUrl;
 }
 
 export async function uploadUserMessageImages({

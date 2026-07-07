@@ -906,12 +906,11 @@
 }
 
 .nauval-composer {
-  --primary: oklch(0.55 0.1906 259.23);
-  --primary-foreground: oklch(1 0 0);
+  --primary: var(--coral);
 }
 
 .dark .nauval-composer {
-  --primary: oklch(0.6 0.1906 259.23);
+  --primary: var(--coral);
 }
 
 .nauval-chat-surface {

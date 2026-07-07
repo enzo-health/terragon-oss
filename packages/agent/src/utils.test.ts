@@ -34,6 +34,7 @@ describe("model-to-agent", () => {
         ["opus[1m]", "claudeCode"],
         ["sonnet", "claudeCode"],
         ["sonnet[1m]", "claudeCode"],
+        ["fable", "claudeCode"],
         ["gpt-5.5-low", "codex"],
         ["gpt-5.5", "codex"],
         ["gpt-5.5-high", "codex"],
@@ -138,6 +139,7 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "sonnet" })).toBe("sonnet");
       expect(parseModelOrNull({ modelName: "sonnet[1m]" })).toBe("sonnet[1m]");
       expect(parseModelOrNull({ modelName: "haiku" })).toBe("haiku");
+      expect(parseModelOrNull({ modelName: "fable" })).toBe("fable");
       expect(parseModelOrNull({ modelName: "gpt-5.4" })).toBe("gpt-5.4");
       expect(parseModelOrNull({ modelName: "gpt-5.4-mini" })).toBe(
         "gpt-5.4-mini",
@@ -174,9 +176,9 @@ describe("model-to-agent", () => {
   describe("normalizedModelForDaemon", () => {
     it("should normalize Claude 1M shortcuts to explicit model IDs", () => {
       expect(normalizedModelForDaemon("sonnet[1m]")).toBe(
-        "claude-sonnet-4-6[1m]",
+        "claude-sonnet-5[1m]",
       );
-      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-7[1m]");
+      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-8[1m]");
     });
   });
 });

@@ -170,13 +170,12 @@ export function SelectPopup({
         sticky={sticky}
         positionMethod={positionMethod}
       >
-        <BaseSelect.ScrollUpArrow className="top-1 left-1 right-1 z-10 absolute rounded h-5 text-xs text-foreground flex items-center justify-around bg-accent" />
         <BaseSelect.Popup
           data-slot="select-popup"
           {...props}
           className={cn(
             "group origin-(--transform-origin) bg-surface ring ring-border rounded-outer shadow-lg",
-            "p-1 outline-none max-lg:w-(--anchor-width) text-sm",
+            "flex max-h-96 flex-col overflow-hidden p-1 outline-none max-lg:w-(--anchor-width) text-sm",
             "transition-[transform,scale,opacity]",
             "data-ending-style:opacity-0 data-ending-style:scale-90",
             "data-starting-style:opacity-0 data-starting-style:scale-90",
@@ -186,7 +185,6 @@ export function SelectPopup({
           <BaseSelect.Arrow />
           {children}
         </BaseSelect.Popup>
-        <BaseSelect.ScrollDownArrow className="bottom-1 left-1 right-1 z-10 absolute rounded h-5 text-xs text-foreground flex items-center justify-around bg-accent" />
       </BaseSelect.Positioner>
     </BaseSelect.Portal>
   );
@@ -200,7 +198,7 @@ export function SelectList({
     <BaseSelect.List
       data-slot="select-list"
       className={cn(
-        "max-h-(--available-height) overflow-y-auto relative space-y-0.5",
+        "relative max-h-72 min-h-0 space-y-0.5 overflow-y-auto overscroll-contain pb-1 pr-1 [scrollbar-gutter:stable]",
         className,
       )}
       {...props}

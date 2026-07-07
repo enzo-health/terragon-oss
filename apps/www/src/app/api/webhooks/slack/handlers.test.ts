@@ -12,6 +12,7 @@ import {
   upsertSlackSettings,
 } from "@terragon/shared/model/slack";
 import * as slackWebApi from "@slack/web-api";
+import * as schema from "@terragon/shared/db/schema";
 
 const getDefaultWebClientMock = (overrides?: {
   messages?: any[];
@@ -63,36 +64,35 @@ describe("handleAppMentionEvent", () => {
   let channelId: string;
 
   beforeEach(async () => {
+    await db.delete(schema.slackTaskDeliveries);
     const testUserResult = await createTestUser({ db });
     user = testUserResult.user;
     slackUserId = `UUSER123-${user.id}`;
     teamId = `TTEAM123`;
     channelId = `CCHAN123`;
-    await Promise.all([
-      upsertSlackAccount({
-        db,
-        userId: user.id,
-        teamId,
-        account: {
-          slackUserId,
-          slackTeamName: "Test Team",
-          slackTeamDomain: "test-workspace",
-          accessTokenEncrypted: encryptValue(
-            "access-token",
-            env.ENCRYPTION_MASTER_KEY,
-          ),
-        },
-      }),
-      upsertSlackSettings({
-        db,
-        userId: user.id,
-        teamId,
-        settings: {
-          defaultRepoFullName: "testorg/testrepo",
-          defaultModel: null,
-        },
-      }),
-    ]);
+    await upsertSlackAccount({
+      db,
+      userId: user.id,
+      teamId,
+      account: {
+        slackUserId,
+        slackTeamName: "Test Team",
+        slackTeamDomain: "test-workspace",
+        accessTokenEncrypted: encryptValue(
+          "access-token",
+          env.ENCRYPTION_MASTER_KEY,
+        ),
+      },
+    });
+    await upsertSlackSettings({
+      db,
+      userId: user.id,
+      teamId,
+      settings: {
+        defaultRepoFullName: "testorg/testrepo",
+        defaultModel: null,
+      },
+    });
     await upsertSlackInstallation({
       db,
       userId: user.id,
@@ -449,7 +449,7 @@ describe("handleAppMentionEvent", () => {
                   "type": "plain_text",
                 },
                 "type": "button",
-                "value": "{"text":"<@B123456789> please help me with this task","channel":"CCHAN123","user":"user-with-no-installation","thread_ts":"1234567890.123456","team":"TTEAM123"}",
+                "value": "{"text":"<@B123456789> please help me with this task","ts":"1234567890.123456","channel":"CCHAN123","user":"user-with-no-installation","thread_ts":"1234567890.123456","team":"TTEAM123"}",
               },
               {
                 "action_id": "go_to_settings",
@@ -466,6 +466,25 @@ describe("handleAppMentionEvent", () => {
           },
         ]
       `);
+    });
+
+    it("should send a Slack failure message when task creation fails", async () => {
+      vi.mocked(newThreadInternal).mockRejectedValueOnce(
+        new Error("thread creation failed"),
+      );
+      const postMessageFn = vi.fn().mockResolvedValue({ ok: true });
+      vi.mocked(slackWebApi.WebClient).mockImplementation(() => {
+        return getDefaultWebClientMock({ postMessageFn });
+      });
+
+      await handleAppMentionEvent(createBasicEvent());
+
+      expect(postMessageFn).toHaveBeenCalledTimes(1);
+      expect(postMessageFn).toHaveBeenCalledWith({
+        channel: channelId,
+        thread_ts: "1234567890.123456",
+        text: `Sorry <@${slackUserId}>, I couldn't create a Terragon task from this message. Please try again in a moment or check your Slack integration settings.`,
+      });
     });
   });
 
@@ -530,9 +549,43 @@ describe("handleAppMentionEvent", () => {
           sourceType: "slack-mention",
           sourceMetadata: expect.objectContaining({
             type: "slack-mention",
+            teamId,
+            channel: channelId,
+            messageTs: "1234567890.123456",
+            threadTs: "1234567890.123456",
           }),
         }),
       );
+    });
+
+    it("should skip duplicate deliveries for the same Slack message", async () => {
+      const event = createBasicEvent();
+
+      await handleAppMentionEvent(event);
+      await handleAppMentionEvent(event);
+
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+    });
+
+    it("should still create a task when optional Slack enrichment fails", async () => {
+      vi.mocked(slackWebApi.WebClient).mockImplementation(() => {
+        return getDefaultWebClientMock({
+          messages: [],
+          userInfoFn: () => {
+            throw new Error("rate limited");
+          },
+        });
+      });
+      const event = createBasicEvent({
+        thread_ts: "1234567890.000001",
+      });
+
+      await handleAppMentionEvent(event);
+
+      expect(newThreadInternal).toHaveBeenCalledTimes(1);
+      const callArgs = vi.mocked(newThreadInternal).mock.calls[0]?.[0];
+      // @ts-expect-error
+      expect(callArgs?.message.parts[0]?.text).toContain(`@${slackUserId}`);
     });
 
     it("should use custom model from slack settings", async () => {

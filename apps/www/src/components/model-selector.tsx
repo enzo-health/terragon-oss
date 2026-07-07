@@ -201,7 +201,11 @@ function ModelSelectorInner({
           triggerLabel
         )}
       </SelectTrigger>
-      <SelectPopup side="top" className="w-fit">
+      <SelectPopup
+        key={isMultiAgentMode ? "multi-agent" : "single-agent"}
+        side="top"
+        className="w-fit"
+      >
         {supportsMultiAgentPromptSubmission && (
           <MultiAgentModeToggle
             isMultiAgentMode={isMultiAgentMode}

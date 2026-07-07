@@ -32,6 +32,9 @@ import { ModeSelector } from "@/components/promptbox/mode-selector";
 import { TSubmitForm } from "./send-button";
 import type { ComposerHandle } from "./use-promptbox";
 
+const INTERACTIVE_COMPOSER_TARGET =
+  'button, a, input, textarea, select, [role="button"], [role="combobox"], [contenteditable="true"], [data-slot="composer-rich-input"]';
+
 export function SimplePromptBox({
   value,
   onValueChange,
@@ -114,19 +117,32 @@ export function SimplePromptBox({
   hideVoiceInput?: boolean;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const focusComposerInput = useCallback(() => {
+    wrapperRef.current
+      ?.querySelector<HTMLElement>('[data-slot="composer-rich-input"]')
+      ?.focus();
+  }, []);
 
   useEffect(() => {
     composerRef.current = {
-      focus: () => {
-        wrapperRef.current
-          ?.querySelector<HTMLElement>('[data-slot="composer-rich-input"]')
-          ?.focus();
-      },
+      focus: focusComposerInput,
     };
     return () => {
       composerRef.current = null;
     };
-  }, [composerRef]);
+  }, [composerRef, focusComposerInput]);
+
+  const handleComposerPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest(INTERACTIVE_COMPOSER_TARGET)) return;
+
+      event.preventDefault();
+      focusComposerInput();
+    },
+    [focusComposerInput],
+  );
 
   const showPlanModeSelector = useMemo(() => {
     if (isMultiAgentMode) {
@@ -173,7 +189,7 @@ export function SimplePromptBox({
       <DragDropWrapper
         onFilesDropped={handleFilesAttached}
         className={cn(
-          "nauval-composer relative flex flex-col gap-1 rounded-[var(--radius-outer)] border border-border bg-background shadow-xs transition-[box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-standard)] focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/40",
+          "nauval-composer relative flex cursor-text flex-col gap-1 rounded-[calc(var(--radius)+0.2rem)] border border-border bg-card pb-0 shadow-[var(--shadow-warm-lift)] transition-[box-shadow,border-color,background-color] duration-[var(--duration-base)] ease-[var(--ease-standard)] hover:border-coral/30 focus-within:border-coral/60 focus-within:ring-2 focus-within:ring-coral/20",
           isSubmitting &&
             "pointer-events-none cursor-wait border-primary/30 bg-primary/[0.02]",
           borderClassName,
@@ -184,7 +200,11 @@ export function SimplePromptBox({
             <div className="h-full bg-primary/60 animate-shimmer w-1/2" />
           </div>
         )}
-        <div ref={wrapperRef} className="flex flex-col gap-1">
+        <div
+          ref={wrapperRef}
+          className="flex flex-col gap-1"
+          onPointerDown={handleComposerPointerDown}
+        >
           <Composer
             disabled={isSubmitting}
             className="rounded-none border-0 bg-transparent shadow-none focus-within:ring-0 focus-within:border-transparent"

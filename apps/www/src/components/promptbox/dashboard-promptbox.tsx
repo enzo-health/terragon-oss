@@ -192,7 +192,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         isSubmitDisabled={isSubmitDisabled}
         showStopButton={false}
         hideSubmitButton={false}
-        className="min-h-[140px]"
+        className="min-h-[48px]"
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         selectedModels={selectedModels}

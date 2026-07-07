@@ -1,39 +1,32 @@
 import { WebClient } from "@slack/web-api";
 import { db } from "@/lib/db";
 import {
-  getSlackAccountForSlackUserId,
-  getSlackInstallationForTeam,
-  getSlackSettingsForTeam,
+  claimSlackTaskDelivery,
+  completeSlackTaskDelivery,
+  markSlackTaskDeliveryOmitted,
+  markSlackTaskDeliveryFailed,
 } from "@terragon/shared/model/slack";
 import { SlackAccount } from "@terragon/shared";
-import { decryptValue } from "@terragon/utils/encryption";
-import { env } from "@terragon/env/apps-www";
 import { publicAppUrl } from "@terragon/env/next-public";
-import { getUserFlags } from "@terragon/shared/model/user-flags";
 import { newThreadInternal } from "@/server-lib/new-thread-internal";
-import { getUserCredentials } from "@/server-lib/user-credentials";
-import { getDefaultModel } from "@/lib/default-ai-model";
 import { formatThreadContext } from "@/server-lib/ext-thread-context";
+import {
+  convertSlackFilesToMessageParts,
+  formatSlackFileConversionNote,
+  SlackFileConversionResult,
+} from "@/server-lib/slack/slack-files";
+import {
+  completeExistingSlackMentionTaskIfPresent,
+  ensureSlackThreadLinkForMention,
+  resolveSlackMentionContext,
+  resolveSlackMentionDefaultModel,
+} from "@/server-lib/slack/slack-mention-task";
+import type { SlackAppMentionEvent } from "@/server-lib/slack/slack-events";
 
-export interface SlackAppMentionEvent {
-  type: string;
-  user: string;
-  text: string;
-  ts: string;
-  channel: string;
-  thread_ts?: string;
-  team?: string;
-  edited?: {
-    user: string;
-    ts: string;
-  };
-}
-
-export interface SlackInteractiveAction {
-  action_id: string;
-  value: string;
-  type: string;
-}
+export type {
+  SlackAppMentionEvent,
+  SlackInteractiveAction,
+} from "@/server-lib/slack/slack-events";
 
 /**
  * Replaces user mentions like <@U123456> and bot mentions like <@B123456> with readable names
@@ -46,7 +39,7 @@ function cleanSlackText({
   atMentionNameMap: Map<string, string>;
 }): string {
   // Replace user and bot mentions with actual names
-  return text.replace(/<@([UB][A-Z0-9]+)>/g, (match, id) => {
+  return text.replace(/<@([UBW][A-Z0-9]+)>/g, (match, id) => {
     const name = atMentionNameMap.get(id);
     if (name) {
       return `@${name}`;
@@ -54,6 +47,10 @@ function cleanSlackText({
     // fallback
     return `@${id}`;
   });
+}
+
+function stripSlackMentions(text: string) {
+  return text.replace(/<@[A-Z0-9]+>/g, "").trim();
 }
 
 function normalizeName(name: string): string {
@@ -80,10 +77,10 @@ async function getAtMentionNameMap({
   const userIds = new Set<string>(messageAuthorIds);
   const botIds = new Set<string>(messageBotIds);
   for (const messageText of messageTexts) {
-    const mentionMatches = messageText.matchAll(/<@([UB][A-Z0-9]+)>/g);
+    const mentionMatches = messageText.matchAll(/<@([UBW][A-Z0-9]+)>/g);
     for (const match of mentionMatches) {
       if (match[1]) {
-        if (match[1].startsWith("U")) {
+        if (match[1].startsWith("U") || match[1].startsWith("W")) {
           userIds.add(match[1]);
         } else if (match[1].startsWith("B")) {
           botIds.add(match[1]);
@@ -93,24 +90,38 @@ async function getAtMentionNameMap({
   }
   await Promise.all([
     ...Array.from(userIds).map(async (userId) => {
-      const userInfo = await slack.users.info({ user: userId });
-      if (userInfo.user) {
-        atMentionNameMap.set(
+      try {
+        const userInfo = await slack.users.info({ user: userId });
+        if (userInfo.user) {
+          atMentionNameMap.set(
+            userId,
+            normalizeName(
+              userInfo.user.profile?.display_name ||
+                userInfo.user.profile?.real_name ||
+                userInfo.user.name ||
+                userInfo.user.real_name ||
+                userId,
+            ),
+          );
+        }
+      } catch (error) {
+        console.warn("[slack webhook] Failed to fetch Slack user info", {
           userId,
-          normalizeName(
-            userInfo.user.profile?.display_name ||
-              userInfo.user.profile?.real_name ||
-              userInfo.user.name ||
-              userInfo.user.real_name ||
-              userId,
-          ),
-        );
+          error,
+        });
       }
     }),
     ...Array.from(botIds).map(async (botId) => {
-      const botInfo = await slack.bots.info({ bot: botId });
-      if (botInfo.bot) {
-        atMentionNameMap.set(botId, normalizeName(botInfo.bot.name || botId));
+      try {
+        const botInfo = await slack.bots.info({ bot: botId });
+        if (botInfo.bot) {
+          atMentionNameMap.set(botId, normalizeName(botInfo.bot.name || botId));
+        }
+      } catch (error) {
+        console.warn("[slack webhook] Failed to fetch Slack bot info", {
+          botId,
+          error,
+        });
       }
     }),
   ]);
@@ -133,10 +144,10 @@ function getSlackMessagePermalink({
 }: {
   workspaceDomain: string | null;
   channel: string;
-  messageTs: string;
+  messageTs: string | null | undefined;
   threadTs?: string;
 }): string | null {
-  if (!workspaceDomain) {
+  if (!workspaceDomain || !messageTs) {
     return null;
   }
 
@@ -162,10 +173,12 @@ export async function buildSlackMentionMessage({
   slackAccount,
   slack,
   event,
+  fileConversion,
 }: {
   slackAccount: SlackAccount;
   slack: WebClient;
   event: SlackAppMentionEvent;
+  fileConversion?: SlackFileConversionResult;
 }): Promise<string> {
   const threadTs = event.thread_ts || event.ts;
 
@@ -194,7 +207,7 @@ export async function buildSlackMentionMessage({
     messageBotIds,
     messageTexts,
   });
-  const [threadContext, cleanedMessageText] = await Promise.all([
+  const [threadContext, cleanedMessageTextRaw] = await Promise.all([
     getThreadContext({
       slack,
       replies: threadReplies,
@@ -205,6 +218,9 @@ export async function buildSlackMentionMessage({
       atMentionNameMap,
     }),
   ]);
+  const cleanedMessageText = stripSlackMentions(event.text)
+    ? cleanedMessageTextRaw
+    : "Attached Slack file(s).";
 
   // Create Slack thread link to the specific message
   const slackThreadLink = getSlackMessagePermalink({
@@ -223,6 +239,15 @@ export async function buildSlackMentionMessage({
   // Add thread context if available
   if (threadContext) {
     messageParts.push(`Here's the context of the thread:\n${threadContext}`);
+  }
+  if (fileConversion) {
+    const attachmentNote = formatSlackFileConversionNote({
+      ...fileConversion,
+      attachedCount: fileConversion.parts.length,
+    });
+    if (attachmentNote) {
+      messageParts.push(attachmentNote);
+    }
   }
   messageParts.push(
     "Please work on this task. Your work will be sent to the user once you're done.",
@@ -248,11 +273,17 @@ async function getThreadReplies({
   if (!event.thread_ts || event.thread_ts === event.ts) {
     return [];
   }
-  const threadMessages = await slack.conversations.replies({
-    channel: event.channel,
-    ts: event.thread_ts || event.ts,
-    limit: 100, // Get up to 100 messages in the thread
-  });
+  let threadMessages;
+  try {
+    threadMessages = await slack.conversations.replies({
+      channel: event.channel,
+      ts: event.thread_ts || event.ts,
+      limit: 100, // Get up to 100 messages in the thread
+    });
+  } catch (error) {
+    console.warn("[slack webhook] Failed to fetch thread replies", error);
+    return [];
+  }
   return (
     threadMessages.messages
       ?.filter((msg) => {
@@ -323,183 +354,121 @@ async function getThreadContext({
   return formatThreadContext(entries);
 }
 
-async function sendSetupMessage({
-  slack,
-  event,
-  threadTs,
-  teamId,
-  message,
-}: {
-  slack: WebClient;
-  event: SlackAppMentionEvent;
-  threadTs: string;
-  teamId: string;
-  message: string;
-}): Promise<void> {
-  // Store the message context in the button's value for retry
-  const retryData = JSON.stringify({
-    text: event.text,
-    channel: event.channel,
-    user: event.user,
-    thread_ts: threadTs,
-    team: teamId,
-  });
-
-  await slack.chat.postMessage({
-    channel: event.channel,
-    thread_ts: threadTs,
-    text: message,
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: message,
-        },
-      },
-      {
-        type: "actions",
-        elements: [
-          {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "Try Again",
-              emoji: true,
-            },
-            value: retryData,
-            action_id: "retry_task_creation",
-            style: "primary",
-          },
-          {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "Go to Settings",
-              emoji: true,
-            },
-            url: `${publicAppUrl()}/settings/integrations`,
-            action_id: "go_to_settings",
-          },
-        ],
-      },
-    ],
-  });
-}
-
 export async function handleAppMentionEvent(
   event: SlackAppMentionEvent,
 ): Promise<void> {
-  console.log("[slack webhook] Received app mention", event);
+  console.log("[slack webhook] Received app mention", {
+    team: event.team,
+    channel: event.channel,
+    ts: event.ts,
+    threadTs: event.thread_ts,
+    slackEventId: event.slackEventId,
+    fileCount: Array.isArray(event.files) ? event.files.length : 0,
+  });
   // Skip processing if this is an edited message
   if (event.edited) {
     console.log("[slack webhook] Skipping edited message");
     return;
   }
+  let slack: WebClient | null = null;
+  let threadTs: string | null = null;
+  let createdThreadId: string | null = null;
   try {
-    // Get the Slack connection for this team
-    const teamId = event.team;
-    if (!teamId) {
-      console.error("[slack webhook] No team ID in app mention event");
+    const context = await resolveSlackMentionContext({ event });
+    if (!context) {
+      return;
+    }
+    slack = context.slack;
+    threadTs = context.threadTs;
+
+    if (await completeExistingSlackMentionTaskIfPresent({ event, context })) {
       return;
     }
 
-    const slackUserId = event.user;
-    const [slackInstallation, slackAccount] = await Promise.all([
-      getSlackInstallationForTeam({
-        db,
-        teamId,
-      }),
-      getSlackAccountForSlackUserId({
-        db,
-        teamId,
-        slackUserId,
-      }),
-    ]);
-    if (!slackInstallation) {
-      console.error(
-        `[slack webhook] No Slack installation found for team ${teamId}`,
-      );
-      return;
-    }
-    // Initialize Slack Web Client
-    const slack = new WebClient(
-      decryptValue(
-        slackInstallation.botAccessTokenEncrypted,
-        env.ENCRYPTION_MASTER_KEY,
-      ),
-    );
-    // Always respond in thread (use thread_ts if it exists, otherwise use the message ts)
-    const threadTs = event.thread_ts || event.ts;
-    if (!slackAccount) {
-      console.error(
-        `[slack webhook] No Slack account found for user ${slackUserId} in team ${teamId}`,
-      );
-      await sendSetupMessage({
-        slack,
-        event,
-        threadTs,
-        teamId,
-        message: `Hi <@${event.user}>! It looks like we're not connected yet. Please connect your Slack account in the <${publicAppUrl()}/settings|settings page>, then click "Try Again" below.`,
-      });
-      return;
-    }
-    const slackSettings = await getSlackSettingsForTeam({
+    const claimResult = await claimSlackTaskDelivery({
       db,
-      userId: slackAccount.userId,
-      teamId,
+      teamId: context.teamId,
+      channel: event.channel,
+      messageTs: event.ts,
+      slackEventId: event.slackEventId,
     });
-    if (!slackSettings) {
-      console.error(
-        `[slack webhook] No Slack settings found for user ${slackAccount.userId} in team ${teamId}`,
-      );
-      await sendSetupMessage({
-        slack,
-        event,
-        threadTs,
-        teamId,
-        message: `Hi <@${event.user}>! It looks like we're not set up yet. Please set up your Slack account in the <${publicAppUrl()}/settings/integrations|settings page>, then click "Try Again" below.`,
+    if (!claimResult.claimed) {
+      console.log("[slack webhook] Duplicate Slack mention delivery skipped", {
+        teamId: context.teamId,
+        channel: event.channel,
+        messageTs: event.ts,
       });
       return;
     }
-    if (!slackSettings.defaultRepoFullName) {
-      console.error(
-        `[slack webhook] No default repository found for user ${slackAccount.userId} in team ${teamId}`,
-      );
-      await sendSetupMessage({
-        slack,
-        event,
-        threadTs,
-        teamId,
-        message: `Hi <@${event.user}>! It looks like we're not set up yet. Please select a default repository in the <${publicAppUrl()}/settings/integrations|settings page>, then click "Try Again" below.`,
+    const hasFiles = Array.isArray(event.files) && event.files.length > 0;
+    let fileConversion: SlackFileConversionResult = { parts: [], skipped: [] };
+    if (context.slackAttachmentsEnabled && hasFiles) {
+      try {
+        fileConversion = await convertSlackFilesToMessageParts({
+          files: event.files,
+          botToken: context.slackBotToken,
+          userId: context.slackAccount.userId,
+        });
+      } catch (error) {
+        console.error("[slack webhook] Failed to import Slack attachment", {
+          teamId: context.teamId,
+          channel: event.channel,
+          messageTs: event.ts,
+          error,
+        });
+        await markSlackTaskDeliveryFailed({
+          db,
+          deliveryKey: claimResult.deliveryKey,
+          claimantToken: claimResult.claimantToken,
+          lastError: "slack-attachment-import-failed",
+        });
+        await slack.chat.postMessage({
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: `I couldn't import the Slack attachment for this task. Please try again in a moment, or resend the message without the file.`,
+        });
+        return;
+      }
+    }
+    const textWithoutMentions = stripSlackMentions(event.text);
+    if (hasFiles && !textWithoutMentions && fileConversion.parts.length === 0) {
+      await markSlackTaskDeliveryOmitted({
+        db,
+        deliveryKey: claimResult.deliveryKey,
+        claimantToken: claimResult.claimantToken,
+        omittedReason: context.slackAttachmentsEnabled
+          ? "unsupported-attachments-empty-mention"
+          : "attachments-disabled-empty-mention",
+      });
+      await slack.chat.postMessage({
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: context.slackAttachmentsEnabled
+          ? `I can't start a task from attachments alone yet. Please add a short text description with the file.`
+          : `I can't start a task from attachments alone yet. Please add a short text description, or try again after Slack attachments are enabled for your workspace.`,
       });
       return;
     }
 
     const [defaultModel, formattedMessage] = await Promise.all([
-      (async () => {
-        if (slackSettings.defaultModel) {
-          return slackSettings.defaultModel;
-        }
-        const [userFlags, userCredentials] = await Promise.all([
-          getUserFlags({ db, userId: slackAccount.userId }),
-          getUserCredentials({ userId: slackAccount.userId }),
-        ]);
-        return getDefaultModel({ userFlags, userCredentials });
-      })(),
+      resolveSlackMentionDefaultModel({
+        slackAccount: context.slackAccount,
+        slackSettings: context.slackSettings,
+      }),
       buildSlackMentionMessage({
-        slackAccount,
+        slackAccount: context.slackAccount,
         slack,
         event,
+        fileConversion,
       }),
     ]);
     console.log(
       "[slack webhook] Creating thread for user",
-      slackAccount.userId,
+      context.slackAccount.userId,
     );
 
-    const { threadId } = await newThreadInternal({
-      userId: slackAccount.userId,
+    const { threadId, threadChatId } = await newThreadInternal({
+      userId: context.slackAccount.userId,
       message: {
         type: "user",
         model: defaultModel,
@@ -508,31 +477,68 @@ export async function handleAppMentionEvent(
             type: "text",
             text: formattedMessage,
           },
+          ...fileConversion.parts,
         ],
         timestamp: new Date().toISOString(),
       },
       parentThreadId: undefined,
       parentToolId: undefined,
-      githubRepoFullName: slackSettings.defaultRepoFullName,
+      githubRepoFullName: context.slackSettings.defaultRepoFullName,
       baseBranchName: null,
       headBranchName: null,
       sourceType: "slack-mention",
       sourceMetadata: {
         type: "slack-mention",
-        workspaceDomain: slackAccount.slackTeamDomain,
+        teamId: context.teamId,
+        slackEventId: event.slackEventId,
+        workspaceDomain: context.slackAccount.slackTeamDomain,
         channel: event.channel,
         messageTs: event.ts,
         threadTs,
       },
     });
+    createdThreadId = threadId;
+    const slackThreadLink = context.slackLiveSessionsEnabled
+      ? await ensureSlackThreadLinkForMention({
+          slackAccount: context.slackAccount,
+          slackInstallation: context.slackInstallation,
+          event,
+          threadId,
+          threadChatId,
+        })
+      : null;
+    await completeSlackTaskDelivery({
+      db,
+      teamId: context.teamId,
+      channel: event.channel,
+      messageTs: event.ts,
+      threadId,
+      threadChatId,
+      slackThreadLinkId: slackThreadLink?.id,
+      claimantToken: claimResult.claimantToken,
+    });
     // Send an acknowledgment
     await slack.chat.postMessage({
       channel: event.channel,
       thread_ts: threadTs,
-      text: `✅ Task created in ${slackSettings.defaultRepoFullName}: ${publicAppUrl()}/task/${threadId}`,
+      text: `✅ Task created in ${context.slackSettings.defaultRepoFullName}: ${publicAppUrl()}/task/${threadId}`,
     });
     console.log("[slack webhook] Successfully created thread", threadId);
   } catch (error) {
     console.error("[slack webhook] Error handling app mention:", error);
+    if (slack && threadTs && !createdThreadId) {
+      await slack.chat
+        .postMessage({
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: `Sorry <@${event.user}>, I couldn't create a Terragon task from this message. Please try again in a moment or check your Slack integration settings.`,
+        })
+        .catch((postError) => {
+          console.error(
+            "[slack webhook] Failed to send Slack task creation failure message:",
+            postError,
+          );
+        });
+    }
   }
 }

@@ -5,19 +5,19 @@ import { Badge } from "@/components/ui/badge";
 import { usePageBreadcrumbs } from "@/hooks/usePageBreadcrumbs";
 import { format } from "date-fns";
 import { ColumnDef } from "@tanstack/react-table";
-import { SlackInstallation } from "@terragon/shared";
+import { SlackInstallationPublic } from "@terragon/shared";
 
 export function AdminSlackInstallations({
   installations,
 }: {
-  installations: SlackInstallation[];
+  installations: SlackInstallationPublic[];
 }) {
   usePageBreadcrumbs([
     { label: "Admin", href: "/internal/admin" },
     { label: "Slack Installations" },
   ]);
 
-  const columns: ColumnDef<SlackInstallation>[] = [
+  const columns: ColumnDef<SlackInstallationPublic>[] = [
     {
       accessorKey: "teamName",
       header: "Team Name",

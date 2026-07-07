@@ -7,6 +7,7 @@ export const AIModelSchema = z.enum([
   "sonnet",
   "sonnet[1m]",
   "haiku",
+  "fable",
 
   // codex
   "gpt-5.5-low",

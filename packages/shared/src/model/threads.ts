@@ -1735,3 +1735,58 @@ export async function getThreadBySlackThreadKey({
   }
   return (await getThread({ db, threadId: threadOrNull.id, userId })) ?? null;
 }
+
+export async function getThreadBySlackMessageKey({
+  db,
+  userId,
+  teamId,
+  workspaceDomain,
+  channel,
+  messageTs,
+}: {
+  db: DB;
+  userId: string;
+  teamId: string;
+  workspaceDomain?: string;
+  channel: string;
+  messageTs: string;
+}): Promise<ThreadInfoFull | null> {
+  const findThread = async (
+    conditions: Parameters<typeof and>,
+  ): Promise<Pick<Thread, "id"> | null> => {
+    const result = await db.query.thread.findFirst({
+      where: and(...conditions),
+      orderBy: [asc(schema.thread.archived), desc(schema.thread.updatedAt)],
+      columns: {
+        id: true,
+      },
+    });
+    return result ?? null;
+  };
+
+  const exactThread = await findThread([
+    eq(schema.thread.userId, userId),
+    eq(schema.thread.sourceType, "slack-mention"),
+    sql`${schema.thread.sourceMetadata}->>'teamId' = ${teamId}`,
+    sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+    sql`${schema.thread.sourceMetadata}->>'messageTs' = ${messageTs}`,
+  ]);
+  const threadOrNull =
+    exactThread ??
+    (await findThread([
+      eq(schema.thread.userId, userId),
+      eq(schema.thread.sourceType, "slack-mention"),
+      sql`${schema.thread.sourceMetadata}->>'teamId' IS NULL`,
+      ...(workspaceDomain
+        ? [
+            sql`${schema.thread.sourceMetadata}->>'workspaceDomain' = ${workspaceDomain}`,
+          ]
+        : []),
+      sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+      sql`${schema.thread.sourceMetadata}->>'messageTs' = ${messageTs}`,
+    ]));
+  if (!threadOrNull) {
+    return null;
+  }
+  return (await getThread({ db, threadId: threadOrNull.id, userId })) ?? null;
+}

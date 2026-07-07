@@ -68,6 +68,20 @@ export type SlackAccount = typeof schema.slackAccount.$inferSelect;
 export type SlackAccountInsert = typeof schema.slackAccount.$inferInsert;
 export type SlackSettings = typeof schema.slackSettings.$inferSelect;
 export type SlackSettingsInsert = typeof schema.slackSettings.$inferInsert;
+export type SlackTaskDelivery = typeof schema.slackTaskDeliveries.$inferSelect;
+export type SlackTaskDeliveryInsert =
+  typeof schema.slackTaskDeliveries.$inferInsert;
+export type SlackThreadLink = typeof schema.slackThreadLinks.$inferSelect;
+export type SlackThreadLinkInsert = typeof schema.slackThreadLinks.$inferInsert;
+export type SlackOutboundDelivery =
+  typeof schema.slackOutboundDeliveries.$inferSelect;
+export type SlackOutboundDeliveryInsert =
+  typeof schema.slackOutboundDeliveries.$inferInsert;
+export type SlackInstallationPublic = Omit<
+  SlackInstallation,
+  "botAccessTokenEncrypted" | "installerUserId" | "enterpriseId"
+>;
+export type SlackAccountPublic = Omit<SlackAccount, "accessTokenEncrypted">;
 export type LinearAccount = typeof schema.linearAccount.$inferSelect;
 export type LinearAccountInsert = typeof schema.linearAccount.$inferInsert;
 export type LinearSettings = typeof schema.linearSettings.$inferSelect;
@@ -97,8 +111,8 @@ export type UserInfoServerSide = typeof schema.userInfoServerSide.$inferSelect;
 export type UserInfoServerSideInsert =
   typeof schema.userInfoServerSide.$inferInsert;
 
-export type SlackAccountWithMetadata = SlackAccount & {
-  installation: SlackInstallation | null;
+export type SlackAccountWithMetadata = SlackAccountPublic & {
+  installation: SlackInstallationPublic | null;
   settings: SlackSettings | null;
 };
 
@@ -136,6 +150,8 @@ export type ThreadSourceMetadata =
     }
   | {
       type: "slack-mention";
+      teamId?: string;
+      slackEventId?: string;
       workspaceDomain: string;
       channel: string;
       messageTs: string;

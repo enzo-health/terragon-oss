@@ -14,6 +14,9 @@ import {
   getSlackInstallationForTeam,
   upsertSlackInstallation,
   upsertSlackSettings,
+  claimSlackTaskDelivery,
+  completeSlackTaskDelivery,
+  markSlackTaskDeliveryFailed,
 } from "./slack";
 import { nanoid } from "nanoid/non-secure";
 
@@ -29,6 +32,7 @@ describe("slack", () => {
 
   beforeEach(async () => {
     // Clean up slack tables
+    await db.delete(schema.slackTaskDeliveries);
     await db.delete(schema.slackSettings);
     await db.delete(schema.slackAccount);
     await db.delete(schema.slackInstallation);
@@ -40,6 +44,25 @@ describe("slack", () => {
     const otherTestUserAndAccount = await createTestUser({ db });
     otherUser = otherTestUserAndAccount.user;
   });
+
+  async function insertSlackAccount({
+    targetUser = user,
+    targetTeamId = teamId,
+    targetSlackUserId = slackUserId,
+  }: {
+    targetUser?: User;
+    targetTeamId?: string;
+    targetSlackUserId?: string;
+  } = {}) {
+    await db.insert(schema.slackAccount).values({
+      userId: targetUser.id,
+      teamId: targetTeamId,
+      slackUserId: targetSlackUserId,
+      slackTeamName: "Test Team",
+      slackTeamDomain: "test-team",
+      accessTokenEncrypted: "encrypted-token",
+    });
+  }
 
   describe("getSlackAccounts", () => {
     it("should return empty array when user has no slack accounts", async () => {
@@ -85,7 +108,6 @@ describe("slack", () => {
         slackUserId,
         slackTeamName: "Test Team",
         slackTeamDomain: "test-team",
-        accessTokenEncrypted: "encrypted-token",
         installation: expect.objectContaining({
           teamId,
           botUserId: "B123",
@@ -97,6 +119,11 @@ describe("slack", () => {
           defaultModel: "sonnet",
         }),
       });
+      expect(accounts[0]).not.toHaveProperty("accessTokenEncrypted");
+      expect(accounts[0]?.installation).not.toHaveProperty(
+        "botAccessTokenEncrypted",
+      );
+      expect(accounts[0]?.installation).not.toHaveProperty("installerUserId");
     });
 
     it("should only return accounts for the specified user", async () => {
@@ -369,6 +396,45 @@ describe("slack", () => {
       expect(account?.slackTeamDomain).toBe("updated-team");
       expect(account?.accessTokenEncrypted).toBe("encrypted-updated-token");
     });
+
+    it("should allow the same Slack user id in different teams", async () => {
+      await upsertSlackAccount({
+        db,
+        userId: user.id,
+        teamId,
+        account: {
+          slackUserId,
+          slackTeamName: "First Team",
+          slackTeamDomain: "first-team",
+          accessTokenEncrypted: "encrypted-token",
+        },
+      });
+      await upsertSlackAccount({
+        db,
+        userId: otherUser.id,
+        teamId: otherTeamId,
+        account: {
+          slackUserId,
+          slackTeamName: "Second Team",
+          slackTeamDomain: "second-team",
+          accessTokenEncrypted: "encrypted-token-2",
+        },
+      });
+
+      const firstAccount = await getSlackAccountForSlackUserId({
+        db,
+        teamId,
+        slackUserId,
+      });
+      const secondAccount = await getSlackAccountForSlackUserId({
+        db,
+        teamId: otherTeamId,
+        slackUserId,
+      });
+
+      expect(firstAccount?.userId).toBe(user.id);
+      expect(secondAccount?.userId).toBe(otherUser.id);
+    });
   });
 
   describe("deleteSlackAccount", () => {
@@ -405,6 +471,29 @@ describe("slack", () => {
         teamId,
       });
       expect(account).toBeNull();
+    });
+
+    it("should delete settings for the disconnected account", async () => {
+      await insertSlackAccount();
+      await db.insert(schema.slackSettings).values({
+        userId: user.id,
+        teamId,
+        defaultRepoFullName: "test/repo",
+        defaultModel: "sonnet",
+      });
+
+      await deleteSlackAccount({
+        db,
+        userId: user.id,
+        teamId,
+      });
+
+      const settings = await getSlackSettingsForTeam({
+        db,
+        userId: user.id,
+        teamId,
+      });
+      expect(settings).toBeNull();
     });
 
     it("should not affect other users' accounts", async () => {
@@ -585,6 +674,8 @@ describe("slack", () => {
 
   describe("upsertSlackSettings", () => {
     it("should create new slack settings", async () => {
+      await insertSlackAccount();
+
       await upsertSlackSettings({
         db,
         userId: user.id,
@@ -610,6 +701,8 @@ describe("slack", () => {
     });
 
     it("should update existing slack settings", async () => {
+      await insertSlackAccount();
+
       // Create initial settings
       await db.insert(schema.slackSettings).values({
         userId: user.id,
@@ -640,6 +733,8 @@ describe("slack", () => {
     });
 
     it("should handle settings with null values", async () => {
+      await insertSlackAccount();
+
       await upsertSlackSettings({
         db,
         userId: user.id,
@@ -658,6 +753,159 @@ describe("slack", () => {
 
       expect(settings?.defaultRepoFullName).toBeNull();
       expect(settings?.defaultModel).toBe("opus");
+    });
+
+    it("should reject settings for a Slack team the user has not linked", async () => {
+      await expect(
+        upsertSlackSettings({
+          db,
+          userId: user.id,
+          teamId,
+          settings: {
+            defaultRepoFullName: "test/repo",
+            defaultModel: "sonnet",
+          },
+        }),
+      ).rejects.toThrow("Slack account is not linked");
+    });
+  });
+
+  describe("Slack task delivery claims", () => {
+    it("should claim a Slack message once and then reject duplicates", async () => {
+      const firstClaim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev123",
+      });
+      const duplicateClaim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev456",
+      });
+
+      expect(firstClaim.claimed).toBe(true);
+      expect(firstClaim.claimantToken).toEqual(expect.any(String));
+      expect(firstClaim.deliveryKey).toBe(`${teamId}:C123:1234567890.123456`);
+      expect(duplicateClaim.claimed).toBe(false);
+    });
+
+    it("should keep completed Slack deliveries closed to retries", async () => {
+      await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev123",
+      });
+      await completeSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        threadId: "thread-123",
+      });
+
+      const retryClaim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev456",
+      });
+
+      expect(retryClaim.claimed).toBe(false);
+      const delivery = await db.query.slackTaskDeliveries.findFirst({
+        where: (table, { eq }) =>
+          eq(table.deliveryKey, `${teamId}:C123:1234567890.123456`),
+      });
+      expect(delivery?.threadId).toBe("thread-123");
+      expect(delivery?.completedAt).toBeInstanceOf(Date);
+    });
+
+    it("should complete action-keyed deliveries using the claimed key", async () => {
+      const claim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev123",
+        action: "command",
+        actionId: "mute",
+        actorSlackUserId: slackUserId,
+        actionTs: "1234567890.123456",
+      });
+
+      await completeSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        deliveryKey: claim.deliveryKey,
+        claimantToken: claim.claimantToken,
+        threadId: "thread-123",
+      });
+
+      const retryClaim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev456",
+        action: "command",
+        actionId: "mute",
+        actorSlackUserId: slackUserId,
+        actionTs: "1234567890.123456",
+      });
+      const baseDelivery = await db.query.slackTaskDeliveries.findFirst({
+        where: (table, { eq }) =>
+          eq(table.deliveryKey, `${teamId}:C123:1234567890.123456`),
+      });
+      const actionDelivery = await db.query.slackTaskDeliveries.findFirst({
+        where: (table, { eq }) => eq(table.deliveryKey, claim.deliveryKey),
+      });
+
+      expect(claim.claimed).toBe(true);
+      expect(retryClaim.claimed).toBe(false);
+      expect(baseDelivery).toBeUndefined();
+      expect(actionDelivery?.status).toBe("completed");
+      expect(actionDelivery?.threadId).toBe("thread-123");
+    });
+
+    it("should mark claimed Slack deliveries as failed", async () => {
+      const claim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev123",
+      });
+
+      await markSlackTaskDeliveryFailed({
+        db,
+        deliveryKey: claim.deliveryKey,
+        claimantToken: claim.claimantToken,
+        lastError: "slack-attachment-import-failed",
+      });
+
+      const retryClaim = await claimSlackTaskDelivery({
+        db,
+        teamId,
+        channel: "C123",
+        messageTs: "1234567890.123456",
+        slackEventId: "Ev456",
+      });
+      const delivery = await db.query.slackTaskDeliveries.findFirst({
+        where: (table, { eq }) => eq(table.deliveryKey, claim.deliveryKey),
+      });
+
+      expect(retryClaim.claimed).toBe(false);
+      expect(delivery?.status).toBe("failed");
+      expect(delivery?.lastError).toBe("slack-attachment-import-failed");
+      expect(delivery?.completedAt).toBeInstanceOf(Date);
     });
   });
 });

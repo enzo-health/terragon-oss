@@ -68,6 +68,7 @@ program
 
 const CLI_MODEL_OPTIONS: AIModelExternal[] = [
   "haiku",
+  "fable",
   "opus",
   "opus[1m]",
   "sonnet",

@@ -113,6 +113,36 @@ export const featureFlagsDefinitions = {
     description:
       "Enables the Linear bot integration, allowing users to @mention Terragon in Linear issue comments to spin up a sandbox.",
   },
+  slackLiveSessionsEnabled: {
+    defaultValue: false,
+    description:
+      "Enables Slack live session state for Slack-created Terragon tasks.",
+  },
+  slackThreadRepliesToFollowUps: {
+    defaultValue: false,
+    description:
+      "Allows replies in linked Slack threads to become follow-up messages on the Terragon task.",
+  },
+  slackLiveThreadUpdates: {
+    defaultValue: false,
+    description:
+      "Mirrors low-noise Terragon task status and terminal updates back to linked Slack threads.",
+  },
+  slackAttachmentsEnabled: {
+    defaultValue: false,
+    description:
+      "Allows supported Slack files to be included in Slack-created tasks and follow-ups.",
+  },
+  slackCommandsEnabled: {
+    defaultValue: false,
+    description:
+      "Enables Slack live-session controls such as status, mute, sleep, wake, archive, and stop.",
+  },
+  slackWebappStartedNotificationsEnabled: {
+    defaultValue: false,
+    description:
+      "Allows web-started Terragon tasks to be mirrored into Slack when users opt in.",
+  },
   shutdownMode: {
     defaultValue: false,
     description:

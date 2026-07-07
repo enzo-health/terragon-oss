@@ -90,8 +90,7 @@ import {
   type RouteRecoveryPlan,
 } from "@/server-lib/daemon-event/route-recovery";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
-import { emitLinearActivitiesForCanonicalBatch } from "@/server-lib/linear-agent-activity";
-import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
+import { emitThreadIntegrationActivitiesForCanonicalBatch } from "@/server-lib/thread-integration-activity";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -1212,37 +1211,33 @@ export async function POST(request: Request) {
     );
   }
 
+  const usage = deriveUsageFromMessages(messages);
   if (terminalFenceOutcome !== "duplicate") {
-    const { costUsd, agentDurationMs } = deriveUsageFromMessages(messages);
-    waitUntil(trackUsageEvents({ userId, costUsd, agentDurationMs }));
+    waitUntil(
+      trackUsageEvents({
+        userId,
+        costUsd: usage.costUsd,
+        agentDurationMs: usage.agentDurationMs,
+      }),
+    );
     if (messagesIndicateOverloaded(messages, runContext.agent)) {
       waitUntil(isAnthropicDownPOST());
     }
   }
 
-  if (
-    mainPathThread?.sourceType === "linear-mention" &&
-    mainPathThread.sourceMetadata != null &&
-    canonicalEvents != null &&
-    canonicalEvents.length > 0
-  ) {
-    const linearMeta = mainPathThread.sourceMetadata as Extract<
-      ThreadSourceMetadata,
-      { type: "linear-mention" }
-    >;
-    if (linearMeta.agentSessionId) {
-      const isRecoveryFire = recoveryPlan?.outcome === "fire";
-      const { costUsd: linearCostUsd } = deriveUsageFromMessages(messages);
-      waitUntil(
-        emitLinearActivitiesForCanonicalBatch(linearMeta, canonicalEvents, {
-          isDone:
-            daemonRunStatusFromMessages === "completed" && !isRecoveryFire,
-          isError: daemonRunStatusFromMessages === "failed" && !isRecoveryFire,
-          customErrorMessage: daemonTerminalErrorInfo.errorMessage,
-          costUsd: linearCostUsd,
-        }),
-      );
-    }
+  for (const activityEmission of emitThreadIntegrationActivitiesForCanonicalBatch(
+    {
+      thread: mainPathThread,
+      threadId,
+      threadChatId,
+      canonicalEvents,
+      daemonRunStatus: daemonRunStatusFromMessages,
+      isRecoveryFire: recoveryPlan?.outcome === "fire",
+      customErrorMessage: daemonTerminalErrorInfo.errorMessage,
+      costUsd: usage.costUsd,
+    },
+  )) {
+    waitUntil(activityEmission);
   }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
