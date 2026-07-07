@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { waitUntil } from "@vercel/functions";
 import { extendSandboxLife } from "@terragon/sandbox";
 import { trackUsageEvents } from "@/server-lib/usage-events";
+import { emitThreadIntegrationErrorActivities } from "@/server-lib/thread-integration-activity";
 
 export async function withThreadChat<T>({
   userId,
@@ -73,6 +74,30 @@ export async function withThreadChat<T>({
         },
         markAsUnread: true,
       });
+      try {
+        const thread = await getThreadMinimal({ db, threadId, userId });
+        for (const emission of emitThreadIntegrationErrorActivities({
+          thread,
+          threadId,
+          threadChatId,
+          errorType,
+          errorInfo,
+        })) {
+          waitUntil(
+            emission.catch((integrationError) => {
+              console.error(
+                "Failed to emit thread integration error",
+                integrationError,
+              );
+            }),
+          );
+        }
+      } catch (slackError) {
+        console.error(
+          "Failed to schedule thread integration error",
+          slackError,
+        );
+      }
       await onError?.(error instanceof Error ? error : new Error(errorInfo));
     }
   } finally {
