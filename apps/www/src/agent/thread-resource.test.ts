@@ -16,6 +16,23 @@ import { ThreadError } from "./error";
 import { waitUntilResolved, mockWaitUntil } from "@/test-helpers/mock-next";
 import { maybeHibernateSandbox } from "./sandbox";
 import { nanoid } from "nanoid/non-secure";
+import { emitThreadIntegrationErrorActivities } from "@/server-lib/thread-integration-activity";
+
+const integrationActivityMocks = vi.hoisted(() => ({
+  emitThreadIntegrationErrorActivities: vi.fn(() => [Promise.resolve()]),
+}));
+
+vi.mock("@/server-lib/thread-integration-activity", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/server-lib/thread-integration-activity")
+    >();
+  return {
+    ...actual,
+    emitThreadIntegrationErrorActivities:
+      integrationActivityMocks.emitThreadIntegrationErrorActivities,
+  };
+});
 
 vi.mock("./sandbox", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./sandbox")>();
@@ -169,6 +186,59 @@ describe("thread-resource", () => {
       expect(onExit).toHaveBeenCalledWith(
         expect.objectContaining({ id: threadChatId, threadId }),
       );
+    });
+
+    it("notifies Slack when a Slack-created task fails", async () => {
+      await updateThread({
+        db,
+        userId: user.id,
+        threadId,
+        updates: {
+          sourceType: "slack-mention",
+          sourceMetadata: {
+            type: "slack-mention",
+            teamId: "TTEAM123",
+            slackEventId: "Ev123",
+            workspaceDomain: "test-workspace",
+            channel: "CCHAN123",
+            messageTs: "1710000000.000100",
+            threadTs: "1710000000.000100",
+          },
+        },
+      });
+
+      await withThreadChat({
+        userId: user.id,
+        threadId,
+        threadChatId,
+        execOrThrow: async () => {
+          throw new ThreadError(
+            "invalid-claude-credentials",
+            "refresh token expired",
+            null,
+          );
+        },
+      });
+      await waitUntilResolved();
+
+      expect(
+        emitThreadIntegrationErrorActivities,
+      ).toHaveBeenCalledExactlyOnceWith({
+        thread: expect.objectContaining({
+          id: threadId,
+          userId: user.id,
+          sourceType: "slack-mention",
+          sourceMetadata: expect.objectContaining({
+            type: "slack-mention",
+            teamId: "TTEAM123",
+            channel: "CCHAN123",
+          }),
+        }),
+        threadId,
+        threadChatId,
+        errorType: "invalid-claude-credentials",
+        errorInfo: "refresh token expired",
+      });
     });
   });
 
