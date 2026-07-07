@@ -81,7 +81,7 @@ The daemon will create a unix socket at /tmp/terragon-daemon.sock and listen for
    "token": "string",
    "prompt": "string", 
    "sessionId": "string|null",
-   "model": "haiku|sonnet|sonnet[1m]|opus|opus[1m]"
+   "model": "haiku|sonnet|sonnet[1m]|opus|opus[1m]|fable"
   }
 
 Examples:

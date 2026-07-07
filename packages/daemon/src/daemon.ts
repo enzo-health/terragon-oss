@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { buildStandardAgUiWireRows } from "@terragon/agent/ag-ui-rows";
 import {
   type CanonicalEvent,
   EVENT_ENVELOPE_VERSION,
@@ -20,18 +21,11 @@ import {
   buildCanonicalEventsForBatch,
   getMessageFingerprint,
 } from "./daemon-canonical-events";
-import { ampCommand, getAmpApiKeyOrNull } from "./amp";
-import {
-  ClaudeCodeParser,
-  claudeCommand,
-  getAnthropicApiKeyOrNull,
-  maybeFixLogsForSessionId,
-} from "./claude";
+import { maybeFixLogsForSessionId } from "./claude";
 import {
   buildThreadStartParams,
   buildTurnStartParams,
   CODEX_TURN_START_MAX_INPUT_CHARS,
-  codexCommand,
   createCodexParserState,
   estimateTurnStartRequestSizeChars,
   parseCodexLine,
@@ -46,16 +40,6 @@ import {
   type ThreadMetaEvent,
 } from "./codex-app-server";
 import { routeCodexNotification } from "./codex-notification-router";
-import {
-  createGeminiParserState,
-  geminiCommand,
-  parseGeminiLine,
-} from "./gemini";
-import {
-  getOpencodeApiKeyOrNull,
-  opencodeCommand,
-  parseOpencodeLine,
-} from "./opencode";
 import { DEFAULT_RETRY_CONFIG, RetryBackoff, RetryConfig } from "./retry";
 import {
   DaemonServerPostError,
@@ -67,6 +51,7 @@ import {
   runtimeAdapterUnsupportedOperationToMessage,
   writeToUnixSocket,
 } from "./runtime";
+import { DEFAULT_OUTBOX_JOURNAL_DIR, OutboxJournal } from "./outbox-journal";
 import { sanitizeRepoSkillFiles } from "./sanitize-skills";
 import {
   ClaudeMessage,
@@ -81,12 +66,7 @@ import {
   RuntimeAdapterContract,
 } from "./shared";
 import { readString, toRecord } from "./json-read";
-import {
-  createIdleWatchdog,
-  IdleWatchdog,
-  killProcessGroup,
-  MessageBufferEntry,
-} from "./utils";
+import { IdleWatchdog, killProcessGroup, MessageBufferEntry } from "./utils";
 
 const DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS = 5_000;
 const ACP_SSE_RECONNECT_DELAY_MS = 150;
@@ -471,6 +451,7 @@ type DaemonEventRunState = {
    * many terminal messages arrive. Committed on ack alongside the seq cursor.
    */
   canonicalTerminalEmitted: boolean;
+  streamedAssistantText: boolean;
   cleanupRequested: boolean;
   pendingEnvelope: {
     messagesFingerprint: string;
@@ -548,13 +529,14 @@ export class TerragonDaemon {
   private messageFlushTimerDueAtMs: number | null = null;
   private uptimeReportingInterval: number = 0;
   private uptimeReportingTimer: NodeJS.Timeout | null = null;
-  private isFlushInProgress: boolean = false;
-  private pendingFlushRequired: boolean = false;
+  private threadFlushChains: Map<string, Promise<void>> = new Map();
+  private threadRetryNotBeforeMs: Map<string, number> = new Map();
   private retryBackoffs: Map<string, RetryBackoff> = new Map();
   private retryConfig: RetryConfig;
 
   private featureFlags: FeatureFlags = {} as FeatureFlags;
   private agentFrontmatterReader: AgentFrontmatterReader;
+  private outboxJournal: OutboxJournal;
 
   constructor({
     messageFlushDelay = 16,
@@ -563,6 +545,7 @@ export class TerragonDaemon {
     runtime,
     retryConfig = DEFAULT_RETRY_CONFIG,
     mcpConfigPath,
+    outboxJournal,
   }: {
     messageFlushDelay?: number;
     messageHandleDelay?: number;
@@ -570,6 +553,7 @@ export class TerragonDaemon {
     runtime: IDaemonRuntime;
     retryConfig?: RetryConfig;
     mcpConfigPath?: string;
+    outboxJournal?: OutboxJournal;
   }) {
     this.startTime = performance.now();
     this.runtime = runtime;
@@ -579,6 +563,16 @@ export class TerragonDaemon {
     this.retryConfig = retryConfig;
     this.mcpConfigPath = mcpConfigPath;
     this.agentFrontmatterReader = new AgentFrontmatterReader(runtime);
+    this.outboxJournal =
+      outboxJournal ??
+      new OutboxJournal({
+        dir:
+          process.env.TERRAGON_DAEMON_OUTBOX_DIR ?? DEFAULT_OUTBOX_JOURNAL_DIR,
+        enabled:
+          process.env.TERRAGON_DAEMON_OUTBOX_JOURNAL !== "0" &&
+          !process.env.VITEST,
+        logger: this.runtime.logger,
+      });
 
     // Load feature flags from environment variable if available
     const envFeatureFlags = process.env.TERRAGON_FEATURE_FLAGS;
@@ -629,6 +623,8 @@ export class TerragonDaemon {
 
     // Load agent frontmatter
     await this.agentFrontmatterReader.loadAgents();
+
+    await this.replayOutboxJournal();
 
     // Start listening to the unix socket
     await this.runtime.listenToUnixSocket(
@@ -901,6 +897,32 @@ export class TerragonDaemon {
     });
   }
 
+  private sendAcpSessionCancel(activeProcessState: ActiveProcessState): void {
+    const { acpUrl, sessionId } = activeProcessState;
+    if (!acpUrl || !sessionId) {
+      return;
+    }
+    fetch(acpUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch((error) => {
+      this.runtime.logger.warn("ACP session/cancel failed", {
+        threadChatId: activeProcessState.threadChatId,
+        sessionId,
+        error: formatError(error),
+      });
+    });
+  }
+
   private killActiveProcess(
     threadChatId: string,
     options: { destroyAcpServer?: boolean } = {},
@@ -916,6 +938,7 @@ export class TerragonDaemon {
         });
         killProcessGroup(this.runtime, processId);
       }
+      this.sendAcpSessionCancel(activeProcessState);
       // Abort ACP transport (SSE loop + unblock Promise.race)
       if (activeProcessState.acpAbortController) {
         this.runtime.logger.info("Aborting ACP transport", { threadChatId });
@@ -1018,6 +1041,7 @@ export class TerragonDaemon {
       acpSessionId: input.acpSessionId ?? null,
       canonicalRunStartedEmitted: false,
       canonicalTerminalEmitted: false,
+      streamedAssistantText: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     });
@@ -1153,33 +1177,15 @@ export class TerragonDaemon {
       }
       return;
     }
-    switch (input.agent) {
-      case "claudeCode":
-        await this.runClaudeCodeCommand(input);
-        break;
-      case "amp":
-        await this.runAmpCommand(input);
-        break;
-      case "codex":
-        await this.runCodexCommand(input);
-        break;
-      case "gemini":
-        await this.runGeminiCommand(input);
-        break;
-      case "opencode":
-        await this.runOpencodeCommand(input);
-        break;
-      default: {
-        // This ensures we handle all model types exhaustively
-        const _exhaustiveCheck: never = input.agent;
-        this.runtime.logger.error("Unknown agent", {
-          agent: _exhaustiveCheck,
-          agentVersion: input.agentVersion,
-          model: input.model,
-        });
-        throw new Error(`Unknown agent: ${input.agent}`);
-      }
-    }
+    this.runtime.logger.error("Unsupported transport mode for dispatch", {
+      agent: input.agent,
+      transportMode: input.transportMode,
+      agentVersion: input.agentVersion,
+      model: input.model,
+    });
+    throw new Error(
+      `Unsupported transport mode for agent ${input.agent}: ${input.transportMode}`,
+    );
   }
 
   private createAppServerRunContext({
@@ -1875,7 +1881,7 @@ export class TerragonDaemon {
           // earlier visible-message flush. Streaming throttling belongs to the
           // leading-edge flush timer and delta path, not a trailing debounce.
           if (threadEvent.type === "item.completed") {
-            this.scheduleMessageFlush(250);
+            this.scheduleMessageFlush(this.messageFlushDelay);
           }
 
           if (threadEvent.type === "turn.failed") {
@@ -2232,12 +2238,6 @@ export class TerragonDaemon {
           return "claude";
         case "codex":
           return "codex";
-        case "amp":
-          return "amp";
-        case "opencode":
-          return "opencode";
-        case "gemini":
-          throw new Error("ACP transport is not supported for gemini agent");
         default: {
           const _exhaustiveCheck: never = input.agent;
           throw new Error(
@@ -2478,7 +2478,7 @@ export class TerragonDaemon {
         } else if (message.type === "assistant" && message.message?.content) {
           const content = message.message.content;
           if (Array.isArray(content)) {
-            const streamedBlockIndices: number[] = [];
+            let streamedBlockCount = 0;
             let shouldSplitAfterAssistant = false;
             for (
               let blockIndex = 0;
@@ -2490,7 +2490,7 @@ export class TerragonDaemon {
                 continue;
               }
               if (block.type === "text" && block.text) {
-                streamedBlockIndices.push(blockIndex);
+                streamedBlockCount += 1;
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
@@ -2501,7 +2501,7 @@ export class TerragonDaemon {
                   text: block.text,
                 });
               } else if (block.type === "thinking" && block.thinking) {
-                streamedBlockIndices.push(blockIndex);
+                streamedBlockCount += 1;
                 this.enqueueDelta({
                   threadId: input.threadId,
                   threadChatId: input.threadChatId,
@@ -2515,13 +2515,7 @@ export class TerragonDaemon {
                 shouldSplitAfterAssistant = true;
               }
             }
-            if (streamedBlockIndices.length > 0) {
-              message._claudeStreamedBlockIndices = streamedBlockIndices;
-            }
-            if (
-              shouldSplitAfterAssistant ||
-              streamedBlockIndices.length === 0
-            ) {
+            if (shouldSplitAfterAssistant || streamedBlockCount === 0) {
               deltaMessageId = randomUUID();
             }
           }
@@ -2780,9 +2774,13 @@ export class TerragonDaemon {
       recoveryMode === "replace-session" ||
       !input.acpSessionId;
 
-    const runtimeAuthResult = await this.ensureSandboxAgentRuntime(baseUrl, input, {
-      restart: shouldForceRestart,
-    });
+    const runtimeAuthResult = await this.ensureSandboxAgentRuntime(
+      baseUrl,
+      input,
+      {
+        restart: shouldForceRestart,
+      },
+    );
     if (runtimeAuthResult.status === "restart-required") {
       this.runtime.logger.warn(
         "ACP runtime auth requires sandbox-agent restart before session reuse",
@@ -3401,6 +3399,7 @@ export class TerragonDaemon {
       acpSessionId: null,
       canonicalRunStartedEmitted: false,
       canonicalTerminalEmitted: false,
+      streamedAssistantText: false,
       cleanupRequested: false,
       pendingEnvelope: null,
     };
@@ -3455,6 +3454,7 @@ export class TerragonDaemon {
       nextCanonicalSeq: runState.nextCanonicalSeq,
       canonicalRunStartedEmitted: runState.canonicalRunStartedEmitted,
       canonicalTerminalEmitted: runState.canonicalTerminalEmitted,
+      streamedAssistantText: runState.streamedAssistantText,
       threadId,
       threadChatId,
       messages,
@@ -3608,36 +3608,6 @@ export class TerragonDaemon {
     return entries.slice(0, pendingEntryCount);
   }
 
-  private onProcessStderr = (
-    agent: string,
-    line: string,
-    threadChatId: string,
-  ) => {
-    this.runtime.logger.error(`${agent} stderr`, {
-      line,
-      threadChatId,
-    });
-    const activeProcessState = this.activeProcesses.get(threadChatId);
-    if (activeProcessState) {
-      activeProcessState.stderr.push(line);
-      if (activeProcessState.stderr.length > 20) {
-        activeProcessState.stderr.shift();
-      }
-    }
-  };
-
-  private getProcessErrorInfo = (threadChatId: string) => {
-    const activeProcessState = this.activeProcesses.get(threadChatId);
-    if (activeProcessState?.stderr.length) {
-      return activeProcessState.stderr.join("\n");
-    }
-    const appServerContext = this.appServerRunContexts.get(threadChatId);
-    if (appServerContext?.watchdogTriggered) {
-      return "Codex app-server turn hit the watchdog timeout";
-    }
-    return undefined;
-  };
-
   private getProcessDurationMs = (threadChatId: string) => {
     const activeProcessState = this.activeProcesses.get(threadChatId);
     if (activeProcessState?.startTime) {
@@ -3680,582 +3650,10 @@ export class TerragonDaemon {
     });
   };
 
-  private handleProcessClose = ({
-    agent,
-    processId,
-    exitCode,
-    threadChatId,
-    getMockSuccessResult,
-  }: {
-    agent: string;
-    processId: number | undefined;
-    exitCode: number | null;
-    threadChatId: string;
-    getMockSuccessResult?: () => string;
-  }) => {
-    this.runtime.logger.info(`${agent} command finished`, {
-      exitCode,
-      processId,
-      threadChatId,
-    });
-    const activeState = this.activeProcesses.get(threadChatId);
-    if (!activeState || activeState.processId !== processId) {
-      this.runtime.logger.info("Process closed but not handled", {
-        processId,
-        exitCode,
-        threadChatId,
-      });
-      return;
-    }
-    if (exitCode !== 0 && !activeState.isStopping && !activeState.isCompleted) {
-      this.addMessageToBuffer({
-        agent: activeState.agent,
-        message: {
-          type: "custom-error",
-          session_id: null,
-          duration_ms: this.getProcessDurationMs(threadChatId),
-          error_info: this.getProcessErrorInfo(threadChatId),
-        },
-        threadId: activeState.threadId,
-        threadChatId: activeState.threadChatId,
-        token: activeState.token,
-      });
-    }
-    if (exitCode === 0 && typeof getMockSuccessResult === "function") {
-      this.addMessageToBuffer({
-        agent: activeState.agent,
-        message: {
-          type: "result",
-          subtype: "success",
-          total_cost_usd: 0,
-          duration_ms: this.getProcessDurationMs(threadChatId),
-          duration_api_ms: this.getProcessDurationMs(threadChatId),
-          is_error: false,
-          num_turns: 1,
-          session_id: activeState.sessionId ?? "",
-          result: getMockSuccessResult(),
-        },
-        threadId: activeState.threadId,
-        threadChatId: activeState.threadChatId,
-        token: activeState.token,
-      });
-    }
-    // Remove this process from the map
-    this.stopHeartbeat(threadChatId);
-    this.activeProcesses.delete(threadChatId);
-    this.markDaemonEventRunStateForCleanup(threadChatId);
-  };
-
-  private async spawnAgentProcess({
-    agentName,
-    command,
-    env,
-    input,
-    onStdoutLine,
-    onClose,
-    getMockSuccessResult,
-  }: {
-    agentName: string;
-    input: DaemonMessageClaude;
-    command: string;
-    env?: Record<string, string | undefined>;
-    onStdoutLine: (line: string) => void;
-    onClose?: (code: number | null) => void;
-    getMockSuccessResult?: () => string;
-  }): Promise<void> {
-    this.runtime.logger.info("Spawning agent process", {
-      agentName,
-      command,
-    });
-    return new Promise((resolve) => {
-      // Watchdog: kill process if it stops emitting output for too long
-      const watchdogTimeoutMs = (() => {
-        if (process.env.IDLE_TIMEOUT_MS) {
-          const n = Number(process.env.IDLE_TIMEOUT_MS);
-          if (Number.isFinite(n) && n > 0) return n;
-        }
-        return 15 * 60 * 1000; // default 15 minutes
-      })();
-      let spawnedProcessId: number | undefined;
-      const watchdog = createIdleWatchdog({
-        timeoutMs: watchdogTimeoutMs,
-        logger: this.runtime.logger,
-        onTimeout: async () => {
-          const durationMs = this.getProcessDurationMs(input.threadChatId);
-          this.runtime.logger.warn("Idle timeout reached, killing process", {
-            agentName,
-            processId: spawnedProcessId,
-            watchdogTimeoutMs,
-            durationMs,
-          });
-          this.addMessageToBuffer({
-            agent: input.agent,
-            message: {
-              type: "result",
-              subtype: "success",
-              total_cost_usd: 0,
-              duration_ms: durationMs,
-              duration_api_ms: durationMs,
-              is_error: true,
-              num_turns: 1,
-              result: `${agentName} error: no output for ${watchdogTimeoutMs / 1000}s; process killed`,
-              session_id:
-                this.activeProcesses.get(input.threadChatId)?.sessionId ?? "",
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-          this.killActiveProcess(input.threadChatId);
-          await this.flushMessageBuffer();
-        },
-      });
-
-      // Update MCP config with current env vars so the MCP server subprocess
-      // can reach the Terragon API (env vars change per dispatch).
-      if (this.mcpConfigPath) {
-        try {
-          const raw = this.runtime.readFileSync(this.mcpConfigPath);
-          const mcpConfig = JSON.parse(raw);
-          if (mcpConfig?.mcpServers?.terry) {
-            mcpConfig.mcpServers.terry.env = {
-              ...mcpConfig.mcpServers.terry.env,
-              TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-              DAEMON_TOKEN: input.token,
-              TERRAGON_THREAD_ID: input.threadId,
-              TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-            };
-            this.runtime.writeFileSync(
-              this.mcpConfigPath,
-              JSON.stringify(mcpConfig, null, 2),
-            );
-          }
-        } catch {
-          this.runtime.logger.warn("Failed to update MCP config with env vars");
-        }
-      }
-
-      // Write env vars to a well-known file so the MCP server can read them
-      // even when spawned by codex app-server (which reads ~/.codex/config.toml
-      // and doesn't pass env vars from the JSON MCP config).
-      try {
-        this.runtime.writeFileSync(
-          "/tmp/terragon-mcp-env.json",
-          JSON.stringify({
-            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-            DAEMON_TOKEN: input.token,
-            TERRAGON_THREAD_ID: input.threadId,
-            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-          }),
-        );
-      } catch {
-        this.runtime.logger.warn("Failed to write MCP env file");
-      }
-
-      const { processId, pollInterval } = this.runtime.spawnCommandLine(
-        command,
-        {
-          env: {
-            ...process.env,
-            ...env,
-            DAEMON_TOKEN: input.token,
-            TERRAGON_SERVER_URL: this.runtime.normalizedUrl,
-            TERRAGON_THREAD_ID: input.threadId,
-            TERRAGON_THREAD_CHAT_ID: input.threadChatId,
-          },
-          onStdoutLine: (line) => {
-            this.runtime.logger.debug("Agent output", { processId, line });
-            if (line) {
-              // Any output indicates activity; reset the watchdog
-              watchdog.reset();
-              onStdoutLine(line);
-            }
-          },
-          onStderr: (line) => {
-            watchdog.reset();
-            this.onProcessStderr(agentName, line, input.threadChatId);
-          },
-          onError: (error: any) => {
-            this.runtime.logger.error("Agent command error", {
-              processId,
-              error: formatError(error),
-            });
-          },
-          onClose: (code) => {
-            watchdog.clear();
-            if (onClose) {
-              onClose(code);
-            }
-            this.handleProcessClose({
-              agent: agentName,
-              exitCode: code,
-              processId,
-              threadChatId: input.threadChatId,
-              getMockSuccessResult,
-            });
-            this.flushMessageBuffer();
-            resolve();
-          },
-        },
-      );
-      if (!processId) {
-        this.runtime.logger.error("Spawn failed: child process has no pid", {
-          agentName,
-          threadChatId: input.threadChatId,
-        });
-        // The child "error" event will fire and trigger handleProcessClose,
-        // which will report the failure to the server. No early return here
-        // so that the onClose callback path handles cleanup consistently.
-      } else {
-        this.runtime.logger.info("Spawned agent process", {
-          agentName,
-          processId,
-        });
-      }
-      if (processId) {
-        spawnedProcessId = processId;
-        this.updateActiveProcessState(input.threadChatId, {
-          processId,
-          pollInterval,
-          watchdog,
-        });
-        // Start the watchdog once the process is running
-        watchdog.reset();
-      }
-    });
-  }
-
-  private async runClaudeCodeCommand(
-    input: DaemonMessageClaude,
-  ): Promise<void> {
-    if (input.sessionId) {
-      maybeFixLogsForSessionId(this.runtime, input.sessionId);
-    }
-    const claudeCodeParser = new ClaudeCodeParser();
-    return this.spawnAgentProcess({
-      agentName: "Claude",
-      input,
-      command: claudeCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        sessionId: input.sessionId,
-        model: input.model,
-        mcpConfigPath: this.mcpConfigPath ?? null,
-        permissionMode: input.permissionMode,
-        enableMcpPermissionPrompt: this.getFeatureFlag("mcpPermissionPrompt"),
-      }),
-      env: {
-        ANTHROPIC_API_KEY: getAnthropicApiKeyOrNull(this.runtime),
-        BASH_MAX_TIMEOUT_MS: (60 * 1000).toString(),
-        ...(!!input.useCredits
-          ? {
-              ANTHROPIC_BASE_URL: `${this.runtime.normalizedUrl}/api/proxy/anthropic`,
-              ANTHROPIC_AUTH_TOKEN: input.token,
-            }
-          : {}),
-      },
-      onStdoutLine: (line) => {
-        try {
-          const { messages, metaEvents, deltas } =
-            claudeCodeParser.parseClaudeCodeLine(line);
-
-          // Enqueue meta events (session.initialized, usage.incremental, message.stop)
-          for (const metaEvent of metaEvents) {
-            this.enqueueMetaEvent({
-              metaEvent,
-              threadId: input.threadId,
-              threadChatId: input.threadChatId,
-              token: input.token,
-            });
-          }
-
-          // Push text/thinking deltas into the delta buffer
-          if (deltas.length > 0) {
-            for (const delta of deltas) {
-              if (delta.kind !== "text" && delta.kind !== "thinking") {
-                continue;
-              }
-              this.enqueueDelta({
-                threadId: input.threadId,
-                threadChatId: input.threadChatId,
-                token: input.token,
-                messageId: delta.messageId,
-                partIndex: delta.partIndex,
-                kind: delta.kind,
-                text: delta.text,
-              });
-            }
-          }
-
-          // Push parsed chat messages into the message buffer
-          for (const outputMessage of messages) {
-            const sessionId = (outputMessage as any).session_id;
-            if (sessionId) {
-              this.updateActiveProcessState(input.threadChatId, {
-                sessionId,
-                isWorking: true,
-              });
-            }
-            if (outputMessage.type === "result") {
-              this.updateActiveProcessState(input.threadChatId, {
-                isCompleted: true,
-              });
-            }
-            this.addMessageToBuffer({
-              agent: "claudeCode",
-              message: outputMessage,
-              threadId: input.threadId,
-              threadChatId: input.threadChatId,
-              token: input.token,
-            });
-          }
-        } catch (e) {
-          this.runtime.logger.error("Failed to parse Claude output line", {
-            line,
-            error: formatError(e),
-          });
-        }
-      },
-    });
-  }
-
-  private async runOpencodeCommand(input: DaemonMessageClaude): Promise<void> {
-    return this.spawnAgentProcess({
-      agentName: "Opencode",
-      input,
-      command: opencodeCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        model: input.model,
-        sessionId: input.sessionId,
-      }),
-      env: {
-        OPENCODE_API_KEY: getOpencodeApiKeyOrNull(this.runtime),
-      },
-      getMockSuccessResult: () => "Opencode successfully completed",
-      onStdoutLine: (line) => {
-        const activeProcessState = this.activeProcesses.get(input.threadChatId);
-        const parsedMessages = parseOpencodeLine({
-          line,
-          runtime: this.runtime,
-          isWorking: !!activeProcessState?.isWorking,
-        });
-        for (const parsedMessage of parsedMessages) {
-          const type = parsedMessage.type;
-          const sessionId = parsedMessage.session_id;
-          if (type === "system" && sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
-            });
-          } else if (
-            activeProcessState?.sessionId &&
-            (type === "assistant" || type === "user")
-          ) {
-            parsedMessage.session_id = activeProcessState.sessionId;
-          }
-          if (type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-          }
-          this.addMessageToBuffer({
-            agent: "opencode",
-            message: parsedMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      },
-    });
-  }
-
-  private async runAmpCommand(input: DaemonMessageClaude): Promise<void> {
-    return this.spawnAgentProcess({
-      agentName: "Amp",
-      command: ampCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        sessionId: input.sessionId,
-      }),
-      env: { AMP_API_KEY: getAmpApiKeyOrNull(this.runtime) },
-      input,
-      onStdoutLine: (line) => {
-        try {
-          const outputMessage = JSON.parse(line);
-          if (outputMessage.type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-          }
-          if (
-            outputMessage.type === "user" &&
-            outputMessage.message?.role === "user" &&
-            outputMessage.message?.content?.[0]?.type === "text"
-          ) {
-            // Ignore this message because amp echos the first message from the user.
-            this.runtime.logger.debug("Ignoring Amp user message", {
-              message: outputMessage,
-            });
-            return;
-          }
-          this.addMessageToBuffer({
-            agent: "amp",
-            message: outputMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        } catch (e) {
-          this.runtime.logger.error("Failed to parse Amp output line", {
-            line,
-            error: e,
-          });
-        }
-      },
-    });
-  }
-
-  private async runCodexCommand(input: DaemonMessageClaude): Promise<void> {
-    const parserState = createCodexParserState();
-    return this.spawnAgentProcess({
-      agentName: "Codex",
-      input,
-      command: codexCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        model: input.model,
-        sessionId: input.sessionId,
-        useCredits: !!input.useCredits,
-      }),
-      getMockSuccessResult: () => "Codex successfully completed",
-      onStdoutLine: (line) => {
-        // Parse the line into ClaudeMessage format
-        const parsedMessages = parseCodexLine({
-          line,
-          runtime: this.runtime,
-          state: parserState,
-        });
-        const activeProcessState = this.activeProcesses.get(input.threadChatId);
-        for (const parsedMessage of parsedMessages) {
-          const type = parsedMessage.type;
-          const sessionId = parsedMessage.session_id;
-          if (type === "system" && sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
-            });
-          } else if (
-            activeProcessState?.sessionId &&
-            (type === "assistant" || type === "user")
-          ) {
-            parsedMessage.session_id = activeProcessState.sessionId;
-          }
-          this.addMessageToBuffer({
-            agent: "codex",
-            message: parsedMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-          if (parsedMessage.type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-            if (parsedMessage.is_error) {
-              this.flushMessageBuffer();
-            }
-          }
-        }
-      },
-    });
-  }
-
-  private async runGeminiCommand(input: DaemonMessageClaude): Promise<void> {
-    // Create parser state for accumulating deltas
-    const parserState = createGeminiParserState();
-    return this.spawnAgentProcess({
-      agentName: "Gemini",
-      command: geminiCommand({
-        runtime: this.runtime,
-        prompt: input.prompt,
-        model: input.model,
-        sessionId: input.sessionId,
-      }),
-      env: {
-        GOOGLE_GEMINI_BASE_URL: `${this.runtime.normalizedUrl}/api/proxy/google`,
-        GEMINI_API_KEY: input.token,
-      },
-      input,
-      onStdoutLine: (line) => {
-        // Parse the line into ClaudeMessage format
-        const parsedMessages = parseGeminiLine({
-          line,
-          runtime: this.runtime,
-          state: parserState,
-        });
-        const activeProcessState = this.activeProcesses.get(input.threadChatId);
-        for (const parsedMessage of parsedMessages) {
-          const type = parsedMessage.type;
-          const sessionId = parsedMessage.session_id;
-          if (type === "system" && sessionId) {
-            this.updateActiveProcessState(input.threadChatId, {
-              sessionId,
-              isWorking: true,
-            });
-          } else if (
-            activeProcessState?.sessionId &&
-            (type === "assistant" || type === "user")
-          ) {
-            parsedMessage.session_id = activeProcessState.sessionId;
-          }
-          if (type === "result") {
-            this.updateActiveProcessState(input.threadChatId, {
-              isCompleted: true,
-            });
-          }
-          this.addMessageToBuffer({
-            agent: "gemini",
-            message: parsedMessage,
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      },
-      onClose: () => {
-        // Flush any remaining accumulated content
-        if (parserState.accumulatedContent) {
-          const activeProcessState = this.activeProcesses.get(
-            input.threadChatId,
-          );
-          this.addMessageToBuffer({
-            agent: "gemini",
-            message: {
-              type: "assistant",
-              message: {
-                role: "assistant",
-                content: [
-                  { type: "text", text: parserState.accumulatedContent },
-                ],
-              },
-              parent_tool_use_id: null,
-              session_id: activeProcessState?.sessionId || "",
-            },
-            threadId: input.threadId,
-            threadChatId: input.threadChatId,
-            token: input.token,
-          });
-        }
-      },
-    });
-  }
-
   private processMessagesForSending(
     entries: MessageBufferEntry[],
   ): MessageBufferEntry[] {
-    if (entries.find((e) => e.agent === "gemini" || e.agent === "codex")) {
+    if (entries.find((e) => e.agent === "codex")) {
       const errorEntry = entries.find(
         (e) => e.message.type === "result" && e.message.is_error,
       );
@@ -4384,10 +3782,6 @@ export class TerragonDaemon {
     token: string;
   }): void {
     this.metaEventBuffer.push(entry);
-    if (this.isFlushInProgress) {
-      this.pendingFlushRequired = true;
-      return;
-    }
     // Fast-path: flush meta events immediately at 16ms (60fps) for smooth streaming
     this.scheduleMessageFlush(16);
   }
@@ -4406,14 +3800,13 @@ export class TerragonDaemon {
     const runState = this.getOrCreateDaemonEventRunState(entry.threadChatId);
     const deltaSeq = runState.nextDeltaSeq;
     runState.nextDeltaSeq += 1;
+    if (entry.kind === "text" || entry.kind === "thinking") {
+      runState.streamedAssistantText = true;
+    }
     this.deltaBuffer.push({
       ...entry,
       deltaSeq,
     });
-    if (this.isFlushInProgress) {
-      this.pendingFlushRequired = true;
-      return;
-    }
     // Fast-path: flush deltas immediately at 16ms (60fps) for smooth streaming
     // This is independent of message buffer flush timing
     this.scheduleMessageFlush(16);
@@ -4428,12 +3821,6 @@ export class TerragonDaemon {
     this.runtime.logger.debug("Added message to buffer", {
       bufferSize: this.messageBuffer.length,
     });
-
-    // If a flush is in progress, mark that another flush is needed
-    if (this.isFlushInProgress) {
-      this.pendingFlushRequired = true;
-      return;
-    }
 
     this.scheduleMessageFlush(this.messageFlushDelay);
   }
@@ -4465,103 +3852,127 @@ export class TerragonDaemon {
   /**
    * Send all buffered messages to the API and clear the buffer
    */
-  private async flushMessageBuffer(): Promise<void> {
-    // Prevent concurrent flushes
-    if (this.isFlushInProgress) {
-      this.pendingFlushRequired = true;
-      return;
+  private flushMessageBuffer(): Promise<void> {
+    if (this.messageFlushTimer) {
+      clearTimeout(this.messageFlushTimer);
+      this.messageFlushTimer = null;
+      this.messageFlushTimerDueAtMs = null;
     }
 
-    if (
-      this.messageBuffer.length === 0 &&
-      this.deltaBuffer.length === 0 &&
-      this.metaEventBuffer.length === 0
-    ) {
+    const candidateThreadChatIds = new Set<string>();
+    for (const entry of this.messageBuffer) {
+      candidateThreadChatIds.add(entry.threadChatId);
+    }
+    for (const d of this.deltaBuffer) {
+      candidateThreadChatIds.add(d.threadChatId);
+    }
+    for (const entry of this.metaEventBuffer) {
+      candidateThreadChatIds.add(entry.threadChatId);
+    }
+
+    const now = Date.now();
+    let earliestDeferredMs: number | null = null;
+    const dispatched: Promise<void>[] = [];
+    for (const threadChatId of candidateThreadChatIds) {
+      const notBeforeMs = this.threadRetryNotBeforeMs.get(threadChatId);
+      if (notBeforeMs !== undefined && now < notBeforeMs) {
+        earliestDeferredMs =
+          earliestDeferredMs === null
+            ? notBeforeMs
+            : Math.min(earliestDeferredMs, notBeforeMs);
+        continue;
+      }
+      dispatched.push(this.enqueueThreadFlush(threadChatId));
+    }
+
+    if (earliestDeferredMs !== null) {
+      this.scheduleMessageFlush(Math.max(0, earliestDeferredMs - now));
+    }
+
+    if (dispatched.length === 0) {
       this.maybeCleanupAllDaemonEventRunStates();
-      return;
+      return Promise.resolve();
     }
+    return Promise.all(dispatched).then(() => {
+      this.maybeCleanupAllDaemonEventRunStates();
+    });
+  }
 
-    this.isFlushInProgress = true;
-    this.pendingFlushRequired = false;
-
-    let retryDelayOverrideMs: number | null = null;
-    try {
-      if (this.messageFlushTimer) {
-        clearTimeout(this.messageFlushTimer);
-        this.messageFlushTimer = null;
-        this.messageFlushTimerDueAtMs = null;
+  private enqueueThreadFlush(threadChatId: string): Promise<void> {
+    const previous =
+      this.threadFlushChains.get(threadChatId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() => this.flushThread(threadChatId));
+    this.threadFlushChains.set(threadChatId, next);
+    void next.finally(() => {
+      if (this.threadFlushChains.get(threadChatId) === next) {
+        this.threadFlushChains.delete(threadChatId);
       }
+    });
+    return next;
+  }
 
-      const messageBufferCopy = [...this.messageBuffer];
-      this.messageBuffer = [];
+  private async flushThread(threadChatId: string): Promise<void> {
+    this.threadRetryNotBeforeMs.delete(threadChatId);
 
-      // Group messages by threadChatId so each thread flushes independently
-      const groupsOrdered: Array<{
-        threadChatId: string;
-        entries: MessageBufferEntry[];
-      }> = [];
-      const groupMap = new Map<string, MessageBufferEntry[]>();
-      for (const entry of messageBufferCopy) {
-        const threadChatId = entry.threadChatId;
-        let group = groupMap.get(threadChatId);
-        if (!group) {
-          group = [];
-          groupMap.set(threadChatId, group);
-          groupsOrdered.push({ threadChatId, entries: group });
-        }
-        group.push(entry);
+    const groupEntries: MessageBufferEntry[] = [];
+    const remainingMessages: MessageBufferEntry[] = [];
+    for (const entry of this.messageBuffer) {
+      if (entry.threadChatId === threadChatId) {
+        groupEntries.push(entry);
+      } else {
+        remainingMessages.push(entry);
       }
+    }
+    this.messageBuffer = remainingMessages;
 
-      const handledEntries = new Set<MessageBufferEntry>();
-      const failedGroups: Array<{
-        threadId: string;
-        threadChatId: string;
-        messageCount: number;
-        error: unknown;
-      }> = [];
-      const timezone = this.getCurrentTimezone();
+    const timezone = this.getCurrentTimezone();
+    const handledEntries = new Set<MessageBufferEntry>();
+    const failures: Array<{
+      threadId: string;
+      threadChatId: string;
+      messageCount: number;
+      error: unknown;
+    }> = [];
+    let requeueForNewData = false;
 
-      for (const group of groupsOrdered) {
-        const entriesToSend = this.getPendingBatchEntriesForThread({
-          threadChatId: group.threadChatId,
-          entries: group.entries,
-        });
-        if (entriesToSend.length === 0) {
-          continue;
+    if (groupEntries.length > 0) {
+      const entriesToSend = this.getPendingBatchEntriesForThread({
+        threadChatId,
+        entries: groupEntries,
+      });
+      const activeToken = this.getActiveTokenForThread(threadChatId);
+      const canonicalToken =
+        activeToken ?? entriesToSend[entriesToSend.length - 1]!.token;
+      const staleTokenEntries: MessageBufferEntry[] = [];
+      const tokenScopedEntries: MessageBufferEntry[] = [];
+      for (const entry of entriesToSend) {
+        if (entry.token === canonicalToken) {
+          tokenScopedEntries.push(entry);
+        } else {
+          staleTokenEntries.push(entry);
         }
-        const activeToken = this.getActiveTokenForThread(group.threadChatId);
-        const canonicalToken =
-          activeToken ?? entriesToSend[entriesToSend.length - 1]!.token;
-        const staleTokenEntries: MessageBufferEntry[] = [];
-        const tokenScopedEntries: MessageBufferEntry[] = [];
-        for (const entry of entriesToSend) {
-          if (entry.token === canonicalToken) {
-            tokenScopedEntries.push(entry);
-          } else {
-            staleTokenEntries.push(entry);
-          }
+      }
+      if (staleTokenEntries.length > 0) {
+        this.runtime.logger.warn(
+          "Dropping stale buffered daemon messages with superseded token",
+          {
+            threadChatId,
+            droppedEntries: staleTokenEntries.length,
+          },
+        );
+        for (const staleEntry of staleTokenEntries) {
+          handledEntries.add(staleEntry);
         }
-        if (staleTokenEntries.length > 0) {
-          this.runtime.logger.warn(
-            "Dropping stale buffered daemon messages with superseded token",
-            {
-              threadChatId: group.threadChatId,
-              droppedEntries: staleTokenEntries.length,
-            },
-          );
-          for (const staleEntry of staleTokenEntries) {
-            handledEntries.add(staleEntry);
-          }
+      }
+      if (tokenScopedEntries.length === 0) {
+        if (entriesToSend.length < groupEntries.length) {
+          requeueForNewData = true;
         }
-        if (tokenScopedEntries.length === 0) {
-          if (entriesToSend.length < group.entries.length) {
-            this.pendingFlushRequired = true;
-          }
-          continue;
-        }
+      } else {
         const lastEntry = tokenScopedEntries[tokenScopedEntries.length - 1]!;
         const threadId = lastEntry.threadId;
-        const threadChatId = lastEntry.threadChatId;
         const token = lastEntry.token;
         const processedEntriesToSend =
           this.processMessagesForSending(tokenScopedEntries);
@@ -4569,349 +3980,389 @@ export class TerragonDaemon {
           for (const entry of tokenScopedEntries) {
             handledEntries.add(entry);
           }
-          if (entriesToSend.length < group.entries.length) {
-            this.pendingFlushRequired = true;
+          if (entriesToSend.length < groupEntries.length) {
+            requeueForNewData = true;
           }
-          continue;
-        }
-
-        try {
-          const messagesToSend = coalesceAssistantTextMessages(
-            processedEntriesToSend.map((e) => e.message),
-          );
-          const codexPreviousResponseEntry = [...processedEntriesToSend]
-            .reverse()
-            .find((entry) => entry.codexPreviousResponseId !== undefined);
-          const codexPreviousResponseId = codexPreviousResponseEntry
-            ? codexPreviousResponseEntry.codexPreviousResponseId
-            : undefined;
-          await this.sendMessagesToAPI({
-            messages: messagesToSend,
-            entryCount: tokenScopedEntries.length,
-            timezone,
-            token,
-            threadId,
-            threadChatId,
-            codexPreviousResponseId,
-          });
-          for (const entry of entriesToSend) {
-            handledEntries.add(entry);
-          }
-          if (entriesToSend.length < group.entries.length) {
-            this.pendingFlushRequired = true;
-          }
-        } catch (error) {
-          failedGroups.push({
-            threadId,
-            threadChatId,
-            messageCount: processedEntriesToSend.length,
-            error,
-          });
-        }
-      }
-
-      // Send any remaining deltas / meta events that weren't drained by
-      // sendMessagesToAPI (e.g., delta-only or meta-only flush with no
-      // messages for that threadChatId).
-      if (this.deltaBuffer.length > 0 || this.metaEventBuffer.length > 0) {
-        type RemainingTail = {
-          threadId: string;
-          threadChatId: string;
-          token: string;
-          deltaEntries: Array<
-            DaemonDelta & {
-              threadId: string;
-              threadChatId: string;
-              token: string;
-            }
-          >;
-          deltas: DaemonDelta[];
-          metaEventEntries: Array<{
-            metaEvent: ThreadMetaEvent;
-            threadId: string;
-            threadChatId: string;
-            token: string;
-          }>;
-          metaEvents: ThreadMetaEvent[];
-        };
-        const tailByThread = new Map<string, RemainingTail>();
-        const ensure = (
-          threadChatId: string,
-          threadId: string,
-          token: string,
-        ): RemainingTail => {
-          let t = tailByThread.get(threadChatId);
-          if (!t) {
-            t = {
+        } else {
+          try {
+            const messagesToSend = coalesceAssistantTextMessages(
+              processedEntriesToSend.map((e) => e.message),
+            );
+            const codexPreviousResponseEntry = [...processedEntriesToSend]
+              .reverse()
+              .find((entry) => entry.codexPreviousResponseId !== undefined);
+            const codexPreviousResponseId = codexPreviousResponseEntry
+              ? codexPreviousResponseEntry.codexPreviousResponseId
+              : undefined;
+            await this.sendMessagesToAPI({
+              messages: messagesToSend,
+              entryCount: tokenScopedEntries.length,
+              timezone,
+              token,
               threadId,
               threadChatId,
-              token,
-              deltaEntries: [],
-              deltas: [],
-              metaEventEntries: [],
-              metaEvents: [],
-            };
-            tailByThread.set(threadChatId, t);
-          }
-          return t;
-        };
-        const droppedDeltaCounts = new Map<string, number>();
-        const droppedMetaCounts = new Map<string, number>();
-        for (const d of this.deltaBuffer) {
-          const activeToken = this.getActiveTokenForThread(d.threadChatId);
-          if (activeToken && d.token !== activeToken) {
-            const previous = droppedDeltaCounts.get(d.threadChatId) ?? 0;
-            droppedDeltaCounts.set(d.threadChatId, previous + 1);
-            continue;
-          }
-          const tail = ensure(d.threadChatId, d.threadId, d.token);
-          tail.deltaEntries.push(d);
-          tail.deltas.push({
-            messageId: d.messageId,
-            partIndex: d.partIndex,
-            deltaSeq: d.deltaSeq,
-            kind: d.kind,
-            text: d.text,
-            ...(d.toolCallId !== undefined ? { toolCallId: d.toolCallId } : {}),
-            ...(d.stream !== undefined ? { stream: d.stream } : {}),
-          });
-        }
-        for (const entry of this.metaEventBuffer) {
-          const activeToken = this.getActiveTokenForThread(entry.threadChatId);
-          if (activeToken && entry.token !== activeToken) {
-            const previous = droppedMetaCounts.get(entry.threadChatId) ?? 0;
-            droppedMetaCounts.set(entry.threadChatId, previous + 1);
-            continue;
-          }
-          const tail = ensure(entry.threadChatId, entry.threadId, entry.token);
-          tail.metaEventEntries.push(entry);
-          tail.metaEvents.push(entry.metaEvent);
-        }
-        for (const [threadChatId, droppedCount] of droppedDeltaCounts) {
-          this.runtime.logger.warn(
-            "Dropping stale daemon deltas with superseded token",
-            {
-              threadChatId,
-              droppedCount,
-            },
-          );
-        }
-        for (const [threadChatId, droppedCount] of droppedMetaCounts) {
-          this.runtime.logger.warn(
-            "Dropping stale daemon meta events with superseded token",
-            {
-              threadChatId,
-              droppedCount,
-            },
-          );
-        }
-        this.deltaBuffer = [];
-        this.metaEventBuffer = [];
-
-        for (const tail of tailByThread.values()) {
-          try {
-            const runState = this.getOrCreateDaemonEventRunState(
-              tail.threadChatId,
-            );
-            const deltaEnvelope = this.createDeltaOnlyDaemonEventEnvelope(
-              tail.threadChatId,
-            );
-            const tailPayload: DaemonEventAPIBody = {
-              messages: [],
-              threadId: tail.threadId,
-              timezone,
-              threadChatId: tail.threadChatId,
-              transportMode: runState.transportMode,
-              protocolVersion: runState.protocolVersion,
-              acpServerId: runState.acpServerId,
-              acpSessionId: runState.acpSessionId,
-              payloadVersion: deltaEnvelope.payloadVersion,
-              eventId: deltaEnvelope.eventId,
-              runId: deltaEnvelope.runId,
-              seq: deltaEnvelope.seq,
-              ...(tail.deltas.length > 0 ? { deltas: tail.deltas } : {}),
-              ...(tail.metaEvents.length > 0
-                ? { metaEvents: tail.metaEvents }
-                : {}),
-            };
-            await this.runtime.serverPost(tailPayload, tail.token);
-          } catch (error) {
-            if (!isNonRetryableAuthError(error)) {
-              this.deltaBuffer = [...tail.deltaEntries, ...this.deltaBuffer];
-              this.metaEventBuffer = [
-                ...tail.metaEventEntries,
-                ...this.metaEventBuffer,
-              ];
+              codexPreviousResponseId,
+            });
+            for (const entry of entriesToSend) {
+              handledEntries.add(entry);
             }
-            failedGroups.push({
-              threadId: tail.threadId,
-              threadChatId: tail.threadChatId,
-              messageCount: 0,
+            if (entriesToSend.length < groupEntries.length) {
+              requeueForNewData = true;
+            }
+          } catch (error) {
+            failures.push({
+              threadId,
+              threadChatId,
+              messageCount: processedEntriesToSend.length,
               error,
             });
-            this.runtime.logger.warn("Tail flush failed", {
-              threadId: tail.threadId,
-              deltaCount: tail.deltas.length,
-              metaEventCount: tail.metaEvents.length,
-              error: formatError(error),
-            });
           }
         }
       }
+    }
 
-      const unsentEntries = messageBufferCopy.filter(
-        (entry) => !handledEntries.has(entry),
-      );
-      if (unsentEntries.length > 0) {
-        this.messageBuffer = [...unsentEntries, ...this.messageBuffer];
-        if (failedGroups.length === 0) {
-          this.pendingFlushRequired = true;
+    const myDeltaEntries: typeof this.deltaBuffer = [];
+    const remainingDeltas: typeof this.deltaBuffer = [];
+    for (const d of this.deltaBuffer) {
+      if (d.threadChatId === threadChatId) {
+        myDeltaEntries.push(d);
+      } else {
+        remainingDeltas.push(d);
+      }
+    }
+    const myMetaEntries: typeof this.metaEventBuffer = [];
+    const remainingMeta: typeof this.metaEventBuffer = [];
+    for (const entry of this.metaEventBuffer) {
+      if (entry.threadChatId === threadChatId) {
+        myMetaEntries.push(entry);
+      } else {
+        remainingMeta.push(entry);
+      }
+    }
+
+    if (myDeltaEntries.length > 0 || myMetaEntries.length > 0) {
+      this.deltaBuffer = remainingDeltas;
+      this.metaEventBuffer = remainingMeta;
+
+      const activeToken = this.getActiveTokenForThread(threadChatId);
+      const keptDeltaEntries: typeof this.deltaBuffer = [];
+      const deltas: DaemonDelta[] = [];
+      let droppedDeltaCount = 0;
+      let tailThreadId: string | null = null;
+      let tailToken: string | null = null;
+      for (const d of myDeltaEntries) {
+        if (activeToken && d.token !== activeToken) {
+          droppedDeltaCount += 1;
+          continue;
         }
+        tailThreadId = d.threadId;
+        tailToken = d.token;
+        keptDeltaEntries.push(d);
+        deltas.push({
+          messageId: d.messageId,
+          partIndex: d.partIndex,
+          deltaSeq: d.deltaSeq,
+          kind: d.kind,
+          text: d.text,
+          ...(d.toolCallId !== undefined ? { toolCallId: d.toolCallId } : {}),
+          ...(d.stream !== undefined ? { stream: d.stream } : {}),
+        });
+      }
+      const keptMetaEntries: typeof this.metaEventBuffer = [];
+      const metaEvents: ThreadMetaEvent[] = [];
+      let droppedMetaCount = 0;
+      for (const entry of myMetaEntries) {
+        if (activeToken && entry.token !== activeToken) {
+          droppedMetaCount += 1;
+          continue;
+        }
+        tailThreadId = entry.threadId;
+        tailToken = entry.token;
+        keptMetaEntries.push(entry);
+        metaEvents.push(entry.metaEvent);
+      }
+      if (droppedDeltaCount > 0) {
+        this.runtime.logger.warn(
+          "Dropping stale daemon deltas with superseded token",
+          { threadChatId, droppedCount: droppedDeltaCount },
+        );
+      }
+      if (droppedMetaCount > 0) {
+        this.runtime.logger.warn(
+          "Dropping stale daemon meta events with superseded token",
+          { threadChatId, droppedCount: droppedMetaCount },
+        );
       }
 
-      if (failedGroups.length > 0) {
-        // Detect permanent auth errors (401/403) — drop messages instead of retrying forever.
-        // These indicate an invalid token that won't become valid on its own.
-        const retryableGroups: typeof failedGroups = [];
-        const authDroppedThreadChatIds = new Set<string>();
-        for (const g of failedGroups) {
-          if (isNonRetryableAuthError(g.error)) {
-            this.runtime.logger.error(
-              "Permanent auth error — dropping messages (token is invalid, retrying won't help)",
-              {
-                error: formatError(g.error),
-                messageCount: g.messageCount,
-                threadId: g.threadId,
-                threadChatId: g.threadChatId,
-              },
-            );
-            this.getRetryBackoff(g.threadChatId).reset();
-            // Remove these messages from the buffer
-            this.messageBuffer = this.messageBuffer.filter(
-              (entry) => entry.threadChatId !== g.threadChatId,
-            );
-            this.clearPendingDaemonEventEnvelope(g.threadChatId);
-            authDroppedThreadChatIds.add(g.threadChatId);
-            continue;
-          }
-          retryableGroups.push(g);
-        }
-        for (const threadChatId of authDroppedThreadChatIds) {
-          this.stopHeartbeat(threadChatId);
-          this.killActiveProcess(threadChatId);
-          const appServerContext = this.appServerRunContexts.get(threadChatId);
-          if (!appServerContext) {
-            this.markDaemonEventRunStateForCleanup(threadChatId);
-            continue;
-          }
-          appServerContext.isStopping = true;
-          this.clearAppServerWatchdog(appServerContext);
-          appServerContext.rejectTurnComplete(
-            new Error(
-              "Codex app-server turn stopped after non-retryable daemon auth failure",
-            ),
-          );
-          this.appServerRunContexts.delete(threadChatId);
-          void appServerContext.manager.kill().catch((error) => {
-            this.runtime.logger.error(
-              "Failed to kill codex app-server after non-retryable auth failure",
-              {
-                threadChatId,
-                error: formatError(error),
-              },
-            );
+      if (
+        (deltas.length > 0 || metaEvents.length > 0) &&
+        tailThreadId !== null &&
+        tailToken !== null
+      ) {
+        try {
+          const runState = this.getOrCreateDaemonEventRunState(threadChatId);
+          const deltaEnvelope =
+            this.createDeltaOnlyDaemonEventEnvelope(threadChatId);
+          const tailAgUiEvents = buildStandardAgUiWireRows({
+            runId: deltaEnvelope.runId,
+            canonicalEvents: [],
+            deltas,
           });
-          this.markDaemonEventRunStateForCleanup(threadChatId);
+          const tailPayload: DaemonEventAPIBody = {
+            messages: [],
+            threadId: tailThreadId,
+            timezone,
+            threadChatId,
+            transportMode: runState.transportMode,
+            protocolVersion: runState.protocolVersion,
+            acpServerId: runState.acpServerId,
+            acpSessionId: runState.acpSessionId,
+            payloadVersion: deltaEnvelope.payloadVersion,
+            eventId: deltaEnvelope.eventId,
+            runId: deltaEnvelope.runId,
+            seq: deltaEnvelope.seq,
+            ...(tailAgUiEvents.length > 0
+              ? { agUiEvents: tailAgUiEvents }
+              : {}),
+            ...(deltas.length > 0 ? { deltas } : {}),
+            ...(metaEvents.length > 0 ? { metaEvents } : {}),
+          };
+          this.journalOutboundEvent(tailPayload, tailToken);
+          await this.runtime.serverPost(tailPayload, tailToken);
+          this.journalOutboundAck(tailPayload);
+        } catch (error) {
+          if (!isNonRetryableAuthError(error)) {
+            this.deltaBuffer = [...keptDeltaEntries, ...this.deltaBuffer];
+            this.metaEventBuffer = [
+              ...keptMetaEntries,
+              ...this.metaEventBuffer,
+            ];
+          }
+          failures.push({
+            threadId: tailThreadId,
+            threadChatId,
+            messageCount: 0,
+            error,
+          });
+          this.runtime.logger.warn("Tail flush failed", {
+            threadId: tailThreadId,
+            deltaCount: deltas.length,
+            metaEventCount: metaEvents.length,
+            error: formatError(error),
+          });
         }
+      }
+    }
 
-        const allClaimInProgress =
-          retryableGroups.length > 0 &&
-          retryableGroups.every((failedGroup) =>
-            isDaemonEventClaimInProgressError(failedGroup.error),
+    const authFailure = failures.find((f) => isNonRetryableAuthError(f.error));
+    if (authFailure) {
+      this.runtime.logger.error(
+        "Permanent auth error — dropping messages (token is invalid, retrying won't help)",
+        {
+          error: formatError(authFailure.error),
+          messageCount: authFailure.messageCount,
+          threadId: authFailure.threadId,
+          threadChatId,
+        },
+      );
+      this.getRetryBackoff(threadChatId).reset();
+      this.messageBuffer = this.messageBuffer.filter(
+        (entry) => entry.threadChatId !== threadChatId,
+      );
+      this.clearPendingDaemonEventEnvelope(threadChatId);
+      this.stopHeartbeat(threadChatId);
+      this.killActiveProcess(threadChatId);
+      const appServerContext = this.appServerRunContexts.get(threadChatId);
+      if (appServerContext) {
+        appServerContext.isStopping = true;
+        this.clearAppServerWatchdog(appServerContext);
+        appServerContext.rejectTurnComplete(
+          new Error(
+            "Codex app-server turn stopped after non-retryable daemon auth failure",
+          ),
+        );
+        this.appServerRunContexts.delete(threadChatId);
+        void appServerContext.manager.kill().catch((error) => {
+          this.runtime.logger.error(
+            "Failed to kill codex app-server after non-retryable auth failure",
+            {
+              threadChatId,
+              error: formatError(error),
+            },
           );
-        if (allClaimInProgress) {
-          for (const failedGroup of retryableGroups) {
-            this.getRetryBackoff(failedGroup.threadChatId).reset();
-            this.runtime.logger.warn(
-              "Daemon event claim is in progress; preserving payload identity and retrying",
-              {
-                error: formatError(failedGroup.error),
-                messageCount: failedGroup.messageCount,
-                threadId: failedGroup.threadId,
-                threadChatId: failedGroup.threadChatId,
-                retryingIn: DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS,
-              },
-            );
-          }
-          retryDelayOverrideMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
-          this.pendingFlushRequired = true;
-        } else if (retryableGroups.length > 0) {
-          for (const failedGroup of retryableGroups) {
-            const backoff = this.getRetryBackoff(failedGroup.threadChatId);
-            backoff.increment();
-            const retryInOrNull = backoff.retryIn();
-            if (retryInOrNull === null) {
-              this.runtime.logger.error(
-                "Max retries reached for this message group, scheduling fallback retry",
-                {
-                  error: formatError(failedGroup.error),
-                  messageCount: failedGroup.messageCount,
-                  threadId: failedGroup.threadId,
-                  threadChatId: failedGroup.threadChatId,
-                  attempt: backoff.retryAttempt,
-                },
-              );
-              backoff.reset();
-            } else {
-              this.runtime.logger.error(
-                "API call failed for message group, will retry messages",
-                {
-                  error: formatError(failedGroup.error),
-                  messageCount: failedGroup.messageCount,
-                  threadId: failedGroup.threadId,
-                  threadChatId: failedGroup.threadChatId,
-                  retryingIn: retryInOrNull,
-                  attempt: backoff.retryAttempt,
-                },
-              );
-            }
-          }
-          this.pendingFlushRequired = true;
-        }
-      } else if (handledEntries.size > 0) {
-        // Reset backoff for successfully flushed threads
-        for (const entry of handledEntries) {
-          this.getRetryBackoff(entry.threadChatId).reset();
-        }
-      } else if (handledEntries.size === 0) {
-        this.runtime.logger.info("All messages filtered out, nothing to send");
+        });
       }
-    } finally {
-      this.isFlushInProgress = false;
+      this.markDaemonEventRunStateForCleanup(threadChatId);
+      return;
     }
-    // If new messages arrived while we were flushing, or if we need to retry
-    if (
-      this.pendingFlushRequired &&
-      (this.messageBuffer.length > 0 ||
-        this.deltaBuffer.length > 0 ||
-        this.metaEventBuffer.length > 0)
-    ) {
-      // Compute minimum retry delay across all threads that have pending retries
-      let minRetryDelay: number | null = null;
-      for (const [, backoff] of this.retryBackoffs) {
-        const delay = backoff.retryIn();
-        if (
-          delay !== null &&
-          (minRetryDelay === null || delay < minRetryDelay)
-        ) {
-          minRetryDelay = delay;
+
+    const unsentEntries = groupEntries.filter(
+      (entry) => !handledEntries.has(entry),
+    );
+    if (unsentEntries.length > 0) {
+      this.messageBuffer = [...unsentEntries, ...this.messageBuffer];
+    }
+
+    if (failures.length > 0) {
+      const backoff = this.getRetryBackoff(threadChatId);
+      let retryDelayMs: number;
+      if (failures.every((f) => isDaemonEventClaimInProgressError(f.error))) {
+        backoff.reset();
+        this.runtime.logger.warn(
+          "Daemon event claim is in progress; preserving payload identity and retrying",
+          {
+            error: formatError(failures[0]!.error),
+            messageCount: failures[0]!.messageCount,
+            threadId: failures[0]!.threadId,
+            threadChatId,
+            retryingIn: DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS,
+          },
+        );
+        retryDelayMs = DAEMON_EVENT_CLAIM_IN_PROGRESS_RETRY_MS;
+      } else {
+        backoff.increment();
+        const retryInOrNull = backoff.retryIn();
+        if (retryInOrNull === null) {
+          this.runtime.logger.error(
+            "Max retries reached for this message group, scheduling fallback retry",
+            {
+              error: formatError(failures[0]!.error),
+              messageCount: failures[0]!.messageCount,
+              threadId: failures[0]!.threadId,
+              threadChatId,
+              attempt: backoff.retryAttempt,
+            },
+          );
+          backoff.reset();
+          retryDelayMs = this.messageFlushDelay;
+        } else {
+          this.runtime.logger.error(
+            "API call failed for message group, will retry messages",
+            {
+              error: formatError(failures[0]!.error),
+              messageCount: failures[0]!.messageCount,
+              threadId: failures[0]!.threadId,
+              threadChatId,
+              retryingIn: retryInOrNull,
+              attempt: backoff.retryAttempt,
+            },
+          );
+          retryDelayMs = retryInOrNull;
         }
       }
-      const delay =
-        retryDelayOverrideMs ?? minRetryDelay ?? this.messageFlushDelay;
-      this.scheduleMessageFlush(delay, { replaceExisting: true });
+      this.threadRetryNotBeforeMs.set(threadChatId, Date.now() + retryDelayMs);
+      this.scheduleMessageFlush(retryDelayMs);
+      return;
     }
-    this.maybeCleanupAllDaemonEventRunStates();
+
+    if (handledEntries.size > 0) {
+      this.getRetryBackoff(threadChatId).reset();
+    } else if (groupEntries.length > 0) {
+      this.runtime.logger.info("All messages filtered out, nothing to send");
+    }
+
+    if (requeueForNewData) {
+      this.scheduleMessageFlush(this.messageFlushDelay);
+    }
+  }
+
+  private isJournalableOutboundBody(
+    body: DaemonEventAPIBody,
+  ): body is DaemonEventAPIBody & {
+    runId: string;
+    eventId: string;
+    seq: number;
+  } {
+    if (typeof body.runId !== "string" || body.runId.length === 0) {
+      return false;
+    }
+    if (typeof body.eventId !== "string" || body.eventId.length === 0) {
+      return false;
+    }
+    if (typeof body.seq !== "number") {
+      return false;
+    }
+    return (
+      (Array.isArray(body.messages) && body.messages.length > 0) ||
+      (Array.isArray(body.deltas) && body.deltas.length > 0) ||
+      (Array.isArray(body.metaEvents) && body.metaEvents.length > 0)
+    );
+  }
+
+  private journalOutboundEvent(body: DaemonEventAPIBody, token: string): void {
+    if (!this.isJournalableOutboundBody(body)) {
+      return;
+    }
+    this.outboxJournal.recordEvent({
+      threadChatId: body.threadChatId,
+      runId: body.runId,
+      eventId: body.eventId,
+      seq: body.seq,
+      token,
+      body,
+    });
+  }
+
+  private journalOutboundAck(body: DaemonEventAPIBody): void {
+    if (!this.isJournalableOutboundBody(body)) {
+      return;
+    }
+    this.outboxJournal.recordAck({
+      threadChatId: body.threadChatId,
+      runId: body.runId,
+      eventId: body.eventId,
+      seq: body.seq,
+    });
+  }
+
+  private async replayOutboxJournal(): Promise<void> {
+    let unacked: Awaited<ReturnType<OutboxJournal["loadUnacked"]>>;
+    try {
+      unacked = await this.outboxJournal.loadUnacked();
+    } catch (error) {
+      this.runtime.logger.error(
+        "Outbox journal replay: load failed; skipping recovery",
+        { error: formatError(error) },
+      );
+      return;
+    }
+    if (unacked.length === 0) {
+      return;
+    }
+    this.runtime.logger.info(
+      "Outbox journal replay: re-sending unacked events",
+      { eventCount: unacked.length },
+    );
+    for (const record of unacked) {
+      try {
+        await this.runtime.serverPost(record.body, record.token);
+        this.outboxJournal.recordAck({
+          threadChatId: record.threadChatId,
+          runId: record.runId,
+          eventId: record.eventId,
+          seq: record.seq,
+        });
+      } catch (error) {
+        if (isNonRetryableAuthError(error)) {
+          this.outboxJournal.recordAck({
+            threadChatId: record.threadChatId,
+            runId: record.runId,
+            eventId: record.eventId,
+            seq: record.seq,
+          });
+          this.runtime.logger.warn(
+            "Outbox journal replay: dropping event (non-retryable auth)",
+            { eventId: record.eventId, error: formatError(error) },
+          );
+        } else {
+          this.runtime.logger.warn(
+            "Outbox journal replay: re-send failed; will retry next boot",
+            { eventId: record.eventId, error: formatError(error) },
+          );
+        }
+      }
+    }
+    await this.outboxJournal.flush();
   }
 
   /**
@@ -5009,6 +4460,12 @@ export class TerragonDaemon {
       }
       this.metaEventBuffer = remainingMetaEvents;
 
+      const agUiEvents = buildStandardAgUiWireRows({
+        runId: runState.runId,
+        canonicalEvents,
+        deltas: matchingDeltas,
+      });
+
       const payload: DaemonEventAPIBody = {
         messages,
         threadId,
@@ -5024,13 +4481,16 @@ export class TerragonDaemon {
         ...(envelopeV2 ?? {}),
         ...(headShaAtCompletion ? { headShaAtCompletion } : {}),
         ...(canonicalEvents.length > 0 ? { canonicalEvents } : {}),
+        ...(agUiEvents.length > 0 ? { agUiEvents } : {}),
         ...(matchingDeltas.length > 0 ? { deltas: matchingDeltas } : {}),
         ...(matchingMetaEvents.length > 0
           ? { metaEvents: matchingMetaEvents }
           : {}),
       };
 
+      this.journalOutboundEvent(payload, token);
       await this.runtime.serverPost(payload, token);
+      this.journalOutboundAck(payload);
       if (envelopeV2) {
         this.markDaemonEventEnvelopeDelivered({
           threadChatId,
@@ -5156,12 +4616,9 @@ export class TerragonDaemon {
     }
     // Send any remaining messages in the buffer
     this.killAllActiveProcesses();
-    // Wait for any in-progress flush to complete before final flush
-    const teardownFlushStart = Date.now();
-    while (this.isFlushInProgress && Date.now() - teardownFlushStart < 10_000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await Promise.allSettled([...this.threadFlushChains.values()]);
     await this.flushMessageBuffer();
+    await this.outboxJournal.shutdown();
     // Send a kill message to the unix socket to flush our blocking listeners.
     await writeToUnixSocket({
       unixSocketPath: this.runtime.unixSocketPath,

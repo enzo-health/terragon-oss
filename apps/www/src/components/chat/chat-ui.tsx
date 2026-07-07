@@ -34,17 +34,14 @@ import {
 import { useFeatureFlag } from "@/hooks/use-feature-flag";
 import { usePlatform } from "@/hooks/use-platform";
 import { ThreadIntentProvider } from "@/hooks/use-thread-intent";
-import { useScrollToBottom } from "@/hooks/useScrollToBottom";
 import { fetchAgUiHistoryMessages } from "@/lib/ag-ui-history-fetch";
 import { threadDiffQueryOptions } from "@/queries/thread-queries";
 import {
   type ChatUICoreData,
-  type ChatUIDialogData,
   type ChatUIErrorState,
   ChatUILayout,
   type ChatUIOptimisticHandlers,
   type ChatUIPanelState,
-  type ChatUIScrollState,
   type ChatUIViewModelData,
 } from "./chat-ui-layout";
 import {
@@ -52,7 +49,8 @@ import {
   useSecondaryPanel,
   useThreadDocumentTitleAndFavicon,
 } from "./hooks";
-import { LeafLoading } from "./leaf-loading";
+import { Loader } from "@/components/ai/loader";
+import type { ScrollController } from "./conversation/scroll-bridge";
 import { ThreadProvider, useThreadContext } from "./thread-provider";
 import {
   createOptimisticPermissionModeUpdatedEvent,
@@ -150,28 +148,18 @@ function ChatUIContent() {
   } = useThreadContext();
   const queryClient = useQueryClient();
 
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const scrollControllerRef = useRef<ScrollController | null>(null);
   const promptBoxRef = useRef<{
     focus: () => void;
     setPermissionMode: (mode: "allowAll" | "plan") => void;
   } | null>(null);
 
-  const { messagesEndRef, isAtBottom, forceScrollToBottom } = useScrollToBottom(
-    { observedRef: transcriptRef },
-  );
   const platform = usePlatform();
   const repoFilePreviewEnabled = useFeatureFlag("repoFilePreview");
   const [error, setError] = useState<ThreadErrorMessage | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
-  // Defer scroll-to-bottom button visibility so the initial auto-scroll can fire first.
-  const [hasInitialized, setHasInitialized] = useState(false);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setHasInitialized(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   const {
     shouldAutoOpenSecondaryPanel,
@@ -201,21 +189,16 @@ function ChatUIContent() {
     threadChatId: threadChat.id,
   });
 
-  const {
-    thread,
-    threadViewSnapshot,
-    lastUsedModel,
-    redoDialogData,
-    forkDialogData,
-  } = useChatViewSnapshot({
-    shell,
-    threadChat,
-    threadDiff: threadDiff ?? null,
-    threadChatSource,
-    agent: chatAgent,
-    capturedRunId,
-    threadId,
-  });
+  const { thread, threadViewSnapshot, lastUsedModel, redoDialogData } =
+    useChatViewSnapshot({
+      shell,
+      threadChat,
+      threadDiff: threadDiff ?? null,
+      threadChatSource,
+      agent: chatAgent,
+      capturedRunId,
+      threadId,
+    });
 
   useThreadDocumentTitleAndFavicon({
     name: shell.name ?? "",
@@ -285,12 +268,6 @@ function ChatUIContent() {
   });
 
   const dispatch = threadViewModel.dispatchThreadViewEvent;
-  // Single-in-flight correlation for optimistic-submit rollback. The runtime
-  // onError path carries no clientSubmissionId, so we stash the latest pending
-  // id here and read it back in onAppendRejected. The reducer also keys its
-  // stash off the authoritative status change. v1 supports one submit in
-  // flight; multi-submit is a tracked non-goal.
-  const pendingClientSubmissionIdRef = useRef<string | null>(null);
   const onOptimisticPermissionModeUpdate = useCallback(
     (mode: "allowAll" | "plan") =>
       dispatch(createOptimisticPermissionModeUpdatedEvent(mode)),
@@ -366,32 +343,6 @@ function ChatUIContent() {
     ? handleOpenRepoTree
     : undefined;
 
-  const toolProps = useMemo(
-    () => ({
-      threadId,
-      threadChatId: threadViewModel.threadChatId,
-      isReadOnly,
-      promptBoxRef,
-      childThreads: shell.childThreads ?? [],
-      githubRepoFullName: thread.githubRepoFullName ?? "",
-      repoBaseBranchName: thread.repoBaseBranchName ?? "main",
-      branchName: thread.branchName ?? null,
-      onOptimisticPermissionModeUpdate,
-      onOpenRepoFile,
-    }),
-    [
-      isReadOnly,
-      onOptimisticPermissionModeUpdate,
-      shell.childThreads,
-      thread.branchName,
-      thread.githubRepoFullName,
-      thread.repoBaseBranchName,
-      threadViewModel.threadChatId,
-      threadId,
-      onOpenRepoFile,
-    ],
-  );
-
   const reconcileActiveChatFromServer = useReconcileActiveChatFromServer({
     threadId,
     threadChatId,
@@ -434,14 +385,10 @@ function ChatUIContent() {
   });
 
   const scrollToTop = useCallback(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector(
-        '[data-slot="scroll-area-viewport"]',
-      );
-      if (scrollViewport) {
-        scrollViewport.scrollTop = 0;
-      }
-    }
+    scrollControllerRef.current?.scrollToTop();
+  }, []);
+  const forceScrollToBottom = useCallback(() => {
+    scrollControllerRef.current?.scrollToBottom();
   }, []);
   const { handleRetry, isRetrying } = useRetryThreadMutation({
     threadId,
@@ -472,7 +419,6 @@ function ChatUIContent() {
       optimisticStatus: ThreadStatus,
       clientSubmissionId: string,
     ) => {
-      pendingClientSubmissionIdRef.current = clientSubmissionId;
       dispatch(
         createOptimisticUserSubmittedEvent({
           message: userMessage,
@@ -495,17 +441,12 @@ function ChatUIContent() {
       kind: "rejected" | "lock-held";
       clientSubmissionId: string | null;
     }) => {
-      // Prefer the id carried on the error payload (the typed onError seam);
-      // fall back to the single-in-flight ref when the runtime did not carry one
-      // (older/unpatched runtime path). The ref deletion is a tracked follow-up
-      // once the carried id is proven on a live runtime.
       const clientSubmissionId =
-        rejection.clientSubmissionId ?? pendingClientSubmissionIdRef.current;
+        rejection.clientSubmissionId ??
+        threadViewModel.pendingClientSubmissionId;
       if (!clientSubmissionId) {
         return;
       }
-      // Consume the pending id regardless so a later error can't reuse it.
-      pendingClientSubmissionIdRef.current = null;
       // Only revert on lock-held: that is an unambiguous append rejection — the
       // server refused the run, so the message was never accepted. A generic
       // runtime error may instead be a later stream/resume failure AFTER the
@@ -518,12 +459,17 @@ function ChatUIContent() {
       dispatch(createOptimisticUserSubmitRejectedEvent({ clientSubmissionId }));
       void reconcileActiveChatFromServer();
     },
-    [dispatch, reconcileActiveChatFromServer],
+    [
+      dispatch,
+      reconcileActiveChatFromServer,
+      threadViewModel.pendingClientSubmissionId,
+    ],
   );
 
-  // Group props by concern so `<ChatUILayout/>` sees a stable ~7-prop signature
-  // instead of 49 individual fields. Each group is `useMemo`-wrapped so its
-  // identity is stable across re-renders that don't touch the underlying data.
+  // Group props by concern so `<ChatUILayout/>` sees a small grouped signature
+  // instead of dozens of individual fields. Each group is `useMemo`-wrapped so
+  // its identity is stable across re-renders that don't touch the underlying
+  // data; identity-stable scroll refs and callbacks are passed flat.
   // The `agent` early-null guard below is intentionally placed AFTER the hooks
   // (the conditional `null` flows through the memo dependency arrays via the
   // typed-narrowing assertion at the render site).
@@ -540,6 +486,7 @@ function ChatUIContent() {
             thread,
             threadWithViewModelStatus,
             setReplayCursor: agUiTransport.setReplayCursor,
+            redoDialogData,
           }
         : null,
     [
@@ -552,6 +499,7 @@ function ChatUIContent() {
       threadId,
       threadWithViewModelStatus,
       agUiTransport.setReplayCursor,
+      redoDialogData,
     ],
   );
 
@@ -563,7 +511,6 @@ function ChatUIContent() {
       artifactDescriptors,
       effectiveThreadStatus,
       isAgentCurrentlyWorking,
-      toolProps,
       lastUsedModel,
       handleOpenArtifact,
       onOpenRepoFile,
@@ -582,28 +529,6 @@ function ChatUIContent() {
       loadAgUiHistoryMessages,
       queuedMessages,
       threadViewModel,
-      toolProps,
-    ],
-  );
-
-  const scrollState = useMemo<ChatUIScrollState>(
-    () => ({
-      transcriptRef,
-      scrollAreaRef,
-      chatContainerRef,
-      messagesEndRef,
-      promptBoxRef,
-      forceScrollToBottom,
-      scrollToTop,
-      isAtBottom,
-      hasInitialized,
-    }),
-    [
-      forceScrollToBottom,
-      hasInitialized,
-      isAtBottom,
-      messagesEndRef,
-      scrollToTop,
     ],
   );
 
@@ -617,11 +542,6 @@ function ChatUIContent() {
       platform,
     }),
     [activeArtifactId, platform, shouldRenderSecondaryPanel, showTerminal],
-  );
-
-  const dialogData = useMemo<ChatUIDialogData>(
-    () => ({ redoDialogData, forkDialogData }),
-    [forkDialogData, redoDialogData],
   );
 
   const optimisticHandlers = useMemo<ChatUIOptimisticHandlers>(
@@ -658,7 +578,9 @@ function ChatUIContent() {
     // agent.
     return (
       <div className="flex flex-col h-full w-full items-center justify-center">
-        <LeafLoading message="Loading task…" />
+        <Loader variant="shimmer" dots className="text-sm">
+          Loading task…
+        </Loader>
       </div>
     );
   }
@@ -668,11 +590,14 @@ function ChatUIContent() {
       <ChatUILayout
         coreData={coreData}
         viewModel={viewModel}
-        scrollState={scrollState}
         panelState={panelState}
-        dialogData={dialogData}
         optimisticHandlers={optimisticHandlers}
         errorState={errorState}
+        chatContainerRef={chatContainerRef}
+        scrollController={scrollControllerRef}
+        promptBoxRef={promptBoxRef}
+        forceScrollToBottom={forceScrollToBottom}
+        scrollToTop={scrollToTop}
       />
     </ThreadIntentProvider>
   );

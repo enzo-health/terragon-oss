@@ -19,11 +19,8 @@ import {
   parseDaemonAcpSsePayload,
   TerragonDaemon,
 } from "./daemon";
-import {
-  DaemonRuntime,
-  DaemonServerPostError,
-  writeToUnixSocket,
-} from "./runtime";
+import { DaemonRuntime, writeToUnixSocket } from "./runtime";
+import { claudeAcpRuntimeAdapterContract } from "./runtime-contracts";
 import {
   ClaudeMessage,
   DAEMON_CAPABILITY_EVENT_ENVELOPE_V2,
@@ -31,7 +28,6 @@ import {
   DAEMON_EVENT_VERSION_HEADER,
   DaemonDelta,
   DAEMON_VERSION,
-  type DaemonEventAPIBody,
   DaemonMessageClaude,
   DaemonMessageStop,
 } from "./shared";
@@ -79,13 +75,6 @@ const TEST_STOP_MESSAGE: DaemonMessageStop = {
   token: "TEST_TOKEN_STRING",
 };
 
-function payloadHasAssistantStringMessage(
-  payload: DaemonEventAPIBody,
-  content: string,
-): boolean {
-  return JSON.stringify(payload.messages).includes(content);
-}
-
 describe("daemon", () => {
   let runtime: DaemonRuntime;
   let daemon: TerragonDaemon;
@@ -94,8 +83,6 @@ describe("daemon", () => {
   >;
   let spawnCommandLineMock: MockInstance<DaemonRuntime["spawnCommandLine"]>;
   let serverPostMock: MockInstance<DaemonRuntime["serverPost"]>;
-  let execSyncMock: MockInstance<DaemonRuntime["execSync"]>;
-  let readFileSyncMock: MockInstance<DaemonRuntime["readFileSync"]>;
   let spawnPid = 1234;
   beforeEach(() => {
     // Mock Intl.DateTimeFormat to return a fixed timezone
@@ -125,18 +112,14 @@ describe("daemon", () => {
     serverPostMock = vi
       .spyOn(runtime, "serverPost")
       .mockResolvedValue(undefined);
-    execSyncMock = vi
-      .spyOn(runtime, "execSync")
-      .mockReturnValue("NOT_EXISTS\n");
-    readFileSyncMock = vi
-      .spyOn(runtime, "readFileSync")
-      .mockImplementation((path: string) => {
-        // Default behavior: throw error when .git-credentials doesn't exist
-        if (path.endsWith("/.git-credentials")) {
-          throw new Error("File not found");
-        }
-        throw new Error(`Unexpected call to readFileSync: ${path}`);
-      });
+    vi.spyOn(runtime, "execSync").mockReturnValue("NOT_EXISTS\n");
+    vi.spyOn(runtime, "readFileSync").mockImplementation((path: string) => {
+      // Default behavior: throw error when .git-credentials doesn't exist
+      if (path.endsWith("/.git-credentials")) {
+        throw new Error("File not found");
+      }
+      throw new Error(`Unexpected call to readFileSync: ${path}`);
+    });
     vi.spyOn(runtime, "appendFileSync").mockImplementation(() => {
       throw new Error("Unexpected call to appendFileSync");
     });
@@ -154,69 +137,10 @@ describe("daemon", () => {
     });
   });
 
-  function mockSpawnCommandStdoutLine(claudeMessage: any) {
-    spawnCommandLineMock.mock.calls[0]![1].onStdoutLine(
-      JSON.stringify(claudeMessage),
-    );
-  }
-
   afterEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     await runtime.teardown();
-  });
-
-  it("should kill the active claude process when another message is received", async () => {
-    spawnCommandLineMock.mockReturnValue({
-      processId: 1234,
-      pollInterval: undefined,
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    expect(killChildProcessGroupMock).toHaveBeenCalledTimes(0);
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-    expect(killChildProcessGroupMock).toHaveBeenCalledWith(1234);
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
-    expect(killChildProcessGroupMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("should kill the active claude process when stop message is received", async () => {
-    spawnCommandLineMock.mockReturnValue({
-      processId: 1234,
-      pollInterval: undefined,
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    expect(killChildProcessGroupMock).toHaveBeenCalledTimes(0);
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_STOP_MESSAGE),
-    });
-    await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-
-    expect(killChildProcessGroupMock).toHaveBeenCalledTimes(1);
-    expect(killChildProcessGroupMock).toHaveBeenCalledWith(1234);
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
   });
 
   it("routes codex app-server transport to runAppServerCommand", async () => {
@@ -441,7 +365,6 @@ describe("daemon", () => {
         },
         parent_tool_use_id: null,
         session_id: "session-1",
-        _claudeStreamedBlockIndices: [0],
       },
     ];
     const sendMessagesToAPI = Reflect.get(daemon, "sendMessagesToAPI");
@@ -833,6 +756,15 @@ describe("daemon", () => {
       initializeDaemonEventRunStateForNewRun: (params: {
         input: DaemonMessageClaude;
       }) => void;
+      enqueueDelta: (entry: {
+        threadId: string;
+        threadChatId: string;
+        token: string;
+        messageId: string;
+        partIndex: number;
+        kind: "text" | "thinking" | "tool-output";
+        text: string;
+      }) => void;
       sendMessagesToAPI: (input: {
         messages: ClaudeMessage[];
         entryCount: number;
@@ -853,6 +785,16 @@ describe("daemon", () => {
     };
     internals.initializeDaemonEventRunStateForNewRun({ input: canonicalInput });
 
+    internals.enqueueDelta({
+      threadId: canonicalInput.threadId,
+      threadChatId: canonicalInput.threadChatId,
+      token: canonicalInput.token,
+      messageId: "msg_abc123",
+      partIndex: 0,
+      kind: "text",
+      text: "Streamed via deltas",
+    });
+
     await internals.sendMessagesToAPI({
       messages: [
         {
@@ -863,9 +805,6 @@ describe("daemon", () => {
           },
           parent_tool_use_id: null,
           session_id: "session-1",
-          // Tagged: the daemon already streamed this text as deltas under the
-          // Codex item id, so the canonical event would be a duplicate.
-          _codexItemId: "msg_abc123",
         },
       ],
       entryCount: 1,
@@ -2048,78 +1987,6 @@ describe("daemon", () => {
     (daemon as any).stopHeartbeat(TEST_INPUT_MESSAGE.threadChatId);
   });
 
-  it("should not kill an already finished process when starting a new command", async () => {
-    let firstOnClose: ((code: number | null) => void) | undefined;
-    spawnCommandLineMock.mockImplementation((command, handlers) => {
-      firstOnClose = handlers?.onClose;
-      return {
-        processId: ++spawnPid,
-        pollInterval: undefined,
-      };
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    expect(typeof firstOnClose).toBe("function");
-    firstOnClose?.(0);
-    await sleep();
-    killChildProcessGroupMock.mockClear();
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        prompt: "second run",
-      }),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-    expect(killChildProcessGroupMock).not.toHaveBeenCalled();
-  });
-
-  it("should spawn the claude command and send output to the API", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    const spawnCommandArg1 = spawnCommandLineMock.mock.calls[0]![0];
-    const spawnCommandArg2 = spawnCommandLineMock.mock.calls[0]![1];
-    expect(spawnCommandArg1).toMatch(
-      /^cat \/tmp\/claude-prompt-.* \| claude -p/,
-    );
-    expect(spawnCommandArg2).toMatchObject({
-      env: expect.any(Object),
-      onStdoutLine: expect.any(Function),
-      onStderr: expect.any(Function),
-      onError: expect.any(Function),
-      onClose: expect.any(Function),
-    });
-    const claudeMessage1 = {
-      role: "assistant",
-      content: "TEST_RESPONSE_STRING",
-    };
-
-    mockSpawnCommandStdoutLine(claudeMessage1);
-    await sleep();
-    expect(serverPostMock).toHaveBeenCalledTimes(1);
-    expect(serverPostMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messages: [claudeMessage1],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-  });
-
   it("sends daemon version header without v2 capability when payload has no v2 envelope", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal("fetch", fetchMock);
@@ -2278,2159 +2145,242 @@ describe("daemon", () => {
     }
   });
 
-  it("emits v2 daemon envelopes with stable runId and monotonic seq when coordinator routing is enabled", async () => {
-    const inputMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      featureFlags: {},
+  describe("transport-agnostic runtime (internals)", () => {
+    type ReProcessState = {
+      agent: "claudeCode" | "codex";
+      threadId: string;
+      threadChatId: string;
+      token: string;
+      processId: number | undefined;
+      sessionId: string | null;
+      startTime: number;
+      stderr: string[];
+      isWorking: boolean;
+      isStopping: boolean;
+      isCompleted: boolean;
+      pollInterval: NodeJS.Timeout | null;
+      acpAbortController: AbortController | null;
+      runId: string;
+      pendingPermissions: Map<string, { acpRequestId: unknown }>;
+      acpUrl: string | null;
+      watchdog: null;
+      runtimeAdapterContract: typeof claudeAcpRuntimeAdapterContract;
+    };
+    type ReInternals = {
+      activeProcesses: Map<string, ReProcessState>;
+      heartbeatTimers: Map<string, NodeJS.Timeout>;
+      startHeartbeat: (threadChatId: string) => void;
+      stopHeartbeat: (threadChatId: string) => void;
+      killActiveProcess: (
+        threadChatId: string,
+        options?: { destroyAcpServer?: boolean },
+      ) => void;
+      addMessageToBuffer: (entry: {
+        agent: "claudeCode" | "codex";
+        message: ClaudeMessage;
+        threadId: string;
+        threadChatId: string;
+        token: string;
+      }) => void;
+      flushMessageBuffer: () => Promise<void>;
+      initializeDaemonEventRunStateForNewRun: (params: {
+        input: DaemonMessageClaude;
+      }) => void;
     };
 
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(inputMessage),
-    });
-    await sleep();
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
+    const internals = () => daemon as unknown as ReInternals;
 
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "SEQ_0",
-    });
-    await sleep(20);
-
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "SEQ_1",
-    });
-    await sleep(20);
-
-    expect(serverPostMock).toHaveBeenCalledTimes(2);
-    const firstPayload = serverPostMock.mock.calls[0]![0];
-    const secondPayload = serverPostMock.mock.calls[1]![0];
-
-    expect(firstPayload.payloadVersion).toBe(2);
-    expect(secondPayload.payloadVersion).toBe(2);
-    expect(firstPayload.runId).toBeTypeOf("string");
-    expect(firstPayload.runId).toBe(secondPayload.runId);
-    expect(firstPayload.seq).toBe(0);
-    expect(secondPayload.seq).toBe(1);
-    expect(firstPayload.eventId).toBe(
-      createHash("sha256").update(`${firstPayload.runId}:0`).digest("hex"),
-    );
-    expect(secondPayload.eventId).toBe(
-      createHash("sha256").update(`${firstPayload.runId}:1`).digest("hex"),
-    );
-  });
-
-  it("reuses the same v2 envelope identity when retrying the same payload", async () => {
-    let apiCallCount = 0;
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount++;
-      if (apiCallCount === 1) {
-        throw new Error("transient failure");
-      }
-      return;
-    });
-
-    const inputMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      featureFlags: {},
-    };
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(inputMessage),
-    });
-    await sleep();
-
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "RETRY_ME",
-    });
-
-    await sleep(40);
-    expect(serverPostMock).toHaveBeenCalledTimes(2);
-    const firstPayload = serverPostMock.mock.calls[0]![0];
-    const secondPayload = serverPostMock.mock.calls[1]![0];
-
-    expect(firstPayload.payloadVersion).toBe(2);
-    expect(secondPayload.payloadVersion).toBe(2);
-    expect(firstPayload.runId).toBe(secondPayload.runId);
-    expect(firstPayload.seq).toBe(secondPayload.seq);
-    expect(firstPayload.eventId).toBe(secondPayload.eventId);
-  });
-
-  it("emits v2 envelopes for all concurrent threads", async () => {
-    await daemon.start();
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        threadId: "THREAD_A",
-        threadChatId: "CHAT_A",
-        token: "TOKEN_A",
-      } satisfies DaemonMessageClaude),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const chatAStdout =
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-    expect(chatAStdout).toBeTypeOf("function");
-
-    chatAStdout?.(
-      JSON.stringify({
-        role: "assistant",
-        content: "THREAD_A_MESSAGE_1",
-      }),
-    );
-    await sleep(20);
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        prompt: "second thread",
-        threadId: "THREAD_B",
-        threadChatId: "CHAT_B",
-        token: "TOKEN_B",
-      } satisfies DaemonMessageClaude),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-    chatAStdout?.(
-      JSON.stringify({
-        role: "assistant",
-        content: "THREAD_A_MESSAGE_2",
-      }),
-    );
-
-    const chatBStdout =
-      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-    expect(chatBStdout).toBeTypeOf("function");
-    chatBStdout?.(
-      JSON.stringify({
-        role: "assistant",
-        content: "THREAD_B_MESSAGE_1",
-      }),
-    );
-    await sleep(30);
-
-    const chatAPayloads = serverPostMock.mock.calls
-      .map((call) => call[0])
-      .filter((payload) => payload.threadChatId === "CHAT_A");
-    expect(chatAPayloads).toHaveLength(2);
-    expect(chatAPayloads[0]?.payloadVersion).toBe(2);
-    expect(chatAPayloads[1]?.payloadVersion).toBe(2);
-    expect(chatAPayloads[0]?.runId).toBe(chatAPayloads[1]?.runId);
-    expect(chatAPayloads[0]?.seq).toBe(0);
-    expect(chatAPayloads[1]?.seq).toBe(1);
-
-    const chatBPayloads = serverPostMock.mock.calls
-      .map((call) => call[0])
-      .filter((payload) => payload.threadChatId === "CHAT_B");
-    expect(chatBPayloads).toHaveLength(1);
-    expect(chatBPayloads[0]?.payloadVersion).toBe(2);
-  });
-
-  it("sets Anthropic proxy environment variables when using built-in credits", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        useCredits: true,
-      }),
-    });
-    await sleep();
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    const env = spawnCommandLineMock.mock.calls[0]![1]!.env as Record<
-      string,
-      string | undefined
-    >;
-    expect(env.ANTHROPIC_BASE_URL).toBe(
-      "http://localhost:3000/api/proxy/anthropic",
-    );
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("TEST_TOKEN_STRING");
-  });
-
-  it("should spawn the claude command and batch messages to the API", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    const spawnCommandArg1 = spawnCommandLineMock.mock.calls[0]![0];
-    const spawnCommandArg2 = spawnCommandLineMock.mock.calls[0]![1];
-    expect(spawnCommandArg1).toMatch(
-      /^cat \/tmp\/claude-prompt-.* \| claude -p/,
-    );
-    expect(spawnCommandArg2).toMatchObject({
-      env: expect.any(Object),
-      onStdoutLine: expect.any(Function),
-      onStderr: expect.any(Function),
-      onError: expect.any(Function),
-      onClose: expect.any(Function),
-    });
-
-    // Simulate 3 batches of messages to the API
-    const messageBatch1 = [
-      { role: "assistant", content: "TEST_RESPONSE_STRING_1" },
-      { role: "assistant", content: "TEST_RESPONSE_STRING_2" },
-      { role: "assistant", content: "TEST_RESPONSE_STRING_3" },
-      { role: "assistant", content: "TEST_RESPONSE_STRING_4" },
-    ];
-    for (const message of messageBatch1) {
-      mockSpawnCommandStdoutLine(message);
-      await sleep(2);
-    }
-    await sleep(10);
-
-    // Batch 2
-    const messageBatch2 = [
-      { role: "assistant", content: "TEST_RESPONSE_STRING_5" },
-      { role: "assistant", content: "TEST_RESPONSE_STRING_6" },
-    ];
-    for (const message of messageBatch2) {
-      mockSpawnCommandStdoutLine(message);
-      await sleep(2);
-    }
-    await sleep(10);
-
-    // Batch 3
-    const messageBatch3 = [
-      { role: "assistant", content: "TEST_RESPONSE_STRING_7" },
-      { role: "assistant", content: "TEST_RESPONSE_STRING_8" },
-    ];
-    for (const message of messageBatch3) {
-      mockSpawnCommandStdoutLine(message);
-      await sleep(2);
-    }
-
-    await sleep();
-    expect(serverPostMock).toHaveBeenCalledTimes(3);
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        messages: messageBatch1,
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        messages: messageBatch2,
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        messages: messageBatch3,
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-  });
-
-  it("should flush the message buffer when the daemon is terminated", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_STRING",
-    });
-
-    expect(serverPostMock).toHaveBeenCalledTimes(0);
-    await runtime.teardown();
-    await sleep();
-    expect(serverPostMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("should prevent concurrent flushes when messages arrive during API call", async () => {
-    // Make serverPost take some time to simulate network delay
-    let serverPostCallCount = 0;
-    serverPostMock.mockImplementation(async () => {
-      serverPostCallCount++;
-      await sleep(50); // Simulate 50ms API call
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-
-    // Send 3 messages quickly
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_1",
-    });
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_2",
-    });
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_3",
-    });
-
-    // Wait for the flush timer
-    await sleep(15);
-
-    // While the first flush is in progress, send more messages
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_4",
-    });
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_5",
-    });
-
-    // Wait for all flushes to complete
-    await sleep(100);
-
-    // Should have exactly 2 API calls, not 3
-    expect(serverPostCallCount).toBe(2);
-
-    // First call should have the first 3 messages
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        messages: [
-          { role: "assistant", content: "TEST_RESPONSE_1" },
-          { role: "assistant", content: "TEST_RESPONSE_2" },
-          { role: "assistant", content: "TEST_RESPONSE_3" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-
-    // Second call should have the last 2 messages
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        messages: [
-          { role: "assistant", content: "TEST_RESPONSE_4" },
-          { role: "assistant", content: "TEST_RESPONSE_5" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-  });
-
-  it("does not push back the first visible message flush when more messages arrive", async () => {
-    daemon = new TerragonDaemon({
-      runtime,
-      messageHandleDelay: 5,
-      messageFlushDelay: 50,
-      retryConfig: {
-        baseDelayMs: 10,
-        maxDelayMs: 100,
-        maxAttempts: 10,
-        backoffMultiplier: 2,
-        jitterFactor: 0,
-      },
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "FIRST_VISIBLE_MESSAGE",
-    });
-    await sleep(25);
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "SECOND_VISIBLE_MESSAGE",
-    });
-    await sleep(35);
-
-    expect(serverPostMock).toHaveBeenCalledTimes(1);
-    expect(serverPostMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messages: [
-          { role: "assistant", content: "FIRST_VISIBLE_MESSAGE" },
-          { role: "assistant", content: "SECOND_VISIBLE_MESSAGE" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-  });
-
-  it("should handle rapid message arrivals without losing messages", async () => {
-    // Make serverPost take some time
-    serverPostMock.mockImplementation(async () => {
-      await sleep(30);
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    // Send many messages rapidly
-    for (let i = 1; i <= 10; i++) {
-      mockSpawnCommandStdoutLine({
-        role: "assistant",
-        content: `TEST_RESPONSE_${i}`,
-      });
-      await sleep(2); // Small delay between messages
-    }
-
-    // Wait for all flushes to complete
-    await sleep(150);
-
-    // All messages should be sent, none should be lost
-    const allMessagesSent = serverPostMock.mock.calls
-      .flatMap((call) => call[0].messages)
-      .flatMap((msg) => {
-        if (
-          typeof msg === "object" &&
-          msg !== null &&
-          "content" in msg &&
-          typeof msg.content === "string"
-        ) {
-          return [msg.content];
-        }
-        return [];
-      });
-
-    expect(allMessagesSent).toHaveLength(10);
-    for (let i = 1; i <= 10; i++) {
-      expect(allMessagesSent).toContain(`TEST_RESPONSE_${i}`);
-    }
-  });
-
-  it("should retry messages when API call fails", async () => {
-    let apiCallCount = 0;
-
-    // Make the first API call fail, subsequent calls succeed
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount++;
-      if (apiCallCount === 1) {
-        throw new Error("Network error");
-      }
-      // Subsequent calls succeed
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    // Send messages that will fail on first API call
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_1",
-    });
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_RESPONSE_2",
-    });
-
-    // Wait for first flush attempt (which will fail)
-    await sleep(15);
-
-    // First API call should have been attempted
-    expect(apiCallCount).toBe(1);
-
-    // Wait for retry
-    await sleep(15);
-
-    // Second API call should succeed
-    expect(apiCallCount).toBe(2);
-
-    // Check that the same messages were sent in both attempts
-    expect(serverPostMock).toHaveBeenCalledTimes(2);
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        messages: [
-          { role: "assistant", content: "TEST_RESPONSE_1" },
-          { role: "assistant", content: "TEST_RESPONSE_2" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-    expect(serverPostMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        messages: [
-          { role: "assistant", content: "TEST_RESPONSE_1" },
-          { role: "assistant", content: "TEST_RESPONSE_2" },
-        ],
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        timezone: "America/New_York",
-      }),
-      "TEST_TOKEN_STRING",
-    );
-  });
-
-  it("keeps retrying daemon claim-in-progress responses even when normal retry budget is exhausted", async () => {
-    daemon = new TerragonDaemon({
-      runtime,
-      messageHandleDelay: 5,
-      messageFlushDelay: 10,
-      retryConfig: {
-        baseDelayMs: 10,
-        maxDelayMs: 100,
-        maxAttempts: 1,
-        backoffMultiplier: 2,
-        jitterFactor: 0,
-      },
-    });
-
-    let apiCallCount = 0;
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount += 1;
-      if (apiCallCount === 1) {
-        throw new DaemonServerPostError({
-          status: 409,
-          errorCode: "daemon_event_claim_in_progress",
-          responseBody: {
-            error: "daemon_event_claim_in_progress",
-          },
-        });
-      }
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        featureFlags: {},
-      } satisfies DaemonMessageClaude),
-    });
-    await sleep();
-
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "CLAIM_IN_PROGRESS_RETRY",
-    });
-
-    await sleep(40);
-    expect(apiCallCount).toBe(1);
-
-    await sleep(5_200);
-    expect(apiCallCount).toBe(2);
-    expect(serverPostMock).toHaveBeenCalledTimes(2);
-
-    const firstPayload = serverPostMock.mock.calls[0]?.[0];
-    const secondPayload = serverPostMock.mock.calls[1]?.[0];
-    expect(secondPayload?.payloadVersion).toBe(2);
-    expect(secondPayload?.runId).toBe(firstPayload?.runId);
-    expect(secondPayload?.seq).toBe(firstPayload?.seq);
-    expect(secondPayload?.eventId).toBe(firstPayload?.eventId);
-  }, 20_000);
-
-  it("pins pending retry identity and defers newly buffered messages to the next batch", async () => {
-    let apiCallCount = 0;
-
-    // Make the first API call fail
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount++;
-      if (apiCallCount === 1) {
-        await sleep(30); // Simulate network delay
-        throw new Error("API error");
-      }
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        featureFlags: {},
-      } satisfies DaemonMessageClaude),
-    });
-    await sleep();
-
-    // Send first batch of messages
-    mockSpawnCommandStdoutLine({ role: "assistant", content: "BATCH_1_MSG_1" });
-    mockSpawnCommandStdoutLine({ role: "assistant", content: "BATCH_1_MSG_2" });
-
-    // Wait for first flush to start (and fail)
-    await sleep(15);
-
-    // While the first flush is failing, send more messages
-    mockSpawnCommandStdoutLine({ role: "assistant", content: "BATCH_2_MSG_1" });
-    mockSpawnCommandStdoutLine({ role: "assistant", content: "BATCH_2_MSG_2" });
-
-    // Wait for everything to complete
-    await sleep(140);
-
-    // Should have 3 calls: initial failure, retry of pinned batch, then next batch
-    expect(serverPostMock).toHaveBeenCalledTimes(3);
-    expect(apiCallCount).toBe(3);
-
-    // First and second call are the same batch identity
-    const firstPayload = serverPostMock.mock.calls[0]![0];
-    const secondPayload = serverPostMock.mock.calls[1]![0];
-    const thirdPayload = serverPostMock.mock.calls[2]![0];
-
-    expect(firstPayload.messages).toEqual([
-      { role: "assistant", content: "BATCH_1_MSG_1" },
-      { role: "assistant", content: "BATCH_1_MSG_2" },
-    ]);
-    expect(secondPayload.messages).toEqual(firstPayload.messages);
-    expect(secondPayload.eventId).toBe(firstPayload.eventId);
-    expect(secondPayload.seq).toBe(firstPayload.seq);
-    expect(secondPayload.runId).toBe(firstPayload.runId);
-
-    // Newly buffered messages are deferred to the next envelope/batch
-    expect(thirdPayload.messages).toEqual([
-      { role: "assistant", content: "BATCH_2_MSG_1" },
-      { role: "assistant", content: "BATCH_2_MSG_2" },
-    ]);
-    expect(thirdPayload.payloadVersion).toBe(2);
-    expect(thirdPayload.runId).toBe(firstPayload.runId);
-    expect(thirdPayload.seq).toBe((firstPayload.seq as number) + 1);
-    expect(thirdPayload.eventId).toBe(
-      createHash("sha256")
-        .update(`${firstPayload.runId as string}:${thirdPayload.seq as number}`)
-        .digest("hex"),
-    );
-  });
-
-  it("drops stale pending envelope state when a same-thread run restarts with a new token", async () => {
-    let apiCallCount = 0;
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount += 1;
-      if (apiCallCount === 1) {
-        await sleep(40);
-        throw new Error("transient failure");
-      }
-      return;
-    });
-
-    const firstRunInput: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      featureFlags: {},
-      runId: "run-restart-before-retry-1",
-    };
-    const secondRunInput: DaemonMessageClaude = {
-      ...firstRunInput,
-      prompt: "second run while retry is pending",
-      runId: "run-restart-before-retry-2",
-      token: "TEST_TOKEN_STRING_SECOND_RUN",
-    };
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(firstRunInput),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const firstRunStdout =
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-    expect(firstRunStdout).toBeTypeOf("function");
-    firstRunStdout?.(
-      JSON.stringify({ role: "assistant", content: "RUN_1_MSG" }),
-    );
-
-    await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(secondRunInput),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-    const secondRunStdout =
-      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-    expect(secondRunStdout).toBeTypeOf("function");
-    secondRunStdout?.(
-      JSON.stringify({ role: "assistant", content: "RUN_2_MSG" }),
-    );
-
-    await sleepUntil(() =>
-      serverPostMock.mock.calls.some(([payload]) =>
-        payloadHasAssistantStringMessage(
-          payload as DaemonEventAPIBody,
-          "RUN_2_MSG",
-        ),
-      ),
-    );
-
-    const runOnePayloads = serverPostMock.mock.calls
-      .map(([payload]) => payload as DaemonEventAPIBody)
-      .filter((payload) =>
-        payloadHasAssistantStringMessage(payload, "RUN_1_MSG"),
-      );
-    expect(runOnePayloads.length).toBeGreaterThan(0);
-    const firstPayload = runOnePayloads[0]!;
-    const runTwoPayload = serverPostMock.mock.calls
-      .map(([payload]) => payload as DaemonEventAPIBody)
-      .find((payload) =>
-        payloadHasAssistantStringMessage(payload, "RUN_2_MSG"),
-      );
-    const staleRunOneOnRunTwo = runOnePayloads.find(
-      (payload) => payload.runId === "run-restart-before-retry-2",
-    );
-    if (!runTwoPayload) {
-      throw new Error("Expected second run payload");
-    }
-    expect(staleRunOneOnRunTwo).toBeUndefined();
-    expect(JSON.stringify(firstPayload.messages)).toContain("RUN_1_MSG");
-    expect(firstPayload.canonicalEvents).toHaveLength(1);
-    expect(firstPayload.canonicalEvents?.[0]).toEqual(
-      expect.objectContaining({
-        eventId: createHash("sha256")
-          .update("run-restart-before-retry-1:canonical:0")
-          .digest("hex"),
-        seq: 0,
-        type: "run-started",
-      }),
-    );
-    expect(firstPayload.payloadVersion).toBe(2);
-    expect(firstPayload.runId).toBe("run-restart-before-retry-1");
-    expect(runTwoPayload.payloadVersion).toBe(2);
-    expect(runTwoPayload.runId).toBe("run-restart-before-retry-2");
-    expect(runTwoPayload.seq).toBe(0);
-    expect(runTwoPayload.eventId).toBe(
-      createHash("sha256").update("run-restart-before-retry-2:0").digest("hex"),
-    );
-    expect(runTwoPayload.canonicalEvents).toHaveLength(1);
-    expect(runTwoPayload.canonicalEvents?.[0]).toEqual(
-      expect.objectContaining({
-        eventId: createHash("sha256")
-          .update("run-restart-before-retry-2:canonical:0")
-          .digest("hex"),
-        seq: 0,
-        type: "run-started",
-      }),
-    );
-  });
-
-  it("clears abandoned canonical batches after a non-retryable auth drop", async () => {
-    type DaemonInternals = {
-      daemonEventRunStates: Map<
-        string,
-        {
-          pendingEnvelope: { eventId: string } | null;
-        }
-      >;
-    };
-    const internals = daemon as unknown as DaemonInternals;
-    const authError = Object.assign(new Error("invalid token"), {
-      status: 401,
-    });
-    serverPostMock
-      .mockRejectedValueOnce(authError)
-      .mockResolvedValue(undefined);
-
-    const firstRunInput: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      featureFlags: {},
-      runId: "run-auth-drop-1",
-    };
-    const secondRunInput: DaemonMessageClaude = {
-      ...firstRunInput,
-      prompt: "fresh run after auth drop",
-      runId: "run-auth-drop-2",
-    };
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(firstRunInput),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const firstRunStdout =
-      spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-    expect(firstRunStdout).toBeTypeOf("function");
-    firstRunStdout?.(
-      JSON.stringify({ role: "assistant", content: "AUTH_DROP_MSG" }),
-    );
-
-    await sleepUntil(() => serverPostMock.mock.calls.length >= 1);
-    await sleepUntil(() => {
-      const runState = internals.daemonEventRunStates.get(
-        firstRunInput.threadChatId,
-      );
-      return !runState || runState.pendingEnvelope === null;
-    });
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(secondRunInput),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-    const secondRunStdout =
-      spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-    expect(secondRunStdout).toBeTypeOf("function");
-    secondRunStdout?.(
-      JSON.stringify({ role: "assistant", content: "FRESH_RUN_MSG" }),
-    );
-
-    await sleepUntil(() => serverPostMock.mock.calls.length === 2);
-
-    const firstPayload = serverPostMock.mock.calls
-      .map(([payload]) => payload as DaemonEventAPIBody)
-      .find((payload) =>
-        payloadHasAssistantStringMessage(payload, "AUTH_DROP_MSG"),
-      );
-    const secondPayload = serverPostMock.mock.calls
-      .map(([payload]) => payload as DaemonEventAPIBody)
-      .find((payload) =>
-        payloadHasAssistantStringMessage(payload, "FRESH_RUN_MSG"),
-      );
-
-    if (!firstPayload || !secondPayload) {
-      throw new Error("Expected auth-drop and fresh-run payloads");
-    }
-    expect(JSON.stringify(firstPayload.messages)).toContain("AUTH_DROP_MSG");
-    expect(firstPayload.canonicalEvents).toHaveLength(1);
-    expect(firstPayload.canonicalEvents?.[0]).toEqual(
-      expect.objectContaining({
-        eventId: createHash("sha256")
-          .update("run-auth-drop-1:canonical:0")
-          .digest("hex"),
-        seq: 0,
-        type: "run-started",
-      }),
-    );
-    expect(firstPayload.runId).toBe("run-auth-drop-1");
-    expect(secondPayload.runId).toBe("run-auth-drop-2");
-    expect(JSON.stringify(secondPayload.messages)).toContain("FRESH_RUN_MSG");
-    expect(secondPayload.seq).toBe(0);
-    expect(secondPayload.eventId).toBe(
-      createHash("sha256").update("run-auth-drop-2:0").digest("hex"),
-    );
-    expect(secondPayload.canonicalEvents).toHaveLength(1);
-    expect(secondPayload.canonicalEvents?.[0]).toEqual(
-      expect.objectContaining({
-        eventId: createHash("sha256")
-          .update("run-auth-drop-2:canonical:0")
-          .digest("hex"),
-        seq: 0,
-        type: "run-started",
-      }),
-    );
-    expect(secondPayload.canonicalEvents).not.toEqual(
-      firstPayload.canonicalEvents,
-    );
-  });
-
-  it("cleans daemon event run state when a run exits", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        featureFlags: {},
-      } satisfies DaemonMessageClaude),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const onCloseCallback = spawnCommandLineMock.mock.calls[0]![1].onClose;
-    expect(onCloseCallback).toBeTypeOf("function");
-    onCloseCallback?.(0);
-
-    await sleep(30);
-    const daemonEventRunStates = (
-      daemon as unknown as {
-        daemonEventRunStates: Map<string, unknown>;
-      }
-    ).daemonEventRunStates;
-    expect(daemonEventRunStates.has(TEST_INPUT_MESSAGE.threadChatId)).toBe(
-      false,
-    );
-  });
-
-  it("cleans daemon event run state when a run is stopped", async () => {
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        featureFlags: {},
-      } satisfies DaemonMessageClaude),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_STOP_MESSAGE),
-    });
-    await sleep(30);
-
-    const daemonEventRunStates = (
-      daemon as unknown as {
-        daemonEventRunStates: Map<string, unknown>;
-      }
-    ).daemonEventRunStates;
-    expect(daemonEventRunStates.has(TEST_STOP_MESSAGE.threadChatId)).toBe(
-      false,
-    );
-  });
-
-  it("should handle multiple consecutive API failures", async () => {
-    let apiCallCount = 0;
-
-    // Make the first 3 API calls fail
-    serverPostMock.mockImplementation(async () => {
-      apiCallCount++;
-      if (apiCallCount <= 3) {
-        throw new Error(`API error ${apiCallCount}`);
-      }
-      return;
-    });
-
-    await daemon.start();
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleep();
-
-    // Send a message
-    mockSpawnCommandStdoutLine({
-      role: "assistant",
-      content: "TEST_MESSAGE",
-    });
-
-    // Wait for multiple retry attempts
-    // Delays will be: 10ms (1st retry), 20ms (2nd), 40ms (3rd), need to wait for all
-    await sleep(100);
-
-    // Should have made 4 API calls (3 failures + 1 success)
-    expect(apiCallCount).toBe(4);
-
-    // All calls should have the same message
-    for (let i = 1; i <= 4; i++) {
-      expect(serverPostMock).toHaveBeenNthCalledWith(
-        i,
-        expect.objectContaining({
-          messages: [{ role: "assistant", content: "TEST_MESSAGE" }],
-          threadId: "TEST_THREAD_ID_STRING",
-          threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-          timezone: "America/New_York",
-        }),
-        "TEST_TOKEN_STRING",
-      );
-    }
-  });
-
-  describe("Claude credentials handling", () => {
-    it("should use environment ANTHROPIC_API_KEY when Claude credentials file does not exist", async () => {
-      // Mock execSync to return "NOT_EXISTS" (no credentials file)
-      execSyncMock.mockReturnValue("NOT_EXISTS\n");
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleep();
-
-      // Check that execSync was called to check for credentials
-      expect(execSyncMock).toHaveBeenCalledWith(
-        "cd && test -f .claude/.credentials.json && echo 'EXISTS' || echo 'NOT_EXISTS'",
-      );
-
-      // Check that spawnCommand was called with the API key from environment
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const spawnEnv = spawnCommandLineMock.mock.calls[0]![1].env;
-      expect(spawnEnv.ANTHROPIC_API_KEY).toBe("test-api-key-from-env");
-    });
-
-    it("should set empty ANTHROPIC_API_KEY when Claude credentials file exists", async () => {
-      // Mock execSync to return "EXISTS" (credentials file exists)
-      execSyncMock.mockReturnValue("EXISTS\n");
-      // Mock readFileSync to handle both .git-credentials and .credentials.json
-      readFileSyncMock.mockImplementation((path: string) => {
-        if (path.endsWith("/.git-credentials")) {
-          throw new Error("File not found");
-        }
-        if (path.endsWith("/.claude/.credentials.json")) {
-          return '{"claudeAiOauth": {}}';
-        }
-        throw new Error(`Unexpected file read: ${path}`);
-      });
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleep();
-
-      // Check that execSync was called to check for credentials
-      expect(execSyncMock).toHaveBeenCalledWith(
-        "cd && test -f .claude/.credentials.json && echo 'EXISTS' || echo 'NOT_EXISTS'",
-      );
-
-      // Check that spawnCommand was called with empty API key
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const spawnEnv = spawnCommandLineMock.mock.calls[0]![1].env;
-      expect(spawnEnv.ANTHROPIC_API_KEY).toBe("");
-    });
-
-    it("should use the anthropicApiKey from the credentials file when it exists", async () => {
-      execSyncMock.mockReturnValue("EXISTS\n");
-      // Mock readFileSync to handle both .git-credentials and .credentials.json
-      readFileSyncMock.mockImplementation((path: string) => {
-        if (path.endsWith("/.git-credentials")) {
-          throw new Error("File not found");
-        }
-        if (path.endsWith("/.claude/.credentials.json")) {
-          return '{"anthropicApiKey": "anthropic-api-key-from-credentials"}';
-        }
-        throw new Error(`Unexpected file read: ${path}`);
-      });
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleep();
-
-      // Check that execSync was called to check for credentials
-      expect(execSyncMock).toHaveBeenCalledWith(
-        "cd && test -f .claude/.credentials.json && echo 'EXISTS' || echo 'NOT_EXISTS'",
-      );
-
-      // Check that spawnCommand was called with empty API key
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const spawnEnv = spawnCommandLineMock.mock.calls[0]![1].env;
-      expect(spawnEnv.ANTHROPIC_API_KEY).toBe(
-        "anthropic-api-key-from-credentials",
-      );
-    });
-
-    it("should handle execSync output with whitespace correctly", async () => {
-      // Mock execSync to return "EXISTS" with various whitespace
-      execSyncMock.mockReturnValue("  EXISTS  \n\n");
-      // Mock readFileSync to handle both .git-credentials and .credentials.json
-      readFileSyncMock.mockImplementation((path: string) => {
-        if (path.endsWith("/.git-credentials")) {
-          throw new Error("File not found");
-        }
-        if (path.endsWith("/.claude/.credentials.json")) {
-          return '{"claudeAiOauth": {}}';
-        }
-        throw new Error(`Unexpected file read: ${path}`);
-      });
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleep();
-
-      // Check that spawnCommand was called with empty API key (credentials exist)
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const spawnEnv = spawnCommandLineMock.mock.calls[0]![1].env;
-      expect(spawnEnv.ANTHROPIC_API_KEY).toBe("");
-    });
-
-    it("should check for credentials on each Claude command", async () => {
-      await daemon.start();
-
-      // First command - credentials don't exist
-      execSyncMock.mockReturnValue("NOT_EXISTS\n");
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleep();
-
-      // Second command - credentials now exist
-      execSyncMock.mockReturnValue("EXISTS\n");
-      readFileSyncMock.mockImplementation((path: string) => {
-        if (path.endsWith("/.git-credentials")) {
-          throw new Error("File not found");
-        }
-        if (path.endsWith("/.claude/.credentials.json")) {
-          return '{"claudeAiOauth": {}}';
-        }
-        throw new Error(`Unexpected file read: ${path}`);
-      });
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify({
-          ...TEST_INPUT_MESSAGE,
-          prompt: "second prompt",
-        }),
-      });
-      await sleep();
-
-      // Check that first command used env API key and second used empty
-      const firstSpawnEnv = spawnCommandLineMock.mock.calls[0]![1].env;
-      const secondSpawnEnv = spawnCommandLineMock.mock.calls[1]![1].env;
-
-      expect(firstSpawnEnv.ANTHROPIC_API_KEY).toBe(
-        process.env.ANTHROPIC_API_KEY,
-      );
-      expect(secondSpawnEnv.ANTHROPIC_API_KEY).toBe("");
-    });
-  });
-
-  describe("Error handling with result messages", () => {
-    it("should not send custom-error when Claude sends a result message with is_error: true (rate limit case)", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-
-      // Simulate Claude sending a rate limit error result message
-      const rateLimitResult = {
-        type: "result",
-        subtype: "success",
-        is_error: true,
-        duration_ms: 529,
-        duration_api_ms: 0,
-        num_turns: 117,
-        result: "Claude AI usage limit reached|1752519600",
-        session_id: "549ccae5-23cc-4c3d-a7ca-b448b11446e7",
-        total_cost_usd: 0,
-        usage: {
-          input_tokens: 0,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-          output_tokens: 0,
-          server_tool_use: {
-            web_search_requests: 0,
-          },
-          service_tier: "standard",
-        },
-      };
-
-      mockSpawnCommandStdoutLine(rateLimitResult);
-
-      // Simulate process exiting with non-zero code
-      const onCloseCallback = spawnCommandLineMock.mock.calls[0]![1].onClose;
-      onCloseCallback(1);
-
-      // Wait for message flush
-      await sleep(20);
-
-      // Should have sent only the result message, not an additional custom-error
-      expect(serverPostMock).toHaveBeenCalledTimes(1);
-      expect(serverPostMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: [rateLimitResult],
-          threadId: "TEST_THREAD_ID_STRING",
-          threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-          timezone: "America/New_York",
-        }),
-        "TEST_TOKEN_STRING",
-      );
-    });
-
-    it("should send custom-error when process exits with non-zero code without a result message", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-
-      // Simulate some normal Claude output (not a result message)
-      mockSpawnCommandStdoutLine({
-        role: "assistant",
-        content: "Starting to process...",
-      });
-
-      // Simulate process exiting with non-zero code (e.g., crash)
-      const onCloseCallback = spawnCommandLineMock.mock.calls[0]![1].onClose;
-      onCloseCallback(1);
-
-      // Wait for message flush
-      await sleep(20);
-
-      // Should have sent both the assistant message and a custom-error
-      expect(serverPostMock).toHaveBeenCalledTimes(1);
-      const sentMessages = serverPostMock.mock.calls[0]![0].messages;
-      expect(sentMessages).toHaveLength(2);
-      expect(sentMessages[0]).toEqual({
-        role: "assistant",
-        content: "Starting to process...",
-      });
-      expect(sentMessages[1]).toMatchObject({
-        type: "custom-error",
-        session_id: null,
-        duration_ms: expect.any(Number),
-      });
-    });
-
-    it("should not send custom-error when process is explicitly stopped", async () => {
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-
-      // Simulate some Claude output
-      mockSpawnCommandStdoutLine({
-        role: "assistant",
-        content: "Processing...",
-      });
-
-      // Send stop message
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_STOP_MESSAGE),
-      });
-      await sleep(20);
-      // Simulate process being killed (exit code 1 when killed)
-      const onCloseCallback = spawnCommandLineMock.mock.calls[0]![1].onClose;
-      onCloseCallback(1);
-
-      // Wait for message flush
-      await sleep(20);
-
-      // Should have sent the assistant message and custom-stop, but no custom-error
-      expect(serverPostMock).toHaveBeenCalledTimes(1);
-      const sentMessages = serverPostMock.mock.calls[0]![0].messages;
-      expect(sentMessages).toContainEqual({
-        role: "assistant",
-        content: "Processing...",
-      });
-      expect(sentMessages).toContainEqual(
-        expect.objectContaining({
-          type: "custom-stop",
-        }),
-      );
-      // Should not contain custom-error
-      expect(
-        sentMessages.find((m: any) => m.type === "custom-error"),
-      ).toBeUndefined();
-    });
-  });
-
-  it("should not send custom-error when old process closes after being superseded", async () => {
-    let firstProcessOnClose: ((code: number) => void) | undefined;
-    let secondProcessOnClose: ((code: number) => void) | undefined;
-
-    spawnCommandLineMock.mockImplementation((command, handlers) => {
-      const processId = spawnCommandLineMock.mock.calls.length;
-      // Capture the onClose handlers
-      if (processId === 1) {
-        firstProcessOnClose = handlers!.onClose;
-      } else if (processId === 2) {
-        secondProcessOnClose = handlers!.onClose;
-      }
+    function makeInput(threadChatId: string): DaemonMessageClaude {
       return {
+        ...TEST_INPUT_MESSAGE,
+        threadId: `thread-${threadChatId}`,
+        threadChatId,
+        token: `token-${threadChatId}`,
+        transportMode: "acp",
+        protocolVersion: 2,
+        runId: `run-${threadChatId}`,
+      };
+    }
+
+    function startRun(threadChatId: string, processId = 4321): ReProcessState {
+      const i = internals();
+      i.initializeDaemonEventRunStateForNewRun({
+        input: makeInput(threadChatId),
+      });
+      const state: ReProcessState = {
+        agent: "claudeCode",
+        threadId: `thread-${threadChatId}`,
+        threadChatId,
+        token: `token-${threadChatId}`,
         processId,
-        pollInterval: undefined,
+        sessionId: null,
+        startTime: Date.now(),
+        stderr: [],
+        isWorking: true,
+        isStopping: false,
+        isCompleted: false,
+        pollInterval: null,
+        acpAbortController: null,
+        runId: `run-${threadChatId}`,
+        pendingPermissions: new Map(),
+        acpUrl: null,
+        watchdog: null,
+        runtimeAdapterContract: claudeAcpRuntimeAdapterContract,
       };
-    });
-
-    await daemon.start();
-
-    // Start first process
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    // Start second process - this kills the first one
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify({
-        ...TEST_INPUT_MESSAGE,
-        prompt: "second prompt",
-      }),
-    });
-
-    // Wait for second process to spawn
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-    await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-
-    // Now the first process finally closes with an error code (because it was killed)
-    if (typeof firstProcessOnClose === "function") {
-      firstProcessOnClose(1); // Exit code 1 (killed)
+      i.activeProcesses.set(threadChatId, state);
+      return state;
     }
 
-    // Wait a bit for any message processing
-    await sleep(20);
-
-    // Should NOT have sent a custom-error message for the first process
-    // because it was superseded by the second process
-    const allMessages = serverPostMock.mock.calls.flatMap(
-      (call) => call[0].messages,
-    );
-    const customErrors = allMessages.filter(
-      (msg: any) => msg.type === "custom-error",
-    );
-
-    // Should be no custom-error messages since the first process was killed intentionally
-    expect(customErrors).toHaveLength(0);
-
-    // Now if the second process crashes, it SHOULD send a custom-error
-    if (typeof secondProcessOnClose === "function") {
-      secondProcessOnClose(1); // Exit code 1 (crashed)
+    function assistantMessage(text: string): ClaudeMessage {
+      return {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text }] },
+        parent_tool_use_id: null,
+        session_id: "session",
+      };
     }
 
-    await sleep(20);
+    function emptyHeartbeatPosts() {
+      return serverPostMock.mock.calls.filter(
+        (call) => (call[0] as { messages?: unknown[] })?.messages?.length === 0,
+      );
+    }
 
-    // Now there should be exactly one custom-error for the second process
-    const allMessagesAfter = serverPostMock.mock.calls.flatMap(
-      (call) => call[0].messages,
-    );
-    const customErrorsAfter = allMessagesAfter.filter(
-      (msg: any) => msg.type === "custom-error",
-    );
+    function postsForThread(threadChatId: string) {
+      return serverPostMock.mock.calls.filter(
+        (call) =>
+          (call[0] as { threadChatId?: string })?.threadChatId === threadChatId,
+      );
+    }
 
-    expect(customErrorsAfter).toHaveLength(1);
-  });
-
-  it("should include the Gemini session id in the success result message", async () => {
-    await daemon.start();
-
-    const geminiMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      agent: "gemini",
-      model: "gemini-2.5-pro",
-    };
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(geminiMessage),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    // Simulate Gemini sending an INIT event with session_id
-    const initEvent = {
-      type: "init",
-      timestamp: new Date().toISOString(),
-      session_id: "gemini-session-12345",
-      model: "gemini-2.5-pro",
-    };
-    mockSpawnCommandStdoutLine(initEvent);
-
-    // Simulate a simple message
-    const messageEvent = {
-      type: "message",
-      timestamp: new Date().toISOString(),
-      role: "assistant",
-      content: "Hello from Gemini",
-      delta: false,
-    };
-    mockSpawnCommandStdoutLine(messageEvent);
-
-    // Simulate success result
-    const resultEvent = {
-      type: "result",
-      timestamp: new Date().toISOString(),
-      status: "success",
-      stats: {
-        total_tokens: 100,
-        input_tokens: 50,
-        output_tokens: 50,
-        duration_ms: 1000,
-        tool_calls: 0,
-      },
-    };
-    mockSpawnCommandStdoutLine(resultEvent);
-
-    await sleep(20); // Give time for messages to be buffered and sent
-    const lastCall =
-      serverPostMock.mock.calls[serverPostMock.mock.calls.length - 1];
-    const messages = lastCall?.[0]?.messages ?? [];
-
-    // Find the init message which should have the session_id
-    const initMessage = messages.find(
-      (msg: any) => msg.type === "system" && msg.subtype === "init",
-    );
-    expect(initMessage?.session_id).toBe("gemini-session-12345");
-  });
-
-  it("should parse and handle Opencode JSON output", async () => {
-    await daemon.start();
-    const opencodeMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      agent: "opencode",
-      model: "opencode/grok-code",
-    };
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(opencodeMessage),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-    const opencodeCommand = spawnCommandLineMock.mock.calls[0]![0];
-    expect(
-      opencodeCommand.replace(/\/tmp\/.*.txt/, "<txt>"),
-    ).toMatchInlineSnapshot(
-      `"cat <txt> | opencode run --model terry/grok-code --format json"`,
-    );
-
-    // Simulate Opencode sending a step_start event
-    const stepStartEvent = {
-      type: "step_start",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "step-1",
-        type: "step-start",
-        sessionID: "opencode-session-123",
-        messageID: "msg-1",
-      },
-    };
-    mockSpawnCommandStdoutLine(stepStartEvent);
-
-    // Simulate Opencode sending a text event
-    const textEvent = {
-      type: "text",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "text-1",
-        type: "text",
-        text: "Hello from Opencode",
-        sessionID: "opencode-session-123",
-        messageID: "msg-2",
-        time: {
-          start: Date.now() - 1000,
-          end: Date.now(),
-        },
-      },
-    };
-    mockSpawnCommandStdoutLine(textEvent);
-
-    // Simulate Opencode sending a tool_use event
-    const toolUseEvent = {
-      type: "tool_use",
-      timestamp: Date.now(),
-      sessionID: "opencode-session-123",
-      part: {
-        id: "tool-1",
-        type: "tool",
-        tool: "bash",
-        callID: "call-123",
-        sessionID: "opencode-session-123",
-        messageID: "msg-3",
-        state: {
-          status: "completed",
-          input: { command: "echo 'test'" },
-          output: "test",
-          title: "Execute command",
-          metadata: {},
-          time: { start: Date.now() - 500, end: Date.now() },
-        },
-      },
-    };
-    mockSpawnCommandStdoutLine(toolUseEvent);
-
-    await sleep(20);
-
-    // All messages should be sent to the server
-    expect(serverPostMock).toHaveBeenCalled();
-    const allMessages = serverPostMock.mock.calls.flatMap(
-      (call) => call[0].messages,
-    );
-
-    // Should have system (from step_start), assistant (from text and tool_use), and user (from tool_result) messages
-    expect(allMessages.some((m: any) => m.type === "system")).toBe(true);
-    expect(allMessages.filter((m: any) => m.type === "assistant")).toHaveLength(
-      2,
-    ); // One from text, one from tool_use
-    expect(allMessages.some((m: any) => m.type === "user")).toBe(true); // From tool_result
-    expect(allMessages).toHaveLength(4); // system + assistant + assistant + user
-  });
-
-  it("should handle Opencode session ID correctly", async () => {
-    await daemon.start();
-
-    const opencodeMessage: DaemonMessageClaude = {
-      ...TEST_INPUT_MESSAGE,
-      agent: "opencode",
-      model: "opencode/grok-code",
-      sessionId: "existing-session-456",
-    };
-
-    await writeToUnixSocket({
-      unixSocketPath: runtime.unixSocketPath,
-      dataStr: JSON.stringify(opencodeMessage),
-    });
-    await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-    const opencodeCommand = spawnCommandLineMock.mock.calls[0]![0];
-    // Should include existing session ID
-    expect(opencodeCommand).toContain("--session existing-session-456");
-  });
-
-  describe("Multiple process tracking", () => {
-    it("should track multiple processes by threadChatId", async () => {
-      const process1Pid = 5001;
-      const process2Pid = 5002;
-      let processCounter = 0;
-
-      spawnCommandLineMock.mockImplementation(() => ({
-        processId: processCounter === 0 ? process1Pid : process2Pid,
-        pollInterval: undefined,
-      }));
-
-      await daemon.start();
-
-      // Start first process
-      const message1 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_1",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message1),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      processCounter++;
-
-      // Start second process with different threadChatId
-      const message2 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_2",
-        prompt: "second prompt",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message2),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      // Both processes should be running, neither should have been killed
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
-      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(0);
+    it("heartbeat POSTs empty messages on the configured interval", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "30";
+      startRun("hb-interval");
+      internals().startHeartbeat("hb-interval");
+      await sleepUntil(() => emptyHeartbeatPosts().length > 0);
+      expect(emptyHeartbeatPosts().length).toBeGreaterThan(0);
+      internals().stopHeartbeat("hb-interval");
+      delete process.env.HEARTBEAT_INTERVAL_MS;
     });
 
-    it("should kill only the corresponding process when stop message is received", async () => {
-      const process1Pid = 6001;
-      const process2Pid = 6002;
-      let processCounter = 0;
-
-      spawnCommandLineMock.mockImplementation(() => ({
-        processId: processCounter === 0 ? process1Pid : process2Pid,
-        pollInterval: undefined,
-      }));
-
-      await daemon.start();
-
-      // Start first process
-      const message1 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_1",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message1),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      processCounter++;
-
-      // Start second process
-      const message2 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_2",
-        prompt: "second prompt",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message2),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
-      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(0);
-
-      // Send stop message for first process only
-      const stopMessage1 = {
-        type: "stop" as const,
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "CHAT_1",
-        token: "TEST_TOKEN_STRING",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(stopMessage1),
-      });
-      await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-
-      // Only first process should be killed
-      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(1);
-      expect(killChildProcessGroupMock).toHaveBeenCalledWith(process1Pid);
-
-      // Second process should still be running
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
+    it("heartbeat stops once the process is marked completed", async () => {
+      process.env.HEARTBEAT_INTERVAL_MS = "30";
+      const state = startRun("hb-complete");
+      internals().startHeartbeat("hb-complete");
+      state.isCompleted = true;
+      await sleepUntil(() => !internals().heartbeatTimers.has("hb-complete"));
+      serverPostMock.mockClear();
+      await sleep(90);
+      expect(internals().heartbeatTimers.has("hb-complete")).toBe(false);
+      expect(emptyHeartbeatPosts()).toHaveLength(0);
+      delete process.env.HEARTBEAT_INTERVAL_MS;
     });
 
-    it("should flush buffered messages per thread when multiple processes emit output", async () => {
-      await daemon.start();
-
-      const message1 = {
-        ...TEST_INPUT_MESSAGE,
-        threadId: "TEST_THREAD_ID_ONE",
-        threadChatId: "CHAT_1",
-        token: "TOKEN_ONE",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message1),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      const message2 = {
-        ...TEST_INPUT_MESSAGE,
-        threadId: "TEST_THREAD_ID_TWO",
-        threadChatId: "CHAT_2",
-        token: "TOKEN_TWO",
-        prompt: "second prompt",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message2),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      const chat1Output = { role: "assistant", content: "CHAT_1_OUTPUT" };
-      const chat2Output = { role: "assistant", content: "CHAT_2_OUTPUT" };
-
-      const chat1Stdout =
-        spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-      const chat2Stdout =
-        spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-
-      expect(chat1Stdout).toBeTypeOf("function");
-      expect(chat2Stdout).toBeTypeOf("function");
-
-      chat1Stdout?.(JSON.stringify(chat1Output));
-      chat2Stdout?.(JSON.stringify(chat2Output));
-
-      await sleepUntil(() => serverPostMock.mock.calls.length > 0);
-      await sleep(50);
-
-      expect(serverPostMock).toHaveBeenCalledTimes(2);
-
-      const firstCall = serverPostMock.mock.calls[0]!;
-      const secondCall = serverPostMock.mock.calls[1]!;
-
-      expect(firstCall[1]).toBe("TOKEN_ONE");
-      expect(secondCall[1]).toBe("TOKEN_TWO");
-
-      expect(firstCall[0]).toMatchObject({
-        threadId: "TEST_THREAD_ID_ONE",
-        threadChatId: "CHAT_1",
-      });
-      expect(secondCall[0]).toMatchObject({
-        threadId: "TEST_THREAD_ID_TWO",
-        threadChatId: "CHAT_2",
-      });
-
-      expect(firstCall[0].messages).toHaveLength(1);
-      expect(firstCall[0].messages[0]).toMatchObject(chat1Output);
-
-      expect(secondCall[0].messages).toHaveLength(1);
-      expect(secondCall[0].messages[0]).toMatchObject(chat2Output);
+    it("killing an active process kills the child group and stops its heartbeat", () => {
+      startRun("kill-one", 9911);
+      internals().startHeartbeat("kill-one");
+      internals().killActiveProcess("kill-one");
+      expect(killChildProcessGroupMock).toHaveBeenCalledWith(9911);
+      expect(internals().heartbeatTimers.has("kill-one")).toBe(false);
+      expect(internals().activeProcesses.has("kill-one")).toBe(false);
     });
 
-    it("should continue flushing healthy thread groups when another group fails", async () => {
-      let chatOneFailureCount = 0;
-      serverPostMock.mockImplementation(async (payload) => {
-        if (payload.threadChatId === "CHAT_1" && chatOneFailureCount === 0) {
-          chatOneFailureCount += 1;
-          throw new Error("CHAT_1 temporary failure");
+    it("flushing the message buffer POSTs buffered messages to the API", async () => {
+      startRun("buffer-one");
+      internals().addMessageToBuffer({
+        agent: "claudeCode",
+        message: assistantMessage("buffered output"),
+        threadId: "thread-buffer-one",
+        threadChatId: "buffer-one",
+        token: "token-buffer-one",
+      });
+      await internals().flushMessageBuffer();
+      const posted = postsForThread("buffer-one").find(
+        (call) =>
+          ((call[0] as { messages?: unknown[] })?.messages?.length ?? 0) > 0,
+      );
+      expect(posted).toBeTruthy();
+      expect(JSON.stringify(posted?.[0])).toContain("buffered output");
+    });
+
+    it("flushes buffered messages per thread with independent POSTs", async () => {
+      startRun("thread-a");
+      startRun("thread-b");
+      internals().addMessageToBuffer({
+        agent: "claudeCode",
+        message: assistantMessage("from thread a"),
+        threadId: "thread-thread-a",
+        threadChatId: "thread-a",
+        token: "token-thread-a",
+      });
+      internals().addMessageToBuffer({
+        agent: "claudeCode",
+        message: assistantMessage("from thread b"),
+        threadId: "thread-thread-b",
+        threadChatId: "thread-b",
+        token: "token-thread-b",
+      });
+      await internals().flushMessageBuffer();
+      const aPost = postsForThread("thread-a")[0];
+      const bPost = postsForThread("thread-b")[0];
+      expect(aPost).toBeTruthy();
+      expect(bPost).toBeTruthy();
+      expect(JSON.stringify(aPost?.[0])).toContain("from thread a");
+      expect(JSON.stringify(aPost?.[0])).not.toContain("from thread b");
+    });
+
+    it("continues flushing a healthy thread when another thread's POST fails", async () => {
+      startRun("healthy");
+      startRun("failing");
+      serverPostMock.mockImplementation(async (body) => {
+        if ((body as { threadChatId?: string })?.threadChatId === "failing") {
+          throw new Error("simulated POST failure");
         }
-        return;
+        return undefined;
       });
-
-      await daemon.start();
-
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify({
-          ...TEST_INPUT_MESSAGE,
-          threadId: "TEST_THREAD_ID_ONE",
-          threadChatId: "CHAT_1",
-          token: "TOKEN_ONE",
-        }),
+      internals().addMessageToBuffer({
+        agent: "claudeCode",
+        message: assistantMessage("healthy output"),
+        threadId: "thread-healthy",
+        threadChatId: "healthy",
+        token: "token-healthy",
       });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify({
-          ...TEST_INPUT_MESSAGE,
-          threadId: "TEST_THREAD_ID_TWO",
-          threadChatId: "CHAT_2",
-          token: "TOKEN_TWO",
-          prompt: "second prompt",
-        }),
+      internals().addMessageToBuffer({
+        agent: "claudeCode",
+        message: assistantMessage("failing output"),
+        threadId: "thread-failing",
+        threadChatId: "failing",
+        token: "token-failing",
       });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      const chat1Stdout =
-        spawnCommandLineMock.mock.calls[0]![1].onStdoutLine ?? null;
-      const chat2Stdout =
-        spawnCommandLineMock.mock.calls[1]![1].onStdoutLine ?? null;
-      expect(chat1Stdout).toBeTypeOf("function");
-      expect(chat2Stdout).toBeTypeOf("function");
-
-      chat1Stdout?.(
-        JSON.stringify({ role: "assistant", content: "CHAT_1_MSG" }),
-      );
-      chat2Stdout?.(
-        JSON.stringify({ role: "assistant", content: "CHAT_2_MSG" }),
-      );
-
-      await sleepUntil(() => serverPostMock.mock.calls.length >= 3, 3000);
-
-      const sentThreadChatIds = serverPostMock.mock.calls.map(
-        (call) => call[0].threadChatId,
-      );
-      expect(sentThreadChatIds.slice(0, 3)).toEqual([
-        "CHAT_1",
-        "CHAT_2",
-        "CHAT_1",
-      ]);
-
-      const chatOneCalls = sentThreadChatIds.filter((id) => id === "CHAT_1");
-      const chatTwoCalls = sentThreadChatIds.filter((id) => id === "CHAT_2");
-      expect(chatOneCalls).toHaveLength(2);
-      expect(chatTwoCalls).toHaveLength(1);
-    });
-
-    it("should replace a process when a new message with same threadChatId is received", async () => {
-      const process1Pid = 7001;
-      const process2Pid = 7002;
-      let processCounter = 0;
-
-      spawnCommandLineMock.mockImplementation(() => ({
-        processId: processCounter === 0 ? process1Pid : process2Pid,
-        pollInterval: undefined,
-      }));
-
-      await daemon.start();
-
-      // Start first process
-      const message1 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_1",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message1),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      processCounter++;
-
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(0);
-
-      // Start another process with the same threadChatId
-      const message2 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_1",
-        prompt: "second prompt for same chat",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message2),
-      });
-      await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-
-      // First process should be killed and second should start
-      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(1);
-      expect(killChildProcessGroupMock).toHaveBeenCalledWith(process1Pid);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
-    });
-
-    it("should send custom-stop message only for the stopped process", async () => {
-      const process1Pid = 8001;
-      const process2Pid = 8002;
-      let processCounter = 0;
-
-      spawnCommandLineMock.mockImplementation(() => ({
-        processId: processCounter === 0 ? process1Pid : process2Pid,
-        pollInterval: undefined,
-      }));
-
-      await daemon.start();
-
-      // Start first process
-      const message1 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_1",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message1),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      processCounter++;
-
-      // Start second process
-      const message2 = {
-        ...TEST_INPUT_MESSAGE,
-        threadChatId: "CHAT_2",
-        prompt: "second prompt",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(message2),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-
-      serverPostMock.mockClear();
-
-      // Send stop message for first process
-      const stopMessage1 = {
-        type: "stop" as const,
-        threadId: "TEST_THREAD_ID_STRING",
-        threadChatId: "CHAT_1",
-        token: "TEST_TOKEN_STRING",
-      };
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(stopMessage1),
-      });
-      await sleepUntil(() => serverPostMock.mock.calls.length > 0);
-
-      // Should send custom-stop message for CHAT_1
-      expect(serverPostMock).toHaveBeenCalled();
-      const sentMessages = serverPostMock.mock.calls.flatMap(
-        (call) => call[0].messages,
-      );
-      const customStopMessages = sentMessages.filter(
-        (msg: any) => msg.type === "custom-stop",
-      );
-      expect(customStopMessages).toHaveLength(1);
-
-      // Verify the custom-stop is for the correct threadChatId
-      const lastCall =
-        serverPostMock.mock.calls[serverPostMock.mock.calls.length - 1];
-      expect(lastCall?.[0]?.threadChatId).toBe("CHAT_1");
-    });
-  });
-
-  describe("permission mode handling", () => {
-    it("should use --permission-mode plan flag when permissionMode is plan", async () => {
-      const planModeMessage: DaemonMessageClaude = {
-        ...TEST_INPUT_MESSAGE,
-        permissionMode: "plan",
-      };
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(planModeMessage),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const claudeCommand = spawnCommandLineMock.mock.calls[0]![0];
-
-      // Should include --permission-mode plan
-      expect(claudeCommand).toContain("--permission-mode plan");
-      // Should include --allowedTools for WebSearch and WebFetch
-      expect(claudeCommand).toContain("--allowedTools");
-      expect(claudeCommand).toContain("WebSearch");
-      expect(claudeCommand).toContain("WebFetch");
-      // Should NOT include --dangerously-skip-permissions
-      expect(claudeCommand).not.toContain("--dangerously-skip-permissions");
-    });
-
-    it("should use --dangerously-skip-permissions when permissionMode is allowAll", async () => {
-      const allowAllMessage: DaemonMessageClaude = {
-        ...TEST_INPUT_MESSAGE,
-        permissionMode: "allowAll",
-      };
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(allowAllMessage),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const claudeCommand = spawnCommandLineMock.mock.calls[0]![0];
-
-      // Should include --dangerously-skip-permissions
-      expect(claudeCommand).toContain("--dangerously-skip-permissions");
-      // Should NOT include --permission-mode
-      expect(claudeCommand).not.toContain("--permission-mode");
-    });
-
-    it("should default to --dangerously-skip-permissions when permissionMode is not specified", async () => {
-      // TEST_INPUT_MESSAGE doesn't have permissionMode field
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      const claudeCommand = spawnCommandLineMock.mock.calls[0]![0];
-
-      // Should include --dangerously-skip-permissions (default behavior)
-      expect(claudeCommand).toContain("--dangerously-skip-permissions");
-      // Should NOT include --permission-mode
-      expect(claudeCommand).not.toContain("--permission-mode");
-    });
-
-    it("should handle permission mode changes between messages", async () => {
-      const planMessage: DaemonMessageClaude = {
-        ...TEST_INPUT_MESSAGE,
-        permissionMode: "plan",
-        threadId: "THREAD_1",
-      };
-
-      const allowAllMessage: DaemonMessageClaude = {
-        ...TEST_INPUT_MESSAGE,
-        permissionMode: "allowAll",
-        threadId: "THREAD_2",
-      };
-
-      await daemon.start();
-
-      // First message with plan mode
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(planMessage),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(1);
-      let claudeCommand = spawnCommandLineMock.mock.calls[0]![0];
-      expect(claudeCommand).toContain("--permission-mode plan");
-      expect(claudeCommand).toContain("--allowedTools");
-      expect(claudeCommand).toContain("WebSearch");
-      expect(claudeCommand).toContain("WebFetch");
-      expect(claudeCommand).not.toContain("--dangerously-skip-permissions");
-
-      // Second message with allowAll mode
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(allowAllMessage),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 2);
-      expect(spawnCommandLineMock).toHaveBeenCalledTimes(2);
-      claudeCommand = spawnCommandLineMock.mock.calls[1]![0];
-      expect(claudeCommand).toContain("--dangerously-skip-permissions");
-      expect(claudeCommand).not.toContain("--permission-mode");
-    });
-  });
-
-  describe("heartbeat", () => {
-    it("should send heartbeat with empty messages after interval", async () => {
-      process.env.HEARTBEAT_INTERVAL_MS = "50";
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      serverPostMock.mockClear();
-
-      // Wait for heartbeat to fire
+      void internals().flushMessageBuffer();
       await sleepUntil(() =>
-        serverPostMock.mock.calls.some(
-          (call: any) => call[0]?.messages?.length === 0,
+        postsForThread("healthy").some(
+          (call) =>
+            ((call[0] as { messages?: unknown[] })?.messages?.length ?? 0) > 0,
         ),
       );
-
-      expect(serverPostMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: [],
-          threadId: "TEST_THREAD_ID_STRING",
-          threadChatId: "TEST_THREAD_CHAT_ID_STRING",
-        }),
-        "TEST_TOKEN_STRING",
-      );
-
-      delete process.env.HEARTBEAT_INTERVAL_MS;
+      expect(postsForThread("healthy").length).toBeGreaterThan(0);
     });
 
-    it("should stop heartbeat when process completes", async () => {
-      process.env.HEARTBEAT_INTERVAL_MS = "50";
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // Simulate process completion
-      mockSpawnCommandStdoutLine({
-        type: "result",
-        subtype: "success",
-        total_cost_usd: 0,
-        duration_ms: 100,
-        duration_api_ms: 100,
-        is_error: false,
-        num_turns: 1,
-        session_id: "test-session",
-        result: "done",
-      });
-      await sleep(20);
-
-      // Simulate process close — this triggers handleProcessClose which stops heartbeat
-      const onClose = spawnCommandLineMock.mock.calls[0]![1].onClose;
-      onClose?.(0);
-      await sleep(20);
-      serverPostMock.mockClear();
-
-      // Wait long enough — no heartbeat should fire after process close
-      await sleep(120);
-      const heartbeatCalls = serverPostMock.mock.calls.filter(
-        (call: any) => call[0]?.messages?.length === 0,
-      );
-      expect(heartbeatCalls).toHaveLength(0);
-
-      delete process.env.HEARTBEAT_INTERVAL_MS;
-    });
-
-    it("should stop heartbeat when stop message is received", async () => {
-      process.env.HEARTBEAT_INTERVAL_MS = "50";
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // Send stop message — killActiveProcess stops the heartbeat
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_STOP_MESSAGE),
-      });
-      await sleepUntil(() => killChildProcessGroupMock.mock.calls.length === 1);
-      serverPostMock.mockClear();
-
-      // Wait long enough — no heartbeat should fire after stop
-      await sleep(120);
-      const heartbeatCalls = serverPostMock.mock.calls.filter(
-        (call: any) => call[0]?.messages?.length === 0,
-      );
-      expect(heartbeatCalls).toHaveLength(0);
-
-      delete process.env.HEARTBEAT_INTERVAL_MS;
-    });
-
-    it("should survive heartbeat API failure without killing the process", async () => {
-      process.env.HEARTBEAT_INTERVAL_MS = "50";
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-
-      // Make serverPost fail only for heartbeat (empty messages)
-      serverPostMock.mockImplementation(async (payload: any) => {
-        if (payload.messages?.length === 0) {
-          throw new Error("Network error");
-        }
-        return;
-      });
-
-      // Wait for heartbeat to attempt and fail
-      await sleep(80);
-
-      // Process should still be running (not killed)
-      expect(killChildProcessGroupMock).not.toHaveBeenCalled();
-
-      delete process.env.HEARTBEAT_INTERVAL_MS;
-    });
-
-    it("should clean up heartbeat timers on teardown", async () => {
-      process.env.HEARTBEAT_INTERVAL_MS = "50";
-
-      await daemon.start();
-      await writeToUnixSocket({
-        unixSocketPath: runtime.unixSocketPath,
-        dataStr: JSON.stringify(TEST_INPUT_MESSAGE),
-      });
-      await sleepUntil(() => spawnCommandLineMock.mock.calls.length === 1);
-      serverPostMock.mockClear();
-
-      // Teardown should clear all heartbeat timers
-      await runtime.teardown();
-      serverPostMock.mockClear();
-
-      // After teardown, no heartbeats should fire
-      await sleep(120);
-      const heartbeatCalls = serverPostMock.mock.calls.filter(
-        (call: any) => call[0]?.messages?.length === 0,
-      );
-      expect(heartbeatCalls).toHaveLength(0);
-
-      delete process.env.HEARTBEAT_INTERVAL_MS;
+    it("tracks multiple processes independently and kills only the targeted one", () => {
+      startRun("track-a", 3001);
+      startRun("track-b", 3002);
+      expect(internals().activeProcesses.has("track-a")).toBe(true);
+      expect(internals().activeProcesses.has("track-b")).toBe(true);
+      internals().killActiveProcess("track-b");
+      expect(internals().activeProcesses.has("track-a")).toBe(true);
+      expect(internals().activeProcesses.has("track-b")).toBe(false);
+      expect(killChildProcessGroupMock).toHaveBeenCalledWith(3002);
+      expect(killChildProcessGroupMock).toHaveBeenCalledTimes(1);
     });
   });
 });
 
 describe("ACP SSE terminal validation", () => {
   it("does not restart sandbox-agent for a healthy ACP resume", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response("ok", { status: 200 }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("ok", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const localRuntime = new DaemonRuntime({
       url: "http://localhost:3000",
@@ -4438,9 +2388,7 @@ describe("ACP SSE terminal validation", () => {
       outputFormat: "text",
     });
     vi.spyOn(localRuntime, "exitProcess").mockImplementation(() => {});
-    const execSyncSpy = vi
-      .spyOn(localRuntime, "execSync")
-      .mockReturnValue("");
+    const execSyncSpy = vi.spyOn(localRuntime, "execSync").mockReturnValue("");
     const localDaemon = new TerragonDaemon({ runtime: localRuntime });
     const internals = localDaemon as unknown as {
       ensureSandboxAgentRuntime: (

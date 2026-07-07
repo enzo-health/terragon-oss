@@ -128,7 +128,7 @@ export const GitDiffPart = memo(function GitDiffPart({
   const allExpanded = diffInstances.every((_, idx) => expandedFiles[idx]);
 
   return (
-    <div className="flex flex-col rounded-lg bg-surface-soft">
+    <div className="flex flex-col rounded-lg bg-surface ring-1 ring-border">
       <div
         className="flex flex-row items-center cursor-pointer select-none justify-between p-2"
         role="button"

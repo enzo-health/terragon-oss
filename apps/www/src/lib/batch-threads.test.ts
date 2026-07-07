@@ -67,19 +67,22 @@ describe("maybeBatchThreads", () => {
     await redis.del(key);
   });
 
-  it("handles concurrent requests - first creates, second waits and gets same threadId", async () => {
-    const threadId = nanoid();
-    const threadChatId = nanoid();
+  it("handles concurrent requests - one creates, the other waits and gets same threadId", async () => {
+    const threadId1 = nanoid();
+    const threadChatId1 = nanoid();
+    const threadId2 = nanoid();
+    const threadChatId2 = nanoid();
 
     const createNewThread1 = vi.fn(async () => {
       // Simulate slow thread creation
       await new Promise((resolve) => setTimeout(resolve, 200));
-      return { threadId, threadChatId };
+      return { threadId: threadId1, threadChatId: threadChatId1 };
     });
 
-    const createNewThread2 = vi.fn(async () => {
-      throw new Error("should-not-be-called");
-    });
+    const createNewThread2 = vi.fn(async () => ({
+      threadId: threadId2,
+      threadChatId: threadChatId2,
+    }));
 
     // Start both requests concurrently
     const [result1, result2] = await Promise.all([
@@ -99,19 +102,26 @@ describe("maybeBatchThreads", () => {
       }),
     ]);
 
-    expect(result1.threadId).toBe(threadId);
-    expect(result1.didCreateNewThread).toBe(true);
-    expect(result2.threadId).toBe(threadId);
-    expect(result2.didCreateNewThread).toBe(false);
+    const createdResult = result1.didCreateNewThread ? result1 : result2;
+    const waitedResult = result1.didCreateNewThread ? result2 : result1;
 
-    // Only first should create
-    expect(createNewThread1).toHaveBeenCalledOnce();
-    expect(createNewThread2).not.toHaveBeenCalled();
+    expect(createdResult.threadId).toBe(waitedResult.threadId);
+    expect(createdResult.threadChatId).toBe(waitedResult.threadChatId);
+    expect(waitedResult.didCreateNewThread).toBe(false);
+
+    // Exactly one concurrent request should create the thread. Redis decides
+    // which contender acquires the lock first, so this test must not depend on
+    // Promise array ordering under shard load.
+    expect(
+      createNewThread1.mock.calls.length + createNewThread2.mock.calls.length,
+    ).toBe(1);
 
     // Key should still be set with threadId
     const key = `thread-batch:${userId}:${batchKey}`;
     const value = await redis.get(key);
-    expect(value).toBe(`${threadId}/${threadChatId}`);
+    expect(value).toBe(
+      `${createdResult.threadId}/${createdResult.threadChatId}`,
+    );
 
     // Cleanup
     await redis.del(key);

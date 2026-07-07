@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePromptBox, HandleSubmit, HandleUpdate } from "./use-promptbox";
 import { useRepositoryCache } from "./typeahead/repository-cache";
 import { AIAgent } from "@terragon/agent/types";
@@ -10,7 +10,7 @@ import {
   DBUserMessage,
 } from "@terragon/shared";
 import { SimplePromptBox } from "./simple-promptbox";
-import { richTextToTiptap } from "./tiptap-to-richtext";
+import { richTextToComposerValue } from "./composer-richtext";
 import { cn } from "@/lib/utils";
 import { Attachment } from "@/lib/attachment-types";
 
@@ -122,7 +122,14 @@ export function GenericPromptBox({
   }, [message]);
 
   const {
-    editor,
+    value,
+    setValue,
+    triggers,
+    placeholder: composerPlaceholder,
+    composerRef,
+    insertText,
+    insertMention,
+    insertSlashCommand,
     attachedFiles,
     isSubmitting,
     isSubmitDisabled,
@@ -155,7 +162,7 @@ export function GenericPromptBox({
     branchName,
     typeahead: repositoryCache,
     initialFiles,
-    initialContent: richTextToTiptap(getInitialRichText(message)),
+    initialContent: richTextToComposerValue(getInitialRichText(message)),
     disableLocalStorage: true,
     onUpdate,
     isRecording,
@@ -163,22 +170,17 @@ export function GenericPromptBox({
     supportsMultiAgentPromptSubmission: !!supportMultiAgentPromptSubmission,
   });
 
-  // Focus the editor when it is ready
-  const initializedRef = useRef(false);
-  useEffect(() => {
-    if (editor && !editor.isDestroyed && !initializedRef.current) {
-      if (autoFocus) {
-        setTimeout(() => {
-          editor.commands.focus();
-        }, 50);
-      }
-      initializedRef.current = true;
-    }
-  }, [editor, autoFocus]);
-
   return (
     <SimplePromptBox
-      editor={editor}
+      value={value}
+      onValueChange={setValue}
+      triggers={triggers}
+      placeholder={composerPlaceholder}
+      autoFocus={autoFocus}
+      composerRef={composerRef}
+      insertText={insertText}
+      insertMention={insertMention}
+      insertSlashCommand={insertSlashCommand}
       forcedAgent={forcedAgent}
       forcedAgentVersion={forcedAgentVersion}
       attachedFiles={attachedFiles}

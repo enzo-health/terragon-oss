@@ -6,11 +6,11 @@
  * Feeds a representative AG-UI BaseEvent sequence through the live
  * ThreadViewModel sidecar (via `useThreadViewModel` / `useAgUiSidecarRouter`)
  * and asserts the lifecycle, artifact, and quarantine projection that the
- * production chat page consumes beside the assistant-ui runtime.
+ * production chat page consumes.
  *
  * Transcript message projection (text/tool/rich parts) is rendered by the
- * assistant-ui runtime in production and is covered by
- * `apps/www/src/components/chat/assistant-ui/native-thread.test.tsx`; this
+ * `chat/transcript-view/` store fold + leaf registry in production and is
+ * covered by `transcript-view/registry.test.tsx` and the store tests; this
  * harness intentionally does not re-assert it.
  */
 

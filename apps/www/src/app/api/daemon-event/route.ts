@@ -7,11 +7,10 @@ import { env } from "@terragon/env/apps-www";
 import { extendSandboxLife } from "@terragon/sandbox";
 import * as schema from "@terragon/shared/db/schema";
 import {
-  assignThreadChatMessageSeqToCanonicalEvents,
   findOpenAgUiMessagesForRun,
+  findOpenAgUiToolCallsForRun,
 } from "@terragon/shared/model/agent-event-log";
 import {
-  completeAgentRunContextTerminal,
   getAgentRunContextByRunId,
   updateAgentRunContext,
 } from "@terragon/shared/model/agent-run-context";
@@ -36,8 +35,10 @@ import {
   hasOtherActiveRuns,
   setActiveThreadChat,
 } from "@/agent/sandbox-resource";
-import { messagesIndicateRecoverableFailure } from "@/server-lib/daemon-event/message-parser";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import {
+  LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE,
+  messagesIndicateRecoverableFailure,
+} from "@/server-lib/daemon-event/message-parser";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   type DaemonTokenAuthContext,
@@ -46,6 +47,7 @@ import {
   hasDaemonProviderScope,
 } from "@/lib/auth-server";
 import { db } from "@/lib/db";
+import { agUiWireRowsToRows } from "@terragon/agent/ag-ui-rows";
 import {
   type AgUiPublishRow,
   broadcastAgUiEventEphemeral,
@@ -59,7 +61,6 @@ import {
   commitPreLegacyAgUiEvents,
   commitTerminalAgUiEvents,
   type DaemonEventEnvelopeV2,
-  filterCanonicalEventsForDeltaCoexistence,
   findCanonicalEventContextMismatch,
   findCanonicalRunTerminalEvent,
   splitCanonicalEventsForCommit,
@@ -67,11 +68,29 @@ import {
 import {
   buildFailedTerminalErrorMetadata,
   buildTerminalLifecyclePolicy,
-  resolveTerminalStatusForTransition,
   shouldQueueTerminalCheckpoint,
+  type TerminalCheckpointReadyStatus,
 } from "@/server-lib/daemon-event/run-completion";
+import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
+import { parseClaudeOverloadedMessage } from "@/agent/msg/helpers";
+import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { buildInterruptedToolResultMessages } from "@/lib/db-message-helpers";
+import { trackUsageEvents } from "@/server-lib/usage-events";
+import {
+  internalPOST,
+  isAnthropicDownPOST,
+} from "@/server-lib/internal-request";
+import { getEligibleQueuedThreadChats } from "@/server-lib/process-queued-thread";
+import { persistSideEffectAgUiMessages } from "@/server-lib/ag-ui-side-effect-messages";
+import {
+  applyRouteRecoveryFire,
+  applyRouteRecoveryRateLimit,
+  planRouteRecovery,
+  type RouteRecoveryPlan,
+} from "@/server-lib/daemon-event/route-recovery";
+import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { emitThreadIntegrationActivitiesForCanonicalBatch } from "@/server-lib/thread-integration-activity";
 
 const DAEMON_TEST_AUTH_HEADER = "X-Terragon-Test-Daemon-Auth";
 const DAEMON_TEST_USER_ID_HEADER = "X-Terragon-Test-User-Id";
@@ -133,14 +152,9 @@ function requiredDaemonProviderScopesForAgent(
 ): DaemonTokenProvider[] {
   switch (agent) {
     case "claudeCode":
-    case "amp":
       return ["anthropic"];
     case "codex":
       return ["openai"];
-    case "gemini":
-      return ["google"];
-    case "opencode":
-      return ["openrouter", "openai", "anthropic"];
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(
@@ -203,6 +217,37 @@ function deriveSessionIdFromMessages(
   return null;
 }
 
+function deriveUsageFromMessages(messages: DaemonEventAPIBody["messages"]): {
+  costUsd: number;
+  agentDurationMs: number;
+} {
+  let costUsd = 0;
+  let agentDurationMs = 0;
+  for (const message of messages) {
+    if (message.type === "custom-stop" || message.type === "custom-error") {
+      agentDurationMs = message.duration_ms ?? 0;
+    }
+    if (message.type === "result") {
+      agentDurationMs = message.duration_ms ?? 0;
+      costUsd = "total_cost_usd" in message ? message.total_cost_usd : 0;
+    }
+  }
+  return { costUsd, agentDurationMs };
+}
+
+function messagesIndicateOverloaded(
+  messages: DaemonEventAPIBody["messages"],
+  agent: string | undefined,
+): boolean {
+  if (agent !== "claudeCode") {
+    return false;
+  }
+  return messages.some(
+    (message) =>
+      message.type === "result" && parseClaudeOverloadedMessage(message),
+  );
+}
+
 function publishMetaEvents(params: {
   metaEvents: NonNullable<DaemonEventAPIBody["metaEvents"]> | null;
   threadId: string;
@@ -228,18 +273,6 @@ function publishMetaEvents(params: {
 function isFailureRetryable(failureCategory: RuntimeFailureCategory): boolean {
   const action = RUNTIME_FAILURE_ACTION_TABLE[failureCategory];
   return action !== "blocked";
-}
-
-function numericUsageField(usage: object, field: string): number {
-  const value = Reflect.get(usage, field);
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "string" && value.length > 0) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
 }
 
 function buildRunContextFailureUpdates(params: {
@@ -422,6 +455,10 @@ export async function POST(request: Request) {
   const rawCanonicalEvents = Array.isArray(json.canonicalEvents)
     ? json.canonicalEvents
     : null;
+  const agUiStandardRows =
+    Array.isArray(json.agUiEvents) && json.agUiEvents.length > 0
+      ? agUiWireRowsToRows(json.agUiEvents)
+      : null;
   const deltas = json.deltas;
   const metaEvents = Array.isArray(json.metaEvents) ? json.metaEvents : null;
 
@@ -771,26 +808,43 @@ export async function POST(request: Request) {
     }
   }
 
-  const canonicalEventsAfterDeltaFilter =
-    filterCanonicalEventsForDeltaCoexistence({
-      canonicalEvents: rawCanonicalEvents,
-      deltas,
-    });
-  // A terminal batch can still carry a RECOVERABLE failure (rate-limit,
-  // OAuth-revoked, prompt-too-long). When it does, drop the canonical
-  // run-terminal so the message-based recovery path can re-queue instead of
-  // fencing the run to a hard stop; recovery terminates itself if it fails.
-  const isRecoverableResult = messagesIndicateRecoverableFailure({
-    messages,
-    agent: runContext?.agent,
-    timezone,
-  });
+  const recoverableTerminalCandidate = rawCanonicalEvents
+    ? findCanonicalRunTerminalEvent(rawCanonicalEvents)
+    : null;
+  const isRecoverableResult =
+    recoverableTerminalCandidate?.recoverable != null ||
+    (LEGACY_RECOVERABLE_SNIFFER_UNTIL_ALL_DAEMONS_STAMP_RECOVERABLE &&
+      messagesIndicateRecoverableFailure({
+        messages,
+        agent: runContext?.agent,
+        timezone,
+      }));
+
+  const isV2Batch = canPersistCanonicalEvents && envelopeV2 != null;
+  const recoveryPlan: RouteRecoveryPlan | null =
+    isV2Batch && isRecoverableResult && runContext
+      ? await planRouteRecovery({
+          daemonStampedRecoverable:
+            recoverableTerminalCandidate?.recoverable ?? null,
+          messages,
+          agent: runContext.agent,
+          timezone,
+          userId,
+          threadId,
+          threadChatId,
+        })
+      : null;
+  const routeOwnsRecovery =
+    recoveryPlan !== null &&
+    (recoveryPlan.outcome === "fire" || recoveryPlan.outcome === "rate-limit");
+
+  const dropRecoverableRunTerminal =
+    isRecoverableResult &&
+    (recoveryPlan === null || recoveryPlan.outcome !== "no-recovery");
   const canonicalEvents =
-    isRecoverableResult && canonicalEventsAfterDeltaFilter
-      ? canonicalEventsAfterDeltaFilter.filter(
-          (event) => event.type !== "run-terminal",
-        )
-      : canonicalEventsAfterDeltaFilter;
+    dropRecoverableRunTerminal && rawCanonicalEvents
+      ? rawCanonicalEvents.filter((event) => event.type !== "run-terminal")
+      : rawCanonicalEvents;
   const canonicalTerminalBeforePersistence = canonicalEvents
     ? findCanonicalRunTerminalEvent(canonicalEvents)
     : null;
@@ -804,7 +858,12 @@ export async function POST(request: Request) {
     | "processing"
     | "completed"
     | "failed"
-    | "stopped" = canonicalTerminal ? canonicalTerminal.status : "processing";
+    | "stopped" =
+    recoveryPlan?.outcome === "fire"
+      ? "completed"
+      : canonicalTerminal
+        ? canonicalTerminal.status
+        : "processing";
   const daemonTerminalErrorInfo: {
     errorMessage: string | null;
     errorCategory: DaemonTerminalErrorCategory;
@@ -846,6 +905,11 @@ export async function POST(request: Request) {
   let terminalFenceOutcome: "committed" | "duplicate" | null = null;
   let terminalEventIdForAck: string | null = null;
   let terminalSeqForAck: number | null = null;
+  let terminalChatTransition: Awaited<
+    ReturnType<typeof commitTerminalRunAndChatStatus>
+  >["transition"] = null;
+  let terminalCheckpointReadyStatus: TerminalCheckpointReadyStatus | null =
+    null;
   if (daemonRunStatusFromMessages !== "processing") {
     const terminalEventId = canonicalTerminal?.eventId ?? envelopeV2?.eventId;
     const terminalSeq = canonicalTerminal?.seq ?? envelopeV2?.seq;
@@ -861,27 +925,62 @@ export async function POST(request: Request) {
     terminalEventIdForAck = terminalEventId;
     terminalSeqForAck = terminalSeq;
 
-    const terminalFenceResult = await completeAgentRunContextTerminal({
-      db,
-      runId: runContext.runId,
-      userId,
-      threadId,
-      threadChatId,
-      transportMode: runContext.transportMode,
-      protocolVersion: runContext.protocolVersion,
-      runtimeProvider: runContext.runtimeProvider,
-      daemonTokenKeyId: runContext.daemonTokenKeyId,
-      terminalStatus: daemonRunStatusFromMessages,
-      lastAcceptedSeq: terminalSeq,
-      terminalEventId,
-      failureUpdates: terminalFailureUpdates,
+    const terminalThreadForPolicy =
+      daemonRunStatusFromMessages === "completed"
+        ? await getThreadMinimal({ db, threadId, userId })
+        : null;
+    const disableGitCheckpointing =
+      !!terminalThreadForPolicy?.disableGitCheckpointing;
+    const terminalPolicy = buildTerminalLifecyclePolicy({
+      status: daemonRunStatusFromMessages,
+      disableGitCheckpointing,
     });
-    if (terminalFenceResult.status === "rejected") {
+    terminalCheckpointReadyStatus = terminalPolicy.checkpointReadyStatus;
+
+    const commit = await commitTerminalRunAndChatStatus({
+      db,
+      fence: {
+        runId: runContext.runId,
+        userId,
+        threadId,
+        threadChatId,
+        transportMode: runContext.transportMode,
+        protocolVersion: runContext.protocolVersion,
+        runtimeProvider: runContext.runtimeProvider,
+        daemonTokenKeyId: runContext.daemonTokenKeyId,
+        terminalStatus: daemonRunStatusFromMessages,
+        lastAcceptedSeq: terminalSeq,
+        terminalEventId,
+        failureUpdates: terminalFailureUpdates,
+      },
+      transition: {
+        userId,
+        threadId,
+        threadChatId,
+        eventType: terminalPolicy.eventType,
+        markAsUnread: true,
+        requireStatusTransitionForChatUpdates: true,
+        skipBroadcast: true,
+      },
+      disableGitCheckpointing,
+    });
+    const terminalFenceResult = commit.fence;
+    if (commit.reconciled) {
+      return jsonTerminalAckResponse({
+        status: 202,
+        deduplicated: true,
+        reason: "run_terminal_reconciled",
+        runId: runContext.runId,
+        acknowledgedEventId: terminalEventId,
+        acknowledgedSeq: terminalSeq,
+      });
+    }
+    if (!terminalFenceResult || terminalFenceResult.status === "rejected") {
       return Response.json(
         {
           success: false,
           error: "daemon_event_terminal_run_context_cas_failed",
-          reason: terminalFenceResult.reason,
+          reason: terminalFenceResult?.reason,
           runId: runContext.runId,
         },
         { status: 409 },
@@ -889,6 +988,7 @@ export async function POST(request: Request) {
     }
     terminalFenceOutcome = terminalFenceResult.status;
     runContext = terminalFenceResult.runContext;
+    terminalChatTransition = commit.transition;
   }
 
   const {
@@ -903,6 +1003,7 @@ export async function POST(request: Request) {
     canonicalEventsForPersistence,
     deltas,
     runId: authoritativeRunId,
+    agUiStandardRows,
   });
   let canonicalPersistence: {
     summary: CanonicalPersistenceSummary;
@@ -999,20 +1100,32 @@ export async function POST(request: Request) {
     (!deltas || deltas.length === 0) &&
     (!canonicalEvents || canonicalEvents.length === 0)
   ) {
-    const result = await handleDaemonEvent({
-      messages: [],
+    const heartbeatThread = await getThreadMinimal({ db, threadId, userId });
+    if (!heartbeatThread) {
+      return new Response("Thread not found", { status: 404 });
+    }
+    if (heartbeatThread.codesandboxId && heartbeatThread.sandboxProvider) {
+      waitUntil(
+        extendSandboxLife({
+          sandboxId: heartbeatThread.codesandboxId,
+          sandboxProvider: heartbeatThread.sandboxProvider,
+        }),
+      );
+    }
+    await touchThreadChatUpdatedAt({ db, threadId, threadChatId });
+    return Response.json({ success: true });
+  }
+
+  const isNonTerminalActivityBatch =
+    daemonRunStatusFromMessages === "processing";
+  if (isNonTerminalActivityBatch) {
+    await updateThreadChatWithTransition({
+      db,
+      userId,
       threadId,
       threadChatId,
-      userId,
-      timezone,
-      contextUsage: null,
-      runId: authoritativeRunId,
-      runContext,
+      eventType: "assistant.message",
     });
-    if (!result.success) {
-      return new Response(result.error, { status: result.status || 500 });
-    }
-    return Response.json({ success: true });
   }
 
   if (
@@ -1079,40 +1192,6 @@ export async function POST(request: Request) {
     daemonRunStatusFromMessages !== "processing" &&
     (envelopeV2 != null || canonicalTerminal != null);
 
-  // Prefer computing context usage from the last non-result message's usage
-  // fields when available. Do not sum across all messages.
-  const computedContextUsage = (() => {
-    try {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
-        if (!message || message.type === "result") continue;
-        if (!("message" in message)) continue;
-        if ("parent_tool_use_id" in message && message.parent_tool_use_id) {
-          continue;
-        }
-        const messagePayload = message.message;
-        if (typeof messagePayload !== "object" || messagePayload === null) {
-          continue;
-        }
-        if (!("usage" in messagePayload)) continue;
-        const usage = messagePayload.usage;
-        if (typeof usage !== "object" || usage === null) continue;
-        const input = numericUsageField(usage, "input_tokens");
-        const output = numericUsageField(usage, "output_tokens");
-        const cacheCreate = numericUsageField(
-          usage,
-          "cache_creation_input_tokens",
-        );
-        const cacheRead = numericUsageField(usage, "cache_read_input_tokens");
-        const total = input + output + cacheCreate + cacheRead;
-        return Number.isFinite(total) && total > 0 ? total : null;
-      }
-      return null;
-    } catch (_e) {
-      return null;
-    }
-  })();
-  let result: Awaited<ReturnType<typeof handleDaemonEvent>>;
   if (
     runContext &&
     (runContext.status === "pending" || runContext.status === "dispatched")
@@ -1121,83 +1200,45 @@ export async function POST(request: Request) {
       status: "processing",
     });
   }
-  let skipLegacyRuntimeTranscriptPersistence = false;
-  try {
-    const isCanonicalOnlyTerminalBatch =
-      canonicalTerminal != null &&
-      messages.length === 0 &&
-      (!deltas || deltas.length === 0);
-    const hasNativeRuntimeEvents =
-      (canonicalEvents != null && canonicalEvents.length > 0) ||
-      (deltas != null && deltas.length > 0);
-    skipLegacyRuntimeTranscriptPersistence =
-      canPersistCanonicalEvents && envelopeV2 != null && hasNativeRuntimeEvents;
-    const shouldSkipDuplicateTerminalProjection =
-      terminalFenceOutcome === "duplicate" &&
-      !messages.some((message) => message.type === "assistant") &&
-      (!deltas || deltas.length === 0);
-    if (shouldSkipDuplicateTerminalProjection || isCanonicalOnlyTerminalBatch) {
-      result = {
-        success: true,
-        threadChatMessageSeq: null,
-        terminalRecoveryQueued: false,
-      };
-    } else {
-      result = await handleDaemonEvent({
-        messages,
-        threadId,
-        threadChatId,
-        userId,
-        timezone,
-        contextUsage: computedContextUsage ?? null,
-        runId: authoritativeRunId,
-        runContext,
-        deferTerminalTransitionToRoute: fenceTerminalTransition,
-        skipThreadChatPersistence: skipLegacyRuntimeTranscriptPersistence,
-      });
-    }
-  } catch (error) {
-    console.error(
-      "[daemon-event] UNHANDLED ERROR in main processing — FULL ERROR:",
-      error,
+
+  const mainPathThread = await getThreadMinimal({ db, threadId, userId });
+  if (mainPathThread?.codesandboxId && mainPathThread.sandboxProvider) {
+    waitUntil(
+      extendSandboxLife({
+        sandboxId: mainPathThread.codesandboxId,
+        sandboxProvider: mainPathThread.sandboxProvider,
+      }),
     );
-    if (runContext && !fenceTerminalTransition) {
-      await updateRunContextIfPresent({
-        status: "failed",
-      });
-    }
-    throw error;
   }
 
-  if (!result.success) {
-    if (runContext) {
-      await updateRunContextIfPresent({
-        status: "failed",
-      });
-    }
-    return new Response(result.error, { status: result.status || 500 });
-  }
-
-  if (result.threadChatMessageSeq != null) {
-    const insertedEventIds = canonicalPersistence.summary.insertedEventIds;
-    if (insertedEventIds.length > 0) {
-      // The persist layer already recorded the exact eventIds it wrote —
-      // use them directly instead of re-running the mapper (which would
-      // risk drift between producer and consumer if the mapping ever
-      // changed). Duplicates from earlier POSTs already carry their seq
-      // from the initial insert, so they're intentionally excluded here.
-      await assignThreadChatMessageSeqToCanonicalEvents({
-        db,
-        eventIds: insertedEventIds,
-        threadChatMessageSeq: result.threadChatMessageSeq,
-      });
+  const usage = deriveUsageFromMessages(messages);
+  if (terminalFenceOutcome !== "duplicate") {
+    waitUntil(
+      trackUsageEvents({
+        userId,
+        costUsd: usage.costUsd,
+        agentDurationMs: usage.agentDurationMs,
+      }),
+    );
+    if (messagesIndicateOverloaded(messages, runContext.agent)) {
+      waitUntil(isAnthropicDownPOST());
     }
   }
 
-  // Rich-part AG-UI rows were already persisted in the merged persist call
-  // above (canonical + delta + rich-part rows in a single transaction).
-  // The old second toDBMessage call is eliminated — the precomputed
-  // results were used to build richPartRows before handleDaemonEvent.
+  for (const activityEmission of emitThreadIntegrationActivitiesForCanonicalBatch(
+    {
+      thread: mainPathThread,
+      threadId,
+      threadChatId,
+      canonicalEvents,
+      daemonRunStatus: daemonRunStatusFromMessages,
+      isRecoveryFire: recoveryPlan?.outcome === "fire",
+      customErrorMessage: daemonTerminalErrorInfo.errorMessage,
+      costUsd: usage.costUsd,
+    },
+  )) {
+    waitUntil(activityEmission);
+  }
 
   const resolvedSessionId = deriveSessionIdFromMessages(messages);
   const resolvedStatus = daemonRunStatusFromMessages;
@@ -1332,40 +1373,14 @@ export async function POST(request: Request) {
     const terminalOps: Array<Promise<unknown>> = [];
 
     if (fenceTerminalTransition) {
-      const terminalStatusForTransition = resolveTerminalStatusForTransition({
-        resolvedStatus,
-        terminalRecoveryQueued: result.terminalRecoveryQueued,
-      });
-      const terminalThread =
-        terminalStatusForTransition === "completed"
-          ? await getThreadMinimal({ db, threadId, userId })
-          : null;
-      const { eventType, checkpointReadyStatus } = buildTerminalLifecyclePolicy(
-        {
-          status: terminalStatusForTransition,
-          disableGitCheckpointing: !!terminalThread?.disableGitCheckpointing,
-        },
-      );
-
-      const transitionResult = await updateThreadChatWithTransition({
-        userId,
-        threadId,
-        threadChatId,
-        eventType,
-        // `handleDaemonEvent` skips unread + terminal metadata when it defers the
-        // terminal transition to this fenced route path.
-        markAsUnread: true,
-        // No chatUpdates here: this path is terminal-only and must not append
-        // messages. Terminal metadata is written in a separate, status-gated
-        // update below.
-        requireStatusTransitionForChatUpdates: true,
-        skipBroadcast: true,
-      });
+      const checkpointReadyStatus = terminalCheckpointReadyStatus;
+      const didUpdateStatus = terminalChatTransition?.didUpdateStatus ?? false;
+      const updatedStatus = terminalChatTransition?.updatedStatus;
 
       let latestThreadChatAfterTransition:
         | Awaited<ReturnType<typeof getThreadChat>>
         | undefined;
-      if (transitionResult.updatedStatus && !transitionResult.didUpdateStatus) {
+      if (updatedStatus && !didUpdateStatus) {
         latestThreadChatAfterTransition = await getThreadChat({
           db,
           userId,
@@ -1374,14 +1389,13 @@ export async function POST(request: Request) {
         });
         if (
           !latestThreadChatAfterTransition ||
-          latestThreadChatAfterTransition.status !==
-            transitionResult.updatedStatus
+          latestThreadChatAfterTransition.status !== updatedStatus
         ) {
           return Response.json(
             {
               success: false,
               error: "daemon_event_terminal_thread_chat_cas_failed",
-              expectedStatus: transitionResult.updatedStatus,
+              expectedStatus: updatedStatus,
               actualStatus: latestThreadChatAfterTransition?.status ?? null,
             },
             { status: 409 },
@@ -1390,7 +1404,7 @@ export async function POST(request: Request) {
       }
       if (
         checkpointReadyStatus !== null &&
-        !transitionResult.didUpdateStatus &&
+        !didUpdateStatus &&
         latestThreadChatAfterTransition === undefined
       ) {
         latestThreadChatAfterTransition = await getThreadChat({
@@ -1403,7 +1417,7 @@ export async function POST(request: Request) {
       if (
         shouldQueueTerminalCheckpoint({
           checkpointReadyStatus,
-          didUpdateStatus: transitionResult.didUpdateStatus,
+          didUpdateStatus,
           latestStatus: latestThreadChatAfterTransition?.status,
         })
       ) {
@@ -1416,29 +1430,32 @@ export async function POST(request: Request) {
         runId: runContext.runId,
       });
 
-      if (result.terminalRecoveryQueued) {
-        await Promise.all([
-          updateThreadChatTerminalMetadataIfTerminal({
-            db,
-            userId,
-            threadId,
-            threadChatId,
-            updates: {
-              errorMessage: null,
-              errorMessageInfo: null,
-            },
-          }),
-          updateRunContextIfPresent({
-            status: "completed",
-            ...buildRunContextFailureUpdates({
-              status: "completed",
-              errorMessage: null,
-              errorCategory: "unknown",
-              failureSource: null,
-            }),
-          }),
-        ]);
-      } else if (resolvedStatus === "failed") {
+      const terminalFreedConcurrencySlot = recoveryPlan?.outcome !== "fire";
+      if (terminalFreedConcurrencySlot) {
+        waitUntil(
+          (async () => {
+            try {
+              const eligibleQueuedThreadChats =
+                await getEligibleQueuedThreadChats({ userId });
+              if (eligibleQueuedThreadChats.length > 0) {
+                await internalPOST(`process-thread-queue/${userId}`);
+              }
+            } catch (error) {
+              console.warn(
+                "[daemon-event] concurrency-slot queue kick failed",
+                {
+                  userId,
+                  threadId,
+                  threadChatId,
+                  error,
+                },
+              );
+            }
+          })(),
+        );
+      }
+
+      if (resolvedStatus === "failed") {
         const errorMetadata = buildFailedTerminalErrorMetadata(
           daemonTerminalErrorInfo.errorMessage,
         );
@@ -1537,6 +1554,50 @@ export async function POST(request: Request) {
     }
   }
 
+  if (
+    (daemonRunStatusFromMessages === "stopped" ||
+      daemonRunStatusFromMessages === "failed") &&
+    terminalFenceOutcome !== null
+  ) {
+    try {
+      const openToolCalls = await findOpenAgUiToolCallsForRun({
+        db,
+        runId: authoritativeRunId,
+      });
+      const interruptedToolResults = buildInterruptedToolResultMessages({
+        openToolCalls,
+        interruptionReason:
+          daemonRunStatusFromMessages === "failed" ? "error" : "user",
+      });
+      if (interruptedToolResults.length > 0) {
+        await persistSideEffectAgUiMessages({
+          db,
+          threadId,
+          threadChatId,
+          messages: interruptedToolResults,
+          source: "daemon-side-effect",
+          runId: authoritativeRunId,
+        });
+      }
+    } catch (error) {
+      console.warn("[daemon-event] interrupted tool-result injection failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_interrupted_tool_result_persist_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
+    }
+  }
+
   // Deferred terminal-event persistence (see note above the heartbeat
   // shortcut). At this point handleDaemonEvent has already written any
   // side-effect MESSAGES_SNAPSHOT rows, so the terminal marker is guaranteed
@@ -1561,6 +1622,77 @@ export async function POST(request: Request) {
       return Response.json(terminalCommit.body, {
         status: terminalCommit.status,
       });
+    }
+  }
+
+  if (
+    routeOwnsRecovery &&
+    recoveryPlan?.outcome === "fire" &&
+    terminalFenceOutcome !== null
+  ) {
+    try {
+      await applyRouteRecoveryFire({
+        plan: recoveryPlan,
+        userId,
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+      });
+      waitUntil(
+        maybeProcessFollowUpQueue({
+          userId,
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          bypassBusyCheck: true,
+        }),
+      );
+    } catch (error) {
+      console.warn("[daemon-event] route recovery re-dispatch failed", {
+        threadId,
+        threadChatId,
+        runId: authoritativeRunId,
+        error,
+      });
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_route_recovery_fire_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
+    }
+  }
+
+  if (routeOwnsRecovery && recoveryPlan?.outcome === "rate-limit") {
+    try {
+      await applyRouteRecoveryRateLimit({
+        plan: recoveryPlan,
+        userId,
+        threadId,
+        threadChatId,
+      });
+    } catch (error) {
+      console.warn(
+        "[daemon-event] route recovery rate-limit transition failed",
+        {
+          threadId,
+          threadChatId,
+          runId: authoritativeRunId,
+          error,
+        },
+      );
+      return Response.json(
+        {
+          success: false,
+          error: "daemon_event_route_recovery_rate_limit_failed",
+          runId: authoritativeRunId,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
     }
   }
 

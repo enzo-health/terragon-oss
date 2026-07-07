@@ -501,50 +501,6 @@ describe("sandbox-setup", () => {
         env_http_headers: { "X-Daemon-Token": "DAEMON_TOKEN" },
       });
     });
-    it("should create AGENT.md for amp agent with customSystemPrompt", async () => {
-      const session = new MockSession("mock-sandbox");
-      const runCommandSpy = vi
-        .spyOn(session, "runCommand")
-        .mockImplementation(async (cmd) => {
-          if (cmd === "cd && pwd") return "/home/user";
-          return "";
-        });
-      const writeTextFileSpy = vi
-        .spyOn(session, "writeTextFile")
-        .mockImplementation(async () => {});
-
-      const customPrompt = "This is a custom system prompt for Amp";
-      const options = {
-        ...defaultOptions,
-        agent: "amp" as const,
-        customSystemPrompt: customPrompt,
-      };
-
-      await setupSandboxEveryTime({
-        session,
-        options,
-        isCreatingSandbox: false,
-      });
-
-      // Should create ~/.config directory
-      expect(runCommandSpy).toHaveBeenCalledWith(
-        "mkdir -p /home/user/.config",
-        {
-          cwd: "/",
-        },
-      );
-      // Should write custom system prompt to ~/.config/AGENTS.md for amp agent
-      expect(writeTextFileSpy).toHaveBeenCalledWith(
-        "/home/user/.config/AGENTS.md",
-        customPrompt,
-      );
-      // Should set proper permissions (batched chmod)
-      expect(runCommandSpy).toHaveBeenCalledWith(
-        "chmod 644 /home/user/.config/AGENTS.md && chmod 644 /home/user/.config/amp/settings.json",
-        { cwd: "/" },
-      );
-    });
-
     it("should create CLAUDE.md for claudeCode agents with customSystemPrompt", async () => {
       const session = new MockSession("mock-sandbox");
       vi.spyOn(session, "runCommand").mockImplementation(async (cmd) => {

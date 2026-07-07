@@ -86,17 +86,21 @@ function render(ui: ReactElement): void {
 function RealtimeHost({
   channel,
   onClose,
+  onMessage,
+  debounceMs = 0,
 }: {
   channel: string;
   onClose?: () => void;
+  onMessage?: (message: unknown) => void;
+  debounceMs?: number;
 }): null {
   useRealtimeBase({
     party: "main",
     channel,
-    matches: () => false,
-    onMessage: () => {},
+    matches: () => true,
+    onMessage: onMessage ?? (() => {}),
     onClose,
-    debounceMs: 0,
+    debounceMs,
     disconnectOnDismount: true,
   });
   return null;
@@ -108,6 +112,17 @@ function RealtimeHost({
 function fireClose(socket: (typeof partySocketInstances)[number]): void {
   act(() => {
     socket.listeners.get("close")?.forEach((listener) => listener());
+  });
+}
+
+function fireMessage(
+  socket: (typeof partySocketInstances)[number],
+  payload: unknown,
+): void {
+  act(() => {
+    socket.listeners
+      .get("message")
+      ?.forEach((listener) => listener({ data: JSON.stringify(payload) }));
   });
 }
 
@@ -164,5 +179,81 @@ describe("useRealtimeBase", () => {
     fireClose(socket);
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useRealtimeBase debounced dispatch", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("delivers the first message immediately on the leading edge", () => {
+    const onMessage = vi.fn();
+    render(
+      createElement(RealtimeHost, {
+        channel: "user:real",
+        onMessage,
+        debounceMs: 1000,
+      }),
+    );
+    const socket = partySocketInstances[0]!;
+
+    fireMessage(socket, { type: "user", data: { n: 1 } });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenLastCalledWith({
+      type: "user",
+      data: { n: 1 },
+    });
+  });
+
+  it("coalesces a burst into leading + a single trailing delivery", () => {
+    const onMessage = vi.fn();
+    render(
+      createElement(RealtimeHost, {
+        channel: "user:real",
+        onMessage,
+        debounceMs: 1000,
+      }),
+    );
+    const socket = partySocketInstances[0]!;
+
+    fireMessage(socket, { type: "user", data: { n: 1 } });
+    fireMessage(socket, { type: "user", data: { n: 2 } });
+    fireMessage(socket, { type: "user", data: { n: 3 } });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenLastCalledWith({
+      type: "user",
+      data: { n: 3 },
+    });
+  });
+
+  it("does not double-fire a singleton message on the trailing edge", () => {
+    const onMessage = vi.fn();
+    render(
+      createElement(RealtimeHost, {
+        channel: "user:real",
+        onMessage,
+        debounceMs: 1000,
+      }),
+    );
+    const socket = partySocketInstances[0]!;
+
+    fireMessage(socket, { type: "user", data: { n: 1 } });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 });

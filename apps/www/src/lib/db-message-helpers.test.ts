@@ -4,6 +4,8 @@ import type {
   DBUserMessage,
   DBSystemMessage,
 } from "@terragon/shared";
+import type { CanonicalEvent } from "@terragon/agent/canonical-events";
+import { deriveDBMessagesFromCanonical } from "@terragon/shared/model/derive-db-messages-from-canonical";
 import {
   getPendingToolCallErrorMessages,
   getUserMessageToSend,
@@ -403,6 +405,55 @@ describe("getUserMessageToSend", () => {
     expect(result!.parts[0]).toEqual({ type: "text", text: "First message" });
     expect(result!.parts[1]).toEqual({ type: "text", text: "\n\n---\n\n" });
     expect(result!.parts[2]).toEqual({ type: "text", text: "Second message" });
+  });
+
+  it("stops at a result-success meta produced by the canonical projection", () => {
+    const resultTerminatedTurn: CanonicalEvent[] = [
+      {
+        payloadVersion: 2,
+        eventId: "evt-result-1",
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        seq: 5,
+        timestamp: "2026-07-02T00:00:00.000Z",
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "result",
+        payload: {
+          subtype: "success",
+          cost_usd: 0.01,
+          duration_ms: 1000,
+          duration_api_ms: 500,
+          is_error: false,
+          num_turns: 1,
+          result: "done",
+          session_id: "test-session-123",
+        },
+      },
+    ];
+    const projected = deriveDBMessagesFromCanonical(resultTerminatedTurn);
+    expect(projected).toEqual([
+      expect.objectContaining({ type: "meta", subtype: "result-success" }),
+    ]);
+
+    const messages: DBMessage[] = [
+      createUserMessage("Older message"),
+      ...projected,
+      createUserMessage("First message"),
+      createUserMessage("Second message"),
+    ];
+
+    const result = getUserMessageToSend({
+      messages,
+      currentMessage: createUserMessage("Current message"),
+    });
+
+    expect(result!.parts).toEqual([
+      { type: "text", text: "First message" },
+      { type: "text", text: "\n\n---\n\n" },
+      { type: "text", text: "Second message" },
+    ]);
   });
 
   it("should skip stop messages", () => {

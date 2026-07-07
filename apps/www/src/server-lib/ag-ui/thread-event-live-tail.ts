@@ -3,10 +3,8 @@ import type { DB } from "@terragon/shared/db";
 import {
   getAgUiEventEnvelopesForThreadChat,
   getLatestRunIdForThreadChat,
-  isTerminalAgentRunStatus,
 } from "@terragon/shared/model/agent-event-log";
 import { getAgentRunContextByRunId } from "@terragon/shared/model/agent-run-context";
-import { deriveChatFailureThreadErrorType } from "@terragon/shared/runtime/chat-failure";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
   isTerminalRunEventType,
@@ -14,7 +12,7 @@ import {
   repairReplayTextMessageLifecycles,
   toReplayEntries,
 } from "@/server-lib/ag-ui/ag-ui-replay-planner";
-import { buildRunTerminalAgUi } from "@/server-lib/ag-ui-publisher";
+import { buildTerminalEventFromRunContext } from "@/server-lib/ag-ui/terminal-event-synthesizer";
 
 export type LiveTailSseSession = {
   readonly closed: boolean;
@@ -78,10 +76,9 @@ export async function replayDurableEventsAfterCursor(params: {
   if (!sse.frameResumeReplayEntries(replayEntries)) {
     return true;
   }
-  const repairedReplayEntries =
-    sse.replayCursorSeq !== null && !sse.hasEmittedAgUiDataEvent
-      ? repairReplayTextMessageLifecycles(replayEntries)
-      : replayEntries;
+  const repairedReplayEntries = !sse.hasEmittedAgUiDataEvent
+    ? repairReplayTextMessageLifecycles(replayEntries)
+    : replayEntries;
   let emittedReplayEntry = false;
   for (const entry of repairedReplayEntries) {
     if (!sse.emitReplayEntry(entry)) {
@@ -114,20 +111,16 @@ export async function reconcileActiveRunFromDurable(params: {
       runId,
       userId,
     });
-    if (runContext !== null && isTerminalAgentRunStatus(runContext.status)) {
+    const terminalEvent = buildTerminalEventFromRunContext({
+      runId,
+      runContext,
+      threadId,
+    });
+    if (terminalEvent !== null) {
       await replayDurableEventsAfterCursor({ db, sse, threadId, threadChatId });
       if (sse.closed) {
         return true;
       }
-      const terminalEvent = buildRunTerminalAgUi({
-        threadId,
-        runId,
-        daemonRunStatus: runContext.status,
-        errorMessage: runContext.failureTerminalReason ?? null,
-        errorCode: runContext.failureTerminalReason
-          ? deriveChatFailureThreadErrorType(runContext.failureTerminalReason)
-          : null,
-      });
       if (!sse.emitAgUiEvent(terminalEvent, null)) {
         return true;
       }

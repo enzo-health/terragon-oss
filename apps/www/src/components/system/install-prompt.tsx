@@ -43,7 +43,8 @@ export function InstallPrompt() {
         id: INSTALL_TOAST_ID,
         description: "Add Terragon to your device for faster access.",
         icon: <Download className="size-4" />,
-        duration: Infinity,
+        position: "bottom-right",
+        duration: 15000,
         action: {
           label: "Install",
           onClick: async () => {

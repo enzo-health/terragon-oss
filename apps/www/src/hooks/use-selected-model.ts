@@ -8,7 +8,6 @@ import {
   selectedModelAtom,
   selectedModelsPersistedAtom,
 } from "@/atoms/user-flags";
-import { useFeatureFlag } from "./use-feature-flag";
 
 export type SetSelectedModel = ({
   model,
@@ -37,12 +36,6 @@ export function useSelectedModel({
   setSelectedModel: SetSelectedModel;
   selectedModels: SelectedAIModels;
 } {
-  const openCodeOpenAIAnthropicModel = useFeatureFlag(
-    "opencodeOpenAIAnthropicModelOption",
-  );
-  const openCodeGemini3ProModel = useFeatureFlag(
-    "opencodeGemini3ProModelOption",
-  );
   const [selectedModelFromAtom, setSelectedModelFromAtom] =
     useAtom(selectedModelAtom);
   const [selectedModelsPersisted, setPersistedSelectedModels] = useAtom(
@@ -73,8 +66,6 @@ export function useSelectedModel({
     if (forcedAgent) {
       const validModels = agentToModels(forcedAgent, {
         agentVersion: forcedAgentVersion ?? "latest",
-        enableOpenRouterOpenAIAnthropicModel: openCodeOpenAIAnthropicModel,
-        enableOpencodeGemini3ProModelOption: openCodeGemini3ProModel,
       });
       for (const [model, count] of selectedModelsInnerEntries) {
         if (count > 0 && validModels.includes(model)) {
@@ -99,8 +90,6 @@ export function useSelectedModel({
     selectedModelFromAtom,
     forcedAgent,
     forcedAgentVersion,
-    openCodeOpenAIAnthropicModel,
-    openCodeGemini3ProModel,
   ]);
 
   const setPersistedPromptPreferences = useSetAtom(

@@ -11,12 +11,6 @@ function providersForAgent(agent: AIAgent): DaemonTokenProvider[] {
       return ["anthropic"];
     case "codex":
       return ["openai"];
-    case "gemini":
-      return ["google"];
-    case "amp":
-      return ["anthropic"];
-    case "opencode":
-      return ["openrouter", "openai", "anthropic"];
     default: {
       const _exhaustiveCheck: never = agent;
       throw new Error(
@@ -45,7 +39,7 @@ export async function createDaemonRunCredentials({
   runId: string;
   tokenNonce: string;
   agent: AIAgent;
-  transportMode: "legacy" | "acp" | "codex-app-server";
+  transportMode: "acp" | "codex-app-server";
   protocolVersion: 1 | 2;
   codexOAuthCredentialId?: string | null;
 }): Promise<{ token: string }> {

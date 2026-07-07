@@ -70,7 +70,7 @@ terry create "Run large codegen" --model gpt-5.5-high
 - `-b, --branch <branch>`: Base branch name (default: current branch, falls back to main)
 - `--no-new-branch`: Don't create a new branch (default: creates new branch)
 - `-M, --mode <mode>`: Task mode: `plan` or `execute` (default: `execute`)
-- `-m, --model <model>`: AI model to use: `opus`, `opus[1m]`, `sonnet`, `sonnet[1m]`, `haiku`, `amp`, `gpt-5.5-low`, `gpt-5.5-medium`, `gpt-5.5`, `gpt-5.5-high`, `gpt-5.5-xhigh`, `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4`, `gpt-5.4-high`, `gpt-5.4-xhigh`, `gpt-5.4-mini-low`, `gpt-5.4-mini-medium`, `gpt-5.4-mini`, `gpt-5.4-mini-high`, `gpt-5.4-mini-xhigh`, `gpt-5.4-nano-low`, `gpt-5.4-nano-medium`, `gpt-5.4-nano`, `gpt-5.4-nano-high`, `gpt-5.4-nano-xhigh`, `gemini-3-pro`, `gemini-2.5-pro`, `grok-code`, `qwen3-coder`, `kimi-k2.5`, `glm-5.1`, `opencode/gemini-2.5-pro` (optional)
+- `-m, --model <model>`: AI model to use: `fable`, `opus`, `opus[1m]`, `sonnet`, `sonnet[1m]`, `haiku`, `amp`, `gpt-5.5-low`, `gpt-5.5-medium`, `gpt-5.5`, `gpt-5.5-high`, `gpt-5.5-xhigh`, `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4`, `gpt-5.4-high`, `gpt-5.4-xhigh`, `gpt-5.4-mini-low`, `gpt-5.4-mini-medium`, `gpt-5.4-mini`, `gpt-5.4-mini-high`, `gpt-5.4-mini-xhigh`, `gpt-5.4-nano-low`, `gpt-5.4-nano-medium`, `gpt-5.4-nano`, `gpt-5.4-nano-high`, `gpt-5.4-nano-xhigh`, `gemini-3-pro`, `gemini-2.5-pro`, `grok-code`, `qwen3-coder`, `kimi-k2.5`, `glm-5.1`, `opencode/gemini-2.5-pro` (optional)
 
 ### `terry pull`
 

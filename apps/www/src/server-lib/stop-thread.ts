@@ -1,7 +1,15 @@
 import { sendDaemonMessage } from "@/agent/daemon";
 import { waitUntil } from "@vercel/functions";
+import { getLatestAgentRunContextForThreadChat } from "@terragon/shared/model/agent-run-context";
+import { db } from "@/lib/db";
 import { withThreadSandboxSession } from "@/agent/thread-resource";
-import { updateThreadChatWithTransition } from "@/agent/update-status";
+import { commitTerminalRunAndChatStatus } from "@/server-lib/commit-terminal-run";
+
+const TERMINAL_RUN_STATUSES: readonly string[] = [
+  "completed",
+  "failed",
+  "stopped",
+];
 
 export async function stopThread({
   userId,
@@ -19,16 +27,43 @@ export async function stopThread({
       userId,
       threadChatId,
       onBeforeExec: async () => {
-        const { updatedStatus } = await updateThreadChatWithTransition({
+        const runContext = await getLatestAgentRunContextForThreadChat({
+          db,
           userId,
           threadId,
           threadChatId,
-          eventType: "user.stop",
-          chatUpdates: {
-            scheduleAt: null,
+        });
+        const shouldFence =
+          runContext !== null &&
+          !TERMINAL_RUN_STATUSES.includes(runContext.status);
+        const { transition } = await commitTerminalRunAndChatStatus({
+          db,
+          fence: shouldFence
+            ? {
+                runId: runContext.runId,
+                userId,
+                threadId,
+                threadChatId,
+                transportMode: runContext.transportMode,
+                protocolVersion: runContext.protocolVersion,
+                runtimeProvider: runContext.runtimeProvider,
+                daemonTokenKeyId: runContext.daemonTokenKeyId,
+                terminalStatus: "stopped",
+                lastAcceptedSeq: (runContext.lastAcceptedSeq ?? 0) + 1,
+                terminalEventId: `user-stop:${runContext.runId}`,
+              }
+            : null,
+          transition: {
+            userId,
+            threadId,
+            threadChatId,
+            eventType: "user.stop",
+            chatUpdates: {
+              scheduleAt: null,
+            },
           },
         });
-        return updatedStatus !== "complete";
+        return (transition?.updatedStatus ?? undefined) !== "complete";
       },
       execOrThrow: async ({ session }) => {
         if (!session) {

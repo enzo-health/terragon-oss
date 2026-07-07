@@ -383,12 +383,9 @@ describe("Task 4.6: MCP tool metadata on assistant tool_use blocks", () => {
     ).toBe(true);
   });
 
-  // W-ID.3: _claudeStreamedBlockIndices tracks which content blocks were
-  // already streamed as deltas so the canonical-event builder can skip them.
-  it("annotates assistant messages with _claudeStreamedBlockIndices after streaming deltas", () => {
+  it("streams text/thinking deltas without annotating the assistant message", () => {
     const parser = makeParser();
 
-    // Stream a text delta for block 0 and a thinking delta for block 1
     parser.parseClaudeCodeLine(
       JSON.stringify({
         type: "stream_event",
@@ -410,7 +407,6 @@ describe("Task 4.6: MCP tool metadata on assistant tool_use blocks", () => {
       }),
     );
 
-    // Now send the final assistant message
     const result = parser.parseClaudeCodeLine(
       JSON.stringify({
         type: "assistant",
@@ -430,26 +426,6 @@ describe("Task 4.6: MCP tool metadata on assistant tool_use blocks", () => {
     expect(result.messages).toHaveLength(1);
     const msg = result.messages[0]! as any;
     expect(msg.type).toBe("assistant");
-    expect(msg._claudeStreamedBlockIndices).toEqual([0, 1]);
-  });
-
-  it("does not annotate assistant messages when no deltas were streamed", () => {
-    const parser = makeParser();
-
-    // Send an assistant message without any prior deltas
-    const result = parser.parseClaudeCodeLine(
-      JSON.stringify({
-        type: "assistant",
-        session_id: "s-1",
-        parent_tool_use_id: null,
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "hello" }],
-        },
-      }),
-    );
-
-    const msg = result.messages[0]! as any;
     expect(msg._claudeStreamedBlockIndices).toBeUndefined();
   });
 });

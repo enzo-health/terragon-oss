@@ -221,18 +221,14 @@ describe("extractModelFromComment", () => {
     expect(extractModelFromComment({ commentBody: comment })).toBe("gpt-5");
   });
 
-  it("should extract gemini-2.5-pro model from comment", () => {
+  it("should reject removed gemini model from comment", () => {
     const comment = `@${appName} [gemini-2.5-pro] analyze this`;
-    expect(extractModelFromComment({ commentBody: comment })).toBe(
-      "gemini-2.5-pro",
-    );
+    expect(extractModelFromComment({ commentBody: comment })).toBe(null);
   });
 
-  it("should extract opencode model from comment", () => {
+  it("should reject removed opencode model from comment", () => {
     const comment = `@${appName} [opencode/qwen3-coder] test this`;
-    expect(extractModelFromComment({ commentBody: comment })).toBe(
-      "opencode/qwen3-coder",
-    );
+    expect(extractModelFromComment({ commentBody: comment })).toBe(null);
   });
 
   it("should handle model with no spaces after mention", () => {

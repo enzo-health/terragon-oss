@@ -7,11 +7,13 @@
     ".": "./src/index.ts",
     "./canonical-events": "./src/canonical-events.ts",
     "./ag-ui-mapper": "./src/ag-ui-mapper.ts",
+    "./ag-ui-rows": "./src/ag-ui-rows.ts",
     "./utils": "./src/utils.ts",
     "./tool-calls": "./src/tool-calls.ts",
     "./types": "./src/types.ts",
     "./versions": "./src/versions.ts",
-    "./proxy": "./src/proxy.ts"
+    "./proxy": "./src/proxy.ts",
+    "./recoverable-terminal": "./src/recoverable-terminal.ts"
   },
   "scripts": {
     "tsc-watch": "tsc --watch --noEmit --preserveWatchOutput",
@@ -22,6 +24,7 @@
   },
   "dependencies": {
     "@ag-ui/core": "0.0.52",
+    "@date-fns/tz": "^1.2.0",
     "zod": "4.1.11"
   },
   "devDependencies": {

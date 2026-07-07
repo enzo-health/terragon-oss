@@ -48,6 +48,27 @@ export function getPendingToolCallErrorMessages({
   return messagesToAppend;
 }
 
+export function buildInterruptedToolResultMessages({
+  openToolCalls,
+  interruptionReason,
+}: {
+  openToolCalls: { toolCallId: string; parentToolUseId: string | null }[];
+  interruptionReason: "user" | "error";
+}): DBMessage[] {
+  const interruptionMessage =
+    interruptionReason === "error"
+      ? "Tool execution interrupted by error"
+      : "Tool execution interrupted by user";
+
+  return openToolCalls.map((toolCall) => ({
+    type: "tool-result" as const,
+    id: toolCall.toolCallId,
+    is_error: true,
+    parent_tool_use_id: toolCall.parentToolUseId,
+    result: interruptionMessage,
+  }));
+}
+
 /**
  * Concatenates all consecutive user messages that have not received a response yet.
  * This handles scenarios where:

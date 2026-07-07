@@ -470,4 +470,32 @@ describe("routeCodexNotification", () => {
       expect(decision).toEqual({ kind: "parse" });
     });
   });
+
+  describe("plan item/plan/delta", () => {
+    test("plan deltas are skipped in favor of the completed snapshot", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemUpdated({
+          type: "plan",
+          id: "plan-1",
+          text: " more plan text",
+        }),
+        method: "item/plan/delta",
+        context: makeContext(),
+      });
+      expect(decision).toEqual({ kind: "skip" });
+    });
+
+    test("completed plan item falls through to parse", () => {
+      const decision = routeCodexNotification({
+        threadEvent: itemCompleted({
+          type: "plan",
+          id: "plan-1",
+          text: "- [ ] step",
+        }),
+        method: "item/completed",
+        context: makeContext(),
+      });
+      expect(decision).toEqual({ kind: "flush-then-parse" });
+    });
+  });
 });

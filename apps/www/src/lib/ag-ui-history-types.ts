@@ -7,7 +7,7 @@ import type { AgUiReplayCursor } from "./ag-ui-replay-cursor";
  * importing from the components layer.
  */
 export type TerragonCustomPartEvent = CustomEvent & {
-  readonly name: "terragon.data-part";
+  readonly name: "terragon.data-part" | "terragon.part";
 };
 
 export type AgUiHistoryItem = AgUiMessage | TerragonCustomPartEvent;

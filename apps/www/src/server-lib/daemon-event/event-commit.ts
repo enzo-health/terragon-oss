@@ -1,4 +1,6 @@
 import type { DaemonEventAPIBody } from "@terragon/daemon/shared";
+import type { RecoverableTerminal } from "@terragon/agent/canonical-events";
+import { TERRAGON_PART_RICH_KINDS } from "@terragon/agent/ag-ui-mapper";
 import {
   EventType,
   type BaseEvent,
@@ -9,6 +11,7 @@ import {
 } from "@ag-ui/core";
 import type { DBMessage, DBToolCall } from "@terragon/shared";
 import type { DB } from "@terragon/shared/db";
+import { providerRichPartToDbMessages } from "@terragon/shared/model/provider-rich-part-to-db";
 import { toDBMessage } from "@/agent/msg/toDBMessage";
 import { recordAgentTraceSpan } from "@/lib/agent-trace";
 import {
@@ -53,6 +56,7 @@ export type CanonicalRunTerminalEvent = {
   errorMessage: string | null;
   errorCode: string | null;
   headShaAtCompletion: string | null;
+  recoverable: RecoverableTerminal | null;
 };
 
 export type CanonicalEventContextMismatch = {
@@ -107,21 +111,6 @@ export function emptyCanonicalPersistenceSummary(): CanonicalPersistenceSummary 
   };
 }
 
-export function filterCanonicalEventsForDeltaCoexistence(params: {
-  canonicalEvents: CanonicalEventsPayload | null;
-  deltas: DaemonDeltasPayload | null | undefined;
-}): CanonicalEventsPayload | null {
-  const { canonicalEvents, deltas } = params;
-  if (!canonicalEvents || canonicalEvents.length === 0) {
-    return canonicalEvents;
-  }
-  if (!deltas || deltas.length === 0) {
-    return canonicalEvents;
-  }
-
-  return canonicalEvents.filter((event) => event.type !== "assistant-message");
-}
-
 export function findCanonicalEventContextMismatch(params: {
   canonicalEvents: CanonicalEventsPayload;
   runId: string;
@@ -159,6 +148,7 @@ export function findCanonicalRunTerminalEvent(
       errorMessage: event.errorMessage ?? null,
       errorCode: event.errorCode ?? null,
       headShaAtCompletion: event.headShaAtCompletion ?? null,
+      recoverable: event.recoverable ?? null,
     };
   }
   return null;
@@ -185,6 +175,8 @@ export function splitCanonicalEventsForCommit(
   };
 }
 
+export const TOLERATE_CANONICAL_EVENTS_UNTIL_ALL_DAEMONS_EMIT_AGUI_ROWS = true;
+
 export function buildPreLegacyAgUiCommitPlan(params: {
   canPersistCanonicalEvents: boolean;
   envelopeV2: DaemonEventEnvelopeV2 | null;
@@ -192,21 +184,31 @@ export function buildPreLegacyAgUiCommitPlan(params: {
   canonicalEventsForPersistence: CanonicalEventsPayload | null;
   deltas: DaemonDeltasPayload | null | undefined;
   runId: string;
+  agUiStandardRows?: AgUiPublishRow[] | null;
 }): PreLegacyAgUiCommitPlan {
-  const canonicalRows = params.canonicalEventsForPersistence
-    ? canonicalEventsToAgUiRows(params.canonicalEventsForPersistence)
-    : [];
+  const daemonEmittedRows =
+    params.agUiStandardRows && params.agUiStandardRows.length > 0
+      ? params.agUiStandardRows
+      : null;
+  const canonicalRows =
+    daemonEmittedRows !== null
+      ? daemonEmittedRows
+      : params.canonicalEventsForPersistence
+        ? canonicalEventsToAgUiRows(params.canonicalEventsForPersistence)
+        : [];
   const deltaRows =
-    params.deltas && params.deltas.length > 0
-      ? daemonDeltasToAgUiRows({ runId: params.runId, deltas: params.deltas })
-      : [];
-  const richPartRows =
-    params.canPersistCanonicalEvents && params.envelopeV2
-      ? buildRichPartRows({
-          envelopeV2: params.envelopeV2,
-          messages: params.messages,
-        })
-      : [];
+    daemonEmittedRows !== null
+      ? []
+      : params.deltas && params.deltas.length > 0
+        ? daemonDeltasToAgUiRows({ runId: params.runId, deltas: params.deltas })
+        : [];
+  const richPartRows = params.canPersistCanonicalEvents
+    ? buildRichPartRows({
+        envelopeV2: params.envelopeV2,
+        messages: params.messages,
+        canonicalEventsForPersistence: params.canonicalEventsForPersistence,
+      })
+    : [];
   const mergedRows = [...canonicalRows, ...deltaRows, ...richPartRows];
 
   return {
@@ -401,7 +403,76 @@ export async function commitTerminalAgUiEvents(params: {
   };
 }
 
+type ProviderRichPartCanonicalEvent = Extract<
+  CanonicalEventsPayload[number],
+  { type: "provider-rich-part" }
+>;
+
+export const LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS =
+  true;
+
 function buildRichPartRows(params: {
+  envelopeV2: DaemonEventEnvelopeV2 | null;
+  messages: DaemonEventAPIBody["messages"];
+  canonicalEventsForPersistence: CanonicalEventsPayload | null;
+}): AgUiPublishRow[] {
+  const providerRichEvents = (
+    params.canonicalEventsForPersistence ?? []
+  ).filter(
+    (event): event is ProviderRichPartCanonicalEvent =>
+      event.type === "provider-rich-part",
+  );
+  if (providerRichEvents.length > 0) {
+    return richPartRowsFromProviderRichEvents(providerRichEvents);
+  }
+  if (
+    !LEGACY_RICH_PARTS_FROM_MESSAGES_UNTIL_ALL_DAEMONS_EMIT_CARRIERS ||
+    !params.envelopeV2
+  ) {
+    return [];
+  }
+  return richPartRowsFromMessages({
+    envelopeV2: params.envelopeV2,
+    messages: params.messages,
+  });
+}
+
+function richPartRowsFromProviderRichEvents(
+  events: readonly ProviderRichPartCanonicalEvent[],
+): AgUiPublishRow[] {
+  const richPartRows: AgUiPublishRow[] = [];
+  const richPartInputs: AssistantMessagePartsInput[] = [];
+  const timestamp = new Date();
+  for (const event of events) {
+    if (TERRAGON_PART_RICH_KINDS.has(event.richKind)) {
+      continue;
+    }
+    const dbMsgs = providerRichPartToDbMessages(event);
+    let indexWithinEvent = 0;
+    for (const dbMsg of dbMsgs) {
+      const messageId = `${event.eventId}:msg:${indexWithinEvent}`;
+      indexWithinEvent++;
+      if (dbMsg.type === "tool-call") {
+        richPartRows.push(
+          ...dbToolCallToAgUiRows({ messageId, toolCall: dbMsg, timestamp }),
+        );
+        continue;
+      }
+      if (dbMsg.type !== "agent") continue;
+      const richParts = dbMsg.parts.filter(
+        (part) => part.type !== "text" && part.type !== "thinking",
+      );
+      if (richParts.length === 0) continue;
+      richPartInputs.push({ messageId, parts: richParts });
+    }
+  }
+  if (richPartInputs.length > 0) {
+    richPartRows.push(...dbAgentMessagePartsToAgUiRows(richPartInputs));
+  }
+  return richPartRows;
+}
+
+function richPartRowsFromMessages(params: {
   envelopeV2: DaemonEventEnvelopeV2;
   messages: DaemonEventAPIBody["messages"];
 }): AgUiPublishRow[] {
@@ -410,14 +481,6 @@ function buildRichPartRows(params: {
   const timestamp = new Date();
   let messageIndex = 0;
   for (const claudeMessage of params.messages) {
-    const isCodexDeltaStreamed =
-      claudeMessage.type === "assistant" &&
-      claudeMessage._codexItemId !== undefined;
-    const claudeStreamedBlockSet = new Set<number>(
-      claudeMessage.type === "assistant"
-        ? (claudeMessage._claudeStreamedBlockIndices ?? [])
-        : [],
-    );
     const dbMsgs: DBMessage[] = toDBMessage(claudeMessage);
     for (const dbMsg of dbMsgs) {
       const currentIndex = messageIndex;
@@ -433,22 +496,13 @@ function buildRichPartRows(params: {
         continue;
       }
       if (dbMsg.type !== "agent") continue;
-      if (isCodexDeltaStreamed) continue;
-      const filteredParts =
-        claudeStreamedBlockSet.size > 0
-          ? dbMsg.parts.filter(
-              (part, idx) =>
-                !(
-                  (part.type === "text" || part.type === "thinking") &&
-                  claudeStreamedBlockSet.has(idx)
-                ),
-            )
-          : dbMsg.parts;
-      const hasRichParts = filteredParts.some((part) => part.type !== "text");
-      if (!hasRichParts) continue;
+      const richParts = dbMsg.parts.filter(
+        (part) => part.type !== "text" && part.type !== "thinking",
+      );
+      if (richParts.length === 0) continue;
       richPartInputs.push({
         messageId: `${params.envelopeV2.eventId}:msg:${currentIndex}`,
-        parts: filteredParts,
+        parts: richParts,
       });
     }
   }

@@ -13,14 +13,12 @@ import { AGENT_VERSION } from "./versions";
 
 const options = {
   agentVersion: AGENT_VERSION,
-  enableOpenRouterOpenAIAnthropicModel: true,
-  enableOpencodeGemini3ProModelOption: true,
 };
 
 describe("model-to-agent", () => {
   describe("modelToAgent and agentToModels consistency", () => {
     it("should have bidirectional consistency between functions", () => {
-      const agents: AIAgent[] = ["claudeCode", "gemini", "amp", "codex"];
+      const agents: AIAgent[] = ["claudeCode", "codex"];
 
       agents.forEach((agent) => {
         const models = agentToModels(agent, options);
@@ -36,8 +34,7 @@ describe("model-to-agent", () => {
         ["opus[1m]", "claudeCode"],
         ["sonnet", "claudeCode"],
         ["sonnet[1m]", "claudeCode"],
-        ["gemini-2.5-pro", "gemini"],
-        ["amp", "amp"],
+        ["fable", "claudeCode"],
         ["gpt-5.5-low", "codex"],
         ["gpt-5.5", "codex"],
         ["gpt-5.5-high", "codex"],
@@ -61,9 +58,9 @@ describe("model-to-agent", () => {
 
   describe("sortByAgents", () => {
     it("should sort agents by their order", () => {
-      const agents: AIAgent[] = ["claudeCode", "gemini", "amp", "codex"];
+      const agents: AIAgent[] = ["codex", "claudeCode"];
       const sortedAgents = agents.sort(sortByAgents);
-      expect(sortedAgents).toEqual(["claudeCode", "codex", "gemini", "amp"]);
+      expect(sortedAgents).toEqual(["claudeCode", "codex"]);
     });
   });
 
@@ -142,6 +139,7 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "sonnet" })).toBe("sonnet");
       expect(parseModelOrNull({ modelName: "sonnet[1m]" })).toBe("sonnet[1m]");
       expect(parseModelOrNull({ modelName: "haiku" })).toBe("haiku");
+      expect(parseModelOrNull({ modelName: "fable" })).toBe("fable");
       expect(parseModelOrNull({ modelName: "gpt-5.4" })).toBe("gpt-5.4");
       expect(parseModelOrNull({ modelName: "gpt-5.4-mini" })).toBe(
         "gpt-5.4-mini",
@@ -153,24 +151,9 @@ describe("model-to-agent", () => {
       expect(parseModelOrNull({ modelName: "gpt-5.1-codex-max" })).toBe(
         "gpt-5.1-codex-max",
       );
-      expect(parseModelOrNull({ modelName: "gemini-2.5-pro" })).toBe(
-        "gemini-2.5-pro",
-      );
-      expect(parseModelOrNull({ modelName: "opencode/grok-code" })).toBe(
-        "opencode/grok-code",
-      );
     });
 
-    it("should parse shortcut model names with opencode/ prefix", () => {
-      expect(parseModelOrNull({ modelName: "grok-code" })).toBe(
-        "opencode/grok-code",
-      );
-      expect(parseModelOrNull({ modelName: "qwen3-coder" })).toBe(
-        "opencode/qwen3-coder",
-      );
-      expect(parseModelOrNull({ modelName: "kimi-k2.5" })).toBe(
-        "opencode/kimi-k2.5",
-      );
+    it("should parse shortcut model names", () => {
       expect(parseModelOrNull({ modelName: "gpt-5.1-codex-max-medium" })).toBe(
         "gpt-5.1-codex-max",
       );
@@ -180,9 +163,6 @@ describe("model-to-agent", () => {
       );
       expect(parseModelOrNull({ modelName: "gpt-5.4-nano-medium" })).toBe(
         "gpt-5.4-nano",
-      );
-      expect(parseModelOrNull({ modelName: "glm-5.1" })).toBe(
-        "opencode/glm-5.1",
       );
     });
 
@@ -196,15 +176,14 @@ describe("model-to-agent", () => {
   describe("normalizedModelForDaemon", () => {
     it("should normalize Claude 1M shortcuts to explicit model IDs", () => {
       expect(normalizedModelForDaemon("sonnet[1m]")).toBe(
-        "claude-sonnet-4-6[1m]",
+        "claude-sonnet-5[1m]",
       );
-      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-7[1m]");
+      expect(normalizedModelForDaemon("opus[1m]")).toBe("claude-opus-4-8[1m]");
     });
   });
 });
 
 describe("shouldUseCredits", () => {
-  const withBoth = { hasOpenAI: true, hasClaude: true };
   const withNeither = { hasOpenAI: false, hasClaude: false };
 
   it("returns false for codex when user has OpenAI credentials", () => {
@@ -229,17 +208,6 @@ describe("shouldUseCredits", () => {
     expect(
       shouldUseCredits("claudeCode", { hasOpenAI: true, hasClaude: false }),
     ).toBe(true);
-  });
-
-  it("returns true for agents without connected credentials support", () => {
-    // gemini and opencode don't support connected credentials
-    expect(shouldUseCredits("gemini", withBoth)).toBe(true);
-    expect(shouldUseCredits("opencode", withBoth)).toBe(true);
-  });
-
-  it("returns false for amp with any credentials (supports connected credentials)", () => {
-    expect(shouldUseCredits("amp", withBoth)).toBe(false);
-    expect(shouldUseCredits("amp", withNeither)).toBe(false);
   });
 
   it("returns true when user has no credentials at all", () => {

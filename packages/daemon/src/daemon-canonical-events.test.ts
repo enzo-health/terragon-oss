@@ -24,8 +24,10 @@ function baseParams(
     nextCanonicalSeq: 0,
     canonicalRunStartedEmitted: false,
     canonicalTerminalEmitted: false,
+    streamedAssistantText: false,
     threadId: "thread-1",
     threadChatId: "thread-chat-1",
+    timezone: "UTC",
     messages: [],
     ...overrides,
   };
@@ -62,6 +64,27 @@ describe("buildCanonicalEventsForBatch", () => {
     expect(result.canonicalEvents).toEqual([]);
     expect(result.nextCanonicalSeqAfterBatch).toBe(5);
     expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
+  });
+
+  it("maps codex-compaction to a codex-context-compaction rich part", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 3,
+        messages: [{ type: "codex-compaction", session_id: null }],
+      }),
+    );
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-context-compaction",
+        payload: {},
+      }),
+    ]);
+    for (const event of result.canonicalEvents) {
+      expect(CanonicalEventSchema.safeParse(event).success).toBe(true);
+    }
   });
 
   it("emits run-started once then suppresses it on the next batch", () => {
@@ -149,9 +172,10 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
   });
 
-  it("suppresses the assistant-message when _codexItemId is set", () => {
+  it("suppresses assistant text when the run streamed it as deltas", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
+        streamedAssistantText: true,
         messages: [
           {
             type: "assistant",
@@ -161,7 +185,6 @@ describe("buildCanonicalEventsForBatch", () => {
             },
             parent_tool_use_id: null,
             session_id: "session-1",
-            _codexItemId: "msg_abc123",
           },
         ],
       }),
@@ -173,27 +196,228 @@ describe("buildCanonicalEventsForBatch", () => {
     expect(result.nextCanonicalSeqAfterBatch).toBe(1);
   });
 
-  it("suppresses ACP text blocks already streamed as daemon deltas", () => {
+  it("suppresses text blocks in mixed messages but keeps tool_use", () => {
     const result = buildCanonicalEventsForBatch(
       baseParams({
+        canonicalRunStartedEmitted: true,
+        streamedAssistantText: true,
         messages: [
           {
             type: "assistant",
             message: {
               role: "assistant",
-              content: [{ type: "text", text: "Streamed over ACP" }],
+              content: [
+                { type: "text", text: "Streamed over ACP" },
+                {
+                  type: "tool_use",
+                  id: "tool-call-1",
+                  name: "bash",
+                  input: { command: "pwd" },
+                },
+              ],
             },
             parent_tool_use_id: null,
             session_id: "session-1",
-            _claudeStreamedBlockIndices: [0],
           },
         ],
       }),
     );
 
     expect(result.canonicalEvents).toEqual([
-      expect.objectContaining({ type: "run-started" }),
+      expect.objectContaining({
+        type: "tool-call-start",
+        toolCallId: "tool-call-1",
+      }),
     ]);
+  });
+
+  it("folds inline narration blocks into one assistant-narration carrier, then tool_use", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "Let me search." },
+                {
+                  type: "thinking",
+                  thinking: "web search fits",
+                  signature: "sig-1",
+                },
+                {
+                  type: "server_tool_use",
+                  id: "srvtoolu_1",
+                  name: "web_search",
+                  input: { query: "q" },
+                },
+                {
+                  type: "web_search_tool_result",
+                  tool_use_id: "srvtoolu_1",
+                  content: [
+                    {
+                      type: "web_search_result",
+                      url: "https://ex.com/a",
+                      title: "A",
+                    },
+                  ],
+                },
+                {
+                  type: "document",
+                  source: { type: "url", url: "https://docs.ex.com" },
+                  title: "Doc",
+                },
+                {
+                  type: "tool_use",
+                  id: "tool-call-9",
+                  name: "read_file",
+                  input: { path: "a.ts" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "assistant-narration",
+        payload: {
+          parentToolUseId: null,
+          parts: [
+            { kind: "text", text: "Let me search." },
+            {
+              kind: "thinking",
+              thinking: "web search fits",
+              signature: "sig-1",
+            },
+            {
+              kind: "server-tool-use",
+              id: "srvtoolu_1",
+              name: "web_search",
+              input: { query: "q" },
+            },
+            {
+              kind: "web-search-result",
+              toolUseId: "srvtoolu_1",
+              content: [
+                {
+                  type: "web_search_result",
+                  url: "https://ex.com/a",
+                  title: "A",
+                },
+              ],
+            },
+            {
+              kind: "document",
+              source: { type: "url", url: "https://docs.ex.com" },
+              title: "Doc",
+            },
+          ],
+        },
+      }),
+      expect.objectContaining({
+        type: "tool-call-start",
+        toolCallId: "tool-call-9",
+      }),
+    ]);
+  });
+
+  it("drops delta-owned text/thinking from the narration carrier but keeps rich blocks when streaming", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        streamedAssistantText: true,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "streamed text" },
+                { type: "thinking", thinking: "streamed thinking" },
+                {
+                  type: "server_tool_use",
+                  id: "srvtoolu_2",
+                  name: "web_search",
+                  input: { query: "q" },
+                },
+                {
+                  type: "web_search_tool_result",
+                  tool_use_id: "srvtoolu_2",
+                  content: {
+                    type: "web_search_tool_result_error",
+                    error_code: "boom",
+                  },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "assistant-narration",
+        payload: {
+          parentToolUseId: null,
+          parts: [
+            {
+              kind: "server-tool-use",
+              id: "srvtoolu_2",
+              name: "web_search",
+              input: { query: "q" },
+            },
+            {
+              kind: "web-search-result",
+              toolUseId: "srvtoolu_2",
+              content: {
+                type: "web_search_tool_result_error",
+                error_code: "boom",
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+  });
+
+  it("emits no carrier for a streamed text+thinking message (no double-count of deltas)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        canonicalRunStartedEmitted: true,
+        nextCanonicalSeq: 1,
+        streamedAssistantText: true,
+        messages: [
+          {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                { type: "text", text: "streamed text" },
+                { type: "thinking", thinking: "streamed thinking" },
+              ],
+            },
+            parent_tool_use_id: null,
+            session_id: "session-1",
+          },
+        ] as unknown as ClaudeMessage[],
+      }),
+    );
+
+    expect(result.canonicalEvents).toEqual([]);
     expect(result.nextCanonicalSeqAfterBatch).toBe(1);
   });
 
@@ -320,8 +544,13 @@ describe("buildCanonicalEventsForBatch", () => {
         content: "All done",
       }),
       expect.objectContaining({
-        eventId: canonicalEventId("run-1", 5),
         seq: 5,
+        type: "provider-rich-part",
+        richKind: "result",
+      }),
+      expect.objectContaining({
+        eventId: canonicalEventId("run-1", 6),
+        seq: 6,
         category: "operational",
         type: "run-terminal",
         status: "completed",
@@ -329,7 +558,7 @@ describe("buildCanonicalEventsForBatch", () => {
     ]);
     const terminal = result.canonicalEvents.at(-1)!;
     expect("errorMessage" in terminal).toBe(false);
-    expect(result.nextCanonicalSeqAfterBatch).toBe(6);
+    expect(result.nextCanonicalSeqAfterBatch).toBe(7);
     expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
     expect(CanonicalEventSchema.parse(terminal)).toMatchObject({
       type: "run-terminal",
@@ -355,6 +584,10 @@ describe("buildCanonicalEventsForBatch", () => {
       }),
     );
     expect(result.canonicalEvents).toEqual([
+      expect.objectContaining({
+        type: "provider-rich-part",
+        richKind: "result",
+      }),
       expect.objectContaining({
         type: "run-terminal",
         status: "failed",
@@ -436,10 +669,152 @@ describe("buildCanonicalEventsForBatch", () => {
     );
     expect(result.canonicalEvents.map((event) => event.type)).toEqual([
       "run-started",
+      "provider-rich-part",
       "run-terminal",
     ]);
     expect(result.canonicalRunStartedEmittedAfterBatch).toBe(true);
     expect(result.canonicalTerminalEmittedAfterBatch).toBe(true);
+  });
+});
+
+describe("buildCanonicalEventsForBatch recoverable classification", () => {
+  function terminalOf(result: ReturnType<typeof buildCanonicalEventsForBatch>) {
+    return result.canonicalEvents.find(
+      (event) => event.type === "run-terminal",
+    ) as Extract<
+      ReturnType<
+        typeof buildCanonicalEventsForBatch
+      >["canonicalEvents"][number],
+      { type: "run-terminal" }
+    >;
+  }
+
+  it("stamps a rate-limit terminal (Claude usage limit)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "Claude AI usage limit reached|1752350400",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("completed");
+    expect(terminal.recoverable).toEqual({
+      kind: "rate-limit",
+      retryAfterMs: expect.any(Number),
+    });
+  });
+
+  it("stamps a rate-limit terminal (Codex usage limit)", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "codex",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "You've hit your usage limit. Try again in 2 hours.",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.recoverable?.kind).toBe("rate-limit");
+    expect(terminal.recoverable?.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("stamps an oauth-token-revoked terminal", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: "OAuth token revoked",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.recoverable).toEqual({ kind: "oauth-token-revoked" });
+  });
+
+  it("stamps a context-exhausted terminal", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: "Prompt is too long",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.recoverable).toEqual({ kind: "context-exhausted" });
+  });
+
+  it("leaves a non-recoverable terminal unstamped", () => {
+    const result = buildCanonicalEventsForBatch(
+      baseParams({
+        agent: "claudeCode",
+        canonicalRunStartedEmitted: true,
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+      }),
+    );
+    const terminal = terminalOf(result);
+    expect(terminal.status).toBe("completed");
+    expect(terminal).not.toHaveProperty("recoverable");
   });
 });
 

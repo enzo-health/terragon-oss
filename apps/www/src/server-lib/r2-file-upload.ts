@@ -117,27 +117,7 @@ export async function generateFileUploadUrlForUser({
   if (!config) {
     throw new Error(`Invalid file type: ${fileType}`);
   }
-  // Validate content type
-  if (
-    !config.allowedTypes.includes(contentType) &&
-    !config.allowedTypePrefixes?.some((prefix) =>
-      contentType.startsWith(prefix),
-    )
-  ) {
-    throw new Error(
-      `Invalid content type for ${fileType}. Allowed types: ${config.allowedTypes.join(
-        ", ",
-      )}, ${config.allowedTypePrefixes
-        ?.map((prefix) => `${prefix}*`)
-        .join(", ")}`,
-    );
-  }
-  // Validate file size
-  if (sizeInBytes > config.maxSize) {
-    throw new Error(
-      `File size exceeds maximum of ${config.maxSize / 1024 / 1024}MB for ${fileType}`,
-    );
-  }
+  validateFileUpload({ fileType, contentType, sizeInBytes });
   const r2Client = getR2ClientForFileUploadType(fileType);
   const timestamp = Date.now();
   const ext = getExtensionFromContentType(contentType);
@@ -156,4 +136,38 @@ export async function generateFileUploadUrlForUser({
     throw new Error(`Failed to get public URL for ${r2Key}`);
   }
   return { presignedUrl, r2Key, publicUrl };
+}
+
+export function validateFileUpload({
+  fileType,
+  contentType,
+  sizeInBytes,
+}: {
+  fileType: FileUploadType;
+  contentType: string;
+  sizeInBytes: number;
+}) {
+  const config = UPLOAD_CONFIGS[fileType];
+  if (!config) {
+    throw new Error(`Invalid file type: ${fileType}`);
+  }
+  if (
+    !config.allowedTypes.includes(contentType) &&
+    !config.allowedTypePrefixes?.some((prefix) =>
+      contentType.startsWith(prefix),
+    )
+  ) {
+    throw new Error(
+      `Invalid content type for ${fileType}. Allowed types: ${config.allowedTypes.join(
+        ", ",
+      )}, ${config.allowedTypePrefixes
+        ?.map((prefix) => `${prefix}*`)
+        .join(", ")}`,
+    );
+  }
+  if (sizeInBytes > config.maxSize) {
+    throw new Error(
+      `File size exceeds maximum of ${config.maxSize / 1024 / 1024}MB for ${fileType}`,
+    );
+  }
 }

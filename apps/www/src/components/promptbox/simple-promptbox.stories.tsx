@@ -14,7 +14,15 @@ function SimplePromptBoxDemo() {
   const [selectedModel, setSelectedModel] = useState<AIModel>("sonnet");
 
   const {
-    editor,
+    value,
+    setValue,
+    triggers,
+    placeholder,
+    autoFocus,
+    composerRef,
+    insertText,
+    insertMention,
+    insertSlashCommand,
     attachedFiles,
     isSubmitting,
     isSubmitDisabled,
@@ -82,7 +90,15 @@ function SimplePromptBoxDemo() {
         </div>
       )}
       <SimplePromptBox
-        editor={editor}
+        value={value}
+        onValueChange={setValue}
+        triggers={triggers}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        composerRef={composerRef}
+        insertText={insertText}
+        insertMention={insertMention}
+        insertSlashCommand={insertSlashCommand}
         attachedFiles={attachedFiles}
         handleFilesAttached={handleFilesAttached}
         removeFile={removeFile}

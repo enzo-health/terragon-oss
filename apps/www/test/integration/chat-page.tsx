@@ -1,17 +1,15 @@
 /**
  * Chat UI harness for integration tests.
  *
- * The live transcript renders through `native-thread.tsx` + the nauval
- * `components/ai/*` leaves: only text, reasoning, and tool calls have a
- * production renderer. The bespoke per-part views (DelegationItemCard,
- * TerminalPartView, DiffPartView, PlanPartView) and the legacy `MessagePart`
- * dispatcher were removed — they had no production caller. This harness no
- * longer imports them.
+ * The live transcript renders through the `chat/transcript-view/` leaf registry
+ * and the nauval `components/ai/*` leaves. This harness re-points text rendering
+ * at the production `TextPart` leaf; the bespoke per-part views and the legacy
+ * `MessagePart` dispatcher were removed — they had no production caller.
  *
  * What the turn tests actually need:
  *  - Text rendering: re-pointed at the production `TextPart` (the streamdown
- *    markdown slot that native-thread mounts). `renderMessagePart` renders a
- *    text part through it and returns the static HTML.
+ *    markdown slot the text leaf mounts). `renderMessagePart` renders a text
+ *    part through it and returns the static HTML.
  *  - Terminal / delegation assertions: production surfaces these as the
  *    persisted DB part shape that the live AG-UI mapper consumes (terminal
  *    output → tool-block text; delegation → assistant text). The harness query
@@ -37,10 +35,9 @@ import { TextPart } from "../../src/components/chat/text-part";
 
 /**
  * Render a message part the way the live transcript does. Only text parts have
- * a production renderer (native-thread mounts `TextPart` in its `NativeText`
- * slot); every other part type renders through tool calls or not at all, so
- * this returns "" for them — callers that need richer assertions use the
- * data-shape query helpers below.
+ * a production renderer (the text leaf mounts `TextPart`); every other part type
+ * renders through tool calls or not at all, so this returns "" for them —
+ * callers that need richer assertions use the data-shape query helpers below.
  */
 export function renderMessagePart(part: UIPart): string {
   if (part.type === "text") {

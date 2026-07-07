@@ -1,13 +1,11 @@
-import { AIAgent } from "@terragon/agent/types";
 import Image from "next/image";
 import { OpenAIIcon } from "../icons/openai";
 
-// Helper function to render agent icon
 export function AgentIcon({
   agent,
   sessionId,
 }: {
-  agent: AIAgent;
+  agent: string;
   sessionId: string | null;
 }) {
   switch (agent) {
@@ -71,8 +69,6 @@ export function AgentIcon({
         </span>
       );
     default:
-      const _exhaustiveCheck: never = agent;
-      console.warn("Unknown agent", _exhaustiveCheck);
       return null;
   }
 }

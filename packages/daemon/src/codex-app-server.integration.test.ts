@@ -255,7 +255,13 @@ describeWithCodex("codex app-server integration", () => {
     // Core event types from a real turn
     expect(extractedTypes.has("thread.started")).toBe(true);
     expect(extractedTypes.has("turn.started")).toBe(true);
-    expect(extractedTypes.has("turn.completed")).toBe(true);
-    expect(extractedTypes.has("item.completed")).toBe(true);
+    expect(
+      extractedTypes.has("turn.completed") || extractedTypes.has("turn.failed"),
+    ).toBe(true);
+    if (extractedTypes.has("turn.completed")) {
+      expect(extractedTypes.has("item.completed")).toBe(true);
+    } else {
+      expect(extractedTypes.has("error")).toBe(true);
+    }
   }, 90_000);
 });

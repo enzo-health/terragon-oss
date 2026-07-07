@@ -17,6 +17,9 @@ import { maybeSaveClaudeSessionToR2 } from "./claude-session";
 import { sendLoopsTransactionalEmail } from "@/lib/loops";
 import { publicAppUrl } from "@terragon/env/next-public";
 import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { refreshLinearTokenIfNeeded } from "@/server-lib/linear-oauth";
+import { updateAgentSession } from "@/server-lib/linear-agent-activity";
+import type { ThreadSourceMetadata } from "@terragon/shared/db/types";
 
 export async function checkpointThread({
   userId,
@@ -67,6 +70,42 @@ export async function checkpointThread({
       // Post-checkpoint operations: each is independent and best-effort.
       // Failures must not propagate to the checkpoint error handler since
       // the checkpoint itself already succeeded.
+      try {
+        const linearThread = await getThreadMinimal({ db, threadId, userId });
+        if (
+          linearThread?.sourceType === "linear-mention" &&
+          linearThread.sourceMetadata != null
+        ) {
+          const linearMeta = linearThread.sourceMetadata as Extract<
+            ThreadSourceMetadata,
+            { type: "linear-mention" }
+          >;
+          if (
+            linearMeta.agentSessionId &&
+            linearThread.githubPRNumber &&
+            linearThread.githubRepoFullName
+          ) {
+            const tokenResult = await refreshLinearTokenIfNeeded(
+              linearMeta.organizationId,
+              db,
+            );
+            if (tokenResult.status === "ok") {
+              const prUrl = `https://github.com/${linearThread.githubRepoFullName}/pull/${linearThread.githubPRNumber}`;
+              await updateAgentSession({
+                sessionId: linearMeta.agentSessionId,
+                accessToken: tokenResult.accessToken,
+                addedExternalUrls: [{ label: "Pull Request", url: prUrl }],
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Post-checkpoint Linear PR URL update failed", {
+          threadId,
+          threadChatId,
+          error: e,
+        });
+      }
       try {
         const isEmailNotifsEnabled = await getFeatureFlagForUser({
           db,

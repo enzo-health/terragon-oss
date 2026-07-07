@@ -35,14 +35,13 @@ describe("startAgentMessage runtime adapter dispatch contracts", () => {
     });
   });
 
-  it("selects Claude ACP transport when ACP is enabled", () => {
+  it("selects Claude ACP transport", () => {
     const dispatch = resolveImplementationRuntimeAdapter(
       "claudeCode",
     ).createDispatch({
       ...baseInput,
       agent: "claudeCode",
       codexPreviousResponseId: null,
-      enableAcpTransport: true,
     });
 
     expect(dispatch.transportMode).toBe("acp");
@@ -56,26 +55,5 @@ describe("startAgentMessage runtime adapter dispatch contracts", () => {
       dispatch.message.runtimeAdapterContract.operations["permission-response"]
         .status,
     ).toBe("supported");
-  });
-
-  it("keeps legacy stream-json as explicit fallback with typed unsupported operations", () => {
-    const dispatch = resolveImplementationRuntimeAdapter(
-      "claudeCode",
-    ).createDispatch({
-      ...baseInput,
-      agent: "claudeCode",
-      codexPreviousResponseId: null,
-      enableAcpTransport: false,
-    });
-
-    expect(dispatch.transportMode).toBe("legacy");
-    expect(dispatch.protocolVersion).toBe(1);
-    expect(dispatch.requestedSessionId).toBe("session-123");
-    expect(
-      dispatch.message.runtimeAdapterContract.operations["permission-response"],
-    ).toMatchObject({
-      status: "unsupported",
-      recovery: "manual-intervention",
-    });
   });
 });

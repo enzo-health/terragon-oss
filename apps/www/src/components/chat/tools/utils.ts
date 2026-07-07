@@ -56,6 +56,18 @@ const TOOL_VERB_BY_NAME: Record<string, string> = {
  * back to "Running"/"Done" when no specific verb is configured so that new
  * or MCP-delegated tools render something sensible without plumbing.
  */
+const COMPLETED_VERB_BY_VERB: Record<string, string> = {
+  Running: "Ran",
+  Reading: "Read",
+  Writing: "Wrote",
+  Editing: "Edited",
+  Searching: "Searched",
+  Matching: "Matched",
+  Listing: "Listed",
+  Fetching: "Fetched",
+  Delegating: "Delegated",
+};
+
 export function getToolVerb(
   toolName: string,
   status: "pending" | "completed" | "error",
@@ -65,13 +77,7 @@ export function getToolVerb(
     return `${base ?? "Running"}...`;
   }
   if (!base) return "Done";
-  // "Running" → "Ran", "Reading" → "Read", etc. Only swap the trailing
-  // "ing" suffix on simple verbs; multi-word phrases stay as-is to avoid
-  // mangling (e.g. "Awaiting approval" → past tense adds no value).
-  if (/^[A-Z][a-z]+ing$/.test(base)) {
-    return base.replace(/ing$/, "ed");
-  }
-  return base;
+  return COMPLETED_VERB_BY_VERB[base] ?? "Done";
 }
 
 /**

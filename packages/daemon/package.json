@@ -11,6 +11,9 @@
     "./shared": {
       "import": "./src/shared.ts"
     },
+    "./daemon-canonical-events": {
+      "import": "./src/daemon-canonical-events.ts"
+    },
     "./runtime-contracts": {
       "import": "./src/runtime-contracts.ts"
     },

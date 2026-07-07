@@ -272,6 +272,10 @@ export type DBErrorPart = {
   source?: "codex" | "claude" | "acp" | "gemini" | "amp" | "opencode";
 };
 
+export type DBContextCompactionPart = {
+  type: "context-compaction";
+};
+
 /** Union of all part types that can appear in a DBAgentMessage. */
 export type DBAgentMessagePart =
   | DBTextPart
@@ -284,6 +288,7 @@ export type DBAgentMessagePart =
   | DBImagePart
   | DBPlanPart
   | DBErrorPart
+  | DBContextCompactionPart
   | DBServerToolUsePart
   | DBWebSearchResultPart;
 

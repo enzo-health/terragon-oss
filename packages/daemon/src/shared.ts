@@ -1,4 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk";
+import type { AgUiWireEventRow } from "@terragon/agent/ag-ui-rows";
 import type { CanonicalEvent } from "@terragon/agent/canonical-events";
 import { AIAgentSchema } from "@terragon/agent/types";
 import * as z from "zod/v4";
@@ -182,24 +183,6 @@ export type ClaudeMessage =
       message: Anthropic.MessageParam; // from Anthropic SDK
       parent_tool_use_id: string | null;
       session_id: string;
-      /**
-       * Codex source item id (`msg_<hex>`) when this assistant message came
-       * from a Codex `agent_message` item whose text already streamed as
-       * deltas under the same id. Its presence tells the canonical-event
-       * builder to suppress a duplicate `assistant-message` event: the delta
-       * stream is the single persisted/replayed representation, so emitting a
-       * second one under a fresh id is what stacked identical text in the
-       * transcript. Absent for Claude/ACP messages.
-       */
-      _codexItemId?: string;
-      /**
-       * W-ID.3: Content block indices (0-based) in this assistant message
-       * whose text/thinking was already streamed as deltas. The canonical-
-       * event builder skips these blocks to prevent duplicate transcript
-       * messages. Set by streaming transport adapters such as ClaudeCodeParser
-       * and ACP; absent when no blocks were streamed as deltas.
-       */
-      _claudeStreamedBlockIndices?: number[];
     }
 
   // A user message
@@ -375,6 +358,10 @@ export type ClaudeMessage =
       session_id: string | null;
       message: string;
     }
+  | {
+      type: "codex-compaction";
+      session_id: string | null;
+    }
 
   // ACP image content block
   | {
@@ -452,23 +439,6 @@ export type DaemonDelta = {
 };
 
 /**
- * True when an assistant message's text was already streamed (and persisted)
- * as deltas under its Codex item id, so its canonical / rich-part
- * representation must be suppressed to avoid rendering the same content twice.
- * The single source of truth for that suppression, shared by the daemon's
- * canonical-event builder and the server's rich-part emitter.
- */
-export function isDeltaStreamedAssistantMessage(
-  message: ClaudeMessage,
-): boolean {
-  return (
-    message.type === "assistant" &&
-    (message._codexItemId !== undefined ||
-      message._claudeStreamedBlockIndices !== undefined)
-  );
-}
-
-/**
  * The error string carried by an erroring `result` message, or null when none.
  * The single source of truth for reading that field off the `ClaudeMessage`
  * union, shared by the daemon's terminal mapping (deriveRunTerminalFromMessages)
@@ -498,6 +468,7 @@ export type DaemonEventAPIBody = {
   headShaAtCompletion?: string | null;
   /** Canonical runtime events persisted before legacy thread patch handling. */
   canonicalEvents?: CanonicalEvent[];
+  agUiEvents?: AgUiWireEventRow[];
   /** Token-level deltas for streaming text to clients. */
   deltas?: DaemonDelta[];
   /**

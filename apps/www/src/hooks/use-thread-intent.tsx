@@ -10,6 +10,7 @@ export type ThreadIntent =
       threadId: string;
       threadChatId: string;
       message: DBUserMessage;
+      clientSubmissionId?: string | null;
     }
   | {
       type: "queue-message";

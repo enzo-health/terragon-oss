@@ -85,16 +85,17 @@ The Slack integration allows users to interact with Terragon through Slack. User
 
 1. In the app settings, go to **"OAuth & Permissions"**
 2. Under **"Redirect URLs"**, add:
-   - For local development: `<LOCALHOST_PUBLIC_DOMAIN>/api/auth/slack/callback`
-   - For production: `https://www.terragonlabs.com/api/auth/slack/callback`
+   - For local development: `https://<LOCALHOST_PUBLIC_DOMAIN>/api/auth/slack/callback`
+   - For production: `https://<YOUR_APP_DOMAIN>/api/auth/slack/callback`
 3. Under **"Bot Token Scopes"**, add all the scopes in `SLACK_BOT_SCOPES` in `src/server-actions/slack.ts`
+4. Terragon uses two Slack auth flows: user account linking through OpenID Connect (`openid`, `profile`, `email`) and workspace bot installation through the bot scopes above.
 
 #### 3. Event Subscriptions
 
 1. Go to **"Event Subscriptions"**
 2. Set the **"Request URL"** to:
-   - For local development: `<LOCALHOST_PUBLIC_DOMAIN>/api/webhooks/slack`
-   - For production: `https://www.terragonlabs.com/api/webhooks/slack`
+   - For local development: `https://<LOCALHOST_PUBLIC_DOMAIN>/api/webhooks/slack`
+   - For production: `https://<YOUR_APP_DOMAIN>/api/webhooks/slack`
 3. Subscribe to bot events:
    - `app_mention` - For mentions in channels
 
@@ -102,8 +103,8 @@ The Slack integration allows users to interact with Terragon through Slack. User
 
 1. Go to **"Interactivity & Shortcuts"**
 2. Set the **"Request URL"** to:
-   - For local development: `<LOCALHOST_PUBLIC_DOMAIN>/api/webhooks/slack`
-   - For production: `https://www.terragonlabs.com/api/webhooks/slack`
+   - For local development: `https://<LOCALHOST_PUBLIC_DOMAIN>/api/webhooks/slack`
+   - For production: `https://<YOUR_APP_DOMAIN>/api/webhooks/slack`
 
 #### 5. Get App Credentials
 
@@ -115,5 +116,5 @@ The Slack integration allows users to interact with Terragon through Slack. User
 
 #### Development Tips
 
-- Slack OAuth redirect URLs cannot be localhost, you need to use the ngrok URL if you're testing the slack auth flow.
+- Slack OAuth redirect URLs cannot be localhost, you need to use the ngrok URL if you're testing the slack auth flow. Set `LOCALHOST_PUBLIC_DOMAIN` without a scheme, for example `your-ngrok-domain.ngrok-free.app`.
 - This might require you to add your ngrok URL to your GitHub app settings.

@@ -12,6 +12,7 @@ export type FollowUpArgs = {
   threadId: string;
   threadChatId: string;
   message: DBUserMessage;
+  clientSubmissionId?: string | null;
 };
 
 export const followUp = userOnlyAction(
@@ -21,22 +22,20 @@ export const followUp = userOnlyAction(
       threadId,
       threadChatId,
       message,
+      clientSubmissionId = null,
     }: {
       threadId: string;
       threadChatId: string;
       message: DBUserMessage;
+      clientSubmissionId?: string | null;
     },
   ) {
     console.log("followUp", { threadId, threadChatId });
-    // Mirror the AG-UI append path's run-lock so this fallback path can't
-    // dispatch a second concurrent run on the same thread chat. clientSubmissionId
-    // is null here (not yet plumbed through the intent system), so this provides
-    // the run-lock but not the per-submission dedupe.
     const guarded = await withFollowUpSubmissionGuard({
       userId,
       threadId,
       threadChatId,
-      clientSubmissionId: null,
+      clientSubmissionId,
       dispatch: async (markDispatched) => {
         await followUpInternal({
           userId,

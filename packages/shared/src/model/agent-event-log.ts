@@ -658,6 +658,8 @@ function canonicalEventToReplayMessage(
     case "permission-response":
     case "artifact-reference":
     case "meta":
+    case "provider-rich-part":
+      return null;
     case "unknown-provider-event":
       return null;
     default: {
@@ -1432,7 +1434,7 @@ export async function peekNextThreadChatSeqLocked({
   threadChatId,
   count,
 }: {
-  tx: Pick<DB, "execute" | "select">;
+  tx: Pick<DB, "execute">;
   threadChatId: string;
   count: number;
 }): Promise<number> {
@@ -1441,17 +1443,20 @@ export async function peekNextThreadChatSeqLocked({
       `peekNextThreadChatSeqLocked: count must be >= 1 (got ${count})`,
     );
   }
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${`agent_event_log:thread_chat_seq:${threadChatId}`}), 0)`,
-  );
-  const [row] = await tx
-    .select({
-      maxSeq: sql<string | null>`MAX(${schema.agentEventLog.seq})`,
-    })
-    .from(schema.agentEventLog)
-    .where(eq(schema.agentEventLog.threadChatId, threadChatId));
-  const nextSeq = row?.maxSeq == null ? 0 : Number(row.maxSeq) + 1;
-  return nextSeq;
+  const lockKey = `agent_event_log:thread_chat_seq:${threadChatId}`;
+  const result = await tx.execute<{ max_seq: string | null }>(sql`
+    WITH lock_must_acquire_before_max_seq_read AS MATERIALIZED (
+      SELECT pg_advisory_xact_lock(hashtext(${lockKey}), 0)
+    )
+    SELECT (
+      SELECT MAX(${schema.agentEventLog.seq})
+      FROM ${schema.agentEventLog}
+      WHERE ${schema.agentEventLog.threadChatId} = ${threadChatId}
+    ) AS max_seq
+    FROM lock_must_acquire_before_max_seq_read
+  `);
+  const maxSeq = result.rows[0]?.max_seq ?? null;
+  return maxSeq == null ? 0 : Number(maxSeq) + 1;
 }
 
 type AppendAgUiEventRowLegacy = {

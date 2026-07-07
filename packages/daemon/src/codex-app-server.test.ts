@@ -9,6 +9,7 @@ import {
   dumpRawNotification,
   extractMetaEvent,
   extractThreadEvent,
+  gracefulServerRequestResponse,
   SILENTLY_IGNORED_ITEM_TYPES,
   type CodexAppServerProcess,
   type CodexAppServerSpawn,
@@ -296,6 +297,29 @@ describe("extractThreadEvent", () => {
         id: "msg_0900a174019cd6ed0169a7422ac12881a0a5dcff0bd264e361",
         type: "agent_message",
         text: "hello",
+      },
+    });
+  });
+
+  test("extracts codex/event envelopes that carry payload fields directly in params", () => {
+    const event = extractThreadEvent({
+      method: "codex/event/turn_completed",
+      params: {
+        thread_id: "thread-direct",
+        usage: {
+          input_tokens: 11,
+          cached_input_tokens: 3,
+          output_tokens: 5,
+        },
+      },
+    });
+
+    expect(event).toEqual({
+      type: "turn.completed",
+      usage: {
+        input_tokens: 11,
+        cached_input_tokens: 3,
+        output_tokens: 5,
       },
     });
   });
@@ -786,6 +810,75 @@ describe("extractMetaEvent (Task 2.8)", () => {
     expect(meta.replacement).toBe("newParam");
   });
 
+  test("deprecationNotice camelCase (v2) with summary/details → deprecation.notice", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "deprecationNotice",
+      params: { summary: "old param removed", details: "use newParam" },
+    });
+    expect(meta?.kind).toBe("deprecation.notice");
+    if (meta?.kind !== "deprecation.notice") {
+      return;
+    }
+    expect(meta.message).toBe("old param removed");
+    expect(meta.replacement).toBe("use newParam");
+  });
+
+  test("guardianWarning → config.warning meta channel", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "guardianWarning",
+      params: { thread_id: "t-1", message: "guardian flagged this action" },
+    });
+    expect(meta?.kind).toBe("config.warning");
+    if (meta?.kind !== "config.warning") {
+      return;
+    }
+    expect(meta.message).toBe("guardian flagged this action");
+  });
+
+  test("error with will_retry:true → transient thread.turn_retrying meta", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "error",
+      params: {
+        will_retry: true,
+        thread_id: "t-retry",
+        turn_id: "turn-1",
+        error: { message: "temporary upstream 503" },
+      },
+    });
+    expect(meta?.kind).toBe("thread.turn_retrying");
+    if (meta?.kind !== "thread.turn_retrying") {
+      return;
+    }
+    expect(meta.threadId).toBe("t-retry");
+    expect(meta.message).toBe("temporary upstream 503");
+  });
+
+  test("error without will_retry is NOT a meta event (stays terminal)", () => {
+    const meta = extractMetaEvent({
+      jsonrpc: "2.0",
+      method: "error",
+      params: {
+        will_retry: false,
+        thread_id: "t-fail",
+        error: { message: "hard failure" },
+      },
+    });
+    expect(meta).toBeNull();
+    const threadEvent = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "error",
+      params: {
+        will_retry: false,
+        thread_id: "t-fail",
+        error: { message: "hard failure" },
+      },
+    });
+    expect(threadEvent).toEqual({ type: "error", message: "hard failure" });
+  });
+
   // Non-meta method returns null.
   test("non-meta method returns null", () => {
     const meta = extractMetaEvent({
@@ -794,6 +887,159 @@ describe("extractMetaEvent (Task 2.8)", () => {
       params: { item: { id: "x", type: "agent_message" } },
     });
     expect(meta).toBeNull();
+  });
+});
+
+describe("extractThreadEvent — P0 protocol additions", () => {
+  test("file_change preserves add/delete/update kinds and rename move_path", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          id: "patch-1",
+          type: "fileChange",
+          status: "completed",
+          changes: [
+            { path: "new.ts", kind: { type: "add" } },
+            { path: "gone.ts", kind: { type: "delete" } },
+            {
+              path: "old.ts",
+              kind: { type: "update", move_path: "renamed.ts" },
+            },
+            { path: "edited.ts", kind: { type: "update", move_path: null } },
+          ],
+        },
+      },
+    });
+    expect(event).toEqual({
+      type: "item.completed",
+      item: {
+        id: "patch-1",
+        type: "file_change",
+        status: "completed",
+        changes: [
+          { path: "new.ts", kind: "add" },
+          { path: "gone.ts", kind: "delete" },
+          { path: "old.ts", kind: "update", movePath: "renamed.ts" },
+          { path: "edited.ts", kind: "update" },
+        ],
+      },
+    });
+  });
+
+  test("file_change tolerates legacy string kind", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          id: "patch-2",
+          type: "file_change",
+          status: "completed",
+          changes: [{ path: "a.ts", kind: "add" }],
+        },
+      },
+    });
+    expect(event).toMatchObject({
+      item: { changes: [{ path: "a.ts", kind: "add" }] },
+    });
+  });
+
+  test("v2 plan item is carried (no longer dropped)", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: { id: "plan-1", type: "plan", text: "- [ ] step one" },
+      },
+    });
+    expect(event).toEqual({
+      type: "item.completed",
+      item: { id: "plan-1", type: "plan", text: "- [ ] step one" },
+    });
+  });
+
+  test("item/plan/delta synthesizes an item.updated plan event", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "item/plan/delta",
+      params: { itemId: "plan-1", delta: " more" },
+    });
+    expect(event).toMatchObject({
+      type: "item.updated",
+      item: { id: "plan-1", type: "plan", text: " more" },
+    });
+  });
+
+  test("thread/compacted → context_compaction item.completed", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "thread/compacted",
+      params: { thread_id: "t-1", turnId: "turn-9" },
+    });
+    expect(event).toEqual({
+      type: "item.completed",
+      item: { id: "turn-9", type: "context_compaction" },
+    });
+  });
+
+  test("contextCompaction item is carried", () => {
+    const event = extractThreadEvent({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { id: "cc-1", type: "contextCompaction" } },
+    });
+    expect(event).toEqual({
+      type: "item.completed",
+      item: { id: "cc-1", type: "context_compaction" },
+    });
+  });
+});
+
+describe("gracefulServerRequestResponse (P0 decliners)", () => {
+  test("currentTime/read returns a real unix timestamp", () => {
+    const before = Math.floor(Date.now() / 1000);
+    const response = gracefulServerRequestResponse("currentTime/read");
+    expect(response?.kind).toBe("result");
+    if (response?.kind !== "result") {
+      return;
+    }
+    const currentTimeAt = response.result.currentTimeAt as number;
+    expect(typeof currentTimeAt).toBe("number");
+    expect(currentTimeAt).toBeGreaterThanOrEqual(before);
+  });
+
+  test("item/tool/call declines with success:false", () => {
+    expect(gracefulServerRequestResponse("item/tool/call")).toEqual({
+      kind: "result",
+      result: { contentItems: [], success: false },
+    });
+  });
+
+  test("item/tool/requestUserInput answers with no answers", () => {
+    expect(gracefulServerRequestResponse("item/tool/requestUserInput")).toEqual(
+      { kind: "result", result: { answers: {} } },
+    );
+  });
+
+  test("mcpServer/elicitation/request declines", () => {
+    expect(
+      gracefulServerRequestResponse("mcpServer/elicitation/request"),
+    ).toEqual({ kind: "result", result: { action: "decline", content: null } });
+  });
+
+  test("attestation/generate returns an application error, not method-not-found", () => {
+    const response = gracefulServerRequestResponse("attestation/generate");
+    expect(response?.kind).toBe("error");
+    if (response?.kind !== "error") {
+      return;
+    }
+    expect(response.code).not.toBe(-32601);
+  });
+
+  test("unknown server request has no graceful response", () => {
+    expect(gracefulServerRequestResponse("some/unknown/method")).toBeNull();
   });
 });
 
@@ -980,7 +1226,7 @@ describe("CodexAppServerManager", () => {
       JSON.stringify({
         jsonrpc: "2.0",
         id: 99,
-        method: "item/tool/requestUserInput",
+        method: "some/unhandled/request",
         params: { prompt: "Approve?" },
       }),
     );
@@ -994,14 +1240,14 @@ describe("CodexAppServerManager", () => {
       id: 99,
       error: {
         code: -32601,
-        message: "Unsupported server request: item/tool/requestUserInput",
+        message: "Unsupported server request: some/unhandled/request",
       },
     });
     expect(logger.warn).toHaveBeenCalledWith(
       "Unsupported codex app-server server request",
       {
         id: 99,
-        method: "item/tool/requestUserInput",
+        method: "some/unhandled/request",
       },
     );
     await manager.kill();
@@ -1020,7 +1266,7 @@ describe("CodexAppServerManager", () => {
       JSON.stringify({
         jsonrpc: "2.0",
         id: "request-1",
-        method: "item/tool/requestUserInput",
+        method: "some/unhandled/request",
         params: { prompt: "Approve?" },
       }),
     );
@@ -1034,8 +1280,37 @@ describe("CodexAppServerManager", () => {
       id: "request-1",
       error: {
         code: -32601,
-        message: "Unsupported server request: item/tool/requestUserInput",
+        message: "Unsupported server request: some/unhandled/request",
       },
+    });
+    await manager.kill();
+  });
+
+  test("gracefully declines item/tool/requestUserInput instead of -32601", async () => {
+    const { manager, processes } = createManagerHarness();
+
+    const readyPromise = manager.ensureReady();
+    await waitForCondition(() => processes.length === 1);
+    const processHandle = processes[0]!;
+    await completeInitializeHandshake(processHandle);
+    await readyPromise;
+
+    processHandle.emitStdoutLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "item/tool/requestUserInput",
+        params: { questions: [] },
+      }),
+    );
+
+    await waitForCondition(() => processHandle.stdinWrites.length >= 3);
+    await waitForSettledWrites();
+    const response = parseJsonObject(processHandle.stdinWrites[2] ?? "{}");
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 7,
+      result: { answers: {} },
     });
     await manager.kill();
   });

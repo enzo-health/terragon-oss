@@ -47,8 +47,10 @@ export function CommentWidget({
   };
   const handleSubmit = async ({
     userMessage,
+    clientSubmissionId,
   }: {
     userMessage: DBUserMessage;
+    clientSubmissionId: string;
   }) => {
     if (!threadChatId || !threadMessages) return;
     const plainText = convertToPlainText({ message: userMessage });
@@ -78,6 +80,7 @@ export function CommentWidget({
       threadId: thread.id,
       threadChatId,
       message: contextualMessage,
+      clientSubmissionId,
     });
 
     if (!result.success) {

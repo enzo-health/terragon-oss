@@ -239,7 +239,7 @@ export const MentionList = forwardRef<
     },
   }));
   return (
-    <div className="dropdown-menu z-50 bg-popover text-popover-foreground shadow-md rounded-md border p-1 space-y-0.5 min-w-[min(300px,90vw)] max-h-[300px] overflow-y-auto">
+    <div className="dropdown-menu z-50 bg-popover text-popover-foreground shadow-md rounded-md border p-1 space-y-0.5 min-w-[min(300px,90vw)] max-h-[300px] overflow-y-auto animate-in fade-in-0 zoom-in-95 duration-[var(--duration-quick)] ease-[var(--ease-standard)] origin-top-left">
       <MentionListContent
         ref={contentRef}
         items={props.items}

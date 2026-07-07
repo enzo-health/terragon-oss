@@ -38,6 +38,7 @@ export function useCreateThreadIntentSubscriber({
           threadId: i.threadId,
           threadChatId: i.threadChatId,
           message: i.message,
+          clientSubmissionId: i.clientSubmissionId ?? null,
         });
         if (!result.success) {
           setError(result.errorMessage);

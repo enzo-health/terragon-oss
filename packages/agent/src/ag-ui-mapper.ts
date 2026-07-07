@@ -27,6 +27,8 @@ import type {
   OperationalRunTerminalEvent,
   PermissionRequestEvent,
   PermissionResponseEvent,
+  ProviderRichPartEvent,
+  ProviderRichPartKind,
   ReasoningMessageEvent,
   ToolCallResultEvent as CanonicalToolCallResultEvent,
   ToolCallProgressEvent as CanonicalToolCallProgressEvent,
@@ -72,6 +74,8 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
       return [mapArtifactReference(event, timestamp)];
     case "meta":
       return [mapCanonicalMeta(event, timestamp)];
+    case "provider-rich-part":
+      return mapProviderRichPart(event, timestamp);
     case "unknown-provider-event":
       return [];
     default: {
@@ -79,6 +83,37 @@ export function mapCanonicalEventToAgui(event: CanonicalEvent): BaseEvent[] {
       return _exhaustiveCheck;
     }
   }
+}
+
+export const TERRAGON_PART_EVENT_NAME = "terragon.part";
+
+export const TERRAGON_PART_RICH_KINDS: ReadonlySet<ProviderRichPartKind> =
+  new Set<ProviderRichPartKind>([
+    "acp-plan",
+    "codex-plan",
+    "acp-terminal",
+    "acp-image",
+    "acp-audio",
+    "acp-resource-link",
+    "codex-error",
+    "codex-context-compaction",
+    "codex-auto-approval-review",
+  ]);
+
+function mapProviderRichPart(
+  event: ProviderRichPartEvent,
+  timestamp: number,
+): BaseEvent[] {
+  if (!TERRAGON_PART_RICH_KINDS.has(event.richKind)) {
+    return [];
+  }
+  const custom: CustomEvent = {
+    type: EventType.CUSTOM,
+    timestamp,
+    name: TERRAGON_PART_EVENT_NAME,
+    value: { richKind: event.richKind, payload: event.payload },
+  };
+  return [custom];
 }
 
 function mapRunStarted(

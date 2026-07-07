@@ -336,6 +336,6 @@ interface ToolParams {
   };
 
   FileChange: {
-    files: Array<{ path: string; action?: string }>;
+    files: Array<{ path: string; action?: string; movePath?: string }>;
   };
 }

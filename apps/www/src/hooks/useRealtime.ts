@@ -166,6 +166,7 @@ export function useRealtimeBase({
   const debouncedOnMessage = useDebouncedCallback(
     (msg: BroadcastMessage) => onMessageRef.current(msg),
     debounceMs,
+    { leading: true, trailing: true },
   );
 
   const onMessageWrapper = useCallback(

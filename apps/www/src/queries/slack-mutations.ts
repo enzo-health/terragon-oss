@@ -3,6 +3,7 @@ import { updateSlackSettings } from "@/server-actions/slack";
 import { toast } from "sonner";
 import { SlackSettingsInsert } from "@terragon/shared";
 import { useRouter } from "next/navigation";
+import { unwrapResult } from "@/lib/server-actions";
 
 export function useUpdateSlackSettings() {
   const router = useRouter();
@@ -14,10 +15,7 @@ export function useUpdateSlackSettings() {
       teamId: string;
       settings: Omit<SlackSettingsInsert, "userId" | "teamId">;
     }) => {
-      await updateSlackSettings({
-        teamId,
-        settings,
-      });
+      unwrapResult(await updateSlackSettings({ teamId, settings }));
     },
     onSuccess: () => {
       toast.success("Slack settings saved");

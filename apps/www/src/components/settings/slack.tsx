@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slack } from "lucide-react";
@@ -19,11 +19,13 @@ import { useRealtimeUser } from "@/hooks/useRealtime";
 import { SlackAccountWithMetadata } from "@terragon/shared/db/types";
 import { AIModel } from "@terragon/agent/types";
 import { useServerActionMutation } from "@/queries/server-action-helpers";
+import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
 
 function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   const router = useRouter();
   const updateMutation = useUpdateSlackSettings();
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [isInstallRedirecting, setIsInstallRedirecting] = useState(false);
   const [defaultRepo, setDefaultRepo] = useState(
     account.settings?.defaultRepoFullName || "",
   );
@@ -33,24 +35,28 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
   const getSlackAppInstallUrlMutation = useServerActionMutation({
     mutationFn: getSlackAppInstallUrl,
   });
-
-  const handleDisconnect = async () => {
-    try {
-      setIsDisconnecting(true);
-      await disconnectSlackAccount({ teamId: account.teamId });
-      toast.success("Slack workspace disconnected");
+  const disconnectSlackAccountMutation = useServerActionMutation({
+    mutationFn: disconnectSlackAccount,
+    onSuccess: () => {
+      toast.success("Slack account disconnected");
+      setShowDisconnectConfirm(false);
       router.refresh();
-    } catch (error) {
-      console.error("Failed to disconnect Slack:", error);
-      toast.error("Failed to disconnect Slack workspace");
-    } finally {
-      setIsDisconnecting(false);
-    }
-  };
+    },
+  });
+
+  useEffect(() => {
+    setDefaultRepo(account.settings?.defaultRepoFullName || "");
+    setDefaultModel(account.settings?.defaultModel || null);
+  }, [account.settings?.defaultModel, account.settings?.defaultRepoFullName]);
 
   const handleInstallApp = async () => {
-    const appInstallUrl = await getSlackAppInstallUrlMutation.mutateAsync();
-    window.location.href = appInstallUrl;
+    setIsInstallRedirecting(true);
+    try {
+      const appInstallUrl = await getSlackAppInstallUrlMutation.mutateAsync();
+      window.location.href = appInstallUrl;
+    } catch {
+      setIsInstallRedirecting(false);
+    }
   };
 
   const isConnected = !!account.installation;
@@ -76,9 +82,17 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
             The Slack app needs to be installed in your workspace to complete
             the setup.
           </p>
-          <Button size="sm" onClick={handleInstallApp}>
+          <Button
+            size="sm"
+            onClick={handleInstallApp}
+            disabled={
+              isInstallRedirecting || getSlackAppInstallUrlMutation.isPending
+            }
+          >
             <Slack className="h-4 w-4" />
-            Install Slack app
+            {isInstallRedirecting || getSlackAppInstallUrlMutation.isPending
+              ? "Redirecting…"
+              : "Install Slack app"}
           </Button>
         </div>
       ) : (
@@ -95,7 +109,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
                       teamId: account.teamId,
                       settings: {
                         defaultRepoFullName: repoFullName,
-                        defaultModel: defaultModel!,
+                        ...(defaultModel ? { defaultModel } : {}),
                       },
                     });
                   }
@@ -112,7 +126,7 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
                 supportsMultiAgentPromptSubmission={false}
                 setIsMultiAgentMode={() => {}}
                 selectedModels={{}}
-                selectedModel={defaultModel as any}
+                selectedModel={defaultModel ?? undefined}
                 setSelectedModel={({ model }: { model: AIModel }) => {
                   setDefaultModel(model);
                   updateMutation.mutate({
@@ -127,14 +141,29 @@ function SlackAccountItem({ account }: { account: SlackAccountWithMetadata }) {
           </div>
           <div className="space-x-2">
             <Button
-              onClick={handleDisconnect}
-              disabled={isDisconnecting}
+              onClick={() => setShowDisconnectConfirm(true)}
+              disabled={disconnectSlackAccountMutation.isPending}
               size="sm"
               variant="link"
               className="text-mid font-normal underline px-0 hover:text-strong"
             >
-              {isDisconnecting ? "Disconnecting…" : "Disconnect account"}
+              {disconnectSlackAccountMutation.isPending
+                ? "Disconnecting…"
+                : "Disconnect my Slack account"}
             </Button>
+            <DeleteConfirmationDialog
+              open={showDisconnectConfirm}
+              onOpenChange={setShowDisconnectConfirm}
+              onConfirm={() =>
+                disconnectSlackAccountMutation.mutate({
+                  teamId: account.teamId,
+                })
+              }
+              title="Disconnect Slack account"
+              description="This disconnects your Slack account from Terragon. The workspace app installation and other users are unaffected."
+              confirmText="Disconnect"
+              isLoading={disconnectSlackAccountMutation.isPending}
+            />
           </div>
         </>
       )}
@@ -155,9 +184,15 @@ export function SlackAccountSettings({
   const getSlackOAuthUrlMutation = useServerActionMutation({
     mutationFn: getSlackOAuthUrl,
   });
+  const [isConnectRedirecting, setIsConnectRedirecting] = useState(false);
   const handleConnect = async () => {
-    const authUrl = await getSlackOAuthUrlMutation.mutateAsync();
-    window.location.href = authUrl;
+    setIsConnectRedirecting(true);
+    try {
+      const authUrl = await getSlackOAuthUrlMutation.mutateAsync();
+      window.location.href = authUrl;
+    } catch {
+      setIsConnectRedirecting(false);
+    }
   };
 
   // No connections - show connect prompt
@@ -171,11 +206,13 @@ export function SlackAccountSettings({
           <Button
             size="sm"
             onClick={handleConnect}
-            disabled={getSlackOAuthUrlMutation.isPending}
+            disabled={
+              isConnectRedirecting || getSlackOAuthUrlMutation.isPending
+            }
           >
             <Slack className="h-4 w-4" />
-            {getSlackOAuthUrlMutation.isPending
-              ? "Connecting…"
+            {isConnectRedirecting || getSlackOAuthUrlMutation.isPending
+              ? "Redirecting…"
               : "Connect Slack workspace"}
           </Button>
         </div>
@@ -193,11 +230,11 @@ export function SlackAccountSettings({
           variant="link"
           size="sm"
           onClick={handleConnect}
-          disabled={getSlackOAuthUrlMutation.isPending}
+          disabled={isConnectRedirecting || getSlackOAuthUrlMutation.isPending}
           className="text-mid font-normal underline px-0 hover:text-strong"
         >
-          {getSlackOAuthUrlMutation.isPending
-            ? "Connecting…"
+          {isConnectRedirecting || getSlackOAuthUrlMutation.isPending
+            ? "Redirecting…"
             : "Connect another workspace"}
         </Button>
       </div>

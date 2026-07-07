@@ -16,6 +16,7 @@ import {
   getThreadChat,
   getThreadMinimal,
   touchThreadChatUpdatedAt,
+  updateThreadChat,
   updateThreadChatTerminalMetadataIfTerminal,
 } from "@terragon/shared/model/threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,8 +26,11 @@ import { persistAndPublishAgUiEvents } from "@/server-lib/ag-ui-publisher";
 import { checkpointThread } from "@/server-lib/checkpoint-thread";
 import { getDaemonEventDbPreflight } from "@/server-lib/daemon-event-db-preflight";
 import { queueFollowUpInternal } from "@/server-lib/follow-up";
-import { handleDaemonEvent } from "@/server-lib/handle-daemon-event";
 import { maybeProcessFollowUpQueue } from "@/server-lib/process-follow-up-queue";
+import { trackUsageEvents } from "@/server-lib/usage-events";
+import { isAnthropicDownPOST } from "@/server-lib/internal-request";
+import { getFeatureFlagForUser } from "@terragon/shared/model/feature-flags";
+import { compactThreadChat } from "@/server-lib/compact";
 import { POST } from "./route";
 
 const dbMocks = vi.hoisted(() => {
@@ -99,6 +103,13 @@ const dbMocks = vi.hoisted(() => {
 const canonicalEventLogMocks = vi.hoisted(() => ({
   assignThreadChatMessageSeqToCanonicalEvents: vi.fn(),
   findOpenAgUiMessagesForRun: vi.fn(),
+  findOpenAgUiToolCallsForRun: vi.fn(),
+}));
+
+const sideEffectMocks = vi.hoisted(() => ({
+  persistSideEffectAgUiMessages: vi.fn(),
+  persistInvalidTokenRetrySideEffectMarker: vi.fn(),
+  hasInvalidTokenRetrySideEffectMarker: vi.fn(),
 }));
 
 const agUiPublisherMocks = vi.hoisted(() => ({
@@ -152,10 +163,6 @@ vi.mock("@/lib/auth-server", () => ({
 
 vi.mock("@/agent/sandbox-resource", () => sandboxResourceMocks);
 
-vi.mock("@/server-lib/handle-daemon-event", () => ({
-  handleDaemonEvent: vi.fn(),
-}));
-
 vi.mock("@/server-lib/checkpoint-thread", () => ({
   checkpointThread: vi.fn(),
 }));
@@ -202,7 +209,11 @@ vi.mock("@terragon/shared/model/agent-event-log", () => ({
   assignThreadChatMessageSeqToCanonicalEvents:
     canonicalEventLogMocks.assignThreadChatMessageSeqToCanonicalEvents,
   findOpenAgUiMessagesForRun: canonicalEventLogMocks.findOpenAgUiMessagesForRun,
+  findOpenAgUiToolCallsForRun:
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun,
 }));
+
+vi.mock("@/server-lib/ag-ui-side-effect-messages", () => sideEffectMocks);
 
 vi.mock("@/server-lib/ag-ui-publisher", () => agUiPublisherMocks);
 
@@ -212,6 +223,25 @@ vi.mock("@terragon/shared/broadcast-server", () => ({
 
 vi.mock("@/server-lib/daemon-event-db-preflight", () => ({
   getDaemonEventDbPreflight: vi.fn(),
+}));
+
+vi.mock("@/server-lib/usage-events", () => ({
+  trackUsageEvents: vi.fn(),
+}));
+
+vi.mock("@/server-lib/internal-request", () => ({
+  isAnthropicDownPOST: vi.fn(),
+  internalPOST: vi.fn(),
+}));
+
+vi.mock("@terragon/shared/model/feature-flags", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  getFeatureFlagForUser: vi.fn(),
+}));
+
+vi.mock("@/server-lib/compact", async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
+  compactThreadChat: vi.fn(),
 }));
 
 function createDaemonRequest(
@@ -425,11 +455,6 @@ describe("daemon-event route", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any);
-    vi.mocked(handleDaemonEvent).mockResolvedValue({
-      success: true,
-      threadChatMessageSeq: null,
-      terminalRecoveryQueued: false,
-    });
     vi.mocked(updateThreadChatWithTransition).mockResolvedValue({
       didUpdateStatus: true,
       updatedStatus: "working-done",
@@ -481,6 +506,183 @@ describe("daemon-event route", () => {
     agUiPublisherMocks.publishPersistedAgUiEvents.mockResolvedValue(undefined);
     agUiPublisherMocks.broadcastAgUiEventEphemeral.mockResolvedValue(undefined);
     canonicalEventLogMocks.findOpenAgUiMessagesForRun.mockResolvedValue([]);
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([]);
+    sideEffectMocks.persistSideEffectAgUiMessages.mockResolvedValue(undefined);
+    sideEffectMocks.persistInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      undefined,
+    );
+    sideEffectMocks.hasInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      false,
+    );
+    vi.mocked(trackUsageEvents).mockResolvedValue(undefined);
+    vi.mocked(isAnthropicDownPOST).mockResolvedValue(undefined as never);
+    vi.mocked(getFeatureFlagForUser).mockResolvedValue(false);
+    vi.mocked(compactThreadChat).mockResolvedValue({
+      summary: "auto-compact summary",
+    });
+  });
+
+  it("injects interrupted tool-results for open tool calls on a v2 stopped terminal", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([
+      { toolCallId: "tool-open-1", parentToolUseId: null },
+    ]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-stop",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-stop",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "daemon-side-effect",
+        runId: "run-1",
+        messages: [
+          expect.objectContaining({
+            type: "tool-result",
+            id: "tool-open-1",
+            is_error: true,
+            result: "Tool execution interrupted by user",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("returns a retriable error when interrupted tool-result injection fails", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([
+      { toolCallId: "tool-open-1", parentToolUseId: null },
+    ]);
+    sideEffectMocks.persistSideEffectAgUiMessages.mockRejectedValueOnce(
+      new Error("side-effect write failed"),
+    );
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-fails",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-fails",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        error: "daemon_event_interrupted_tool_result_persist_failed",
+      }),
+    );
+    expect(response.status).toBe(503);
+  });
+
+  it("does not inject interrupted tool-results when no tool calls are open", async () => {
+    canonicalEventLogMocks.findOpenAgUiToolCallsForRun.mockResolvedValue([]);
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [{ type: "custom-stop", duration_ms: 10 } as never],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "event-interrupt-none",
+            seq: 10,
+            status: "stopped",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-interrupt-none",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      sideEffectMocks.persistSideEffectAgUiMessages,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("tracks usage from the result message for a v2 batch", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            ...createSuccessResultMessage(),
+            total_cost_usd: 0.05,
+            duration_ms: 1234,
+          },
+        ],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-usage",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(trackUsageEvents).toHaveBeenCalledWith({
+      userId: "user-1",
+      costUsd: 0.05,
+      agentDurationMs: 1234,
+    });
+    expect(isAnthropicDownPOST).not.toHaveBeenCalled();
+  });
+
+  it("pings the anthropic-down endpoint for an overloaded v2 batch", async () => {
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            ...createSuccessResultMessage(),
+            result:
+              "overloaded_error: Anthropic is overloaded. Please try again later.",
+          },
+        ],
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "event-overloaded",
+        runId: "run-1",
+        seq: 0,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(isAnthropicDownPOST).toHaveBeenCalledTimes(1);
   });
 
   it("returns 401 when daemon token auth fails", async () => {
@@ -496,7 +698,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("accepts daemon-event requests with test auth in non-production", async () => {
@@ -530,12 +731,40 @@ describe("daemon-event route", () => {
         acknowledgedSeq: 0,
       }),
     );
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
+  });
+
+  it("rejects a pre-v2 daemon-event that carries no runId with 400 before persistence", async () => {
+    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue(null);
+
+    const response = await POST(
+      createDaemonRequest(
+        {
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [createSuccessResultMessage()],
+          timezone: "UTC",
+        },
+        {
+          "X-Terragon-Test-Daemon-Auth": "enabled",
+          "X-Terragon-Secret": env.INTERNAL_SHARED_SECRET,
+          "X-Terragon-Test-User-Id": "user-1",
+        },
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        userId: "user-1",
-        runId: "run-1",
+        success: false,
+        error: "daemon_event_run_id_required",
       }),
     );
+    expect(getAgentRunContextByRunId).not.toHaveBeenCalled();
+    expect(agUiPublisherMocks.persistAgUiEvents).not.toHaveBeenCalled();
+    expect(
+      agUiPublisherMocks.persistAndPublishAgUiEvents,
+    ).not.toHaveBeenCalled();
+    expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
   });
 
   it("rejects daemon-event test auth when secret is invalid", async () => {
@@ -562,7 +791,6 @@ describe("daemon-event route", () => {
       success: false,
       error: "daemon_auth_context_missing",
     });
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("does not bypass daemon-token auth when X-Daemon-Token is present", async () => {
@@ -590,7 +818,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("does not publish meta events before full daemon-token validation", async () => {
@@ -677,15 +904,9 @@ describe("daemon-event route", () => {
     });
     expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
     expect(agUiPublisherMocks.persistAgUiEvents).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("re-queues a rate-limit result instead of completing it", async () => {
-    // A Claude rate-limit arrives as a result message that the daemon
-    // canonicalizes into a `completed` run-terminal. Completing it would skip the
-    // rate-limit re-queue (queued-agent-rate-limit), so the route must drop the
-    // terminal and defer recovery to the message-based path. Without the guard,
-    // completeAgentRunContextTerminal fires and the run wrongly terminates.
+  it("re-queues a rate-limit result via a route-owned rate-limit transition", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -720,14 +941,63 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+    expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "system.agent-rate-limit" }),
     );
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
   });
 
-  it("defers an OAuth-token-revoked result to the recovery path", async () => {
-    // OAuth-token-revoked is recoverable (refresh + retry). The route drops the
-    // canonical terminal and defers; the recovery path retries or terminates.
+  it("returns a retriable error when the route-owned rate-limit transition fails", async () => {
+    vi.mocked(updateThreadChatWithTransition)
+      .mockResolvedValueOnce({
+        didUpdateStatus: true,
+        updatedStatus: "working",
+        chatSequence: undefined,
+      })
+      .mockRejectedValueOnce(new Error("rate-limit transition failed"));
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "Claude AI usage limit reached|1752350400",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "rate-limit-terminal-fails",
+            seq: 10,
+            status: "completed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "rate-limit-terminal-fails",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        error: "daemon_event_route_recovery_rate_limit_failed",
+      }),
+    );
+    expect(response.status).toBe(503);
+  });
+
+  it("recovers an OAuth-token-revoked result: retry marker before queued Continue, then re-dispatch", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -761,9 +1031,138 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+    expect(
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        runId: "run-1",
+      }),
+    );
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "daemon-side-effect",
+        messages: [
+          expect.objectContaining({
+            type: "system",
+            message_type: "invalid-token-retry",
+          }),
+        ],
+      }),
+    );
+    const continueCallIndex = vi
+      .mocked(updateThreadChat)
+      .mock.calls.findIndex(
+        ([arg]) =>
+          (arg as { updates?: { appendQueuedMessages?: unknown[] } })?.updates
+            ?.appendQueuedMessages !== undefined,
+      );
+    expect(continueCallIndex).toBeGreaterThanOrEqual(0);
+    const markerOrder =
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker.mock
+        .invocationCallOrder[0]!;
+    const continueOrder =
+      vi.mocked(updateThreadChat).mock.invocationCallOrder[continueCallIndex]!;
+    expect(markerOrder).toBeLessThan(continueOrder);
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
+    );
+  });
+
+  it("does not retry an OAuth-token-revoked result a second time (marker already present)", async () => {
+    sideEffectMocks.hasInvalidTokenRetrySideEffectMarker.mockResolvedValue(
+      true,
+    );
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: true,
+            num_turns: 1,
+            result: "OAuth token revoked",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "oauth-terminal-retried",
+            seq: 10,
+            status: "failed",
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "oauth-terminal-retried",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(completeAgentRunContextTerminal).toHaveBeenCalled();
+    expect(
+      sideEffectMocks.persistInvalidTokenRetrySideEffectMarker,
+    ).not.toHaveBeenCalled();
+    expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it("recovers a typed context-exhausted terminal off the recoverable field (auto-compact + re-dispatch)", async () => {
+    vi.mocked(getFeatureFlagForUser).mockResolvedValue(true);
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        messages: [
+          {
+            type: "result",
+            subtype: "success",
+            total_cost_usd: 0,
+            duration_ms: 10,
+            duration_api_ms: 10,
+            is_error: false,
+            num_turns: 1,
+            result: "ok",
+            session_id: "session-1",
+          },
+        ],
+        canonicalEvents: [
+          createCanonicalRunTerminalEvent({
+            eventId: "typed-context-terminal",
+            seq: 10,
+            status: "failed",
+            recoverable: { kind: "context-exhausted" },
+          }),
+        ],
+        timezone: "UTC",
+        payloadVersion: 2,
+        eventId: "typed-context-terminal",
+        runId: "run-1",
+        seq: 10,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(compactThreadChat).toHaveBeenCalled();
+    expect(sideEffectMocks.persistSideEffectAgUiMessages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            type: "system",
+            message_type: "compact-result",
+          }),
+        ],
+      }),
+    );
+    expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
     );
   });
 
@@ -801,7 +1200,6 @@ describe("daemon-event route", () => {
       ],
     });
     expect(getAgentRunContextByRunId).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
     expect(agUiPublisherMocks.persistAgUiEvents).not.toHaveBeenCalled();
   });
 
@@ -827,7 +1225,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(401);
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }
@@ -917,10 +1314,61 @@ describe("daemon-event route", () => {
         rows: expectedDeltaRows,
       }),
     );
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
+  });
+
+  it("persists daemon-emitted AG-UI wire rows alongside canonical and delta payloads", async () => {
+    const timestampMs = Date.parse("2026-04-27T00:00:00.000Z");
+    const agUiEvent = {
+      type: EventType.TEXT_MESSAGE_START,
+      timestamp: timestampMs,
+      messageId: "daemon-agui-message",
+      role: "assistant",
+    };
+
+    const response = await POST(
+      createDaemonRequest({
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        payloadVersion: 2,
+        eventId: "event-agui-wire",
+        runId: "run-1",
+        seq: 8,
         messages: [],
-        skipThreadChatPersistence: true,
+        canonicalEvents: [createCanonicalRunStartedEvent()],
+        agUiEvents: [
+          {
+            event: agUiEvent,
+            eventId: "daemon-agui-row-1",
+            timestampMs,
+          },
+        ],
+        deltas: [
+          {
+            messageId: "m",
+            partIndex: 0,
+            deltaSeq: 10,
+            kind: "text",
+            text: "ignored because agUiEvents are authoritative",
+          },
+        ],
+        timezone: "UTC",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(agUiPublisherMocks.daemonDeltasToAgUiRows).not.toHaveBeenCalled();
+    expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        threadId: "thread-1",
+        threadChatId: "chat-1",
+        rows: [
+          {
+            event: agUiEvent,
+            eventId: "daemon-agui-row-1",
+            timestamp: new Date(timestampMs),
+          },
+        ],
       }),
     );
   });
@@ -961,11 +1409,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skipThreadChatPersistence: true,
-      }),
-    );
     expect(persistAndPublishAgUiEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         rows: expect.arrayContaining([
@@ -1044,12 +1487,6 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: [],
-          skipThreadChatPersistence: true,
-        }),
-      );
     });
 
     it("skips legacy thread chat message persistence for canonical tool-call streams with legacy assistant messages", async () => {
@@ -1107,14 +1544,14 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      const handleArgs = vi.mocked(handleDaemonEvent).mock.calls[0]?.[0];
-      expect(handleArgs).toEqual(
+      expect(updateThreadChatWithTransition).toHaveBeenCalledTimes(1);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: [assistantToolUseMessage],
-          skipThreadChatPersistence: true,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          eventType: "assistant.message",
         }),
       );
-      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
       expect(publishBroadcastUserMessage).not.toHaveBeenCalled();
       expect(
         assignThreadChatMessageSeqToCanonicalEvents,
@@ -1162,17 +1599,52 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
+      expect(updateThreadChatWithTransition).toHaveBeenCalledTimes(1);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: [assistantTextMessage],
-          skipThreadChatPersistence: true,
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          eventType: "assistant.message",
         }),
       );
-      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
       expect(publishBroadcastUserMessage).not.toHaveBeenCalled();
       expect(
         assignThreadChatMessageSeqToCanonicalEvents,
       ).not.toHaveBeenCalled();
+    });
+
+    it("flips a booting chat to working via a processing-gated assistant.message transition on a non-terminal batch", async () => {
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          payloadVersion: 2,
+          eventId: "event-first-activity-flip",
+          runId: "run-1",
+          seq: 30,
+          messages: [],
+          deltas: [
+            {
+              messageId: "codex-message-flip",
+              partIndex: 0,
+              deltaSeq: 1,
+              kind: "text",
+              text: "Hi",
+            },
+          ],
+          timezone: "UTC",
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledTimes(1);
+      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          eventType: "assistant.message",
+        }),
+      );
     });
 
     it("persists a tool-progress stream as canonical AG-UI only and skips legacy runtime transcript projection", async () => {
@@ -1218,7 +1690,6 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("routes failed native runs through terminal handling without legacy transcript persistence", async () => {
@@ -1257,14 +1728,6 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      const handleArgs = vi.mocked(handleDaemonEvent).mock.calls[0]?.[0];
-      expect(handleArgs).toEqual(
-        expect.objectContaining({
-          messages: [errorMessage],
-          deferTerminalTransitionToRoute: true,
-          skipThreadChatPersistence: true,
-        }),
-      );
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_error",
@@ -1272,72 +1735,6 @@ describe("daemon-event route", () => {
         }),
       );
     });
-  });
-
-  it("drops canonical assistant-message replay rows when deltas are present", async () => {
-    const timestamp = new Date().toISOString();
-    const response = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        payloadVersion: 2,
-        eventId: "event-filter-1",
-        runId: "run-1",
-        seq: 9,
-        messages: [],
-        canonicalEvents: [
-          {
-            payloadVersion: 2,
-            eventId: "canon-run-started",
-            runId: "run-1",
-            threadId: "thread-1",
-            threadChatId: "chat-1",
-            seq: 0,
-            timestamp,
-            category: "operational",
-            type: "run-started",
-            agent: "codex",
-            transportMode: "legacy",
-            protocolVersion: 2,
-          },
-          {
-            payloadVersion: 2,
-            eventId: "canon-assistant",
-            runId: "run-1",
-            threadId: "thread-1",
-            threadChatId: "chat-1",
-            seq: 1,
-            timestamp,
-            category: "transcript",
-            type: "assistant-message",
-            messageId: "m-canon",
-            content: "duplicate me",
-          },
-        ],
-        deltas: [
-          {
-            messageId: "msg_delta",
-            partIndex: 0,
-            deltaSeq: 0,
-            kind: "text",
-            text: "duplicate me",
-          },
-        ],
-        timezone: "UTC",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    const canonicalEventsArg =
-      agUiPublisherMocks.canonicalEventsToAgUiRows.mock.calls.at(
-        -1,
-      )?.[0] as Array<{ type: string }>;
-    expect(canonicalEventsArg).toEqual([
-      expect.objectContaining({ type: "run-started" }),
-    ]);
-    expect(
-      canonicalEventsArg.some((event) => event.type === "assistant-message"),
-    ).toBe(false);
   });
 
   it("rejects filtered canonical assistant context mismatches before persistence", async () => {
@@ -1390,10 +1787,9 @@ describe("daemon-event route", () => {
       agUiPublisherMocks.persistAndPublishAgUiEvents,
     ).not.toHaveBeenCalled();
     expect(agUiPublisherMocks.persistAgUiEvents).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
-  it("emits AG-UI rich-part events for assistant messages with thinking blocks", async () => {
+  it("emits rich-part events for genuine rich parts and excludes delta-owned text/thinking", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1415,15 +1811,24 @@ describe("daemon-event route", () => {
             session_id: "s-1",
             parent_tool_use_id: null,
           },
+          {
+            type: "acp-plan",
+            session_id: "s-1",
+            entries: [
+              {
+                id: "step-1",
+                content: "Run tests",
+                priority: "medium",
+                status: "pending",
+              },
+            ],
+          },
         ],
         timezone: "UTC",
       }),
     );
 
     expect(response.status).toBe(200);
-    // dbAgentMessagePartsToAgUiRows receives one rich assistant message with
-    // a stable messageId derived from the envelope's eventId + the running
-    // dbMessage index.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).toHaveBeenCalledTimes(1);
@@ -1434,13 +1839,13 @@ describe("daemon-event route", () => {
     const inputs = call[0];
     expect(inputs).toHaveLength(1);
     expect(inputs[0]!.messageId).toMatch(/^event-rich-1:msg:\d+$/);
-    // Parts should include the thinking block; the text block is retained in
-    // the DBAgentMessage parts array but the mapper itself skips pure text.
     const partTypes = inputs[0]!.parts.map((p) => p.type);
-    expect(partTypes).toContain("thinking");
+    expect(partTypes).toContain("plan");
+    expect(partTypes).not.toContain("thinking");
+    expect(partTypes).not.toContain("text");
   });
 
-  it("skips rich-part events for Codex messages already streamed as deltas", async () => {
+  it("skips rich-part events for Codex reasoning that streams as thinking deltas", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1464,8 +1869,6 @@ describe("daemon-event route", () => {
             },
             session_id: "s-1",
             parent_tool_use_id: null,
-            // Already streamed + persisted as thinking deltas under this id.
-            _codexItemId: "msg_reasoning_1",
           },
         ],
         timezone: "UTC",
@@ -1473,13 +1876,12 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The delta stream owns this reasoning; no duplicate rich-part emission.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();
   });
 
-  it("filters delta-streamed text/thinking blocks for Claude messages with _claudeStreamedBlockIndices", async () => {
+  it("keeps text/thinking parts out of the rich-part channel, tool_use is separate", async () => {
     const response = await POST(
       createDaemonRequest({
         threadId: "thread-1",
@@ -1506,8 +1908,6 @@ describe("daemon-event route", () => {
             },
             session_id: "s-1",
             parent_tool_use_id: null,
-            // Blocks 0 and 1 (thinking + text) were already streamed as deltas.
-            _claudeStreamedBlockIndices: [0, 1],
           },
         ],
         timezone: "UTC",
@@ -1515,10 +1915,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    // The DBAgentMessage's text/thinking parts are all delta-streamed,
-    // leaving no rich parts. The DBToolCall is a separate message type
-    // (not "agent") so it doesn't go through the rich-part path.
-    // No rich-part emission should occur.
     expect(
       agUiPublisherMocks.dbAgentMessagePartsToAgUiRows,
     ).not.toHaveBeenCalled();
@@ -1575,7 +1971,6 @@ describe("daemon-event route", () => {
       code: "database_error",
       detail: "merged persist failed",
     });
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("skips rich-part emission when assistant message has only text parts", async () => {
@@ -1627,7 +2022,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_capability_v2_requires_v2_envelope");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("rejects canonical daemon events with malformed v2 envelope when daemon advertises v2 capability", async () => {
@@ -1652,7 +2046,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_capability_v2_requires_v2_envelope");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("rejects v2 envelope payloads when the daemon does not advertise v2 envelope capability", async () => {
@@ -1676,7 +2069,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_v2_envelope_requires_capability_v2");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("requires threadChatId for daemon payloads", async () => {
@@ -1740,7 +2132,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_requires_thread_chat_id");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("requires threadChatId for ACP daemon payloads", async () => {
@@ -1761,7 +2152,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe("daemon_event_requires_thread_chat_id");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("routes non-empty placeholder threadChatIds into downstream run-context validation", async () => {
@@ -1783,7 +2173,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(409);
     expect(data.error).toBe("daemon_event_run_context_mismatch");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("returns v2 acknowledgements when a run is already terminal", async () => {
@@ -1834,7 +2223,6 @@ describe("daemon-event route", () => {
     expect(data.reason).toBe("run_terminal_ignored");
     expect(data.acknowledgedEventId).toBe("event-terminal");
     expect(data.acknowledgedSeq).toBe(0);
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("persists canonical events before returning run_terminal_ignored", async () => {
@@ -1887,7 +2275,6 @@ describe("daemon-event route", () => {
         threadChatId: "chat-1",
       }),
     );
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("returns protocol ack shape for run_terminal_ignored responses", async () => {
@@ -1986,7 +2373,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(401);
     expect(data.error).toBe("daemon_event_run_id_claim_mismatch");
     expect(data.runId).toBe("run-different-2");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   // VAL-API-012: Missing/expired daemon claims rejection
@@ -2015,7 +2401,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(401);
     expect(data.error).toBe("daemon_token_claims_required");
     expect(data.runId).toBe("run-1");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("rejects daemon-event with expired token claims with 401 auth error", async () => {
@@ -2073,7 +2458,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(401);
     expect(data.error).toBe("daemon_token_expired");
     expect(data.runId).toBe("run-1");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   it("rejects daemon-token provider scope mismatch before terminal side effects", async () => {
@@ -2121,7 +2505,6 @@ describe("daemon-event route", () => {
       agUiPublisherMocks.broadcastAgUiEventEphemeral,
     ).not.toHaveBeenCalled();
     expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   // VAL-API-013: Run-context mismatch conflict rejection
@@ -2181,7 +2564,6 @@ describe("daemon-event route", () => {
     expect(response.status).toBe(409);
     expect(data.error).toBe("daemon_event_run_context_mismatch");
     expect(data.runId).toBe("run-1");
-    expect(handleDaemonEvent).not.toHaveBeenCalled();
   });
 
   // VAL-API-014: Pure-v2 terminal events are terminal in the canonical runtime only.
@@ -2656,12 +3038,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(handleDaemonEvent).mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        skipThreadChatPersistence: false,
-      }),
-    );
   });
 
   // VAL-CROSS-002: Duplicate ingress across API and runtime remains idempotent
@@ -2729,8 +3105,6 @@ describe("daemon-event route", () => {
       );
 
       expect(firstResponse.status).toBe(200);
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-
       const secondResponse = await POST(
         createDaemonRequest({
           threadId: "thread-1",
@@ -2746,8 +3120,6 @@ describe("daemon-event route", () => {
 
       expect(secondResponse.status).toBe(200);
       expect(await secondResponse.json()).toMatchObject({ success: true });
-
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(2);
     });
 
     it("does not use runtime claim conflicts to block duplicate processing", async () => {
@@ -2772,7 +3144,6 @@ describe("daemon-event route", () => {
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ success: true });
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2791,103 +3162,6 @@ describe("daemon-event route", () => {
     );
 
     expect(response.status).toBe(200);
-  });
-
-  it("does not hold runtime claims when daemon handling fails so retries can process the message", async () => {
-    // Align auth claims with envelope runId to avoid claim mismatch
-    vi.mocked(getDaemonTokenAuthContextOrNull).mockResolvedValue({
-      userId: "user-1",
-      keyId: "api-key-1",
-      claims: {
-        kind: "daemon-run",
-        runId: "run-rollback-test",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        sandboxId: "sandbox-1",
-        agent: "claudeCode",
-        transportMode: "acp",
-        protocolVersion: 2,
-        providers: ["anthropic"],
-        nonce: "nonce-1",
-        issuedAt: Date.now(),
-        exp: Date.now() + 60_000,
-      },
-    });
-    vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
-      runId: "run-rollback-test",
-      userId: "user-1",
-      threadId: "thread-1",
-      threadChatId: "chat-1",
-      sandboxId: "sandbox-1",
-      transportMode: "acp",
-      protocolVersion: 2,
-      agent: "claudeCode",
-      permissionMode: "allowAll",
-      requestedSessionId: null,
-      resolvedSessionId: null,
-      status: "processing",
-      tokenNonce: "nonce-1",
-      daemonTokenKeyId: "api-key-1",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
-    vi.mocked(handleDaemonEvent)
-      .mockResolvedValueOnce({
-        success: false,
-        error: "temporary failure",
-        status: 503,
-        threadChatMessageSeq: null,
-        terminalRecoveryQueued: false,
-      })
-      .mockResolvedValue({
-        success: true,
-        threadChatMessageSeq: null,
-        terminalRecoveryQueued: false,
-      });
-
-    const firstResponse = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          {
-            type: "assistant",
-            message: { content: "working" },
-            session_id: "s-1",
-            parent_tool_use_id: null,
-          },
-        ],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-rollback",
-        runId: "run-rollback-test",
-        seq: 7,
-      }),
-    );
-    expect(firstResponse.status).toBe(503);
-
-    const secondResponse = await POST(
-      createDaemonRequest({
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          {
-            type: "assistant",
-            message: { content: "working" },
-            session_id: "s-1",
-            parent_tool_use_id: null,
-          },
-        ],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-rollback",
-        runId: "run-rollback-test",
-        seq: 7,
-      }),
-    );
-
-    expect(secondResponse.status).toBe(200);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(2);
   });
 
   it("routes repeated daemon envelopes through canonical handlers without Redis claim dedupe", async () => {
@@ -2918,7 +3192,6 @@ describe("daemon-event route", () => {
       acknowledgedEventId: "event-duplicate",
       acknowledgedSeq: 2,
     });
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   it("ignores stale runtime claim conflicts for daemon events", async () => {
@@ -2945,7 +3218,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(data).toMatchObject({ success: true });
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   it("reclaims stale unprocessed daemon-event claims so the event is replayed", async () => {
@@ -2974,7 +3246,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   it("does not consult stale committed runtime claims before replaying daemon events", async () => {
@@ -3001,7 +3272,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(data).toMatchObject({ success: true });
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   it("routes out-of-order daemon envelopes through canonical handlers", async () => {
@@ -3028,7 +3298,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(data).toMatchObject({ success: true });
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   it("does not let old runtime claim races block daemon envelopes", async () => {
@@ -3055,7 +3324,6 @@ describe("daemon-event route", () => {
 
     expect(response.status).toBe(200);
     expect(data).toMatchObject({ success: true });
-    expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
   });
 
   describe("pure v2 workflow", () => {
@@ -3082,12 +3350,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deferTerminalTransitionToRoute: true,
-        }),
-      );
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           threadId: "thread-1",
@@ -3161,11 +3423,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deferTerminalTransitionToRoute: true,
-        }),
-      );
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
@@ -3550,107 +3807,6 @@ describe("daemon-event route", () => {
       expect(response.status).toBe(409);
       expect(data.reason).toBe("already_terminal_different_event");
       expect(agUiPublisherMocks.persistAgUiEvents).not.toHaveBeenCalled();
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
-    });
-
-    it("retries mixed terminal projection after the same terminal event already won CAS", async () => {
-      const terminalRunContext = {
-        runId: "run-1",
-        userId: "user-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        sandboxId: "sandbox-1",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "completed",
-        lastAcceptedSeq: 12,
-        terminalEventId: "event-projection-retry",
-        tokenNonce: "nonce-1",
-        daemonTokenKeyId: "api-key-1",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as NonNullable<Awaited<ReturnType<typeof getAgentRunContextByRunId>>>;
-      const projectionError = new Error("projection failed after CAS");
-      const consoleErrorSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => undefined);
-      vi.mocked(completeAgentRunContextTerminal)
-        .mockResolvedValueOnce({
-          status: "committed",
-          runContext: terminalRunContext,
-        })
-        .mockResolvedValueOnce({
-          status: "duplicate",
-          runContext: terminalRunContext,
-        });
-      vi.mocked(handleDaemonEvent)
-        .mockRejectedValueOnce(projectionError)
-        .mockResolvedValueOnce({
-          success: true,
-          threadChatMessageSeq: null,
-          terminalRecoveryQueued: false,
-        });
-
-      const requestBody = {
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        messages: [
-          {
-            type: "assistant",
-            message: { role: "assistant", content: "final transcript" },
-            session_id: "s-1",
-            parent_tool_use_id: null,
-          },
-          createSuccessResultMessage(),
-        ],
-        canonicalEvents: [
-          createCanonicalRunTerminalEvent({
-            eventId: "event-projection-retry",
-            seq: 12,
-            status: "completed",
-          }),
-        ],
-        timezone: "UTC",
-        payloadVersion: 2,
-        eventId: "event-projection-retry",
-        runId: "run-1",
-        seq: 12,
-      };
-
-      await expect(POST(createDaemonRequest(requestBody))).rejects.toThrow(
-        projectionError,
-      );
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-      expect(updateThreadChatWithTransition).not.toHaveBeenCalled();
-      expect(updateAgentRunContext).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          updates: expect.objectContaining({ status: "failed" }),
-        }),
-      );
-
-      const retryResponse = await POST(createDaemonRequest(requestBody));
-      const retryData = await retryResponse.json();
-
-      expect(retryResponse.status).toBe(200);
-      expect(retryData).toMatchObject({ success: true });
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(2);
-      expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eventType: "assistant.message_done",
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-        }),
-      );
-      expect(checkpointThread).toHaveBeenCalledWith({
-        userId: "user-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-      });
-      consoleErrorSpy.mockRestore();
     });
 
     it("routes canonical-only run-terminal payloads through the fenced terminal transition", async () => {
@@ -3691,7 +3847,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
@@ -3840,7 +3995,6 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
       expect(updateThreadChatWithTransition).toHaveBeenCalledWith(
         expect.objectContaining({
           eventType: "assistant.message_done",
@@ -3854,12 +4008,8 @@ describe("daemon-event route", () => {
       );
     });
 
-    it("defers a context-exhausted result to the recovery path", async () => {
-      // A context-length-exceeded result is recoverable (auto-compact + retry).
-      // The route drops the canonical terminal and defers to the message-based
-      // recovery path, which compacts and re-queues or terminates itself with the
-      // prompt-too-long classification preserved. The canonical fence must NOT
-      // fire here, or it would terminate the run before recovery is attempted.
+    it("fences a context-exhausted terminal as its real failure when auto-compact is disabled", async () => {
+      vi.mocked(getFeatureFlagForUser).mockResolvedValue(false);
       const response = await POST(
         createDaemonRequest({
           threadId: "thread-1",
@@ -3889,10 +4039,66 @@ describe("daemon-event route", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(completeAgentRunContextTerminal).not.toHaveBeenCalled();
-      expect(updateThreadChatTerminalMetadataIfTerminal).not.toHaveBeenCalled();
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ deferTerminalTransitionToRoute: false }),
+      expect(completeAgentRunContextTerminal).toHaveBeenCalled();
+      expect(compactThreadChat).not.toHaveBeenCalled();
+      expect(maybeProcessFollowUpQueue).not.toHaveBeenCalled();
+    });
+
+    it("auto-compacts and re-dispatches a context-exhausted terminal that also carries rich parts", async () => {
+      vi.mocked(getFeatureFlagForUser).mockResolvedValue(true);
+      const response = await POST(
+        createDaemonRequest({
+          threadId: "thread-1",
+          threadChatId: "chat-1",
+          messages: [
+            {
+              type: "custom-error",
+              duration_ms: 10,
+              error_info: "context length exceeded",
+            } as any,
+          ],
+          canonicalEvents: [
+            createCanonicalRunStartedEvent({
+              eventId: "event-recoverable-richpart",
+              seq: 9,
+            }),
+            createCanonicalRunTerminalEvent({
+              eventId: "event-recoverable-richpart-terminal",
+              seq: 10,
+              status: "failed",
+              errorMessage: "context length exceeded",
+              errorCode: "daemon_result_error",
+              recoverable: { kind: "context-exhausted" },
+            }),
+          ],
+          timezone: "UTC",
+          payloadVersion: 2,
+          eventId: "event-recoverable-richpart-terminal",
+          runId: "run-1",
+          seq: 10,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(compactThreadChat).toHaveBeenCalled();
+      const continueCall = vi
+        .mocked(updateThreadChat)
+        .mock.calls.find(
+          ([arg]) =>
+            (arg as { updates?: { appendQueuedMessages?: unknown[] } })?.updates
+              ?.appendQueuedMessages !== undefined,
+        );
+      expect(continueCall?.[0]).toMatchObject({
+        updates: {
+          appendQueuedMessages: [
+            { type: "user", parts: [{ type: "text", text: "Continue" }] },
+          ],
+          sessionId: null,
+          contextLength: null,
+        },
+      });
+      expect(maybeProcessFollowUpQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run-1", bypassBusyCheck: true }),
       );
     });
 
@@ -3970,107 +4176,6 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         }),
       );
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
-      expect(
-        agUiPublisherMocks.persistAndPublishAgUiEvents.mock
-          .invocationCallOrder[0] ?? 0,
-      ).toBeLessThan(
-        vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
-      );
-    });
-
-    it("assigns the resulting thread chat replay sequence back onto canonical events", async () => {
-      vi.mocked(handleDaemonEvent).mockResolvedValue({
-        success: true,
-        threadChatMessageSeq: 12,
-        terminalRecoveryQueued: false,
-      });
-
-      // The route threads the publisher's `insertedEventIds` through to
-      // `assignThreadChatMessageSeqToCanonicalEvents` directly — no double
-      // mapper call. Mock the publisher's return value accordingly.
-      const persistedEventIds = [
-        "canonical-event-1:RUN_STARTED:0",
-        "canonical-event-1:RUN_STARTED:1",
-      ];
-      agUiPublisherMocks.persistAndPublishAgUiEvents.mockResolvedValueOnce({
-        inserted: persistedEventIds.length,
-        skipped: 0,
-        insertedEventIds: persistedEventIds,
-        persistedEnvelopes: [],
-      });
-
-      const canonicalEvent = createCanonicalRunStartedEvent();
-      const response = await POST(
-        createDaemonRequest({
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
-          canonicalEvents: [canonicalEvent],
-          timezone: "UTC",
-          payloadVersion: 2,
-          eventId: "event-pure-v2-replay-seq",
-          runId: "run-1",
-          seq: 11,
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      expect(assignThreadChatMessageSeqToCanonicalEvents).toHaveBeenCalledWith({
-        db: dbMocks.db,
-        eventIds: persistedEventIds,
-        threadChatMessageSeq: 12,
-      });
-      expect(
-        vi.mocked(handleDaemonEvent).mock.invocationCallOrder[0] ?? Infinity,
-      ).toBeLessThan(
-        vi.mocked(assignThreadChatMessageSeqToCanonicalEvents).mock
-          .invocationCallOrder[0] ?? Infinity,
-      );
-    });
-
-    it("passes the fetched runContext to handleDaemonEvent", async () => {
-      vi.mocked(getAgentRunContextByRunId).mockResolvedValue({
-        runId: "run-1",
-        userId: "user-1",
-        threadId: "thread-1",
-        threadChatId: "chat-1",
-        sandboxId: "sandbox-1",
-        transportMode: "acp",
-        protocolVersion: 2,
-        agent: "claudeCode",
-        permissionMode: "allowAll",
-        requestedSessionId: null,
-        resolvedSessionId: null,
-        status: "processing",
-        tokenNonce: "nonce-1",
-        daemonTokenKeyId: "api-key-1",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as Awaited<ReturnType<typeof getAgentRunContextByRunId>>);
-
-      const response = await POST(
-        createDaemonRequest({
-          threadId: "thread-1",
-          threadChatId: "chat-1",
-          messages: [createSuccessResultMessage()],
-          timezone: "UTC",
-          payloadVersion: 2,
-          eventId: "event-pure-v2-context",
-          runId: "run-1",
-          seq: 10,
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      expect(handleDaemonEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          runId: "run-1",
-          runContext: expect.objectContaining({
-            runId: "run-1",
-          }),
-        }),
-      );
     });
 
     it("rejects canonical event context mismatches before legacy handling", async () => {
@@ -4098,7 +4203,6 @@ describe("daemon-event route", () => {
         reason: "threadChatId",
       });
       expect(persistAndPublishAgUiEvents).not.toHaveBeenCalled();
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("acknowledges canonical-only event batches without legacy handling", async () => {
@@ -4148,7 +4252,6 @@ describe("daemon-event route", () => {
           sandboxProvider: "docker",
         });
       });
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("reports deduplicated canonical-only batches without overcounting inserts", async () => {
@@ -4178,7 +4281,6 @@ describe("daemon-event route", () => {
         canonicalEventsPersisted: 0,
         canonicalEventsDeduplicated: 1,
       });
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("keeps canonical-only acknowledgements successful when freshness work fails", async () => {
@@ -4218,7 +4320,6 @@ describe("daemon-event route", () => {
           threadChatId: "chat-1",
         });
       });
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("fails closed when canonical persistence fails", async () => {
@@ -4246,7 +4347,6 @@ describe("daemon-event route", () => {
         error: "daemon_event_canonical_event_persist_failed",
         code: "database_error",
       });
-      expect(handleDaemonEvent).not.toHaveBeenCalled();
     });
 
     it("does not process runtime ACK lifecycle for pending runs", async () => {
@@ -4667,7 +4767,6 @@ describe("daemon-event route", () => {
 
       // Duplicate terminal acknowledgements stop at the run-context fence so
       // transcript projection and terminal metadata are not replayed.
-      expect(handleDaemonEvent).toHaveBeenCalledTimes(1);
     });
   });
 });

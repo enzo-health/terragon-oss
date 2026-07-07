@@ -91,10 +91,10 @@ export function AttachedFiles({
             <button
               onClick={() => onRemoveFile(file.id)}
               className={cn(
-                "absolute -top-2 -right-2 bg-accent text-accent-foreground rounded-full transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] z-10",
+                "absolute -top-2 -right-2 bg-accent text-accent-foreground rounded-full transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] z-10 after:absolute after:-inset-2 after:content-['']",
                 isTouchDevice
                   ? "opacity-100 p-1.5"
-                  : "opacity-0 group-hover:opacity-100 p-1",
+                  : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1",
                 file.uploadStatus === "failed"
                   ? "bg-destructive text-destructive-foreground !opacity-100"
                   : "",
@@ -104,7 +104,6 @@ export function AttachedFiles({
             >
               <X className={cn(isTouchDevice ? "size-4" : "size-3")} />
             </button>
-            {/* Error tooltip */}
             {file.uploadStatus === "failed" && (
               <div className="absolute bottom-full mb-1 px-2 py-1 -left-2 bg-destructive text-destructive-foreground text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-[var(--duration-quick)] ease-[var(--ease-standard)] pointer-events-none">
                 Failed to upload

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { Collapsible } from "@base-ui/react/collapsible";
 import { DBUserMessage } from "@terragon/shared";
 import { AIAgent } from "@terragon/agent/types";
 import { cn } from "@/lib/utils";
@@ -21,36 +21,40 @@ export function QueuedMessages({
   onRemove,
   className,
 }: QueuedMessagesProps) {
-  const [collapsed, setCollapsed] = useState(false);
   if (messages.length === 0) {
     return null;
   }
   return (
     <div className="bg-background">
-      <div
+      <Collapsible.Root
+        defaultOpen
         className={cn(
+          "group/queued",
           "border-t border-x rounded-tl-md rounded-tr-md border-border bg-muted/50",
           "pb-2 -mb-2 overflow-hidden",
+          "animate-in fade-in slide-in-from-bottom-1 duration-[var(--duration-base)] ease-[var(--ease-emphasis)]",
           className,
         )}
       >
-        <div
-          className={cn("p-2 pb-0 space-y-2", {
-            "pb-2": collapsed,
-          })}
-        >
-          <div
-            className="w-full text-xs text-muted-foreground font-medium flex items-center"
-            onClick={() => setCollapsed(!collapsed)}
+        <div className="p-2 pb-0 space-y-2">
+          <Collapsible.Trigger
+            className={cn(
+              "w-full text-xs text-muted-foreground font-medium flex items-center",
+              "cursor-pointer rounded-sm outline-none hover:text-foreground",
+              "focus-visible:ring-2 focus-visible:ring-coral/50",
+              "transition-colors duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
+            )}
           >
-            <ChevronRight
-              className={cn("size-4 transition-transform", {
-                "rotate-90": !collapsed,
-              })}
-            />
+            <ChevronRight className="size-4 transition-transform duration-[var(--duration-quick)] ease-[var(--ease-standard)] group-data-open/queued:rotate-90" />
             <span className="px-1 font-mono">Queued ({messages.length})</span>
-          </div>
-          {!collapsed && (
+          </Collapsible.Trigger>
+          <Collapsible.Panel
+            className={cn(
+              "overflow-hidden h-(--collapsible-panel-height)",
+              "transition-[height] duration-[var(--duration-quick)] ease-[var(--ease-standard)]",
+              "data-starting-style:h-0 data-ending-style:h-0",
+            )}
+          >
             <div className="max-h-[20vh] overflow-y-auto space-y-2 pb-2">
               {messages.map((message, index) => {
                 return (
@@ -64,7 +68,7 @@ export function QueuedMessages({
                       variant="ghost"
                       size="icon"
                       aria-label="Remove queued message"
-                      className="size-6 hover:bg-transparent cursor-pointer shrink-0 py-5 -ml-8 z-10 opacity-75 hover:opacity-100"
+                      className="size-10 hover:bg-sunken/60 cursor-pointer shrink-0 -ml-10 z-10 opacity-75 hover:opacity-100"
                       onClick={() => onRemove?.(index)}
                     >
                       <X className="size-4" />
@@ -73,9 +77,9 @@ export function QueuedMessages({
                 );
               })}
             </div>
-          )}
+          </Collapsible.Panel>
         </div>
-      </div>
+      </Collapsible.Root>
     </div>
   );
 }

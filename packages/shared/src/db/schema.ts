@@ -899,7 +899,7 @@ export const slackAccount = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     teamId: text("team_id").notNull(),
-    slackUserId: text("slack_user_id").notNull().unique(),
+    slackUserId: text("slack_user_id").notNull(),
     slackTeamName: text("slack_team_name").notNull(),
     slackTeamDomain: text("slack_team_domain").notNull(),
     accessTokenEncrypted: text("access_token_encrypted").notNull(),
@@ -946,6 +946,132 @@ export const slackSettings = pgTable(
     ),
   ],
 );
+
+export const slackTaskDeliveries = pgTable("slack_task_deliveries", {
+  deliveryKey: text("delivery_key").primaryKey(),
+  teamId: text("team_id").notNull(),
+  channel: text("channel").notNull(),
+  messageTs: text("message_ts").notNull(),
+  slackEventId: text("slack_event_id"),
+  action: text("action")
+    .$type<"create" | "follow-up" | "command">()
+    .notNull()
+    .default("create"),
+  status: text("status")
+    .$type<"claimed" | "completed" | "ignored" | "omitted" | "failed">()
+    .notNull()
+    .default("claimed"),
+  claimantToken: text("claimant_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { mode: "date" }),
+  claimedAt: timestamp("claimed_at", { mode: "date" }),
+  completedAt: timestamp("completed_at", { mode: "date" }),
+  threadId: text("thread_id"),
+  threadChatId: text("thread_chat_id"),
+  slackThreadLinkId: text("slack_thread_link_id"),
+  ignoredReason: text("ignored_reason"),
+  omittedReason: text("omitted_reason"),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const slackThreadLinks = pgTable(
+  "slack_thread_links",
+  {
+    id: text("id")
+      .default(sql`gen_random_uuid()`)
+      .primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    threadChatId: text("thread_chat_id"),
+    teamId: text("team_id").notNull(),
+    enterpriseId: text("enterprise_id"),
+    isEnterpriseInstall: boolean("is_enterprise_install")
+      .notNull()
+      .default(false),
+    channelTeamId: text("channel_team_id"),
+    sourceTeamId: text("source_team_id"),
+    workspaceDomain: text("workspace_domain").notNull(),
+    channel: text("channel").notNull(),
+    rootMessageTs: text("root_message_ts").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    origin: text("origin").$type<"slack-mention" | "www-opt-in">().notNull(),
+    mirrorMode: text("mirror_mode")
+      .$type<"off" | "status-and-final" | "full">()
+      .notNull()
+      .default("status-and-final"),
+    collaborationMode: text("collaboration_mode")
+      .$type<"owner-only" | "same-team-linked-users">()
+      .notNull()
+      .default("same-team-linked-users"),
+    mutedAt: timestamp("muted_at", { mode: "date" }),
+    lastInboundMessageTs: text("last_inbound_message_ts"),
+    statusMessageTs: text("status_message_ts"),
+    createdBySlackUserId: text("created_by_slack_user_id").notNull(),
+    lastActorSlackUserId: text("last_actor_slack_user_id"),
+    sleepingAt: timestamp("sleeping_at", { mode: "date" }),
+    sleepUntil: timestamp("sleep_until", { mode: "date" }),
+    archivedAt: timestamp("archived_at", { mode: "date" }),
+    unlinkedAt: timestamp("unlinked_at", { mode: "date" }),
+    slackContextJson:
+      jsonb("slack_context_json").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("slack_thread_links_thread_id").on(table.threadId),
+    index("slack_thread_links_team_channel_thread").on(
+      table.teamId,
+      table.channel,
+      table.threadTs,
+    ),
+    index("slack_thread_links_user_team").on(table.userId, table.teamId),
+  ],
+);
+
+export const slackOutboundDeliveries = pgTable("slack_outbound_deliveries", {
+  deliveryKey: text("delivery_key").primaryKey(),
+  slackThreadLinkId: text("slack_thread_link_id").references(
+    () => slackThreadLinks.id,
+    { onDelete: "cascade" },
+  ),
+  threadId: text("thread_id").notNull(),
+  threadChatId: text("thread_chat_id"),
+  teamId: text("team_id").notNull(),
+  channel: text("channel").notNull(),
+  threadTs: text("thread_ts").notNull(),
+  messageTs: text("message_ts"),
+  kind: text("kind").notNull(),
+  status: text("status")
+    .$type<
+      "pending" | "sending" | "sent" | "retryable_failed" | "dead_lettered"
+    >()
+    .notNull()
+    .default("pending"),
+  payloadHash: text("payload_hash"),
+  claimantToken: text("claimant_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { mode: "date" }),
+  claimedAt: timestamp("claimed_at", { mode: "date" }),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { mode: "date" }),
+  lastError: text("last_error"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
 
 export const linearAccount = pgTable(
   "linear_account",

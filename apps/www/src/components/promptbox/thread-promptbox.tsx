@@ -132,7 +132,7 @@ export function getThreadPromptPlaceholder(params: {
   if (status !== null && isAgentRunLive(status)) {
     return WORKING_QUEUE_PLACEHOLDER;
   }
-  return "Describe a task — @ to reference files, / for commands";
+  return "Ask anything. Type / for commands, @ to mention.";
 }
 
 export const ThreadPromptBox = React.forwardRef<
@@ -163,7 +163,17 @@ export const ThreadPromptBox = React.forwardRef<
   ]);
 
   const {
-    editor,
+    value,
+    setValue,
+    triggers,
+    placeholder,
+    autoFocus,
+    composerRef,
+    focusComposer,
+    insertText,
+    insertMention,
+    insertSlashCommand,
+    isEmpty,
     attachedFiles,
     isSubmitting,
     isSubmitDisabled,
@@ -209,20 +219,20 @@ export const ThreadPromptBox = React.forwardRef<
     props.status &&
     isAgentRunLive(props.status) &&
     isAgentStoppable(props.status) &&
-    (!isWorking || editor?.isEmpty);
+    (!isWorking || isEmpty);
 
   // Expose editor focus and permission mode setter to parent
   useImperativeHandle(
     ref,
     () => ({
       focus: () => {
-        editor?.commands.focus();
+        focusComposer();
       },
       setPermissionMode: (mode: "allowAll" | "plan") => {
         handlePermissionModeChange(mode);
       },
     }),
-    [editor, handlePermissionModeChange],
+    [focusComposer, handlePermissionModeChange],
   );
 
   return (
@@ -248,7 +258,15 @@ export const ThreadPromptBox = React.forwardRef<
         githubRepoFullName={props.repoFullName}
       />
       <SimplePromptBox
-        editor={editor}
+        value={value}
+        onValueChange={setValue}
+        triggers={triggers}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        composerRef={composerRef}
+        insertText={insertText}
+        insertMention={insertMention}
+        insertSlashCommand={insertSlashCommand}
         attachedFiles={attachedFiles}
         handleFilesAttached={handleFilesAttached}
         removeFile={removeFile}

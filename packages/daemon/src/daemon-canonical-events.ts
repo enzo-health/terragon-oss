@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   type CanonicalEvent,
+  type ProviderRichPartEvent,
   EVENT_ENVELOPE_VERSION,
 } from "@terragon/agent/canonical-events";
+import { classifyRecoverableTerminal } from "@terragon/agent/recoverable-terminal";
 import {
   type AIAgent,
   type AIModel,
@@ -14,6 +16,14 @@ import {
   type DaemonTransportMode,
   resultErrorMessage,
 } from "./shared";
+
+function resolveRuntimeTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
 
 function stringifyCanonicalToolResult(value: unknown): string {
   if (typeof value === "string") {
@@ -130,8 +140,10 @@ export type BuildCanonicalEventsParams = {
   nextCanonicalSeq: number;
   canonicalRunStartedEmitted: boolean;
   canonicalTerminalEmitted: boolean;
+  streamedAssistantText: boolean;
   threadId: string;
   threadChatId: string;
+  timezone?: string;
   messages: ClaudeMessage[];
   onMalformedBlock?: (info: {
     runId: string;
@@ -149,6 +161,340 @@ export type BuildCanonicalEventsResult = {
   canonicalTerminalEmittedAfterBatch: boolean;
 };
 
+function buildProviderRichPartEvent(
+  message: ClaudeMessage,
+  allocateBaseEvent: () => CanonicalBaseEvent,
+): ProviderRichPartEvent | null {
+  switch (message.type) {
+    case "acp-plan":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-plan",
+        payload: { entries: message.entries },
+      };
+    case "codex-plan":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-plan",
+        payload: { entries: message.entries },
+      };
+    case "acp-diff":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-diff",
+        payload: {
+          filePath: message.filePath,
+          newContent: message.newContent,
+          status: message.status,
+          ...(message.oldContent !== undefined
+            ? { oldContent: message.oldContent }
+            : {}),
+          ...(message.unifiedDiff !== undefined
+            ? { unifiedDiff: message.unifiedDiff }
+            : {}),
+        },
+      };
+    case "codex-diff":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-diff",
+        payload: { diff: message.diff },
+      };
+    case "codex-error":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-error",
+        payload: { message: message.message },
+      };
+    case "codex-compaction":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-context-compaction",
+        payload: {},
+      };
+    case "acp-terminal":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-terminal",
+        payload: { terminalId: message.terminalId, chunks: message.chunks },
+      };
+    case "acp-image":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-image",
+        payload: {
+          mimeType: message.mimeType,
+          ...(message.data !== undefined ? { data: message.data } : {}),
+          ...(message.uri !== undefined ? { uri: message.uri } : {}),
+        },
+      };
+    case "acp-audio":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-audio",
+        payload: {
+          mimeType: message.mimeType,
+          ...(message.data !== undefined ? { data: message.data } : {}),
+          ...(message.uri !== undefined ? { uri: message.uri } : {}),
+        },
+      };
+    case "acp-resource-link":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-resource-link",
+        payload: {
+          uri: message.uri,
+          name: message.name,
+          ...(message.title !== undefined ? { title: message.title } : {}),
+          ...(message.description !== undefined
+            ? { description: message.description }
+            : {}),
+          ...(message.mimeType !== undefined
+            ? { mimeType: message.mimeType }
+            : {}),
+          ...(message.size !== undefined ? { size: message.size } : {}),
+        },
+      };
+    case "codex-auto-approval-review":
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "codex-auto-approval-review",
+        payload: {
+          reviewId: message.reviewId,
+          targetItemId: message.targetItemId,
+          riskLevel: message.riskLevel,
+          action: message.action,
+          status: message.status,
+          ...(message.decision !== undefined
+            ? { decision: message.decision }
+            : {}),
+          ...(message.rationale !== undefined
+            ? { rationale: message.rationale }
+            : {}),
+        },
+      };
+    case "acp-tool-call":
+      if (message.status !== "completed" && message.status !== "failed") {
+        return null;
+      }
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "acp-tool-call",
+        payload: {
+          toolCallId: message.toolCallId,
+          title: message.title,
+          kind: message.kind,
+          status: message.status,
+          locations: message.locations,
+          rawInput: message.rawInput,
+          progressChunks: message.progressChunks,
+          ...(message.rawOutput !== undefined
+            ? { rawOutput: message.rawOutput }
+            : {}),
+          ...(message.startedAt !== undefined
+            ? { startedAt: message.startedAt }
+            : {}),
+          ...(message.completedAt !== undefined
+            ? { completedAt: message.completedAt }
+            : {}),
+        },
+      };
+    case "system":
+      if (message.subtype !== "init") {
+        return null;
+      }
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "system-init",
+        payload: {
+          session_id: message.session_id,
+          tools: message.tools,
+          mcp_servers: message.mcp_servers,
+        },
+      };
+    case "result": {
+      const resolvedResult =
+        message.subtype === "success"
+          ? message.result
+          : message.subtype === "error_during_execution"
+            ? message.error
+            : undefined;
+      return {
+        ...allocateBaseEvent(),
+        category: "artifact",
+        type: "provider-rich-part",
+        richKind: "result",
+        payload: {
+          subtype: message.subtype,
+          cost_usd: "total_cost_usd" in message ? message.total_cost_usd : 0,
+          duration_ms: message.duration_ms,
+          duration_api_ms:
+            "duration_api_ms" in message ? message.duration_api_ms : 0,
+          is_error: message.is_error,
+          num_turns: message.num_turns,
+          session_id: message.session_id,
+          ...(resolvedResult !== undefined ? { result: resolvedResult } : {}),
+        },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+type AssistantNarrationPart = Extract<
+  ProviderRichPartEvent,
+  { richKind: "assistant-narration" }
+>["payload"]["parts"][number];
+
+function isCarriedNarrationBlockType(blockType: string | null): boolean {
+  return (
+    blockType === "thinking" ||
+    blockType === "server_tool_use" ||
+    blockType === "document" ||
+    blockType === "web_search_tool_result"
+  );
+}
+
+function buildWebSearchContent(
+  raw: unknown,
+): Extract<AssistantNarrationPart, { kind: "web-search-result" }>["content"] {
+  if (Array.isArray(raw)) {
+    return raw.map((entry) => {
+      const rec = toRecord(entry);
+      const type = readString(rec, "type");
+      const url = readString(rec, "url");
+      const title = readString(rec, "title");
+      const pageAge = readString(rec, "page_age");
+      const encrypted = readString(rec, "encrypted_content");
+      return {
+        ...(type !== null ? { type } : {}),
+        ...(url !== null ? { url } : {}),
+        ...(title !== null ? { title } : {}),
+        ...(pageAge !== null ? { page_age: pageAge } : {}),
+        ...(encrypted !== null ? { encrypted_content: encrypted } : {}),
+      };
+    });
+  }
+  const rec = toRecord(raw);
+  const type = readString(rec, "type");
+  const errorCode = readString(rec, "error_code");
+  return {
+    ...(type !== null ? { type } : {}),
+    ...(errorCode !== null ? { error_code: errorCode } : {}),
+  };
+}
+
+function buildDocumentNarrationPart(
+  rec: Record<string, unknown> | null,
+): Extract<AssistantNarrationPart, { kind: "document" }> {
+  const sourceRec = toRecord(rec?.source);
+  const sourceType = readString(sourceRec, "type");
+  const sourceUrl = readString(sourceRec, "url");
+  const fileId = readString(sourceRec, "file_id");
+  const mediaType = readString(sourceRec, "media_type");
+  const hasSource =
+    sourceType !== null ||
+    sourceUrl !== null ||
+    fileId !== null ||
+    mediaType !== null;
+  const title = readString(rec, "title");
+  const context = readString(rec, "context");
+  return {
+    kind: "document",
+    ...(hasSource
+      ? {
+          source: {
+            ...(sourceType !== null ? { type: sourceType } : {}),
+            ...(sourceUrl !== null ? { url: sourceUrl } : {}),
+            ...(fileId !== null ? { file_id: fileId } : {}),
+            ...(mediaType !== null ? { media_type: mediaType } : {}),
+          },
+        }
+      : {}),
+    ...(title !== null ? { title } : {}),
+    ...(context !== null ? { context } : {}),
+  };
+}
+
+function buildAssistantNarrationParts(
+  content: unknown[],
+  streamedAssistantText: boolean,
+): AssistantNarrationPart[] {
+  const parts: AssistantNarrationPart[] = [];
+  for (const block of content) {
+    const rec = toRecord(block);
+    const blockType = readString(rec, "type");
+    if (blockType === "text") {
+      if (streamedAssistantText) {
+        continue;
+      }
+      parts.push({ kind: "text", text: readString(rec, "text") ?? "" });
+      continue;
+    }
+    if (blockType === "thinking") {
+      if (streamedAssistantText) {
+        continue;
+      }
+      const signature = readString(rec, "signature");
+      parts.push({
+        kind: "thinking",
+        thinking: readString(rec, "thinking") ?? "",
+        ...(signature !== null ? { signature } : {}),
+      });
+      continue;
+    }
+    if (blockType === "server_tool_use") {
+      parts.push({
+        kind: "server-tool-use",
+        id: readString(rec, "id") ?? "",
+        name: readString(rec, "name") ?? "",
+        input: toRecord(rec?.input) ?? {},
+      });
+      continue;
+    }
+    if (blockType === "web_search_tool_result") {
+      parts.push({
+        kind: "web-search-result",
+        toolUseId: readString(rec, "tool_use_id") ?? "",
+        content: buildWebSearchContent(rec?.content),
+      });
+      continue;
+    }
+    if (blockType === "document") {
+      parts.push(buildDocumentNarrationPart(rec));
+      continue;
+    }
+  }
+  return parts;
+}
+
 export function buildCanonicalEventsForBatch(
   params: BuildCanonicalEventsParams,
 ): BuildCanonicalEventsResult {
@@ -158,11 +504,13 @@ export function buildCanonicalEventsForBatch(
     model,
     transportMode,
     protocolVersion,
+    streamedAssistantText,
     threadId,
     threadChatId,
     messages,
     onMalformedBlock,
   } = params;
+  const timezone = params.timezone ?? resolveRuntimeTimezone();
   if (messages.length === 0 || agent === null) {
     return {
       canonicalEvents: [],
@@ -218,24 +566,18 @@ export function buildCanonicalEventsForBatch(
 
   const canonicalModel = toCanonicalModelOrNull(model);
   for (const message of messages) {
+    const richPartEvent = buildProviderRichPartEvent(
+      message,
+      allocateBaseEvent,
+    );
+    if (richPartEvent) {
+      events.push(richPartEvent);
+      continue;
+    }
     if (message.type === "assistant") {
-      // A Codex agent_message whose text already streamed as deltas under
-      // `_codexItemId` is represented solely by that delta stream; skipping
-      // the whole message is safe because Codex delta-streamed messages
-      // carry only text/thinking blocks (never tool_use).
-      if (message._codexItemId !== undefined) {
-        continue;
-      }
-      // W-ID.3: For Claude/ACP messages with `_claudeStreamedBlockIndices`,
-      // skip only the text/thinking blocks at those indices. Tool-use blocks
-      // and un-streamed text blocks still need canonical events.
-      const streamedBlockSet = new Set<number>(
-        message._claudeStreamedBlockIndices ?? [],
-      );
       const content = message.message.content;
       if (typeof content === "string") {
-        // String content maps to block index 0. If that was streamed, skip.
-        if (streamedBlockSet.has(0)) {
+        if (streamedAssistantText) {
           continue;
         }
         if (content.length === 0) {
@@ -258,13 +600,60 @@ export function buildCanonicalEventsForBatch(
         continue;
       }
 
+      const hasCarriedNarration = content.some((block) =>
+        isCarriedNarrationBlockType(readString(toRecord(block), "type")),
+      );
+      if (hasCarriedNarration) {
+        const narrationParts = buildAssistantNarrationParts(
+          content,
+          streamedAssistantText,
+        );
+        if (narrationParts.length > 0) {
+          events.push({
+            ...allocateBaseEvent(),
+            category: "artifact",
+            type: "provider-rich-part",
+            richKind: "assistant-narration",
+            payload: {
+              parentToolUseId: message.parent_tool_use_id,
+              parts: narrationParts,
+            },
+          });
+        }
+        for (const block of content) {
+          const blockRecord = toRecord(block);
+          if (readString(blockRecord, "type") !== "tool_use") {
+            continue;
+          }
+          const toolCallId = readString(blockRecord, "id");
+          const name = readString(blockRecord, "name");
+          if (!toolCallId || !name) {
+            warnMalformedCanonicalBlock(
+              "missing_tool_use_identity",
+              "tool_use",
+            );
+            continue;
+          }
+          const baseEvent = allocateBaseEvent();
+          events.push({
+            ...baseEvent,
+            category: "tool_lifecycle",
+            type: "tool-call-start",
+            toolCallId,
+            name,
+            parameters: toCanonicalToolParameters(blockRecord?.input),
+            parentToolUseId: message.parent_tool_use_id,
+          });
+        }
+        continue;
+      }
+
       for (let blockIndex = 0; blockIndex < content.length; blockIndex += 1) {
         const block = content[blockIndex]!;
         const blockRecord = toRecord(block);
         const blockType = readString(blockRecord, "type");
         if (blockType === "text" || blockType === "thinking") {
-          // Skip this block if its text/thinking was already delta-streamed.
-          if (streamedBlockSet.has(blockIndex)) {
+          if (streamedAssistantText) {
             continue;
           }
           const text =
@@ -337,8 +726,9 @@ export function buildCanonicalEventsForBatch(
         type: "tool-call-result",
         toolCallId,
         result: stringifyCanonicalToolResult(blockRecord?.content),
-        isError: readBoolean(blockRecord, "is_error") ?? false,
+        isError: readBoolean(blockRecord, "is_error") ?? null,
         completedAt: timestamp,
+        parentToolUseId: message.parent_tool_use_id,
       });
     }
   }
@@ -347,6 +737,11 @@ export function buildCanonicalEventsForBatch(
     const terminal = deriveRunTerminalFromMessages(messages);
     if (terminal) {
       const baseEvent = allocateBaseEvent();
+      const recoverable = classifyRecoverableTerminal({
+        messages,
+        agent,
+        timezone,
+      });
       events.push({
         ...baseEvent,
         category: "operational",
@@ -355,6 +750,7 @@ export function buildCanonicalEventsForBatch(
         ...(terminal.errorMessage !== null
           ? { errorMessage: terminal.errorMessage }
           : {}),
+        ...(recoverable !== null ? { recoverable } : {}),
       });
       canonicalTerminalEmitted = true;
     }

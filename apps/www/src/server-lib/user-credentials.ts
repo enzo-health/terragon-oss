@@ -14,7 +14,6 @@ export async function getUserCredentials({
   });
   const result: UserCredentials = {
     hasClaude: false,
-    hasAmp: false,
     hasOpenAI: false,
     hasOpenAIOAuthCredentials: false,
   };
@@ -27,9 +26,6 @@ export async function getUserCredentials({
         result.hasOpenAI = true;
         result.hasOpenAIOAuthCredentials =
           result.hasOpenAIOAuthCredentials || credential.type === "oauth";
-        break;
-      case "amp":
-        result.hasAmp = true;
         break;
     }
   }

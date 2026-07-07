@@ -93,7 +93,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   const { publish } = useThreadIntent();
 
   const handleSubmit = useCallback<HandleSubmit>(
-    async ({ userMessage }) => {
+    async ({ userMessage, clientSubmissionId }) => {
       const plainText = convertToPlainText({ message: userMessage });
       if (plainText.length === 0) {
         return;
@@ -110,6 +110,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
           threadId,
           threadChatId,
           message: userMessage,
+          clientSubmissionId,
         });
       } catch {
         await refetch();

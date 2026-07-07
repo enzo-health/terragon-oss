@@ -1209,89 +1209,6 @@ export async function deleteThreadById({
   return result[0]!;
 }
 
-export async function getStalledThreads({
-  db,
-  cutoffSecs = 60 * 60, // Default to 1 hour
-}: {
-  db: DB;
-  cutoffSecs?: number;
-}) {
-  const cutoffDate = new Date(Date.now() - cutoffSecs * 1000);
-  const staleThreadChatRows = await db
-    .selectDistinct({ threadId: schema.threadChat.threadId })
-    .from(schema.threadChat)
-    .where(
-      and(
-        inArray(schema.threadChat.status, [
-          "booting",
-          "stopping",
-          "working",
-          "working-done",
-          "working-error",
-          "checkpointing",
-        ]),
-        lte(schema.threadChat.updatedAt, cutoffDate),
-        sql<boolean>`not exists (
-          select 1
-          from thread_chat newer
-          where newer.thread_id = ${schema.threadChat.threadId}
-            and newer.created_at > ${schema.threadChat.createdAt}
-        )`,
-      ),
-    );
-
-  if (staleThreadChatRows.length === 0) {
-    return [];
-  }
-
-  const threads = await db.query.thread.findMany({
-    where: and(
-      inArray(
-        schema.thread.id,
-        staleThreadChatRows.map((row) => row.threadId),
-      ),
-    ),
-    orderBy: (thread) => [desc(thread.updatedAt)],
-  });
-  return threads;
-}
-
-export async function stopStalledThreads({
-  db,
-  threadIds,
-}: {
-  db: DB;
-  threadIds: string[];
-}) {
-  const stalledThreadChats = await db
-    .select({ id: schema.threadChat.id })
-    .from(schema.threadChat)
-    .where(inArray(schema.threadChat.threadId, threadIds));
-
-  if (stalledThreadChats.length > 0) {
-    await db
-      .update(schema.threadChat)
-      .set({
-        status: "complete",
-        errorMessage: "request-timeout",
-        queuedMessages: [],
-      })
-      .where(
-        inArray(
-          schema.threadChat.id,
-          stalledThreadChats.map((threadChat) => threadChat.id),
-        ),
-      )
-      .returning();
-  }
-
-  await db
-    .update(schema.thread)
-    .set({ status: "complete", errorMessage: "request-timeout" })
-    .where(inArray(schema.thread.id, threadIds))
-    .returning();
-}
-
 export async function getStalledThreadChats({
   db,
   cutoffSecs = 60 * 60, // Default to 1 hour
@@ -1812,6 +1729,61 @@ export async function getThreadBySlackThreadKey({
         : []),
       sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
       sql`${schema.thread.sourceMetadata}->>'threadTs' = ${threadTs}`,
+    ]));
+  if (!threadOrNull) {
+    return null;
+  }
+  return (await getThread({ db, threadId: threadOrNull.id, userId })) ?? null;
+}
+
+export async function getThreadBySlackMessageKey({
+  db,
+  userId,
+  teamId,
+  workspaceDomain,
+  channel,
+  messageTs,
+}: {
+  db: DB;
+  userId: string;
+  teamId: string;
+  workspaceDomain?: string;
+  channel: string;
+  messageTs: string;
+}): Promise<ThreadInfoFull | null> {
+  const findThread = async (
+    conditions: Parameters<typeof and>,
+  ): Promise<Pick<Thread, "id"> | null> => {
+    const result = await db.query.thread.findFirst({
+      where: and(...conditions),
+      orderBy: [asc(schema.thread.archived), desc(schema.thread.updatedAt)],
+      columns: {
+        id: true,
+      },
+    });
+    return result ?? null;
+  };
+
+  const exactThread = await findThread([
+    eq(schema.thread.userId, userId),
+    eq(schema.thread.sourceType, "slack-mention"),
+    sql`${schema.thread.sourceMetadata}->>'teamId' = ${teamId}`,
+    sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+    sql`${schema.thread.sourceMetadata}->>'messageTs' = ${messageTs}`,
+  ]);
+  const threadOrNull =
+    exactThread ??
+    (await findThread([
+      eq(schema.thread.userId, userId),
+      eq(schema.thread.sourceType, "slack-mention"),
+      sql`${schema.thread.sourceMetadata}->>'teamId' IS NULL`,
+      ...(workspaceDomain
+        ? [
+            sql`${schema.thread.sourceMetadata}->>'workspaceDomain' = ${workspaceDomain}`,
+          ]
+        : []),
+      sql`${schema.thread.sourceMetadata}->>'channel' = ${channel}`,
+      sql`${schema.thread.sourceMetadata}->>'messageTs' = ${messageTs}`,
     ]));
   if (!threadOrNull) {
     return null;

@@ -95,7 +95,7 @@ describe("getThreadPromptPlaceholder", () => {
           sandboxId: "sandbox-1",
           runStarted: true,
         }),
-      ).toBe("Describe a task — @ to reference files, / for commands");
+      ).toBe("Ask anything. Type / for commands, @ to mention.");
     }
   });
 });

@@ -186,6 +186,7 @@ const THREAD_META_EVENT_KINDS = new Set<string>([
   "thread.status_changed",
   "config.warning",
   "deprecation.notice",
+  "thread.turn_retrying",
   "session.initialized",
   "usage.incremental",
   "message.stop",

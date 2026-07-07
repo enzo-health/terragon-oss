@@ -1,0 +1,269 @@
+"use client";
+
+import type { BootingSubstatus } from "@terragon/shared/runtime/thread-meta-event";
+import { Check, Loader2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Task, TaskIcon, TaskItem, TaskLabel } from "@/components/ai/task";
+import { cn } from "@/lib/utils";
+import type { ThreadMetaSnapshot } from "../../meta-chips/use-thread-meta-events";
+
+// ----- ordered step definitions -----
+
+type BootStep = {
+  substatus: BootingSubstatus;
+  label: string;
+};
+
+const BOOT_STEPS: BootStep[] = [
+  { substatus: "provisioning", label: "Provisioning machine" },
+  { substatus: "cloning-repo", label: "Cloning repository" },
+  { substatus: "installing-agent", label: "Installing agent" },
+  { substatus: "running-setup-script", label: "Configuring environment" },
+  { substatus: "booting-done", label: "Waiting for assistant to start" },
+];
+
+/**
+ * `provisioning-done` maps to the same UI row as `provisioning` — both
+ * represent the "still in the provisioning phase" window. Used on BOTH
+ * the meta-events path and the fallback path so an unmapped substatus
+ * never sends activeIndex to -1 (which would mark every step pending).
+ */
+function normalizeBootSubstatus(substatus: BootingSubstatus): BootingSubstatus {
+  return substatus === "provisioning-done" ? "provisioning" : substatus;
+}
+
+/**
+ * Given the current substatus (from DB/props), return the index of the
+ * currently in-progress step.
+ */
+function currentStepIndex(substatus: BootingSubstatus | null): number {
+  if (substatus === null) return 0;
+  const idx = BOOT_STEPS.findIndex(
+    (s) => s.substatus === normalizeBootSubstatus(substatus),
+  );
+  return idx === -1 ? 0 : idx;
+}
+
+// ----- duration formatting -----
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const totalSecs = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return `${mins}m ${secs}s`;
+}
+
+// ----- live elapsed timer -----
+
+/**
+ * Ticking elapsed counter for the active step.
+ * Isolated in its own component so only this node re-renders on each tick.
+ */
+function ActiveStepTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const elapsedMs = now - new Date(startedAt).getTime();
+  const elapsed = Math.max(0, elapsedMs);
+
+  return (
+    <span
+      className="font-mono text-[0.6875rem] text-muted-foreground/70 flex-shrink-0 tabular-nums"
+      aria-live="polite"
+      aria-label={`Running for ${formatDuration(elapsed)}`}
+    >
+      {formatDuration(elapsed)}
+    </span>
+  );
+}
+
+// ----- install progress bar -----
+
+function InstallProgressBar({
+  resolved,
+  total,
+  currentPackage,
+}: {
+  resolved: number;
+  total?: number;
+  currentPackage?: string;
+}) {
+  const BAR_WIDTH = 20;
+
+  let filled = BAR_WIDTH;
+
+  if (total !== undefined && total > 0) {
+    filled = Math.round((resolved / total) * BAR_WIDTH);
+    filled = Math.min(filled, BAR_WIDTH);
+  } else {
+    // Indeterminate: animate with a fixed partial fill
+    filled = Math.min(resolved % (BAR_WIDTH + 1), BAR_WIDTH);
+  }
+
+  const empty = BAR_WIDTH - filled;
+  const filledChars = "━".repeat(filled);
+  const emptyChars = "░".repeat(empty);
+
+  return (
+    <div className="mt-1 mb-1.5 pl-[26px] flex flex-col gap-0.5">
+      <span
+        className="font-mono text-[0.6875rem] tracking-tight tabular-nums"
+        aria-label={
+          total !== undefined
+            ? `Install progress: ${resolved} of ${total} packages`
+            : `Install progress: ${resolved} packages resolved`
+        }
+      >
+        {total === undefined ? (
+          // Indeterminate: pulse the filled portion to signal ongoing activity
+          <span>
+            <span className="animate-pulse text-primary">{filledChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
+          </span>
+        ) : (
+          <span>
+            <span className="text-primary">{filledChars}</span>
+            <span className="text-muted-foreground/60">{emptyChars}</span>
+          </span>
+        )}{" "}
+        {total !== undefined ? (
+          <span className="text-muted-foreground/80">
+            {resolved}/{total}
+          </span>
+        ) : (
+          <span className="text-muted-foreground/80">{resolved} resolved</span>
+        )}
+      </span>
+      {currentPackage && (
+        <span
+          className="text-[0.6875rem] text-muted-foreground/60 truncate max-w-full"
+          title={currentPackage}
+        >
+          Installing {currentPackage}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ----- main component -----
+
+export interface BootChecklistProps {
+  /**
+   * Current substatus from the DB / parent component.
+   * Used as a fallback when meta events haven't arrived yet.
+   */
+  currentSubstatus: BootingSubstatus | null;
+  metaSnapshot: ThreadMetaSnapshot;
+}
+
+/**
+ * Renders a compact vertical checklist of the 5 sandbox boot steps.
+ *
+ * - Uses `useThreadMetaEvents` to pick up `boot.substatus_changed` events
+ *   for accurate per-step durations.
+ * - Falls back to deriving state from `currentSubstatus` if no meta events
+ *   have arrived yet (first load or meta events lost in transit).
+ * - Shows an install progress bar under the `installing-agent` step while
+ *   that step is in-progress.
+ */
+export function BootChecklist({
+  currentSubstatus,
+  metaSnapshot,
+}: BootChecklistProps) {
+  const { bootSteps, installProgress } = metaSnapshot;
+
+  // Determine which step is currently active using meta events when available,
+  // falling back to the currentSubstatus prop.
+  const hasMetaSteps = bootSteps.length > 0;
+  // Normalize the latest meta-events substatus before the lookup so an
+  // `provisioning-done` event doesn't send activeIndex to -1 (which would
+  // mark every step pending). Mirrors the fallback path.
+  const rawLatest = hasMetaSteps
+    ? bootSteps[bootSteps.length - 1]!.substatus
+    : null;
+  const activeIndex = hasMetaSteps
+    ? (() => {
+        const idx = BOOT_STEPS.findIndex(
+          (s) => s.substatus === normalizeBootSubstatus(rawLatest!),
+        );
+        return idx === -1 ? 0 : idx;
+      })()
+    : currentStepIndex(currentSubstatus);
+
+  return (
+    <Task role="list" aria-label="Boot progress" className="py-1">
+      {BOOT_STEPS.map((step, index) => {
+        const isCompleted = index < activeIndex;
+        const isActive = index === activeIndex;
+        const isPending = index > activeIndex;
+
+        // Look up duration from meta event steps if available.
+        const metaStep = bootSteps.find((s) => s.substatus === step.substatus);
+        const durationMs = metaStep?.durationMs;
+        const startedAt = metaStep?.startedAt;
+
+        const showInstallProgress =
+          (step.substatus === "installing-agent" ||
+            step.substatus === "running-setup-script") &&
+          isActive;
+
+        return (
+          <React.Fragment key={step.substatus}>
+            <TaskItem role="listitem">
+              <TaskIcon
+                className={cn({
+                  "text-primary": isCompleted,
+                  "text-foreground": isActive,
+                  "text-muted-foreground/40": isPending,
+                })}
+              >
+                {isCompleted ? (
+                  <Check className="size-3.5 stroke-[2.5]" />
+                ) : isActive ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : undefined}
+              </TaskIcon>
+
+              <TaskLabel
+                className={cn("text-sm", {
+                  "text-foreground font-medium": isActive,
+                  "text-muted-foreground": isCompleted,
+                  "text-muted-foreground opacity-40": isPending,
+                })}
+              >
+                {step.label}
+              </TaskLabel>
+
+              {isCompleted && durationMs !== undefined && (
+                <span
+                  className="font-mono text-[0.6875rem] text-muted-foreground/70 flex-shrink-0 tabular-nums animate-in fade-in slide-in-from-right-1 duration-[var(--duration-quick)] ease-[var(--ease-emphasis)]"
+                  aria-label={`Completed in ${formatDuration(durationMs)}`}
+                >
+                  {formatDuration(durationMs)}
+                </span>
+              )}
+              {isActive && startedAt !== undefined && (
+                <ActiveStepTimer startedAt={startedAt} />
+              )}
+            </TaskItem>
+
+            {showInstallProgress && installProgress && (
+              <InstallProgressBar
+                resolved={installProgress.resolved}
+                total={installProgress.total}
+                currentPackage={installProgress.currentPackage}
+              />
+            )}
+          </React.Fragment>
+        );
+      })}
+    </Task>
+  );
+}

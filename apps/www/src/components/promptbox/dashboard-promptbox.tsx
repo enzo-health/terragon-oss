@@ -80,7 +80,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
     if (!repoFullName || !branchName) {
       return "Pick a repo and branch to start a task…";
     }
-    return "Describe a task — @ to reference files, Enter to send";
+    return "Ask anything. Type / for commands, @ to mention.";
   }, [placeholder, repoFullName, branchName]);
 
   const wrappedHandleSubmit: UsePromptBoxHandleSubmit = useCallback(
@@ -110,7 +110,16 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   );
 
   const {
-    editor,
+    value,
+    setValue,
+    triggers,
+    placeholder: composerPlaceholder,
+    autoFocus,
+    composerRef,
+    focusComposer,
+    insertText,
+    insertMention,
+    insertSlashCommand,
     attachedFiles,
     isSubmitting,
     isSubmitDisabled: baseIsSubmitDisabled,
@@ -150,20 +159,30 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
   const isSubmitDisabled =
     baseIsSubmitDisabled || credentialInfo?.canInvokeAgent === false;
 
-  // Set content when promptText changes
   React.useEffect(() => {
-    if (promptText && editor && editor.getText() !== promptText) {
-      editor.commands.setContent(promptText);
-      editor.commands.focus();
-    }
-  }, [promptText, editor]);
+    if (!promptText) return;
+    setValue((prev) =>
+      prev.text === promptText
+        ? prev
+        : { text: promptText, segments: [{ type: "text", value: promptText }] },
+    );
+    focusComposer();
+  }, [promptText, setValue, focusComposer]);
 
   return (
     <div className="flex flex-col gap-6">
       <SimplePromptBox
         forcedAgent={null}
         forcedAgentVersion={null}
-        editor={editor}
+        value={value}
+        onValueChange={setValue}
+        triggers={triggers}
+        placeholder={composerPlaceholder}
+        autoFocus={autoFocus}
+        composerRef={composerRef}
+        insertText={insertText}
+        insertMention={insertMention}
+        insertSlashCommand={insertSlashCommand}
         attachedFiles={attachedFiles}
         handleFilesAttached={handleFilesAttached}
         removeFile={removeFile}
@@ -173,7 +192,7 @@ export function DashboardPromptBox(props: DashboardPromptBoxProps) {
         isSubmitDisabled={isSubmitDisabled}
         showStopButton={false}
         hideSubmitButton={false}
-        className="min-h-[140px]"
+        className="min-h-[48px]"
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         selectedModels={selectedModels}

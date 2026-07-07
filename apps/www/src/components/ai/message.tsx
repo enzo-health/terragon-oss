@@ -64,9 +64,9 @@ export const messageTextVariants = cva("min-w-0 text-sm/6.5", {
   variants: {
     variant: {
       plain:
-        "[[data-slot=message-avatar]+[data-slot=message-content]>&:first-child]:pt-2",
+        "max-w-[70ch] [[data-slot=message-avatar]+[data-slot=message-content]>&:first-child]:pt-2",
       bubble:
-        "w-fit max-w-[75%] rounded-outer bg-surface-elevated px-3 py-2 ring ring-border",
+        "w-fit max-w-[75%] rounded-outer bg-muted px-4 py-2.5 text-foreground",
     },
   },
   defaultVariants: { variant: "plain" },

@@ -113,7 +113,10 @@ describe("thread event live tail helpers", () => {
       threadChatId: "chat-1",
       afterSeq: 4,
     });
-    expect(sse.emitReplayEntry).toHaveBeenCalledTimes(2);
+    expect(sse.emitReplayEntry).toHaveBeenCalledTimes(3);
+    const firstEmitted = vi.mocked(sse.emitReplayEntry).mock.calls[0]![0];
+    expect(firstEmitted.event.type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(Reflect.get(firstEmitted.event, "messageId")).toBe("message-1");
     expect(sse.close).toHaveBeenCalledWith("terminal_event");
   });
 

@@ -6,6 +6,7 @@ import { userOnlyAction } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import {
   deleteSlackAccount,
+  getSlackAccountForTeam,
   upsertSlackSettings,
 } from "@terragon/shared/model/slack";
 import { encryptValue } from "@terragon/utils/encryption";
@@ -18,7 +19,6 @@ const SLACK_BOT_SCOPES = [
   "users:read.email",
   "channels:history",
   "files:read",
-  "files:write",
   "groups:history",
   "im:history",
   "im:read",
@@ -69,7 +69,7 @@ export const getSlackOAuthUrl = userOnlyAction(
     const redirectUri = `${nonLocalhostPublicAppUrl()}/api/auth/slack/callback`;
     const slackAuthUrl = new URL("https://slack.com/openid/connect/authorize");
     slackAuthUrl.searchParams.set("client_id", env.SLACK_CLIENT_ID);
-    slackAuthUrl.searchParams.set("scope", SLACK_OPENID_SCOPES.join(","));
+    slackAuthUrl.searchParams.set("scope", SLACK_OPENID_SCOPES.join(" "));
     slackAuthUrl.searchParams.set("redirect_uri", redirectUri);
     slackAuthUrl.searchParams.set("response_type", "code");
 
@@ -109,6 +109,10 @@ export const updateSlackSettings = userOnlyAction(
       settings: Omit<SlackSettingsInsert, "userId" | "teamId">;
     },
   ): Promise<void> {
+    const slackAccount = await getSlackAccountForTeam({ db, userId, teamId });
+    if (!slackAccount) {
+      throw new Error("Slack account is not linked");
+    }
     await upsertSlackSettings({ db, userId, teamId, settings });
   },
   { defaultErrorMessage: "Failed to update Slack settings" },

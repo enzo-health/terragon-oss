@@ -42,9 +42,9 @@ export type CodexNotificationDecision =
 /**
  * Codex item types whose text is streamed live as deltas and persisted under
  * the item id. On `item.completed` any tail the deltas missed is flushed under
- * the same id; the canonical/rich-part representation is then suppressed (see
- * `isDeltaStreamedAssistantMessage`). `agent_message` streams as "text",
- * `reasoning` as "thinking".
+ * the same id; the run's `streamedAssistantText` flag then makes the canonical-
+ * event builder suppress the duplicate `assistant-message` representation.
+ * `agent_message` streams as "text", `reasoning` as "thinking".
  */
 function codexStreamedTextChannel(
   context: CodexNotificationContext,
@@ -245,6 +245,10 @@ export function routeCodexNotification({
     return { kind: "skip" };
   }
 
+  if (threadEvent.type === "item.updated" && method === "item/plan/delta") {
+    return { kind: "skip" };
+  }
+
   // mcpToolCall/progress updates carry partial progress on an in-flight MCP
   // tool call. Stream them as a "tool-output" delta (stream: "progress") keyed
   // on the MCP item id so the client shows live progress inside the owning tool
@@ -273,15 +277,6 @@ export function routeCodexNotification({
     return { kind: "skip" };
   }
 
-  // On `item.completed` for a streamed-text item (agent_message / reasoning),
-  // flush any tail the live deltas missed under the SAME item id, so the delta
-  // stream holds the complete text even when a message completes without prior
-  // `item.updated` deltas. We do NOT return: the event falls through to
-  // parseCodexLine so the DBAgentMessage is still persisted. That parsed message
-  // carries `_codexItemId`, so its canonical / rich-part representation is
-  // suppressed — the delta stream is the single persisted/replayed copy, and a
-  // second one under a fresh id is exactly what stacked identical text in the
-  // transcript.
   if (threadEvent.type === "item.completed" && threadEvent.item) {
     const item = toRecord(threadEvent.item);
     const channel = item

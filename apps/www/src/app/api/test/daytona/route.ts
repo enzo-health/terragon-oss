@@ -12,7 +12,7 @@ import type { AgentRunStatus } from "@terragon/shared/db/types";
 import type { DBUserMessageWithModel } from "@terragon/shared";
 import { normalizedModelForDaemon } from "@terragon/agent/utils";
 import { AGENT_VERSION } from "@terragon/agent/versions";
-import { legacyRuntimeAdapterContract } from "@terragon/daemon/runtime-contracts";
+import { codexRuntimeAdapterContract } from "@terragon/daemon/runtime-contracts";
 import type {
   BootingSubstatus,
   CreateSandboxOptions,
@@ -244,7 +244,7 @@ async function runAgentSmoke() {
       runContext: {
         runId,
         tokenNonce,
-        transportMode: "legacy",
+        transportMode: "codex-app-server",
         protocolVersion: 1,
         agent: "codex",
         codexOAuthCredentialId: null,
@@ -260,9 +260,9 @@ async function runAgentSmoke() {
         permissionMode: "allowAll",
         useCredits: false,
         runId,
-        transportMode: "legacy",
+        transportMode: "codex-app-server",
         protocolVersion: 1,
-        runtimeAdapterContract: legacyRuntimeAdapterContract,
+        runtimeAdapterContract: codexRuntimeAdapterContract,
       },
     });
 

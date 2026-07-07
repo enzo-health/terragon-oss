@@ -179,6 +179,11 @@ export type ThreadMetaEvent =
       replacement?: string;
     }
   | {
+      kind: "thread.turn_retrying";
+      threadId: string;
+      message: string;
+    }
+  | {
       kind: "session.initialized";
       tools: string[];
       mcpServers: string[];
@@ -240,6 +245,48 @@ export type CodexDelegationItem = {
   status: string;
 };
 
+export type CodexFileChange = {
+  path: string;
+  kind: "add" | "delete" | "update";
+  movePath?: string;
+};
+
+export type CodexFileChangeItem = {
+  type: "file_change";
+  id: string;
+  changes: CodexFileChange[];
+  status: "completed" | "failed";
+};
+
+export type CodexPlanItem = {
+  type: "plan";
+  id: string;
+  text: string;
+};
+
+export type CodexContextCompactionItem = {
+  type: "context_compaction";
+  id: string;
+};
+
+type CodexSyntheticItem = Record<string, unknown> & {
+  id: string;
+  type: string;
+};
+
+type CodexNormalizedItem =
+  | ThreadItem
+  | CodexDelegationItem
+  | CodexFileChangeItem
+  | CodexPlanItem
+  | CodexContextCompactionItem
+  | CodexSyntheticItem;
+
+type DaemonCodexItemEvent = {
+  type: CodexItemEventType;
+  item: CodexNormalizedItem;
+};
+
 /**
  * Synthetic event types that extend the SDK `ThreadEvent` union.
  * Used for methods that have no direct SDK equivalent (e.g., turn/diff/updated).
@@ -258,7 +305,8 @@ export type CodexTurnPlanUpdatedEvent = {
  * Extended ThreadEvent union that includes daemon-local synthetic events.
  */
 export type DaemonCodexEvent =
-  | ThreadEvent
+  | Exclude<ThreadEvent, { type: CodexItemEventType }>
+  | DaemonCodexItemEvent
   | CodexTurnDiffUpdatedEvent
   | CodexTurnPlanUpdatedEvent;
 
@@ -486,10 +534,34 @@ function extractTextFromContent(contentValue: unknown): string {
   return textParts.join("");
 }
 
+function normalizePatchChangeKind(rawKind: unknown): {
+  kind: "add" | "delete" | "update";
+  movePath?: string;
+} {
+  if (rawKind === "add" || rawKind === "delete" || rawKind === "update") {
+    return { kind: rawKind };
+  }
+  const kindRecord = toRecord(rawKind);
+  if (kindRecord) {
+    const tag = readString(kindRecord, "type");
+    if (tag === "add" || tag === "delete") {
+      return { kind: tag };
+    }
+    if (tag === "update") {
+      const movePath =
+        readString(kindRecord, "move_path") ??
+        readString(kindRecord, "movePath") ??
+        undefined;
+      return { kind: "update", ...(movePath ? { movePath } : {}) };
+    }
+  }
+  return { kind: "update" };
+}
+
 function normalizeThreadItem(
   rawItem: Record<string, unknown>,
   eventType: CodexItemEventType,
-): ThreadItem | CodexDelegationItem | null {
+): CodexNormalizedItem | null {
   const itemId = readString(rawItem, "id");
   const rawItemType = readString(rawItem, "type");
   if (!itemId || !rawItemType) {
@@ -549,6 +621,22 @@ function normalizeThreadItem(
       agents_states: agentsStates,
       tool: "send_input",
       status: readString(rawItem, "status") ?? "initiated",
+    };
+  }
+
+  const collapsedType = rawItemType.replace(/[_-]/g, "").toLowerCase();
+  if (collapsedType === "plan") {
+    return {
+      type: "plan",
+      id: itemId,
+      text:
+        readString(rawItem, "text") ?? extractTextFromContent(rawItem.content),
+    };
+  }
+  if (collapsedType === "contextcompaction") {
+    return {
+      type: "context_compaction",
+      id: itemId,
     };
   }
 
@@ -620,7 +708,7 @@ function normalizeThreadItem(
     case "file_change": {
       const changes = toArray(rawItem.changes) ?? [];
       const normalizedChanges = changes
-        .map((change) => {
+        .map((change): CodexFileChange | null => {
           const changeRecord = toRecord(change);
           if (!changeRecord) {
             return null;
@@ -629,24 +717,16 @@ function normalizeThreadItem(
           if (!path) {
             return null;
           }
-          const rawKind = readString(changeRecord, "kind");
-          const kind =
-            rawKind === "add" || rawKind === "delete" || rawKind === "update"
-              ? rawKind
-              : "update";
+          const { kind, movePath } = normalizePatchChangeKind(
+            changeRecord.kind,
+          );
           return {
             path,
             kind,
+            ...(movePath ? { movePath } : {}),
           };
         })
-        .filter(
-          (
-            entry,
-          ): entry is {
-            path: string;
-            kind: "add" | "delete" | "update";
-          } => entry !== null,
-        );
+        .filter((entry): entry is CodexFileChange => entry !== null);
       return {
         id: itemId,
         type: "file_change",
@@ -911,7 +991,7 @@ function extractThreadEventFromMethod({
         changes: [],
         status: "completed",
         _delta: delta,
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -930,7 +1010,7 @@ function extractThreadEventFromMethod({
         type: "reasoning",
         text: delta,
         _deltaKind: "summaryText",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -955,7 +1035,7 @@ function extractThreadEventFromMethod({
         text: partContent,
         _deltaKind: "summaryPart",
         _summaryPart: summaryPart ?? {},
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -974,7 +1054,7 @@ function extractThreadEventFromMethod({
         type: "reasoning",
         text: delta,
         _deltaKind: "text",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -997,7 +1077,7 @@ function extractThreadEventFromMethod({
         arguments: {},
         status: normalizeMcpStatus(status, "item.updated"),
         _progress: progress ?? {},
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1027,7 +1107,7 @@ function extractThreadEventFromMethod({
         riskLevel,
         action,
         status: "pending",
-      } as unknown as ThreadItem,
+      },
     };
   }
 
@@ -1063,7 +1143,39 @@ function extractThreadEventFromMethod({
         decision,
         rationale,
         status: decision === "approved" ? "approved" : "denied",
-      } as unknown as ThreadItem,
+      },
+    };
+  }
+
+  if (method === "item/plan/delta") {
+    const itemId =
+      readString(params, "itemId") ?? readString(params, "item_id");
+    if (!itemId) {
+      return null;
+    }
+    const delta = readString(params, "delta") ?? "";
+    return {
+      type: "item.updated",
+      item: {
+        id: itemId,
+        type: "plan",
+        text: delta,
+        _deltaKind: "plan",
+      },
+    };
+  }
+
+  if (method === "thread/compacted") {
+    const itemId =
+      readString(params, "turnId") ??
+      readString(params, "turn_id") ??
+      "context-compaction";
+    return {
+      type: "item.completed",
+      item: {
+        id: itemId,
+        type: "context_compaction",
+      },
     };
   }
 
@@ -1087,6 +1199,9 @@ function extractThreadEventFromMethod({
 
   const eventType = METHOD_TO_THREAD_EVENT_TYPE[method];
   if (!eventType) {
+    if (method.startsWith("codex/event/")) {
+      return null;
+    }
     recordUnknownEvent({
       transport: "codex",
       method,
@@ -1146,7 +1261,7 @@ function extractThreadEventFromMethod({
       }
       return {
         type: eventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error": {
@@ -1160,7 +1275,7 @@ function extractThreadEventFromMethod({
 
 function extractThreadEventFromCodexMessage(
   message: Record<string, unknown>,
-): ThreadEvent | null {
+): DaemonCodexEvent | null {
   const messageType = readString(message, "type");
   if (!messageType) {
     return null;
@@ -1211,7 +1326,7 @@ function extractThreadEventFromCodexMessage(
       }
       return {
         type: eventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error": {
@@ -1225,7 +1340,7 @@ function extractThreadEventFromCodexMessage(
 
 function extractRawThreadEvent(
   value: Record<string, unknown>,
-): ThreadEvent | null {
+): DaemonCodexEvent | null {
   const threadEventType = readString(value, "type");
   if (!threadEventType) {
     return null;
@@ -1269,7 +1384,7 @@ function extractRawThreadEvent(
       }
       return {
         type: threadEventType,
-        item: normalizedItem as unknown as ThreadItem,
+        item: normalizedItem,
       };
     }
     case "error":
@@ -1329,7 +1444,7 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
     const rateLimits = toRecord(params.rateLimits) ?? params;
     return {
       kind: "account.rate_limits_updated",
-      rateLimits: rateLimits as Record<string, unknown>,
+      rateLimits,
     };
   }
 
@@ -1385,10 +1500,15 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
   if (
     method === "config/warning" ||
     method === "warning" ||
-    method === "configWarning"
+    method === "configWarning" ||
+    method === "guardianWarning"
   ) {
-    const msg = readString(params, "message") ?? "";
-    const ctx = readString(params, "context") ?? undefined;
+    const msg =
+      readString(params, "message") ?? readString(params, "summary") ?? "";
+    const ctx =
+      readString(params, "context") ??
+      readString(params, "details") ??
+      undefined;
     return {
       kind: "config.warning",
       message: msg,
@@ -1396,13 +1516,26 @@ export function extractMetaEvent(message: unknown): ThreadMetaEvent | null {
     };
   }
 
-  if (method === "deprecation/notice") {
-    const msg = readString(params, "message") ?? "";
-    const replacement = readString(params, "replacement") ?? undefined;
+  if (method === "deprecationNotice" || method === "deprecation/notice") {
+    const msg =
+      readString(params, "message") ?? readString(params, "summary") ?? "";
+    const replacement =
+      readString(params, "replacement") ??
+      readString(params, "details") ??
+      undefined;
     return {
       kind: "deprecation.notice",
       message: msg,
       ...(replacement !== undefined ? { replacement } : {}),
+    };
+  }
+
+  if (method === "error" && params.will_retry === true) {
+    const threadId = extractThreadIdFromParams(params) ?? "";
+    return {
+      kind: "thread.turn_retrying",
+      threadId,
+      message: extractErrorMessage(params.error ?? params.message),
     };
   }
 
@@ -1437,11 +1570,45 @@ export function extractThreadEvent(message: unknown): DaemonCodexEvent | null {
   if (!method.startsWith("codex/event/")) {
     return null;
   }
-  const codexMessage = toRecord(params.msg);
-  if (!codexMessage) {
-    return null;
-  }
+  const codexMessage =
+    toRecord(params.msg) ??
+    toRecord(params.message) ??
+    toRecord(params.event) ??
+    ({
+      ...params,
+      type: method.slice("codex/event/".length),
+    } satisfies Record<string, unknown>);
   return extractThreadEventFromCodexMessage(codexMessage);
+}
+
+type GracefulServerResponse =
+  | { kind: "result"; result: Record<string, unknown> }
+  | { kind: "error"; code: number; message: string };
+
+export function gracefulServerRequestResponse(
+  method: string,
+): GracefulServerResponse | null {
+  switch (method) {
+    case "currentTime/read":
+      return {
+        kind: "result",
+        result: { currentTimeAt: Math.floor(Date.now() / 1000) },
+      };
+    case "item/tool/call":
+      return { kind: "result", result: { contentItems: [], success: false } };
+    case "item/tool/requestUserInput":
+      return { kind: "result", result: { answers: {} } };
+    case "mcpServer/elicitation/request":
+      return { kind: "result", result: { action: "decline", content: null } };
+    case "attestation/generate":
+      return {
+        kind: "error",
+        code: -32000,
+        message: "attestation/generate is not supported by the terragon daemon",
+      };
+    default:
+      return null;
+  }
 }
 
 function defaultSpawnProcess(
@@ -1947,6 +2114,34 @@ export class CodexAppServerManager {
         return;
       }
 
+      const graceful = gracefulServerRequestResponse(request.method);
+      if (graceful !== null) {
+        recordUnknownEvent({
+          transport: "codex",
+          method: request.method,
+          reason: "graceful server-request decline",
+        });
+        if (graceful.kind === "result") {
+          await this.writeJsonLine({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: graceful.result,
+          });
+        } else {
+          await this.writeServerRequestError({
+            id: request.id,
+            code: graceful.code,
+            message: graceful.message,
+          });
+        }
+        return;
+      }
+
+      recordUnknownEvent({
+        transport: "codex",
+        method: request.method,
+        reason: "unsupported server request (-32601)",
+      });
       this.logger.warn("Unsupported codex app-server server request", {
         id: request.id,
         method: request.method,

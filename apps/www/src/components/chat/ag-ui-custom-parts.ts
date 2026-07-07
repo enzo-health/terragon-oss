@@ -1,10 +1,4 @@
 import { EventType, type BaseEvent, type CustomEvent } from "@ag-ui/core";
-import type {
-  DataMessagePart,
-  ThreadAssistantMessage,
-  ThreadAssistantMessagePart,
-  ThreadMessage,
-} from "@assistant-ui/react";
 
 export const TERRAGON_DATA_PART_EVENT_NAME = "terragon.data-part";
 
@@ -28,7 +22,11 @@ export type TerragonDataPartPayload = ReadonlyJSONObject & {
   readonly data: ReadonlyJSONObject;
 };
 
-export type TerragonDataPart = DataMessagePart<TerragonDataPartPayload>;
+export type TerragonDataPart = {
+  readonly type: "data";
+  readonly name: string;
+  readonly data: TerragonDataPartPayload;
+};
 
 function isReadonlyJSONValue(value: unknown): value is ReadonlyJSONValue {
   if (value === null) {
@@ -103,27 +101,6 @@ export function terragonDataPart(params: {
   };
 }
 
-export function sameTerragonDataPart(
-  existing: ThreadAssistantMessagePart,
-  next: TerragonDataPart,
-): boolean {
-  if (existing.type !== "data") {
-    return false;
-  }
-  const existingData: unknown = existing.data;
-  const nextData: unknown = next.data;
-  if (!isReadonlyJSONObject(existingData) || !isReadonlyJSONObject(nextData)) {
-    return false;
-  }
-  return (
-    existing.name === next.name &&
-    getStringField(existingData, "messageId") ===
-      getStringField(nextData, "messageId") &&
-    getNumberField(existingData, "partIndex") ===
-      getNumberField(nextData, "partIndex")
-  );
-}
-
 export function terragonDataPartFromCustomEvent(
   event: BaseEvent,
 ): TerragonDataPart | null {
@@ -154,76 +131,8 @@ export function terragonDataPartFromCustomEvent(
   });
 }
 
-export function appendTerragonDataPart(
-  content: readonly ThreadAssistantMessagePart[],
-  dataPart: TerragonDataPart,
-): readonly ThreadAssistantMessagePart[] | null {
-  if (content.some((part) => sameTerragonDataPart(part, dataPart))) {
-    return null;
-  }
-  return [...content, dataPart];
-}
-
 export function terragonDataPartIdentityKey(
   dataPart: TerragonDataPart,
 ): string {
   return `${dataPart.name}\u0000${dataPart.data.messageId}\u0000${dataPart.data.partIndex}`;
-}
-
-export function applyCustomPartEvent(params: {
-  messages: ThreadMessage[];
-  event: BaseEvent;
-  createAssistantMessage: (messageId: string) => ThreadAssistantMessage;
-  findAssistantMessageIndex?: (messageId: string) => number | undefined;
-  onAssistantMessageCreated?: (messageId: string, messageIndex: number) => void;
-  hasTerragonDataPart?: (dataPart: TerragonDataPart) => boolean;
-  onTerragonDataPartAppended?: (dataPart: TerragonDataPart) => void;
-}): boolean {
-  const {
-    messages,
-    event,
-    createAssistantMessage,
-    findAssistantMessageIndex,
-    onAssistantMessageCreated,
-    hasTerragonDataPart,
-    onTerragonDataPartAppended,
-  } = params;
-  const dataPart = terragonDataPartFromCustomEvent(event);
-  if (!dataPart) {
-    return false;
-  }
-  if (hasTerragonDataPart?.(dataPart)) {
-    return false;
-  }
-
-  let messageIndex = findAssistantMessageIndex?.(dataPart.data.messageId);
-  if (messageIndex === undefined && !findAssistantMessageIndex) {
-    const fallbackIndex = messages.findIndex(
-      (message) =>
-        message.role === "assistant" && message.id === dataPart.data.messageId,
-    );
-    messageIndex = fallbackIndex === -1 ? undefined : fallbackIndex;
-  }
-  if (messageIndex === undefined) {
-    messages.push(createAssistantMessage(dataPart.data.messageId));
-    messageIndex = messages.length - 1;
-    onAssistantMessageCreated?.(dataPart.data.messageId, messageIndex);
-  }
-
-  const message = messages[messageIndex];
-  if (!message || message.role !== "assistant") {
-    return false;
-  }
-  const content = hasTerragonDataPart
-    ? [...message.content, dataPart]
-    : appendTerragonDataPart(message.content, dataPart);
-  if (!content) {
-    return false;
-  }
-  messages[messageIndex] = {
-    ...message,
-    content,
-  };
-  onTerragonDataPartAppended?.(dataPart);
-  return true;
 }
