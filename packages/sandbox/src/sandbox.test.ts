@@ -10,6 +10,7 @@ import type { ISandboxSession, CreateSandboxOptions } from "./types";
 import { getDaemonFile } from "./constants";
 import { setupSandboxEveryTime } from "./setup";
 import { createHash } from "crypto";
+import { execSync } from "child_process";
 import { nanoid } from "nanoid/non-secure";
 import { gitDiff } from "./commands/git-diff";
 import { gitDiffStats } from "./commands/git-diff-stats";
@@ -200,6 +201,12 @@ describe(`sandbox ${providerName}`, () => {
   });
 
   it("should have GitHub CLI (gh) installed", async () => {
+    const skipReason = getDockerGhSmokeTestSkipReason();
+    if (skipReason) {
+      console.warn(skipReason);
+      return;
+    }
+
     // Check if gh is installed
     const ghVersion = await sandbox.runCommand("gh --version");
     expect(ghVersion).toContain("gh version");
@@ -1800,4 +1807,78 @@ async function sleepUntil(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Condition not met within timeout period");
+}
+
+function getDockerGhSmokeTestSkipReason(): string | null {
+  if (providerName !== "docker") {
+    return null;
+  }
+
+  const imageName = getDockerProviderImageNameForTest();
+  const dockerServerArch = getDockerServerArchitecture();
+  const imageArch = getDockerImageArchitecture(imageName);
+
+  if (!dockerServerArch || !imageArch) {
+    return null;
+  }
+
+  if (dockerServerArch === "arm64" && imageArch === "amd64") {
+    return [
+      "Skipping gh smoke test:",
+      `${imageName} is linux/amd64 but local Docker is linux/arm64.`,
+      "The amd64 GitHub CLI crashes in the Go runtime under Docker's arm64 emulation.",
+      "Build ghcr.io/terragon-labs/containers-test:local on this machine to exercise gh natively.",
+    ].join(" ");
+  }
+
+  return null;
+}
+
+function getDockerProviderImageNameForTest(): string {
+  const localImage = "ghcr.io/terragon-labs/containers-test:local";
+  try {
+    execSync(`docker image inspect ${localImage}`, { stdio: "ignore" });
+    return localImage;
+  } catch {
+    return "ghcr.io/terragon-labs/containers-test";
+  }
+}
+
+function getDockerServerArchitecture(): string | null {
+  try {
+    return normalizeArchitecture(
+      execSync("docker version --format '{{.Server.Arch}}'", {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim(),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function getDockerImageArchitecture(imageName: string): string | null {
+  try {
+    return normalizeArchitecture(
+      execSync(
+        `docker image inspect ${imageName} --format '{{.Architecture}}'`,
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      ).trim(),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function normalizeArchitecture(architecture: string): string {
+  if (architecture === "x86_64") {
+    return "amd64";
+  }
+  if (architecture === "aarch64") {
+    return "arm64";
+  }
+  return architecture;
 }
