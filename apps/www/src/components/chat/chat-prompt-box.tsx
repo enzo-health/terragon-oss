@@ -206,7 +206,7 @@ export const ChatPromptBox = memo(function ChatPromptBox({
   );
 
   return (
-    <div className="z-10 bg-background chat-prompt-box px-4 pb-3 pt-2 max-w-chat w-full mx-auto">
+    <div className="z-10 bg-card chat-prompt-box px-4 pb-3 pt-2 max-w-chat w-full mx-auto">
       {showContextUsageChip ? (
         <ContextChip
           contextLength={contextLength}
