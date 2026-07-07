@@ -57,6 +57,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
       daytonaVolume: undefined,
       volumeEnvironmentEntries: [],
       snapshotTemplateId: undefined,
+      selectedSnapshot: undefined,
       snapshotFingerprint: undefined,
     });
   });
@@ -109,6 +110,7 @@ describe("resolveDaytonaSandboxBootPlan", () => {
     });
 
     expect(plan.snapshotTemplateId).toBe("matching-snapshot");
+    expect(plan.selectedSnapshot?.snapshotName).toBe("matching-snapshot");
   });
 
   it("does not select a snapshot baked from a different base branch", () => {
