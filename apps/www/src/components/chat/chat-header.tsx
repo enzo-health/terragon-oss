@@ -146,8 +146,8 @@ export const ChatHeader = memo(function ChatHeader({
                 <PanelRightClose className="h-4 w-4" />
               </Button>
             )}
-            <div className="flex min-w-0 w-full flex-col gap-1.5">
-              <div className="flex w-full min-w-0 items-center gap-2">
+            <div className="flex min-w-0 w-full flex-col gap-1.5 @xl/pane:flex-row @xl/pane:items-center @xl/pane:gap-3">
+              <div className="flex w-full min-w-0 items-center gap-2 @xl/pane:w-auto @xl/pane:flex-1">
                 <div className="flex items-center opacity-80 flex-shrink-0">
                   <ThreadStatusIndicator thread={thread} />
                 </div>
@@ -187,7 +187,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </div>
               </div>
               {/* metadata */}
-              <div className="flex min-h-6 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px]">
+              <div className="flex min-h-6 min-w-0 items-center gap-2 pl-[22px] text-[12px] text-muted-foreground md:text-[13px] @xl/pane:max-w-[min(60%,720px)] @xl/pane:flex-shrink @xl/pane:pl-0">
                 <span className="truncate font-medium text-foreground/80 @xl/pane:flex-shrink-0 @xl/pane:whitespace-nowrap">
                   {thread.githubRepoFullName}
                 </span>
