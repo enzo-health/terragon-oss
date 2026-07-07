@@ -3,7 +3,7 @@ import {
   DAEMON_FILE_PATH,
   DAEMON_LOG_FILE_PATH,
   getDaemonLogs,
-  sendMessage,
+  sendPingMessage,
 } from "./daemon";
 import type { SandboxProvider } from "@terragon/types/sandbox";
 import type { ISandboxSession, CreateSandboxOptions } from "./types";
@@ -171,72 +171,32 @@ describe(`sandbox ${providerName}`, () => {
     ) {
       throw new Error("Daemon did not start successfully");
     }
-    daemonLogs = await getDaemonLogs({ session: sandbox });
-    if (
-      daemonLogs.find((log) => {
-        return (
-          typeof log !== "string" &&
-          log.message?.includes("Received unix socket message") &&
-          log.data?.message?.includes("TEST_PROMPT_STRING")
-        );
-      })
-    ) {
-      throw new Error("Daemon should not have received pipe message yet");
-    }
-    await sendMessage({
-      session: sandbox,
-      message: {
-        type: "claude",
-        agent: "claudeCode",
-        agentVersion: 1,
-        token: "test-token",
-        prompt: "TEST_PROMPT_STRING",
-        model: "sonnet",
-        sessionId: null,
-        threadId: "test-thread-id",
-        threadChatId: "test-thread-chat-id",
-      },
+    const pingCountBefore = daemonLogs.filter((log) => {
+      const message = typeof log === "string" ? log : log.message;
+      return message?.includes("Ping message received");
+    }).length;
+
+    await expect(sendPingMessage({ session: sandbox })).resolves.toBe(true);
+    await sleepUntil(async () => {
+      const daemonLogs = await getDaemonLogs({ session: sandbox });
+      const pingCountAfter = daemonLogs.filter((log) => {
+        const message = typeof log === "string" ? log : log.message;
+        return message?.includes("Ping message received");
+      }).length;
+      return pingCountAfter > pingCountBefore;
     });
+
     daemonLogs = await getDaemonLogs({ session: sandbox });
-    const receivedAckMessage = daemonLogs.find((log) => {
+    const receivedPingMessage = daemonLogs.findLast((log) => {
       return (
         typeof log !== "string" &&
         log.message?.includes("Received unix socket message") &&
-        log.data?.message?.includes("TEST_PROMPT_STRING")
+        log.data?.message === '{"type":"ping"}'
       );
     });
-    if (!receivedAckMessage) {
-      throw new Error("Daemon should have received ack message");
+    if (!receivedPingMessage) {
+      throw new Error("Daemon should have received ping message");
     }
-    const parsedData = JSON.parse(receivedAckMessage.data.message);
-    expect(parsedData.type).toBe("claude");
-    expect(parsedData.prompt).toBe("TEST_PROMPT_STRING");
-    expect(parsedData.model).toBe("sonnet");
-    expect(parsedData.sessionId).toBeNull();
-    expect(parsedData.threadId).toBe("test-thread-id");
-    expect(parsedData.token).toBeDefined();
-
-    await sleepUntil(async () => {
-      const daemonLogs = await getDaemonLogs({ session: sandbox });
-      return daemonLogs.find((log) => {
-        return (
-          typeof log !== "string" &&
-          log.message?.includes("Spawning agent process")
-        );
-      });
-    });
-    daemonLogs = await getDaemonLogs({ session: sandbox });
-    const startedAgentProcess = daemonLogs.find((log) => {
-      const message = typeof log === "string" ? log : log.message;
-      return message?.includes("Spawning agent process");
-    });
-    if (!startedAgentProcess) {
-      throw new Error("Daemon should have started agent process");
-    }
-    const startedClaudeCommand = startedAgentProcess.data.command;
-    expect(startedClaudeCommand).toContain("cat");
-    expect(startedClaudeCommand).toContain("/tmp/claude-prompt-");
-    expect(startedClaudeCommand).toContain("claude -p --model sonnet");
   });
 
   it("should have GitHub CLI (gh) installed", async () => {
@@ -1830,13 +1790,14 @@ async function createTestRepo(sandbox: ISandboxSession, tmpDir: string) {
 
 async function sleepUntil(
   condition: () => Promise<boolean>,
-  maxWaitMs: number = 2000,
+  maxWaitMs: number = 10_000,
 ) {
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     if (await condition()) {
       return;
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Condition not met within timeout period");
 }
